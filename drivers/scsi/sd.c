@@ -3189,14 +3189,21 @@ static bool sd_validate_opt_xfer_size(struct scsi_disk *sdkp,
 static int sd_revalidate_disk(struct gendisk *disk)
 {
 	struct scsi_disk *sdkp = scsi_disk(disk);
-	struct scsi_device *sdp = sdkp->device;
-	struct request_queue *q = sdkp->disk->queue;
-	sector_t old_capacity = sdkp->capacity;
+	struct scsi_device *sdp;
+	struct request_queue *q;
+	sector_t old_capacity;
 	unsigned char *buffer;
 	unsigned int dev_max, rw_max;
 
 	SCSI_LOG_HLQUEUE(3, sd_printk(KERN_INFO, sdkp,
 				      "sd_revalidate_disk\n"));
+
+	if (WARN_ONCE((!sdkp), "Invalid scsi_disk from %p\n", disk))
+		goto out;
+
+	sdp = sdkp->device;
+	q = sdkp->disk->queue;
+	old_capacity = sdkp->capacity;
 
 	/*
 	 * If the device is offline, don't try and read capacity or any
