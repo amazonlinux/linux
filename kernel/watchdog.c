@@ -25,6 +25,7 @@
 #include <linux/workqueue.h>
 #include <linux/sched/clock.h>
 #include <linux/sched/debug.h>
+#include <linux/dmi.h>
 
 #include <asm/irq_regs.h>
 #include <linux/kvm_para.h>
@@ -96,6 +97,31 @@ static int __init hardlockup_all_cpu_backtrace_setup(char *str)
 __setup("hardlockup_all_cpu_backtrace=", hardlockup_all_cpu_backtrace_setup);
 # endif /* CONFIG_SMP */
 #endif /* CONFIG_HARDLOCKUP_DETECTOR */
+
+static int disable_watchdog(const struct dmi_system_id *d)
+{
+	printk(KERN_INFO "watchdog: disabled (inside virtual machine)\n");
+	watchdog_user_enabled = 0;
+	return 0;
+}
+
+static const struct dmi_system_id watchdog_virt_dmi_table[] = {
+	{
+		.callback = disable_watchdog,
+		.ident = "VMware",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "VMware, Inc."),
+		},
+	},
+	{
+		.callback = disable_watchdog,
+		.ident = "Bochs",
+		.matches = {
+			DMI_MATCH(DMI_SYS_VENDOR, "Bochs"),
+		},
+	},
+	{}
+};
 
 /*
  * These functions can be overridden if an architecture implements its
@@ -774,6 +800,8 @@ int proc_watchdog_cpumask(struct ctl_table *table, int write,
 
 void __init lockup_detector_init(void)
 {
+	dmi_check_system(watchdog_virt_dmi_table);
+
 #ifdef CONFIG_NO_HZ_FULL
 	if (tick_nohz_full_enabled()) {
 		pr_info("Disabling watchdog on nohz_full cores by default\n");
