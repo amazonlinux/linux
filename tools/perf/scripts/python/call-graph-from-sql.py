@@ -1,4 +1,4 @@
-#!/usr/bin/python2
+#!/usr/bin/python
 # call-graph-from-sql.py: create call-graph from sql database
 # Copyright (c) 2014-2017, Intel Corporation.
 #
