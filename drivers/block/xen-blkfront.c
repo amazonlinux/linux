@@ -144,6 +144,10 @@ static unsigned int xen_blkif_max_queues = 4;
 module_param_named(max_queues, xen_blkif_max_queues, uint, S_IRUGO);
 MODULE_PARM_DESC(max_queues, "Maximum number of hardware queues/rings used per virtual disk");
 
+static unsigned int xen_blkif_feature_persistent = 1;
+module_param_named(persistent_grants, xen_blkif_feature_persistent, int, S_IRUGO);
+MODULE_PARM_DESC(persistent_grants, "Enable persistent grant table references (default is 1)");
+
 /*
  * Maximum order of pages to be used for the shared ring between front and
  * backend, 4KB page granularity is used.
@@ -2083,11 +2087,14 @@ again:
 		message = "writing protocol";
 		goto abort_transaction;
 	}
-	err = xenbus_printf(xbt, dev->nodename,
-			    "feature-persistent", "%u", 1);
-	if (err)
-		dev_warn(&dev->dev,
-			 "writing persistent grants feature to xenbus");
+
+	if (xen_blkif_feature_persistent) {
+		err = xenbus_printf(xbt, dev->nodename,
+				"feature-persistent", "%u", 1);
+		if (err)
+			dev_warn(&dev->dev,
+				"writing persistent grants feature to xenbus");
+	}
 
 	err = xenbus_transaction_end(xbt, 0);
 	if (err) {
@@ -2575,9 +2582,13 @@ static void blkfront_gather_backend_features(struct blkfront_info *info)
 	if (xenbus_read_unsigned(info->xbdev->otherend, "feature-discard", 0))
 		blkfront_setup_discard(info);
 
-	info->feature_persistent =
-		!!xenbus_read_unsigned(info->xbdev->otherend,
-				       "feature-persistent", 0);
+	if (xen_blkif_feature_persistent)
+		info->feature_persistent =
+			!!xenbus_read_unsigned(info->xbdev->otherend,
+					       "feature-persistent", 0);
+	else
+		info->feature_persistent = 0;
+
 	if (info->feature_persistent)
 		info->bounce = true;
 
