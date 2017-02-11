@@ -235,6 +235,7 @@ static void __init xen_hvm_guest_init(void)
 
 	xen_panic_handler_init();
 
+	xen_setup_syscore_ops();
 	xen_hvm_smp_init();
 	WARN_ON(xen_cpuhp_setup(xen_cpu_up_prepare_hvm, xen_cpu_dead_hvm));
 	xen_unplug_emulated_devices();
