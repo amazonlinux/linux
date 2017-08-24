@@ -2125,6 +2125,18 @@ void xen_irq_resume(void)
 	restore_pirqs();
 }
 
+void xen_shutdown_pirqs(void)
+{
+	struct irq_info *info;
+
+	list_for_each_entry(info, &xen_irq_list_head, list) {
+		if (info->type != IRQT_PIRQ || !VALID_EVTCHN(info->evtchn))
+			continue;
+
+		shutdown_pirq(irq_get_irq_data(info->irq));
+	}
+}
+
 static struct irq_chip xen_dynamic_chip __read_mostly = {
 	.name			= "xen-dyn",
 
