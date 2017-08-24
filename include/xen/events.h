@@ -71,6 +71,7 @@ static inline void notify_remote_via_evtchn(int port)
 void notify_remote_via_irq(int irq);
 
 void xen_irq_resume(void);
+void xen_shutdown_pirqs(void);
 
 /* Clear an irq's pending state, in preparation for polling on it */
 void xen_clear_irq_pending(int irq);
