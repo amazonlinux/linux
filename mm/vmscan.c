@@ -1877,7 +1877,7 @@ shrink_inactive_list(unsigned long nr_to_scan, struct lruvec *lruvec,
 	 * rate. Nudge the flusher threads in case they are asleep.
 	 */
 	if (stat.nr_unqueued_dirty == nr_taken)
-		wakeup_flusher_threads(0, WB_REASON_VMSCAN);
+		wakeup_flusher_threads(WB_REASON_VMSCAN);
 
 	/*
 	 * Legacy memcg will stall in page writeback so avoid forcibly
