@@ -24,6 +24,7 @@ enum wb_state {
 	WB_registered,		/* bdi_register() was done */
 	WB_writeback_running,	/* Writeback is in progress */
 	WB_has_dirty_io,	/* Dirty inodes on ->b_{dirty|io|more_io} */
+	WB_start_all,		/* nr_pages == 0 (all) work pending */
 };
 
 enum wb_congested_state {
