@@ -3110,10 +3110,7 @@ static const struct alg_test_desc alg_test_descs[] = {
 		}
 	}, {
 		.alg = "hmac(crc32)",
-		.test = alg_test_hash,
-		.suite = {
-			.hash = __VECS(bfin_crc_tv_template)
-		}
+		.test = alg_test_null,
 	}, {
 		.alg = "hmac(md5)",
 		.test = alg_test_hash,
@@ -3156,28 +3153,24 @@ static const struct alg_test_desc alg_test_descs[] = {
 	}, {
 		.alg = "hmac(sha3-224)",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(hmac_sha3_224_tv_template)
 		}
 	}, {
 		.alg = "hmac(sha3-256)",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(hmac_sha3_256_tv_template)
 		}
 	}, {
 		.alg = "hmac(sha3-384)",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(hmac_sha3_384_tv_template)
 		}
 	}, {
 		.alg = "hmac(sha3-512)",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(hmac_sha3_512_tv_template)
 		}
@@ -3359,7 +3352,6 @@ static const struct alg_test_desc alg_test_descs[] = {
 	}, {
 		.alg = "rfc4106(gcm(aes))",
 		.test = alg_test_aead,
-		.fips_allowed = 1,
 		.suite = {
 			.aead = {
 				.enc = __VECS(aes_gcm_rfc4106_enc_tv_template),
@@ -3466,28 +3458,24 @@ static const struct alg_test_desc alg_test_descs[] = {
 	}, {
 		.alg = "sha3-224",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(sha3_224_tv_template)
 		}
 	}, {
 		.alg = "sha3-256",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(sha3_256_tv_template)
 		}
 	}, {
 		.alg = "sha3-384",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(sha3_384_tv_template)
 		}
 	}, {
 		.alg = "sha3-512",
 		.test = alg_test_hash,
-		.fips_allowed = 1,
 		.suite = {
 			.hash = __VECS(sha3_512_tv_template)
 		}
@@ -3599,6 +3587,10 @@ static const struct alg_test_desc alg_test_descs[] = {
 				.dec = __VECS(tf_xts_dec_tv_template)
 			}
 		}
+	}, {
+		.alg = "zlib",
+		.test = alg_test_null,
+		.fips_allowed = 1,
 	}, {
 		.alg = "zlib-deflate",
 		.test = alg_test_comp,
