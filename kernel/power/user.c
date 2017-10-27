@@ -239,6 +239,10 @@ static int snapshot_set_swap_area(struct snapshot_data *data,
 	if (data->swap < 0)
 		return swdev ? -ENODEV : -EINVAL;
 	data->dev = swdev;
+
+	swsusp_resume_device = swdev;
+	swsusp_resume_block = offset;
+
 	return 0;
 }
 
