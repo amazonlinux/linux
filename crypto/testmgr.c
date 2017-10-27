@@ -5744,6 +5744,10 @@ static const struct alg_test_desc alg_test_descs[] = {
 			.hash = __VECS(xxhash64_tv_template)
 		}
 	}, {
+		.alg = "zlib",
+		.test = alg_test_null,
+		.fips_allowed = 1,
+	}, {
 		.alg = "zlib-deflate",
 		.test = alg_test_comp,
 		.fips_allowed = 1,
