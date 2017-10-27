@@ -390,8 +390,12 @@ static long snapshot_ioctl(struct file *filp, unsigned int cmd,
 			if (swdev) {
 				offset = swap_area.offset;
 				data->swap = swap_type_of(swdev, offset, NULL);
-				if (data->swap < 0)
+				if (data->swap < 0) {
 					error = -ENODEV;
+				} else {
+					swsusp_resume_device = swdev;
+					swsusp_resume_block = offset;
+				}
 			} else {
 				data->swap = -1;
 				error = -EINVAL;
