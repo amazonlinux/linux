@@ -1372,6 +1372,8 @@ void __init native_smp_prepare_cpus(unsigned int max_cpus)
 	pr_info("CPU0: ");
 	print_cpu_info(&cpu_data(0));
 
+	native_pv_lock_init();
+
 	uv_system_init();
 
 	set_mtrr_aps_delayed_init();
@@ -1401,7 +1403,6 @@ void __init native_smp_prepare_boot_cpu(void)
 	/* already set me in cpu_online_mask in boot_cpu_init() */
 	cpumask_set_cpu(me, cpu_callout_mask);
 	cpu_set_state_online(me);
-	native_pv_lock_init();
 }
 
 void __init native_smp_cpus_done(unsigned int max_cpus)
