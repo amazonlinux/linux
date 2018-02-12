@@ -1,0 +1,15 @@
+#
+# Amazon driver updates configuration
+#
+
+config AMAZON_DRIVER_UPDATES
+	bool "Amazon Driver Updates"
+	default y
+	depends on PCI || EXPERIMENTAL
+	---help---
+	 Amazon driver updates includes out-of-tree drivers and/or modifeid
+	 versions of the drivers present in the stable kernel tree.
+
+if AMAZON_DRIVER_UPDATES
+
+endif # AMAZON_DRIVER_UPDATES
