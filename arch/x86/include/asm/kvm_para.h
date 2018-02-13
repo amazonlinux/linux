@@ -89,6 +89,7 @@ void kvmclock_init(void);
 void kvmclock_disable(void);
 bool kvm_para_available(void);
 unsigned int kvm_arch_para_features(void);
+unsigned int kvm_arch_para_hints(void);
 void __init kvm_guest_init(void);
 void kvm_async_pf_task_wait(u32 token, int interrupt_kernel);
 void kvm_async_pf_task_wake(u32 token);
@@ -113,6 +114,11 @@ static inline bool kvm_para_available(void)
 }
 
 static inline unsigned int kvm_arch_para_features(void)
+{
+	return 0;
+}
+
+static inline unsigned int kvm_arch_para_hints(void)
 {
 	return 0;
 }
