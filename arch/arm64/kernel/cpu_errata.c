@@ -28,10 +28,19 @@
 static bool __maybe_unused
 is_affected_midr_range(const struct arm64_cpu_capabilities *entry, int scope)
 {
-	u32 midr = read_cpuid_id();
+	const struct arm64_midr_revidr *fix;
+	u32 midr = read_cpuid_id(), revidr;
 
 	WARN_ON(scope != SCOPE_LOCAL_CPU || preemptible());
-	return is_midr_in_range(midr, &entry->midr_range);
+	if (!is_midr_in_range(midr, &entry->midr_range))
+		return false;
+
+	midr &= MIDR_REVISION_MASK | MIDR_VARIANT_MASK;
+	revidr = read_cpuid(REVIDR_EL1);
+	for (fix = entry->fixed_revs; fix && fix->revidr_mask; fix++)
+		if (midr == fix->midr_rv && (revidr & fix->revidr_mask))
+			return false;
+	return true;
 }
 
 static bool __maybe_unused
@@ -589,6 +598,9 @@ check_branch_predictor(const struct arm64_cpu_capabilities *entry, int scope)
 
 	return (need_wa > 0);
 }
+
+#define MIDR_FIXED(rev, revidr_mask) \
+	.fixed_revs = (struct arm64_midr_revidr[]){{ (rev), (revidr_mask) }, {}}
 
 #ifdef CONFIG_ARM64_ERRATUM_1742098
 static struct midr_range broken_aarch32_aes[] = {
