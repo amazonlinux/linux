@@ -297,6 +297,10 @@ struct arm64_cpu_capabilities {
 	union {
 		struct {	/* To be used for erratum handling only */
 			struct midr_range midr_range;
+			const struct arm64_midr_revidr {
+				u32 midr_rv;		/* revision/variant */
+				u32 revidr_mask;
+			} * const fixed_revs;
 		};
 
 		const struct midr_range *midr_range_list;
