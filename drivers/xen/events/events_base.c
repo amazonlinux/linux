@@ -447,6 +447,14 @@ static void bind_evtchn_to_cpu(unsigned int chn, unsigned int cpu)
 	info->cpu = cpu;
 }
 
+static void xen_evtchn_mask_all(void)
+{
+	unsigned int evtchn;
+
+	for (evtchn = 0; evtchn < xen_evtchn_nr_channels(); evtchn++)
+		mask_evtchn(evtchn);
+}
+
 /**
  * notify_remote_via_irq - send event to remote end of event channel via irq
  * @irq: irq of event channel to send event to
@@ -2009,6 +2017,7 @@ void xen_irq_resume(void)
 	struct irq_info *info;
 
 	/* New event-channel space is not 'live' yet. */
+	xen_evtchn_mask_all();
 	xen_evtchn_resume();
 
 	/* No IRQ <-> event-channel mappings. */
@@ -2150,7 +2159,6 @@ static int xen_evtchn_cpu_dead(unsigned int cpu)
 void __init xen_init_IRQ(void)
 {
 	int ret = -EINVAL;
-	unsigned int evtchn;
 
 	if (fifo_events)
 		ret = xen_evtchn_fifo_init();
@@ -2168,8 +2176,7 @@ void __init xen_init_IRQ(void)
 	BUG_ON(!evtchn_to_irq);
 
 	/* No event channels are 'live' right now. */
-	for (evtchn = 0; evtchn < xen_evtchn_nr_channels(); evtchn++)
-		mask_evtchn(evtchn);
+	xen_evtchn_mask_all();
 
 	pirq_needs_eoi = pirq_needs_eoi_flag;
 
