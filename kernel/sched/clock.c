@@ -114,7 +114,7 @@ notrace static void __scd_stamp(struct sched_clock_data *scd)
 	scd->tick_raw = sched_clock();
 }
 
-notrace static void __set_sched_clock_stable(void)
+notrace void set_sched_clock_stable(void)
 {
 	struct sched_clock_data *scd;
 
@@ -234,7 +234,7 @@ static int __init sched_clock_init_late(void)
 	smp_mb(); /* matches {set,clear}_sched_clock_stable() */
 
 	if (__sched_clock_stable_early)
-		__set_sched_clock_stable();
+		set_sched_clock_stable();
 
 	return 0;
 }
