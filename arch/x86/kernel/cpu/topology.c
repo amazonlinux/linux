@@ -59,7 +59,7 @@ int detect_extended_topology_early(struct cpuinfo_x86 *c)
  * exists, use it for populating initial_apicid and cpu topology
  * detection.
  */
-void detect_extended_topology(struct cpuinfo_x86 *c)
+int detect_extended_topology(struct cpuinfo_x86 *c)
 {
 #ifdef CONFIG_SMP
 	unsigned int eax, ebx, ecx, edx, sub_index;
@@ -67,7 +67,7 @@ void detect_extended_topology(struct cpuinfo_x86 *c)
 	unsigned int core_select_mask, core_level_siblings;
 
 	if (detect_extended_topology_early(c) < 0)
-		return;
+		return -1;
 
 	/*
 	 * Populate HT related information from sub-leaf level 0.
@@ -104,4 +104,5 @@ void detect_extended_topology(struct cpuinfo_x86 *c)
 
 	c->x86_max_cores = (core_level_siblings / smp_num_siblings);
 #endif
+	return 0;
 }
