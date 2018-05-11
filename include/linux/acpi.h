@@ -1277,4 +1277,8 @@ int acpi_irq_get(acpi_handle handle, unsigned int index, struct resource *res)
 }
 #endif
 
+int find_acpi_cpu_topology(unsigned int cpu, int level);
+int find_acpi_cpu_topology_package(unsigned int cpu);
+int find_acpi_cpu_cache_topology(unsigned int cpu, int level);
+
 #endif	/*_LINUX_ACPI_H*/
