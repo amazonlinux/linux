@@ -1173,18 +1173,26 @@ static loff_t iomap_swapfile_activate_actor(struct inode *inode, loff_t pos,
 	/* Skip holes. */
 	if (iomap->type == IOMAP_HOLE)
 		goto out;
-
-	/* Only one bdev per swap file. */
-	if (iomap->bdev != isi->sis->bdev)
-		goto err;
-
+	
 	/* Only real or unwritten extents. */
-	if (iomap->type != IOMAP_MAPPED && iomap->type != IOMAP_UNWRITTEN)
-		goto err;
-
-	/* No uncommitted metadata or shared blocks or inline data. */
-	if (iomap->flags & (IOMAP_F_DIRTY | IOMAP_F_SHARED))
-		goto err;
+	if (iomap->type != IOMAP_MAPPED && iomap->type != IOMAP_UNWRITTEN) {
+		pr_err("swapon: file has unallocated extents\n");
+		return -EINVAL;
+        }
+	/* No uncommitted metadata or shared blocks. */
+	if (iomap->flags & IOMAP_F_DIRTY) {
+		pr_err("swapon: file is not committed\n");
+		return -EINVAL;
+	}  
+	if (iomap->flags & IOMAP_F_SHARED) {
+		pr_err("swapon: file has shared extents\n");
+		return -EINVAL;
+        }
+        /* Only one bdev per swap file. */
+        if (iomap->bdev != isi->sis->bdev) {
+		pr_err("swapon: file is on multiple devices\n");
+		return -EINVAL;
+        }
 
 	if (isi->iomap.length == 0) {
 		/* No accumulated extent, so just store it. */
@@ -1201,9 +1209,6 @@ static loff_t iomap_swapfile_activate_actor(struct inode *inode, loff_t pos,
 	}
 out:
 	return count;
-err:
-	pr_err("swapon: file cannot be used for swap\n");
-	return -EINVAL;
 }
 
 /*
