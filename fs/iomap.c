@@ -1170,11 +1170,15 @@ static loff_t iomap_swapfile_activate_actor(struct inode *inode, loff_t pos,
 	struct iomap_swapfile_info *isi = data;
 	int error;
 
-	/* Only real or unwritten extents. */
-	if (iomap->type != IOMAP_MAPPED && iomap->type != IOMAP_UNWRITTEN) {
+	switch (iomap->type) {
+	case IOMAP_MAPPED:
+	case IOMAP_UNWRITTEN:
+		/* Only real or unwritten extents. */ 
+		break;
+	default:
 		pr_err("swapon: file has unallocated extents\n");
 		return -EINVAL;
-        }
+	}
 	/* No uncommitted metadata or shared blocks. */
 	if (iomap->flags & IOMAP_F_DIRTY) {
 		pr_err("swapon: file is not committed\n");
