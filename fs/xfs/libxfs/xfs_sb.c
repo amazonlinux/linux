@@ -158,16 +158,22 @@ xfs_validate_sb_read(
 STATIC int
 xfs_validate_sb_write(
 	struct xfs_mount	*mp,
+	struct xfs_buf		*bp,
 	struct xfs_sb		*sbp)
 {
 	/*
 	 * Carry out additional sb summary counter sanity checks when we write
 	 * the superblock.  We skip this in the read validator because there
 	 * could be newer superblocks in the log and if the values are garbage
-	 * we'll recalculate them at the end of log mount.
+	 * even after replay we'll recalculate them at the end of log mount.
+	 *
+	 * mkfs has traditionally written zeroed counters to inprogress and
+	 * secondary superblocks, so allow this usage to continue because
+	 * we never read counters from such superblocks.
 	 */
-	if (sbp->sb_fdblocks > sbp->sb_dblocks ||
-	    sbp->sb_ifree > sbp->sb_icount) {
+	if (XFS_BUF_ADDR(bp) == XFS_SB_DADDR && !sbp->sb_inprogress &&
+	    (sbp->sb_fdblocks > sbp->sb_dblocks ||
+	     sbp->sb_ifree > sbp->sb_icount)) {
 		xfs_warn(mp, "SB summary counter sanity check failed");
 		return -EFSCORRUPTED;
 	}
@@ -706,7 +712,7 @@ xfs_sb_write_verify(
 	error = xfs_validate_sb_common(mp, bp, &sb);
 	if (error)
 		goto out_error;
-	error = xfs_validate_sb_write(mp, &sb);
+	error = xfs_validate_sb_write(mp, bp, &sb);
 	if (error)
 		goto out_error;
 
