@@ -336,6 +336,21 @@ alternative_if ARM64_WORKAROUND_845719
 alternative_else_nop_endif
 #endif
 3:
+#ifdef CONFIG_ARM64_ERRATUM_1418040
+alternative_if_not ARM64_WORKAROUND_1418040
+	b	4f
+alternative_else_nop_endif
+	/*
+	 * if (x22.mode32 == cntkctl_el1.el0vcten)
+	 *     cntkctl_el1.el0vcten = ~cntkctl_el1.el0vcten
+	 */
+	mrs	x1, cntkctl_el1
+	eon	x0, x1, x22, lsr #3
+	tbz	x0, #1, 4f
+	eor	x1, x1, #2	// ARCH_TIMER_USR_VCT_ACCESS_EN
+	msr     cntkctl_el1, x1
+4:
+#endif
 	apply_ssbd 0, 5f, x0, x1
 5:
 	.endif
@@ -365,11 +380,11 @@ alternative_if_not ARM64_UNMAP_KERNEL_AT_EL0
 	eret
 alternative_else_nop_endif
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
-	bne	4f
+	bne	6f
 	msr	far_el1, x29
 	tramp_alias	x30, tramp_exit_native, x29
 	br	x30
-4:
+6:
 	tramp_alias	x30, tramp_exit_compat, x29
 	br	x30
 #endif
