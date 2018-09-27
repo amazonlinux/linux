@@ -472,6 +472,17 @@ out_printmsg:
 	return required;
 }
 
+static bool __maybe_unused
+has_neoverse_n1_erratum_1542419(const struct arm64_cpu_capabilities *entry,
+				int scope)
+{
+	u32 model = read_cpuid_id() & MIDR_CPU_MODEL_MASK;
+	bool has_dic = read_cpuid_cachetype() & BIT(CTR_DIC_SHIFT);
+
+	WARN_ON(scope != SCOPE_LOCAL_CPU || preemptible());
+	return (model == MIDR_NEOVERSE_N1) && has_dic;
+}
+
 /* known invulnerable cores */
 static const struct midr_range arm64_ssb_cpus[] = {
 	MIDR_ALL_VERSIONS(MIDR_CORTEX_A35),
@@ -642,6 +653,38 @@ const struct arm64_cpu_capabilities arm64_errata[] = {
 		.desc = "Cavium erratum 23154",
 		.capability = ARM64_WORKAROUND_CAVIUM_23154,
 		ERRATA_MIDR_REV_RANGE(MIDR_THUNDERX, 0, 0, 1),
+	},
+#endif
+#ifdef CONFIG_ARM64_ERRATUM_1542419
+	{
+		/* we depend on the firmware portion for correctness */
+		.desc = "ARM erratum 1542419 (kernel portion)",
+		.capability = ARM64_WORKAROUND_1542419,
+		.type = ARM64_CPUCAP_LOCAL_CPU_ERRATUM,
+		.matches = has_neoverse_n1_erratum_1542419,
+		.cpu_enable = cpu_enable_trap_ctr_access,
+	},
+#endif
+#ifdef CONFIG_ARM64_ERRATUM_1418040
+/*
+ * - 1188873 affects r0p0 to r2p0
+ * - 1418040 affects r0p0 to r3p1
+ */
+	{
+		/* Cortex-A76 r0p0 to r3p1 */
+		.desc = "ARM erratum 1418040",
+		.capability = ARM64_WORKAROUND_1418040,
+		ERRATA_MIDR_RANGE(MIDR_CORTEX_A76,
+			   0, 0,
+			   3, 1)
+	},
+	{
+		/* Neoverse N1 r0p0 to r2p0 */
+		.desc = "ARM erratum 1418040",
+		.capability = ARM64_WORKAROUND_1418040,
+		ERRATA_MIDR_RANGE(MIDR_NEOVERSE_N1,
+			   0, 0,
+			   3, 1)
 	},
 #endif
 #ifdef CONFIG_CAVIUM_ERRATUM_27456
