@@ -3011,6 +3011,9 @@ static int blkfront_restore(struct xenbus_device *dev)
 {
 	struct blkfront_info *info = dev_get_drvdata(&dev->dev);
 	int err = 0;
+
+	blkfront_gather_backend_features(info);
+	xlvbd_flush(info);
 	err = talk_to_blkback(dev, info);
 	if (err)
 		goto out;
