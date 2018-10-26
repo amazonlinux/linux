@@ -1600,6 +1600,11 @@ void xen_shutdown_pirqs(void)
 	}
 }
 
+void xen_restore_pirqs(void)
+{
+	restore_pirqs();
+}
+
 static struct irq_chip xen_dynamic_chip __read_mostly = {
 	.name			= "xen-dyn",
 
