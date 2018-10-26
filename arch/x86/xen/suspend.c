@@ -132,6 +132,8 @@ static void xen_syscore_resume(void)
 	xen_restore_steal_clock(smp_processor_id());
 
 	gnttab_resume();
+
+	xen_restore_pirqs();
 }
 
 /*
