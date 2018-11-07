@@ -47,6 +47,7 @@ struct xt_connlimit_conn {
 	struct hlist_node		node;
 	struct nf_conntrack_tuple	tuple;
 	union nf_inet_addr		addr;
+	bool				pending_add;
 };
 
 struct xt_connlimit_rb {
@@ -126,6 +127,7 @@ static bool add_hlist(struct hlist_head *head,
 		return false;
 	conn->tuple = *tuple;
 	conn->addr = *addr;
+	conn->pending_add = true;
 	hlist_add_head(&conn->node, head);
 	return true;
 }
@@ -144,14 +146,30 @@ static unsigned int check_hlist(struct net *net,
 
 	*addit = true;
 
-	/* check the saved connections */
+	/* check the saved connections
+	 */
 	hlist_for_each_entry_safe(conn, n, head, node) {
 		found = nf_conntrack_find_get(net, zone, &conn->tuple);
 		if (found == NULL) {
-			hlist_del(&conn->node);
-			kmem_cache_free(connlimit_conn_cachep, conn);
+			/* It could be an already deleted connection or
+			 * a new connection that is not there in conntrack
+			 * yet. If former delete it from the list, else
+			 * increase count and move on.
+			 */
+			if (conn->pending_add) {
+				length++;
+			} else {
+				hlist_del(&conn->node);
+				kmem_cache_free(connlimit_conn_cachep, conn);
+			}
 			continue;
 		}
+
+		/* If it is a connection that was pending insertion to
+		 * connection tracking table before, then it's time to clear
+		 * the flag.
+		 */
+		conn->pending_add = false;
 
 		found_ct = nf_ct_tuplehash_to_ctrack(found);
 
