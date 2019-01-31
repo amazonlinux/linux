@@ -2243,6 +2243,13 @@ static int xennet_connect(struct net_device *dev)
 			device_unregister(&np->xbdev->dev);
 			return err;
 		}
+	} else {
+		/*
+		 * In the resume / thaw case, the netif needs to be
+		 * reattached, as it was detached in netfront_freeze().
+		 */
+		if (np->freeze_state == NETIF_FREEZE_STATE_FROZEN)
+			netif_device_attach(dev);
 	}
 
 	rtnl_lock();
