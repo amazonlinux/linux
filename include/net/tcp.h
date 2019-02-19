@@ -253,8 +253,6 @@ extern int sysctl_tcp_reordering;
 extern int sysctl_tcp_max_reordering;
 extern int sysctl_tcp_dsack;
 extern long sysctl_tcp_mem[3];
-extern int sysctl_tcp_wmem[3];
-extern int sysctl_tcp_rmem[3];
 extern int sysctl_tcp_app_win;
 extern int sysctl_tcp_adv_win_scale;
 extern int sysctl_tcp_frto;
@@ -1339,7 +1337,8 @@ static inline void tcp_slow_start_after_idle_check(struct sock *sk)
 }
 
 /* Determine a window scaling and initial window to offer. */
-void tcp_select_initial_window(int __space, __u32 mss, __u32 *rcv_wnd,
+void tcp_select_initial_window(const struct sock *sk, int __space, __u32 mss,
+			       __u32 *rcv_wnd,
 			       __u32 *window_clamp, int wscale_ok,
 			       __u8 *rcv_wscale, __u32 init_rcv_wnd);
 
