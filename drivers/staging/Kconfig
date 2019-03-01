@@ -82,6 +82,8 @@ source "drivers/staging/netlogic/Kconfig"
 
 source "drivers/staging/mt29f_spinand/Kconfig"
 
+source "drivers/staging/lustrefsx/Kconfig"
+
 source "drivers/staging/lustre/Kconfig"
 
 source "drivers/staging/dgnc/Kconfig"
