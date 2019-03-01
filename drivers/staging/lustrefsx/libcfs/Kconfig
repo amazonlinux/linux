@@ -1,0 +1,3 @@
+config LUSTREFSX_LIBCFS
+	depends on m
+	tristate "Lustre helper library"
