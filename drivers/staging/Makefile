@@ -32,6 +32,7 @@ obj-$(CONFIG_STAGING_BOARD)	+= board/
 obj-$(CONFIG_LTE_GDM724X)	+= gdm724x/
 obj-$(CONFIG_FIREWIRE_SERIAL)	+= fwserial/
 obj-$(CONFIG_GOLDFISH)		+= goldfish/
+obj-$(CONFIG_LUSTREFSX_LNET)	+= lustrefsx/
 obj-$(CONFIG_LNET)		+= lustre/
 obj-$(CONFIG_DGNC)			+= dgnc/
 obj-$(CONFIG_MTD_SPINAND_MT29F)	+= mt29f_spinand/
