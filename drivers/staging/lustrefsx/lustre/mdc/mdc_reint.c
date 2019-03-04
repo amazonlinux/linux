@@ -131,7 +131,8 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
 	}
 
         if (op_data->op_attr.ia_valid & (ATTR_MTIME | ATTR_CTIME))
-		CDEBUG(D_INODE, "setting mtime %ld, ctime %ld\n",
+		CDEBUG(D_INODE, "setting mtime " LTIME_FMT ", ctime "
+		       LTIME_FMT "\n",
                        LTIME_S(op_data->op_attr.ia_mtime),
                        LTIME_S(op_data->op_attr.ia_ctime));
 	mdc_setattr_pack(req, op_data, ea, ealen);
