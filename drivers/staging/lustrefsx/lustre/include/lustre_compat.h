@@ -694,4 +694,24 @@ static inline struct timespec current_time(struct inode *inode)
 #define __GFP_COLD 0
 #endif
 
+#ifndef HAVE_ADDRESS_SPACE_XARRAY
+static inline void lock_mappings(struct address_space *mappings)
+{
+#ifdef HAVE_ADDRESS_SPACE_IPAGES
+	xa_lock_irq(&mappings->i_pages);
+#else
+	spin_lock_irq(&mappings->tree_lock);
+#endif
+}
+
+static inline void unlock_mappings(struct address_space *mappings)
+{
+#ifdef HAVE_ADDRESS_SPACE_IPAGES
+	xa_unlock_irq(&mappings->i_pages);
+#else
+	spin_unlock_irq(&mappings->tree_lock);
+#endif
+}
+#endif
+
 #endif /* _LUSTRE_COMPAT_H */
