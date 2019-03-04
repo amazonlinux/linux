@@ -3097,7 +3097,8 @@ static int lmv_merge_attr(struct obd_export *exp,
 		struct inode *inode = lsm->lsm_md_oinfo[i].lmo_root;
 
 		CDEBUG(D_INFO, ""DFID" size %llu, blocks %llu nlink %u,"
-		       " atime %lu ctime %lu, mtime %lu.\n",
+		       " atime " LTIME_FMT " ctime " LTIME_FMT
+		       ", mtime " LTIME_FMT ".\n",
 		       PFID(&lsm->lsm_md_oinfo[i].lmo_fid),
 		       i_size_read(inode), (unsigned long long)inode->i_blocks,
 		       inode->i_nlink, LTIME_S(inode->i_atime),
