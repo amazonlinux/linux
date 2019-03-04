@@ -100,7 +100,11 @@ lnet_sock_ioctl(int cmd, unsigned long arg)
 	fput(sock_filp);
 out:
 	if (fd >= 0)
+#ifdef HAVE_KSYS_CLOSE
+		ksys_close(fd);
+#else
 		sys_close(fd);
+#endif
 	return rc;
 }
 
