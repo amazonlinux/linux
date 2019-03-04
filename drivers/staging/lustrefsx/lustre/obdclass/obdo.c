@@ -69,7 +69,8 @@ void obdo_from_inode(struct obdo *dst, struct inode *src, u64 valid)
 	u64 newvalid = 0;
 
 	if (valid & (OBD_MD_FLCTIME | OBD_MD_FLMTIME))
-		CDEBUG(D_INODE, "valid %#llx, new time %lu/%lu\n",
+		CDEBUG(D_INODE, "valid %#llx, new time "
+			LTIME_FMT "/" LTIME_FMT "\n",
 			valid, LTIME_S(src->i_mtime),
 			LTIME_S(src->i_ctime));
 
