@@ -724,4 +724,10 @@ static inline void unlock_mappings(struct address_space *mappings)
 }
 #endif
 
+#ifdef HAVE_TOTALRAM_PAGES_FUNC
+#define TOTALRAM_PAGES totalram_pages()
+#else
+#define TOTALRAM_PAGES totalram_pages
+#endif
+
 #endif /* _LUSTRE_COMPAT_H */
