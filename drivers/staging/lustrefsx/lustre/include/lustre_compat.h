@@ -84,6 +84,16 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
  */
 #define ATTR_BLOCKS    (1 << 27)
 
+/*
+ * In more recent kernels, this flag was removed because nobody was using it.
+ * But Lustre does. So define it if needed. It is safe to do so, since it's
+ * not been replaced with a different flag with the same value, and Lustre
+ * only uses it internally.
+ */
+#ifndef ATTR_ATTR_FLAG
+#define ATTR_ATTR_FLAG (1 << 10)
+#endif
+
 #define current_ngroups current_cred()->group_info->ngroups
 #define current_groups current_cred()->group_info->small_block
 
