@@ -139,6 +139,9 @@
 /* current_time() has replaced CURRENT_TIME */
 #define HAVE_CURRENT_TIME 1
 
+/* inode times are timespec64 */
+#define HAVE_INODE_TIME_64BIT 1
+
 /* dcache_lock is exist */
 /* #undef HAVE_DCACHE_LOCK */
 
@@ -607,7 +610,7 @@
 /* #undef HAVE_OPENSSL_SSK */
 
 /* 'pagevec_init' takes one parameter */
-/* #undef HAVE_PAGEVEC_INIT_ONE_PARAM */
+#define HAVE_PAGEVEC_INIT_ONE_PARAM 1
 
 /* have PCLMULQDQ instruction */
 #define HAVE_PCLMULQDQ 1
@@ -796,6 +799,9 @@
 /* tcp_sendpage use socket as first parameter */
 /* #undef HAVE_TCP_SENDPAGE_USE_SOCKET */
 
+/* timer_setup has replaced setup_timer */
+#define HAVE_TIMER_SETUP
+
 /* 'struct timespec64' is available */
 #define HAVE_TIMESPEC64 1
 
@@ -864,6 +870,27 @@
 
 /* __add_wait_queue_exclusive exists */
 /* #undef HAVE___ADD_WAIT_QUEUE_EXCLUSIVE */
+
+/* struct address_space uses i_pages and xa_lock */
+/* #undef HAVE_ADDRESS_SPACE_IPAGES */
+
+/* struct address_space was converted to an Xarray */
+#define HAVE_ADDRESS_SPACE_XARRAY 1
+
+/* posix acl uses the refcount interface */
+#define HAVE_POSIX_ACL_REFCOUNT 1
+
+/* sys_close was converted to ksys_close for kernel use */
+#define HAVE_KSYS_CLOSE 1
+
+/* kernel_get{sock,peer}name was converted to return the sockaddr length */
+#define HAVE_KERNSOCK_RETURNSLEN 1
+
+/* the 'opened' argument to finish_open and atomic_open was removed */
+#define HAVE_ATOMIC_OPEN_NO_OPENED 1
+
+/* totalram_pages was turned in to a function */
+#define HAVE_TOTALRAM_PAGES_FUNC 1
 
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
