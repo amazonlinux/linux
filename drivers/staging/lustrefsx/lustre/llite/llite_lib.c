@@ -236,16 +236,16 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
         data->ocd_ibits_known = MDS_INODELOCK_FULL;
         data->ocd_version = LUSTRE_VERSION_CODE;
 
-        if (sb->s_flags & MS_RDONLY)
+        if (sb->s_flags & SB_RDONLY)
                 data->ocd_connect_flags |= OBD_CONNECT_RDONLY;
         if (sbi->ll_flags & LL_SBI_USER_XATTR)
                 data->ocd_connect_flags |= OBD_CONNECT_XATTR;
 
-#ifdef MS_NOSEC
+#ifdef SB_NOSEC
 	/* Setting this indicates we correctly support S_NOSEC (See kernel
 	 * commit 9e1f1de02c2275d7172e18dc4e7c2065777611bf)
 	 */
-	sb->s_flags |= MS_NOSEC;
+	sb->s_flags |= SB_NOSEC;
 #endif
 
         if (sbi->ll_flags & LL_SBI_FLOCK)
@@ -345,14 +345,14 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
         }
 
         if (data->ocd_connect_flags & OBD_CONNECT_ACL) {
-#ifdef MS_POSIXACL
-                sb->s_flags |= MS_POSIXACL;
+#ifdef SB_POSIXACL
+                sb->s_flags |= SB_POSIXACL;
 #endif
                 sbi->ll_flags |= LL_SBI_ACL;
         } else {
                 LCONSOLE_INFO("client wants to enable acl, but mdt not!\n");
-#ifdef MS_POSIXACL
-                sb->s_flags &= ~MS_POSIXACL;
+#ifdef SB_POSIXACL
+                sb->s_flags &= ~SB_POSIXACL;
 #endif
                 sbi->ll_flags &= ~LL_SBI_ACL;
         }
@@ -724,7 +724,7 @@ void ll_kill_super(struct super_block *sb)
 	ENTRY;
 
         /* not init sb ?*/
-	if (!(sb->s_flags & MS_ACTIVE))
+	if (!(sb->s_flags & SB_ACTIVE))
 		return;
 
 	sbi = ll_s2sbi(sb);
@@ -2213,8 +2213,8 @@ int ll_remount_fs(struct super_block *sb, int *flags, char *data)
         int err;
         __u32 read_only;
 
-        if ((*flags & MS_RDONLY) != (sb->s_flags & MS_RDONLY)) {
-                read_only = *flags & MS_RDONLY;
+        if ((*flags & SB_RDONLY) != (sb->s_flags & SB_RDONLY)) {
+                read_only = *flags & SB_RDONLY;
                 err = obd_set_info_async(NULL, sbi->ll_md_exp,
                                          sizeof(KEY_READ_ONLY),
                                          KEY_READ_ONLY, sizeof(read_only),
@@ -2227,9 +2227,9 @@ int ll_remount_fs(struct super_block *sb, int *flags, char *data)
                 }
 
                 if (read_only)
-                        sb->s_flags |= MS_RDONLY;
+                        sb->s_flags |= SB_RDONLY;
                 else
-                        sb->s_flags &= ~MS_RDONLY;
+                        sb->s_flags &= ~SB_RDONLY;
 
                 if (sbi->ll_flags & LL_SBI_VERBOSE)
                         LCONSOLE_WARN("Remounted %s %s\n", profilenm,
