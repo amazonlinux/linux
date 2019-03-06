@@ -538,7 +538,31 @@ static inline bool is_sxid(umode_t mode)
 #define IS_NOSEC(inode)	(!is_sxid(inode->i_mode))
 #endif
 
-#ifndef MS_NOSEC
+/*
+ * Upstream Linux kernel commit e462ec50cb5fad19f6003a3d8087f4a0945dd2b1
+ * differentiated the MS_ values from SB_* values. We use SB_*
+ * throughout, but account here for older kernels that do not have
+ * SB_*. The values below are only the ones currently used in the Lustre
+ * code.
+ */
+
+#ifndef SB_RDONLY
+
+#define SB_RDONLY	MS_RDONLY
+#define SB_ACTIVE	MS_ACTIVE
+#define SB_NODIRATIME	MS_NODIRATIME
+
+#if defined(MS_POSIXACL)
+#define SB_POSIXACL MS_POSIXACL
+#endif
+
+#if defined(MS_NOSEC)
+#define SB_NOSEC MS_NOSEC
+#endif
+
+#endif
+
+#ifndef SB_NOSEC
 static inline void inode_has_no_xattr(struct inode *inode)
 {
 	return;
