@@ -174,7 +174,7 @@ static void lcw_dump_stack(struct lc_watchdog *lcw)
 	    lcw_recent_watchdog_count > 3) {
 		LCONSOLE_WARN("Service thread pid %u was inactive for %lu.%.02lus. Watchdog stack traces are limited to 3 per %d seconds, skipping this one.\n",
 			      (int)lcw->lcw_pid,
-			      timediff.tv_sec,
+			      (unsigned long)timediff.tv_sec,
 			      timediff.tv_nsec / (NSEC_PER_SEC / 100),
 			      libcfs_watchdog_ratelimit);
 	} else {
@@ -188,7 +188,7 @@ static void lcw_dump_stack(struct lc_watchdog *lcw)
 
 		LCONSOLE_WARN("Service thread pid %u was inactive for %lu.%.02lus. The thread might be hung, or it might only be slow and will resume later. Dumping the stack trace for debugging purposes:\n",
 			      (int)lcw->lcw_pid,
-			      timediff.tv_sec,
+			      (unsigned long)timediff.tv_sec,
 			      timediff.tv_nsec / (NSEC_PER_SEC / 100));
 		lcw_dump(lcw);
 	}
@@ -388,7 +388,7 @@ static void lcw_update_time(struct lc_watchdog *lcw, const char *message)
 		timediff = ktime_to_timespec64(lapse);
 		LCONSOLE_WARN("Service thread pid %u %s after %lu.%.02lus. This indicates the system was overloaded (too many service threads, or there were not enough hardware resources).\n",
 			      lcw->lcw_pid, message,
-			      timediff.tv_sec,
+			      (unsigned long)timediff.tv_sec,
 			      timediff.tv_nsec / (NSEC_PER_SEC / 100));
 	}
 	lcw->lcw_last_touched = newtime;
