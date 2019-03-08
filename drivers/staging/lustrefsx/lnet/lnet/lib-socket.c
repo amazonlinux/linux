@@ -502,14 +502,23 @@ int
 lnet_sock_getaddr(struct socket *sock, bool remote, __u32 *ip, int *port)
 {
 	struct sockaddr_in sin;
-	int		   len = sizeof(sin);
 	int		   rc;
+
+#ifdef HAVE_KERNSOCK_RETURNSLEN
+	if (remote)
+		rc = kernel_getpeername(sock, (struct sockaddr *)&sin);
+	else
+		rc = kernel_getsockname(sock, (struct sockaddr *)&sin);
+	if (rc < 0) {
+#else
+	int		   len = sizeof(sin);
 
 	if (remote)
 		rc = kernel_getpeername(sock, (struct sockaddr *)&sin, &len);
 	else
 		rc = kernel_getsockname(sock, (struct sockaddr *)&sin, &len);
 	if (rc != 0) {
+#endif
 		CERROR("Error %d getting sock %s IP/port\n",
 			rc, remote ? "peer" : "local");
 		return rc;
