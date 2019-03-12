@@ -44,6 +44,16 @@ config OPROFILE_EVENT_MULTIPLEX
 config HAVE_OPROFILE
 	bool
 
+config MICROVM
+	bool
+	default n
+	depends on X86
+	help
+	  MicroVM is a light weight virtual machine which provides
+	  enhanced security and workload isolation over traditional
+	  VMs. This configuration isolates changes targetted towards
+	  MicroVM optimized kernel.
+
 config OPROFILE_NMI_TIMER
 	def_bool y
 	depends on PERF_EVENTS && HAVE_PERF_EVENTS_NMI && !PPC64
