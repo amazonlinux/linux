@@ -730,4 +730,12 @@ static inline void unlock_mappings(struct address_space *mappings)
 #define TOTALRAM_PAGES totalram_pages
 #endif
 
+#ifdef HAVE_VM_OPS_USE_VM_FAULT_ONLY
+# ifdef HAVE_VM_FAULT_T
+#  define VM_FAULT_T vm_fault_t
+# else
+#  define VM_FAULT_T int
+# endif
+#endif
+
 #endif /* _LUSTRE_COMPAT_H */
