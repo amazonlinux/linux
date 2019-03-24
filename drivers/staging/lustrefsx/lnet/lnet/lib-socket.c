@@ -43,6 +43,18 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lib-lnet.h>
 
+/*
+ * Deal with the post-5.0 rename of these in-kernel values.
+ */
+#if !defined(SO_RCVTIMEO) && defined(SO_RCVTIMEO_OLD)
+#define SO_RCVTIMEO SO_RCVTIMEO_OLD
+#endif
+
+#if !defined(SO_SNDTIMEO) && defined(SO_SNDTIMEO_OLD)
+#define SO_SNDTIMEO SO_SNDTIMEO_OLD
+#endif
+
+
 static int
 kernel_sock_unlocked_ioctl(struct file *filp, int cmd, unsigned long arg)
 {
