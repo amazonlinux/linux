@@ -892,6 +892,9 @@
 /* totalram_pages was turned in to a function */
 #define HAVE_TOTALRAM_PAGES_FUNC 1
 
+/* vm_fault_t exists */
+#define HAVE_VM_FAULT_T 1
+
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
 
