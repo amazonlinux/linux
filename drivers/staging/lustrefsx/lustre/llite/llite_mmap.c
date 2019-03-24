@@ -333,7 +333,7 @@ out:
 }
 
 #ifdef HAVE_VM_OPS_USE_VM_FAULT_ONLY
-static int ll_fault(struct vm_fault *vmf)
+static VM_FAULT_T ll_fault(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 #else
@@ -382,7 +382,7 @@ restart:
 }
 
 #ifdef HAVE_VM_OPS_USE_VM_FAULT_ONLY
-static int ll_page_mkwrite(struct vm_fault *vmf)
+static VM_FAULT_T ll_page_mkwrite(struct vm_fault *vmf)
 {
 	struct vm_area_struct *vma = vmf->vma;
 #else
