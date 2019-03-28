@@ -10280,6 +10280,12 @@ S:	Maintained
 F:	Documentation/devicetree/bindings/pci/versatile.txt
 F:	drivers/pci/host/pci-versatile.c
 
+PCIE DRIVER FOR ANNAPURNA LABS
+M:	Jonathan Chocron <jonnyc@amazon.com>
+L:	linux-pci@vger.kernel.org
+S:	Maintained
+F:	drivers/pci/dwc/pcie-al.c
+
 PCI DRIVER FOR ARMADA 8K
 M:	Thomas Petazzoni <thomas.petazzoni@free-electrons.com>
 L:	linux-pci@vger.kernel.org
