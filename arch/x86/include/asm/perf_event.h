@@ -2,6 +2,7 @@
 #ifndef _ASM_X86_PERF_EVENT_H
 #define _ASM_X86_PERF_EVENT_H
 
+#include <asm/ptrace.h>
 /*
  * Performance event hw details:
  */
@@ -252,6 +253,11 @@ extern void perf_events_lapic_init(void);
 #define PERF_EFLAGS_VM		(1UL << 5)
 
 struct pt_regs;
+struct x86_perf_regs {
+	struct pt_regs	regs;
+	u64		*xmm_regs;
+};
+
 extern unsigned long perf_instruction_pointer(struct pt_regs *regs);
 extern unsigned long perf_misc_flags(struct pt_regs *regs);
 #define perf_misc_flags(regs)	perf_misc_flags(regs)
