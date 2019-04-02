@@ -223,6 +223,11 @@ struct cpu_hw_events {
 	int			n_pebs;
 	int			n_large_pebs;
 
+	/* Current super set of events hardware configuration */
+	u64			pebs_data_cfg;
+	u64			active_pebs_data_cfg;
+	int			pebs_record_size;
+
 	/*
 	 * Intel LBR bits
 	 */
@@ -487,6 +492,7 @@ union perf_capabilities {
 		 * values > 32bit.
 		 */
 		u64	full_width_write:1;
+		u64     pebs_baseline:1;
 	};
 	u64	capabilities;
 };
@@ -627,11 +633,12 @@ struct x86_pmu {
 			pebs_no_xmm_regs	:1;
 	int		pebs_record_size;
 	int		pebs_buffer_size;
+	int             max_pebs_events;
 	void		(*drain_pebs)(struct pt_regs *regs);
 	struct event_constraint *pebs_constraints;
 	void		(*pebs_aliases)(struct perf_event *event);
-	int 		max_pebs_events;
 	unsigned long	free_running_flags;
+	u64             rtm_abort_event;
 
 	/*
 	 * Intel LBR
@@ -967,6 +974,8 @@ void intel_pmu_pebs_enable_all(void);
 void intel_pmu_pebs_disable_all(void);
 
 void intel_pmu_pebs_sched_task(struct perf_event_context *ctx, bool sched_in);
+
+void intel_pmu_store_pebs_lbrs(struct pebs_lbr *lbr);
 
 void intel_ds_init(void);
 
