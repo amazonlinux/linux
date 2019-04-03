@@ -820,6 +820,9 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
 
+/* xattr_handler has a name member */
+#define HAVE_XATTR_HANDLER_NAME 1
+
 /* kernel has vfs_rename with 5 args */
 /* #undef HAVE_VFS_RENAME_5ARGS */
 
