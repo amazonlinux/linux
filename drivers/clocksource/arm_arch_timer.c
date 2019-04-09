@@ -751,7 +751,11 @@ static void arch_timer_evtstrm_enable(int divider)
 	cntkctl |= (divider << ARCH_TIMER_EVT_TRIGGER_SHIFT)
 			| ARCH_TIMER_VIRT_EVT_EN;
 	arch_timer_set_cntkctl(cntkctl);
+#ifdef CONFIG_ARM64
+	cpu_set_named_feature(EVTSTRM);
+#else
 	elf_hwcap |= HWCAP_EVTSTRM;
+#endif
 #ifdef CONFIG_COMPAT
 	compat_elf_hwcap |= COMPAT_HWCAP_EVTSTRM;
 #endif
