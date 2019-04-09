@@ -208,18 +208,18 @@ static struct shash_alg crc32_pmull_algs[] = { {
 
 static int __init crc32_pmull_mod_init(void)
 {
-	if (IS_ENABLED(CONFIG_KERNEL_MODE_NEON) && (elf_hwcap & HWCAP_PMULL)) {
+	if (IS_ENABLED(CONFIG_KERNEL_MODE_NEON) && cpu_have_named_feature(PMULL)) {
 		crc32_pmull_algs[0].update = crc32_pmull_update;
 		crc32_pmull_algs[1].update = crc32c_pmull_update;
 
-		if (elf_hwcap & HWCAP_CRC32) {
+		if (cpu_have_named_feature(CRC32)) {
 			fallback_crc32 = crc32_armv8_le;
 			fallback_crc32c = crc32c_armv8_le;
 		} else {
 			fallback_crc32 = crc32_le;
 			fallback_crc32c = __crc32c_le;
 		}
-	} else if (!(elf_hwcap & HWCAP_CRC32)) {
+	} else if (!cpu_have_named_feature(CRC32)) {
 		return -ENODEV;
 	}
 	return crypto_register_shashes(crc32_pmull_algs,
