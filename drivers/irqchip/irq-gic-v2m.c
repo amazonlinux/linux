@@ -113,6 +113,18 @@ static void gicv2m_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
 	iommu_dma_map_msi_msg(data->irq, msg);
 }
 
+static void gicv2m_amazon_compose_msi_msg(struct irq_data *data, struct msi_msg *msg)
+{
+	struct v2m_data *v2m = irq_data_get_irq_chip_data(data);
+	phys_addr_t addr = v2m->res.start | ((data->hwirq - 32) << 3);
+
+	msg->address_hi = upper_32_bits(addr);
+	msg->address_lo = lower_32_bits(addr);
+	msg->data = 0;
+
+	iommu_dma_map_msi_msg(data->irq, msg);
+}
+
 static struct irq_chip gicv2m_irq_chip = {
 	.name			= "GICv2m",
 	.irq_mask		= irq_chip_mask_parent,
@@ -303,7 +315,8 @@ static int gicv2m_allocate_domains(struct irq_domain *parent)
 
 static int __init gicv2m_init_one(struct fwnode_handle *fwnode,
 				  u32 spi_start, u32 nr_spis,
-				  struct resource *res)
+				  struct resource *res,
+				  bool reg_access_skip)
 {
 	int ret;
 	struct v2m_data *v2m;
@@ -329,38 +342,42 @@ static int __init gicv2m_init_one(struct fwnode_handle *fwnode,
 	if (spi_start && nr_spis) {
 		v2m->spi_start = spi_start;
 		v2m->nr_spis = nr_spis;
-	} else {
-		u32 typer = readl_relaxed(v2m->base + V2M_MSI_TYPER);
+	}
 
-		v2m->spi_start = V2M_MSI_TYPER_BASE_SPI(typer);
-		v2m->nr_spis = V2M_MSI_TYPER_NUM_SPI(typer);
+	if (!reg_access_skip) {
+		if (!v2m->spi_start || !v2m->nr_spis) {
+			u32 typer = readl_relaxed(v2m->base + V2M_MSI_TYPER);
+
+			v2m->spi_start = V2M_MSI_TYPER_BASE_SPI(typer);
+			v2m->nr_spis = V2M_MSI_TYPER_NUM_SPI(typer);
+		}
+
+		/*
+		 * APM X-Gene GICv2m implementation has an erratum where
+		 * the MSI data needs to be the offset from the spi_start
+		 * in order to trigger the correct MSI interrupt. This is
+		 * different from the standard GICv2m implementation where
+		 * the MSI data is the absolute value within the range from
+		 * spi_start to (spi_start + num_spis).
+		 *
+		 * Broadom NS2 GICv2m implementation has an erratum where the MSI data
+		 * is 'spi_number - 32'
+		 */
+		switch (readl_relaxed(v2m->base + V2M_MSI_IIDR)) {
+		case XGENE_GICV2M_MSI_IIDR:
+			v2m->flags |= GICV2M_NEEDS_SPI_OFFSET;
+			v2m->spi_offset = v2m->spi_start;
+			break;
+		case BCM_NS2_GICV2M_MSI_IIDR:
+			v2m->flags |= GICV2M_NEEDS_SPI_OFFSET;
+			v2m->spi_offset = 32;
+			break;
+		}
 	}
 
 	if (!is_msi_spi_valid(v2m->spi_start, v2m->nr_spis)) {
 		ret = -EINVAL;
 		goto err_iounmap;
-	}
-
-	/*
-	 * APM X-Gene GICv2m implementation has an erratum where
-	 * the MSI data needs to be the offset from the spi_start
-	 * in order to trigger the correct MSI interrupt. This is
-	 * different from the standard GICv2m implementation where
-	 * the MSI data is the absolute value within the range from
-	 * spi_start to (spi_start + num_spis).
-	 *
-	 * Broadom NS2 GICv2m implementation has an erratum where the MSI data
-	 * is 'spi_number - 32'
-	 */
-	switch (readl_relaxed(v2m->base + V2M_MSI_IIDR)) {
-	case XGENE_GICV2M_MSI_IIDR:
-		v2m->flags |= GICV2M_NEEDS_SPI_OFFSET;
-		v2m->spi_offset = v2m->spi_start;
-		break;
-	case BCM_NS2_GICV2M_MSI_IIDR:
-		v2m->flags |= GICV2M_NEEDS_SPI_OFFSET;
-		v2m->spi_offset = 32;
-		break;
 	}
 
 	v2m->bm = kzalloc(sizeof(long) * BITS_TO_LONGS(v2m->nr_spis),
@@ -415,7 +432,7 @@ static int __init gicv2m_of_init(struct fwnode_handle *parent_handle,
 			pr_info("DT overriding V2M MSI_TYPER (base:%u, num:%u)\n",
 				spi_start, nr_spis);
 
-		ret = gicv2m_init_one(&child->fwnode, spi_start, nr_spis, &res);
+		ret = gicv2m_init_one(&child->fwnode, spi_start, nr_spis, &res, false);
 		if (ret) {
 			of_node_put(child);
 			break;
@@ -447,6 +464,30 @@ static struct fwnode_handle *gicv2m_get_fwnode(struct device *dev)
 	return data->fwnode;
 }
 
+#define ACPI_AMZN_OEM_ID		"AMAZON"
+
+static void acpi_apply_v2m_quirks(struct acpi_madt_generic_msi_frame *m, struct resource *res,
+		bool *reg_access_skip)
+{
+	static struct acpi_table_madt *madt;
+	acpi_status status;
+
+	status = acpi_get_table(ACPI_SIG_MADT, 0,
+				(struct acpi_table_header **)&madt);
+
+	if (ACPI_FAILURE(status) || !madt)
+		return;
+
+	if (!memcmp(madt->header.oem_id, ACPI_AMZN_OEM_ID, ACPI_OEM_ID_SIZE)) {
+		pr_info("Applying Amazon V2M quirk\n");
+		res->end = m->base_address + SZ_8K - 1;
+		gicv2m_irq_chip.irq_compose_msi_msg = gicv2m_amazon_compose_msi_msg;
+		*reg_access_skip = true;
+	}
+
+	acpi_put_table((struct acpi_table_header *)madt);
+}
+
 static int __init
 acpi_parse_madt_msi(struct acpi_subtable_header *header,
 		    const unsigned long end)
@@ -456,6 +497,7 @@ acpi_parse_madt_msi(struct acpi_subtable_header *header,
 	u32 spi_start = 0, nr_spis = 0;
 	struct acpi_madt_generic_msi_frame *m;
 	struct fwnode_handle *fwnode;
+	bool reg_access_skip = false;
 
 	m = (struct acpi_madt_generic_msi_frame *)header;
 	if (BAD_MADT_ENTRY(m, end))
@@ -464,6 +506,8 @@ acpi_parse_madt_msi(struct acpi_subtable_header *header,
 	res.start = m->base_address;
 	res.end = m->base_address + SZ_4K - 1;
 	res.flags = IORESOURCE_MEM;
+
+	acpi_apply_v2m_quirks(m, &res, &reg_access_skip);
 
 	if (m->flags & ACPI_MADT_OVERRIDE_SPI_VALUES) {
 		spi_start = m->spi_base;
@@ -479,7 +523,7 @@ acpi_parse_madt_msi(struct acpi_subtable_header *header,
 		return -EINVAL;
 	}
 
-	ret = gicv2m_init_one(fwnode, spi_start, nr_spis, &res);
+	ret = gicv2m_init_one(fwnode, spi_start, nr_spis, &res, reg_access_skip);
 	if (ret)
 		irq_domain_free_fwnode(fwnode);
 
