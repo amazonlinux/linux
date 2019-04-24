@@ -1013,6 +1013,8 @@ static int __init gic_init_bases(void __iomem *dist_base,
 
 	if (IS_ENABLED(CONFIG_ARM_GIC_V3_ITS) && gic_dist_supports_lpis())
 		its_init(handle, &gic_data.rdists, gic_data.domain);
+	else if (IS_ENABLED(CONFIG_ARM_GIC_V2M))
+		gicv2m_init(handle, gic_data.domain);
 
 	gic_smp_init();
 	gic_dist_init();
