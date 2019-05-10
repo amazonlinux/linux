@@ -1834,45 +1834,40 @@ static int unuse_pte_range(struct vm_area_struct *vma, pmd_t *pmd,
 	int ret = 0;
 
 	si = swap_info[type];
-	pte = pte_offset_map(pmd, addr);
-	do {
-		if (!is_swap_pte(*pte))
+	for (; addr != end; pte++, addr += PAGE_SIZE) {
+		pte = pte_offset_map(pmd, addr);
+		if (!is_swap_pte(*pte)) {
+			pte_unmap(pte);
 			continue;
-
+		}
 		entry = pte_to_swp_entry(*pte);
-		if (swp_type(entry) != type)
+		if (swp_type(entry) != type) {
+			pte_unmap(pte);
 			continue;
-
+		}
 		offset = swp_offset(entry);
 		pte_unmap(pte);
 
 		swap_map = &si->swap_map[offset];
-		page = swapin_readahead(entry, GFP_HIGHUSER_MOVABLE,
-				vma, addr);
+		page = swapin_readahead(entry, GFP_HIGHUSER_MOVABLE, vma, addr);
 		if (!page) {
 			if (*swap_map == 0 || *swap_map == SWAP_MAP_BAD)
-				goto try_next;
+				continue;
 			return -ENOMEM;
 		}
-		lock_page(page);
-		wait_on_page_writeback(page);
-		ret = unuse_pte(vma, pmd, addr, entry, page);
-		if (ret < 0) {
+		if (trylock_page(page)) {
+			wait_on_page_writeback(page);
+			ret = unuse_pte(vma, pmd, addr, entry, page);
+			if (ret < 0) {
+				unlock_page(page);
+				put_page(page);
+				return ret;
+			}
+			try_to_free_swap(page);
 			unlock_page(page);
-			put_page(page);
-			goto out;
 		}
-
-		try_to_free_swap(page);
-		unlock_page(page);
 		put_page(page);
-try_next:
-		pte = pte_offset_map(pmd, addr);
-	} while (pte++, addr += PAGE_SIZE, addr != end);
-	pte_unmap(pte - 1);
-
-	ret = 0;
-out:
+	}
 	return ret;
 }
 
@@ -2076,10 +2071,11 @@ retry:
 		 * we must not delete, since it may not have been written
 		 * out to swap yet.
 		 */
-		lock_page(page);
-		wait_on_page_writeback(page);
-		try_to_free_swap(page);
-		unlock_page(page);
+		if (trylock_page(page)) {
+			wait_on_page_writeback(page);
+			try_to_free_swap(page);
+			unlock_page(page);
+		}
 		put_page(page);
 	}
 
