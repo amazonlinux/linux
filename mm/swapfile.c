@@ -2082,6 +2082,19 @@ retry:
 		unlock_page(page);
 		put_page(page);
 	}
+
+	/*
+	 * Lets check again to see if there are still swap entries in the map.
+	 * If yes, we would need to do retry the unuse logic again.
+	 * Under global memory pressure, swap entries can be reinserted back
+	 * into process space after the mmlist loop above passes over them.
+	 *
+	 * Limit the number of retries? No: when mmget_not_zero() above fails,
+	 * that mm is likely to be freeing swap from exit_mmap(), which proceeds
+	 * at its own independent pace; and even shmem_writepage() could have
+	 * been preempted after get_swap_page(), temporarily hiding that swap.
+	 * It's easy and robust (though cpu-intensive) just to keep retrying.
+	 */
 	if (si->inuse_pages) {
 		if (!signal_pending(current))
 			goto retry;
