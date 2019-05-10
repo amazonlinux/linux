@@ -1104,160 +1104,119 @@ static void shmem_evict_inode(struct inode *inode)
 	clear_inode(inode);
 }
 
-static unsigned long find_swap_entry(struct radix_tree_root *root, void *item)
-{
-	struct radix_tree_iter iter;
-	void **slot;
-	unsigned long found = -1;
-	unsigned int checked = 0;
-
-	rcu_read_lock();
-	radix_tree_for_each_slot(slot, root, &iter, 0) {
-		if (*slot == item) {
-			found = iter.index;
-			break;
-		}
-		checked++;
-		if ((checked % 4096) != 0)
-			continue;
-		slot = radix_tree_iter_resume(slot, &iter);
-		cond_resched_rcu();
-	}
-
-	rcu_read_unlock();
-	return found;
-}
-
 /*
  * If swap found in inode, free it and move page from swapcache to filecache.
  */
-static int shmem_unuse_inode(struct shmem_inode_info *info,
-			     swp_entry_t swap, struct page **pagep)
+static int shmem_unuse_inode(struct inode *inode, unsigned int type)
 {
-	struct address_space *mapping = info->vfs_inode.i_mapping;
-	void *radswap;
-	pgoff_t index;
+	struct address_space *mapping = inode->i_mapping;
+	void **slot = NULL;
+	struct radix_tree_iter iter;
+	struct page *pagep;
 	gfp_t gfp;
 	int error = 0;
-
-	radswap = swp_to_radix_entry(swap);
-	index = find_swap_entry(&mapping->page_tree, radswap);
-	if (index == -1)
-		return -EAGAIN;	/* tell shmem_unuse we found nothing */
-
-	/*
-	 * Move _head_ to start search for next from here.
-	 * But be careful: shmem_evict_inode checks list_empty without taking
-	 * mutex, and there's an instant in list_move_tail when info->swaplist
-	 * would appear empty, if it were the only one on shmem_swaplist.
-	 */
-	if (shmem_swaplist.next != &info->swaplist)
-		list_move_tail(&shmem_swaplist, &info->swaplist);
+	struct page *page;
+	pgoff_t index;
+	pgoff_t indices[PAGEVEC_SIZE];
+	int i;
+	int entries = 0;
+	swp_entry_t entry;
+	unsigned int stype;
+	pgoff_t start = 0;
 
 	gfp = mapping_gfp_mask(mapping);
-	if (shmem_should_replace_page(*pagep, gfp)) {
-		mutex_unlock(&shmem_swaplist_mutex);
-		error = shmem_replace_page(pagep, gfp, info, index);
-		mutex_lock(&shmem_swaplist_mutex);
-		/*
-		 * We needed to drop mutex to make that restrictive page
-		 * allocation, but the inode might have been freed while we
-		 * dropped it: although a racing shmem_evict_inode() cannot
-		 * complete without emptying the radix_tree, our page lock
-		 * on this swapcache page is not enough to prevent that -
-		 * free_swap_and_cache() of our swap entry will only
-		 * trylock_page(), removing swap from radix_tree whatever.
-		 *
-		 * We must not proceed to shmem_add_to_page_cache() if the
-		 * inode has been freed, but of course we cannot rely on
-		 * inode or mapping or info to check that.  However, we can
-		 * safely check if our swap entry is still in use (and here
-		 * it can't have got reused for another page): if it's still
-		 * in use, then the inode cannot have been freed yet, and we
-		 * can safely proceed (if it's no longer in use, that tells
-		 * nothing about the inode, but we don't need to unuse swap).
-		 */
-		if (!page_swapcount(*pagep))
-			error = -ENOENT;
-	}
-
-	/*
-	 * We rely on shmem_swaplist_mutex, not only to protect the swaplist,
-	 * but also to hold up shmem_evict_inode(): so inode cannot be freed
-	 * beneath us (pagelock doesn't help until the page is in pagecache).
-	 */
-	if (!error)
-		error = shmem_add_to_page_cache(*pagep, mapping, index,
-						radswap);
-	if (error != -ENOMEM) {
-		/*
-		 * Truncation and eviction use free_swap_and_cache(), which
-		 * only does trylock page: if we raced, best clean up here.
-		 */
-		delete_from_swap_cache(*pagep);
-		set_page_dirty(*pagep);
-		if (!error) {
-			spin_lock_irq(&info->lock);
-			info->swapped--;
-			spin_unlock_irq(&info->lock);
-			swap_free(swap);
+repeat:
+	rcu_read_lock();
+	radix_tree_for_each_slot(slot, &mapping->page_tree, &iter, start) {
+		index = iter.index;
+		page = radix_tree_deref_slot(slot);
+		if (unlikely(!page))
+			continue;
+		if (radix_tree_exceptional_entry(page)) {
+			entry = radix_to_swp_entry(page);
+			stype = swp_type(entry);
+			if (stype == type) {
+				indices[entries] = iter.index;
+				entries++;
+				if (entries == PAGEVEC_SIZE)
+					break;
+			}
 		}
 	}
+	rcu_read_unlock();
+	for (i = 0; i < entries; i++) {
+		error = shmem_getpage_gfp(inode, indices[i], &pagep,
+				SGP_CACHE, gfp, NULL, NULL, NULL);
+		if (error == 0) {
+			unlock_page(pagep);
+			put_page(pagep);
+		}
+		if (error == -ENOMEM)
+			goto out;
+	}
+	if (slot != NULL) {
+		entries = 0;
+		start = iter.index;
+		goto repeat;
+	}
+out:
 	return error;
 }
 
 /*
- * Search through swapped inodes to find and replace swap by page.
+ * Read all the shared memory data that resides in the swap
+ * device 'type' back into memory, so the swap device can be
+ * unused.
  */
-int shmem_unuse(swp_entry_t swap, struct page *page)
+int shmem_unuse(unsigned int type)
 {
-	struct list_head *this, *next;
 	struct shmem_inode_info *info;
-	struct mem_cgroup *memcg;
+	struct inode *inode;
+	struct inode *prev_inode = NULL;
+	struct list_head *p;
+	struct list_head *next;
 	int error = 0;
 
-	/*
-	 * There's a faint possibility that swap page was replaced before
-	 * caller locked it: caller will come back later with the right page.
-	 */
-	if (unlikely(!PageSwapCache(page) || page_private(page) != swap.val))
-		goto out;
-
-	/*
-	 * Charge page using GFP_KERNEL while we can wait, before taking
-	 * the shmem_swaplist_mutex which might hold up shmem_writepage().
-	 * Charged back to the user (not to caller) when swap account is used.
-	 */
-	error = mem_cgroup_try_charge(page, current->mm, GFP_KERNEL, &memcg,
-			false);
-	if (error)
-		goto out;
-	/* No radix_tree_preload: swap entry keeps a place for page in tree */
-	error = -EAGAIN;
+	if (list_empty(&shmem_swaplist))
+		return 0;
 
 	mutex_lock(&shmem_swaplist_mutex);
-	list_for_each_safe(this, next, &shmem_swaplist) {
-		info = list_entry(this, struct shmem_inode_info, swaplist);
+	p = &shmem_swaplist;
+	/*
+	 * The extra refcount on the inode is necessary to safely dereference
+	 * p->next after re-acquiring the lock. New shmem inodes with swap
+	 * get added to the end of the list and we will scan them all.
+	 */
+	while (!error && (p = p->next) != &shmem_swaplist) {
+		info = list_entry(p, struct shmem_inode_info, swaplist);
+		inode = igrab(&info->vfs_inode);
+		if (!inode)
+			continue;
+		mutex_unlock(&shmem_swaplist_mutex);
+		if (prev_inode)
+			iput(prev_inode);
 		if (info->swapped)
-			error = shmem_unuse_inode(info, swap, &page);
-		else
-			list_del_init(&info->swaplist);
+			error = shmem_unuse_inode(inode, type);
 		cond_resched();
-		if (error != -EAGAIN)
+		prev_inode = inode;
+		if (error)
 			break;
-		/* found nothing in this: move on to search the next */
+		mutex_lock(&shmem_swaplist_mutex);
 	}
 	mutex_unlock(&shmem_swaplist_mutex);
 
-	if (error) {
-		if (error != -ENOMEM)
-			error = 0;
-		mem_cgroup_cancel_charge(page, memcg, false);
-	} else
-		mem_cgroup_commit_charge(page, memcg, true, false);
-out:
-	unlock_page(page);
-	put_page(page);
+	if (prev_inode)
+		iput(prev_inode);
+
+	/* Remove now swapless inodes from the swaplist. */
+	mutex_lock(&shmem_swaplist_mutex);
+	list_for_each_safe(p, next, &shmem_swaplist) {
+		info = list_entry(p, struct shmem_inode_info, swaplist);
+		if (!info->swapped)
+			list_del_init(&info->swaplist);
+	}
+	mutex_unlock(&shmem_swaplist_mutex);
+
 	return error;
 }
 
@@ -1695,7 +1654,7 @@ repeat:
 		}
 		if (!PageUptodate(page)) {
 			error = -EIO;
-			goto failed;
+
 		}
 		wait_on_page_writeback(page);
 
@@ -4206,7 +4165,7 @@ int __init shmem_init(void)
 	return 0;
 }
 
-int shmem_unuse(swp_entry_t swap, struct page *page)
+int shmem_unuse(unsigned int type)
 {
 	return 0;
 }
