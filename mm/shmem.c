@@ -1091,9 +1091,14 @@ static void shmem_evict_inode(struct inode *inode)
 			}
 			spin_unlock(&sbinfo->shrinklist_lock);
 		}
-		if (!list_empty(&info->swaplist)) {
+		while (!list_empty(&info->swaplist)) {
+			/* Wait while shmem_unuse() is scanning this inode... */
+			wait_var_event(&info->stop_eviction,
+				       !atomic_read(&info->stop_eviction));
 			mutex_lock(&shmem_swaplist_mutex);
-			list_del_init(&info->swaplist);
+			/* ...but beware of the race if we peeked too early */
+			if (!atomic_read(&info->stop_eviction))
+				list_del_init(&info->swaplist);
 			mutex_unlock(&shmem_swaplist_mutex);
 		}
 	}
@@ -1170,50 +1175,38 @@ out:
  */
 int shmem_unuse(unsigned int type)
 {
-	struct shmem_inode_info *info;
-	struct inode *inode;
-	struct inode *prev_inode = NULL;
-	struct list_head *p;
-	struct list_head *next;
+	struct shmem_inode_info *info, *next;
 	int error = 0;
 
 	if (list_empty(&shmem_swaplist))
 		return 0;
 
 	mutex_lock(&shmem_swaplist_mutex);
-	p = &shmem_swaplist;
-	/*
-	 * The extra refcount on the inode is necessary to safely dereference
-	 * p->next after re-acquiring the lock. New shmem inodes with swap
-	 * get added to the end of the list and we will scan them all.
-	 */
-	while (!error && (p = p->next) != &shmem_swaplist) {
-		info = list_entry(p, struct shmem_inode_info, swaplist);
-		inode = igrab(&info->vfs_inode);
-		if (!inode)
+	list_for_each_entry_safe(info, next, &shmem_swaplist, swaplist) {
+		if (!info->swapped) {
+			list_del_init(&info->swaplist);
 			continue;
+		}
+		/*
+		 * Drop the swaplist mutex while searching the inode for swap;
+		 * but before doing so, make sure shmem_evict_inode() will not
+		 * remove placeholder inode from swaplist, nor let it be freed
+		 * (igrab() would protect from unlink, but not from unmount).
+		 */
+		atomic_inc(&info->stop_eviction);
 		mutex_unlock(&shmem_swaplist_mutex);
-		if (prev_inode)
-			iput(prev_inode);
-		if (info->swapped)
-			error = shmem_unuse_inode(inode, type);
+
+		error = shmem_unuse_inode(&info->vfs_inode, type);
 		cond_resched();
-		prev_inode = inode;
-		if (error)
-			break;
+
 		mutex_lock(&shmem_swaplist_mutex);
-	}
-	mutex_unlock(&shmem_swaplist_mutex);
-
-	if (prev_inode)
-		iput(prev_inode);
-
-	/* Remove now swapless inodes from the swaplist. */
-	mutex_lock(&shmem_swaplist_mutex);
-	list_for_each_safe(p, next, &shmem_swaplist) {
-		info = list_entry(p, struct shmem_inode_info, swaplist);
+		next = list_next_entry(info, swaplist);
 		if (!info->swapped)
 			list_del_init(&info->swaplist);
+		if (atomic_dec_and_test(&info->stop_eviction))
+			wake_up_var(&info->stop_eviction);
+		if (error)
+			break;
 	}
 	mutex_unlock(&shmem_swaplist_mutex);
 
@@ -2147,6 +2140,7 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 		info = SHMEM_I(inode);
 		memset(info, 0, (char *)inode - (char *)info);
 		spin_lock_init(&info->lock);
+		atomic_set(&info->stop_eviction, 0);
 		info->seals = F_SEAL_SEAL;
 		info->flags = flags & VM_NORESERVE;
 		INIT_LIST_HEAD(&info->shrinklist);
