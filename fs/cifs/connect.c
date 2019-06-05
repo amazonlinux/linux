@@ -2587,8 +2587,7 @@ cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb_vol *vol)
 	return NULL;
 }
 
-static void
-cifs_put_smb_ses(struct cifs_ses *ses)
+void cifs_put_smb_ses(struct cifs_ses *ses)
 {
 	unsigned int rc, xid;
 	struct TCP_Server_Info *server = ses->server;
