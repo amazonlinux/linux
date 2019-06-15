@@ -874,6 +874,8 @@ struct pci_bus *acpi_pci_root_create(struct acpi_pci_root *root,
 	struct acpi_device *device = root->device;
 	int node = acpi_get_node(device->handle);
 	struct pci_bus *bus;
+	struct pci_host_bridge *host_bridge;
+	union acpi_object *obj;
 
 	info->root = root;
 	info->bridge = device;
@@ -897,6 +899,19 @@ struct pci_bus *acpi_pci_root_create(struct acpi_pci_root *root,
 				  sysdata, &info->resources);
 	if (!bus)
 		goto out_release_info;
+
+	host_bridge = to_pci_host_bridge(bus->bridge);
+
+	/*
+	 * Evaluate the "PCI Boot Configuration" _DSM Function.  If it
+	 * exists and returns 0, we must preserve any PCI resource
+	 * assignments made by firmware for this host bridge.
+	 */
+	obj = acpi_evaluate_dsm(ACPI_HANDLE(bus->bridge), &pci_acpi_dsm_guid, 1,
+	                        IGNORE_PCI_BOOT_CONFIG_DSM, NULL);
+	if (obj && obj->type == ACPI_TYPE_INTEGER && obj->integer.value == 0)
+		host_bridge->preserve_config = 1;
+	ACPI_FREE(obj);
 
 	pci_scan_child_bus(bus);
 	pci_set_host_bridge_release(to_pci_host_bridge(bus->bridge),
