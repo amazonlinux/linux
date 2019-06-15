@@ -488,6 +488,8 @@ struct pci_host_bridge {
 	struct msi_controller *msi;
 	unsigned int ignore_reset_delay:1;	/* for entire hierarchy */
 	unsigned int no_ext_tags:1;		/* no Extended Tags */
+	unsigned int preserve_config:1;		/* Preserve FW resource setup */
+
 	/* Resource alignment requirements */
 	resource_size_t (*align_resource)(struct pci_dev *dev,
 			const struct resource *res,
