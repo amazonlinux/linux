@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
  * Copyright 2015 - 2018 Amazon.com, Inc. or its affiliates.
  *
