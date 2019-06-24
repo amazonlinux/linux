@@ -95,7 +95,7 @@ static inline void ena_com_unmask_intr(struct ena_com_io_cq *io_cq,
 	writel(intr_reg->intr_control, io_cq->unmask_reg);
 }
 
-static inline int ena_com_free_desc(struct ena_com_io_sq *io_sq)
+static inline int ena_com_free_q_entries(struct ena_com_io_sq *io_sq)
 {
 	u16 tail, next_to_comp, cnt;
 
@@ -113,7 +113,7 @@ static inline bool ena_com_sq_have_enough_space(struct ena_com_io_sq *io_sq,
 	int temp;
 
 	if (io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_HOST)
-		return ena_com_free_desc(io_sq) >= required_buffers;
+		return ena_com_free_q_entries(io_sq) >= required_buffers;
 
 	/* This calculation doesn't need to be 100% accurate. So to reduce
 	 * the calculation overhead just Subtract 2 lines from the free descs
@@ -122,7 +122,7 @@ static inline bool ena_com_sq_have_enough_space(struct ena_com_io_sq *io_sq,
 	 */
 	temp = required_buffers / io_sq->llq_info.descs_per_entry + 2;
 
-	return ena_com_free_desc(io_sq) > temp;
+	return ena_com_free_q_entries(io_sq) > temp;
 }
 
 static inline bool ena_com_meta_desc_changed(struct ena_com_io_sq *io_sq,
@@ -173,8 +173,8 @@ static inline bool ena_com_is_doorbell_needed(struct ena_com_io_sq *io_sq,
 
 static inline int ena_com_write_sq_doorbell(struct ena_com_io_sq *io_sq)
 {
-	u16 tail = io_sq->tail;
 	u16 max_entries_in_tx_burst = io_sq->llq_info.max_entries_in_tx_burst;
+	u16 tail = io_sq->tail;
 
 	pr_debug("write submission queue doorbell for queue: %d tail: %d\n",
 		 io_sq->qid, tail);
@@ -195,15 +195,17 @@ static inline int ena_com_update_dev_comp_head(struct ena_com_io_cq *io_cq)
 	u16 unreported_comp, head;
 	bool need_update;
 
-	head = io_cq->head;
-	unreported_comp = head - io_cq->last_head_update;
-	need_update = unreported_comp > (io_cq->q_depth / ENA_COMP_HEAD_THRESH);
+	if (unlikely(io_cq->cq_head_db_reg)) {
+		head = io_cq->head;
+		unreported_comp = head - io_cq->last_head_update;
+		need_update = unreported_comp > (io_cq->q_depth / ENA_COMP_HEAD_THRESH);
 
-	if (io_cq->cq_head_db_reg && need_update) {
-		pr_debug("Write completion queue doorbell for queue %d: head: %d\n",
-			 io_cq->qid, head);
-		writel(head, io_cq->cq_head_db_reg);
-		io_cq->last_head_update = head;
+		if (unlikely(need_update)) {
+			pr_debug("Write completion queue doorbell for queue %d: head: %d\n",
+				 io_cq->qid, head);
+			writel(head, io_cq->cq_head_db_reg);
+			io_cq->last_head_update = head;
+		}
 	}
 
 	return 0;
