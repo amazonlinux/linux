@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
  * Copyright 2015 - 2018 Amazon.com, Inc. or its affiliates.
  *
@@ -900,7 +899,7 @@ struct ena_admin_queue_ext_feature_desc {
 		struct ena_admin_queue_ext_feature_fields max_queue_ext;
 
 		u32 raw[10];
-	} ;
+	};
 };
 
 struct ena_admin_get_feat_resp {
@@ -1142,4 +1141,4 @@ struct ena_admin_ena_mmio_req_read_less_resp {
 /* aenq_link_change_desc */
 #define ENA_ADMIN_AENQ_LINK_CHANGE_DESC_LINK_STATUS_MASK    BIT(0)
 
-#endif /*_ENA_ADMIN_H_ */
+#endif /* _ENA_ADMIN_H_ */
