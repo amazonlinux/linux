@@ -2121,6 +2121,9 @@ EXPORT_SYMBOL(tcp_shutdown);
 bool tcp_check_oom(struct sock *sk, int shift)
 {
 	bool too_many_orphans, out_of_socket_memory;
+#ifdef CONFIG_MICROVM
+	struct task_struct *task;
+#endif
 
 	too_many_orphans = tcp_too_many_orphans(sk, shift);
 	out_of_socket_memory = tcp_out_of_memory(sk);
@@ -2129,6 +2132,14 @@ bool tcp_check_oom(struct sock *sk, int shift)
 		net_info_ratelimited("too many orphaned sockets\n");
 	if (out_of_socket_memory)
 		net_info_ratelimited("out of memory -- consider tuning tcp_mem\n");
+#ifdef CONFIG_MICROVM
+	if (too_many_orphans || out_of_socket_memory) {
+		dump_stack();
+		pr_info("Dumping running processes..");
+		for_each_process(task)
+			pr_info("%s [%d]\n", task->comm, task->pid);
+	}
+#endif
 	return too_many_orphans || out_of_socket_memory;
 }
 
