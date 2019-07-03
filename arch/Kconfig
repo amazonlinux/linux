@@ -45,9 +45,9 @@ config HAVE_OPROFILE
 	bool
 
 config MICROVM
-	bool
+	bool "MicroVM support"
+	depends on X86_64
 	default n
-	depends on X86
 	help
 	  MicroVM is a light weight virtual machine which provides
 	  enhanced security and workload isolation over traditional
