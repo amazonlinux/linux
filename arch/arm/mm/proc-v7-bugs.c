@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/arm-smccc.h>
 #include <linux/kernel.h>
-#include <linux/psci.h>
 #include <linux/smp.h>
 
 #include <asm/cp15.h>
@@ -157,11 +156,8 @@ static void cpu_v7_spectre_v2_init(void)
 		if (state != SPECTRE_MITIGATED)
 			break;
 
-		if (psci_ops.smccc_version == SMCCC_VERSION_1_0)
-			break;
-
-		switch (psci_ops.conduit) {
-		case PSCI_CONDUIT_HVC:
+		switch (arm_smccc_1_1_get_conduit()) {
+		case SMCCC_CONDUIT_HVC:
 			arm_smccc_1_1_hvc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
 					  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
 			if ((int)res.a0 != 0)
@@ -169,7 +165,7 @@ static void cpu_v7_spectre_v2_init(void)
 			method = SPECTRE_V2_METHOD_HVC;
 			break;
 
-		case PSCI_CONDUIT_SMC:
+		case SMCCC_CONDUIT_SMC:
 			arm_smccc_1_1_smc(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
 					  ARM_SMCCC_ARCH_WORKAROUND_1, &res);
 			if ((int)res.a0 != 0)
