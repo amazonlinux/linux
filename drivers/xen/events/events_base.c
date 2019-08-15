@@ -2047,48 +2047,8 @@ void xen_shutdown_pirqs(void)
 			continue;
 
 		shutdown_pirq(irq_get_irq_data(info->irq));
+		irq_state_clr_started(irq_to_desc(info->irq));
 	}
-}
-
-/*
- * For now, only restore the ACPI SCI pirq.
- */
-void xen_restore_pirqs(void)
-{
-#ifdef CONFIG_ACPI
-	int pirq, rc, irq, gsi;
-	struct physdev_map_pirq map_irq;
-	struct irq_info *info;
-
-	list_for_each_entry(info, &xen_irq_list_head, list) {
-		if (info->type != IRQT_PIRQ)
-			continue;
-
-		pirq = info->u.pirq.pirq;
-		gsi = info->u.pirq.gsi;
-		irq = info->irq;
-
-		if (gsi != acpi_gbl_FADT.sci_interrupt)
-			continue;
-
-		map_irq.domid = DOMID_SELF;
-		map_irq.type = MAP_PIRQ_TYPE_GSI;
-		map_irq.index = gsi;
-		map_irq.pirq = pirq;
-
-		rc = HYPERVISOR_physdev_op(PHYSDEVOP_map_pirq, &map_irq);
-		if (rc) {
-			pr_warn("xen: ACPI SCI interrupt map failed, rc=%d\n",
-				rc);
-			xen_free_irq(irq);
-			continue;
-		}
-
-		printk(KERN_DEBUG "xen: restored ACPI SCI interrupt\n");
-
-		__startup_pirq(irq);
-	}
-#endif
 }
 
 static struct irq_chip xen_dynamic_chip __read_mostly = {
