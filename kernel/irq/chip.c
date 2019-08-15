@@ -170,11 +170,11 @@ static void irq_state_clr_masked(struct irq_desc *desc)
 	irqd_clear(&desc->irq_data, IRQD_IRQ_MASKED);
 }
 
-static void irq_state_clr_started(struct irq_desc *desc)
+void irq_state_clr_started(struct irq_desc *desc)
 {
 	irqd_clear(&desc->irq_data, IRQD_IRQ_STARTED);
 }
-
+EXPORT_SYMBOL_GPL(irq_state_clr_started);
 static void irq_state_set_started(struct irq_desc *desc)
 {
 	irqd_set(&desc->irq_data, IRQD_IRQ_STARTED);
