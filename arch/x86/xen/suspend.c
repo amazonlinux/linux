@@ -131,7 +131,6 @@ static void xen_syscore_resume(void *data)
 
 	gnttab_resume();
 
-	xen_restore_pirqs();
 }
 
 /*
