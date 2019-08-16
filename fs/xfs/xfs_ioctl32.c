@@ -570,41 +570,7 @@ xfs_file_compat_ioctl(
 	trace_xfs_file_compat_ioctl(ip);
 
 	switch (cmd) {
-	/* No size or alignment issues on any arch */
-	case XFS_IOC_DIOINFO:
-	case XFS_IOC_FSGEOMETRY:
-	case XFS_IOC_FSGETXATTR:
-	case XFS_IOC_FSSETXATTR:
-	case XFS_IOC_FSGETXATTRA:
-	case XFS_IOC_FSSETDM:
-	case XFS_IOC_GETBMAP:
-	case XFS_IOC_GETBMAPA:
-	case XFS_IOC_GETBMAPX:
-	case XFS_IOC_FSCOUNTS:
-	case XFS_IOC_SET_RESBLKS:
-	case XFS_IOC_GET_RESBLKS:
-	case XFS_IOC_FSGROWFSLOG:
-	case XFS_IOC_GOINGDOWN:
-	case XFS_IOC_ERROR_INJECTION:
-	case XFS_IOC_ERROR_CLEARALL:
-	case FS_IOC_GETFSMAP:
-		return xfs_file_ioctl(filp, cmd, p);
-#ifndef BROKEN_X86_ALIGNMENT
-	/* These are handled fine if no alignment issues */
-	case XFS_IOC_ALLOCSP:
-	case XFS_IOC_FREESP:
-	case XFS_IOC_RESVSP:
-	case XFS_IOC_UNRESVSP:
-	case XFS_IOC_ALLOCSP64:
-	case XFS_IOC_FREESP64:
-	case XFS_IOC_RESVSP64:
-	case XFS_IOC_UNRESVSP64:
-	case XFS_IOC_FSGEOMETRY_V1:
-	case XFS_IOC_FSGROWFSDATA:
-	case XFS_IOC_FSGROWFSRT:
-	case XFS_IOC_ZERO_RANGE:
-		return xfs_file_ioctl(filp, cmd, p);
-#else
+#if defined(BROKEN_X86_ALIGNMENT)
 	case XFS_IOC_ALLOCSP_32:
 	case XFS_IOC_FREESP_32:
 	case XFS_IOC_ALLOCSP64_32:
@@ -705,6 +671,7 @@ xfs_file_compat_ioctl(
 	case XFS_IOC_FSSETDM_BY_HANDLE_32:
 		return xfs_compat_fssetdm_by_handle(filp, arg);
 	default:
-		return -ENOIOCTLCMD;
+		/* try the native version */
+		return xfs_file_ioctl(filp, cmd, p);
 	}
 }
