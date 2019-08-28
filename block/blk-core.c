@@ -798,8 +798,8 @@ int blk_queue_enter(struct request_queue *q, bool nowait)
 		smp_rmb();
 
 		wait_event(q->mq_freeze_wq,
-			   !atomic_read(&q->mq_freeze_depth) ||
-			   blk_queue_dying(q));
+			   (!q->mq_freeze_depth ||
+			   blk_queue_dying(q)));
 		if (blk_queue_dying(q))
 			return -ENODEV;
 	}
@@ -894,6 +894,7 @@ struct request_queue *blk_alloc_queue_node(gfp_t gfp_mask, int node_id)
 	__set_bit(QUEUE_FLAG_BYPASS, &q->queue_flags);
 
 	init_waitqueue_head(&q->mq_freeze_wq);
+	mutex_init(&q->mq_freeze_lock);
 
 	/*
 	 * Init percpu_ref in atomic mode so that it's faster to shutdown.
