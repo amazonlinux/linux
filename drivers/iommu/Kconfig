@@ -74,6 +74,10 @@ config IOMMU_DMA
 	select IOMMU_IOVA
 	select NEED_SG_DMA_LENGTH
 
+config IOMMU_DEFAULT_STRICT
+	def_bool n
+	depends on IOMMU_API && (ARM || ARM64)
+
 config FSL_PAMU
 	bool "Freescale IOMMU support"
 	depends on PCI
