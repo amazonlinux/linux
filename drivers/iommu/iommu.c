@@ -28,7 +28,12 @@ static struct kset *iommu_group_kset;
 static DEFINE_IDA(iommu_group_ida);
 
 static unsigned int iommu_def_domain_type __read_mostly;
+
+#ifdef CONFIG_IOMMU_DEFAULT_STRICT
 static bool iommu_dma_strict __read_mostly = true;
+#else
+static bool iommu_dma_strict __read_mostly = false;
+#endif
 static u32 iommu_cmd_line __read_mostly;
 
 struct iommu_group {
