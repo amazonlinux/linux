@@ -21,4 +21,13 @@ config AMAZON_ENA_ETHERNET
 	  To compile this driver as a module, choose M here.
 	  The module will be called ena.
 
+config AMAZON_EFA_INFINIBAND
+	tristate "Elastic Fabric Adapter (EFA) support"
+	depends on INFINIBAND_USER_ACCESS && AMAZON_ENA_ETHERNET
+	---help---
+	  This driver support Elastic Fabric Adapter (EFA)
+
+	  To compile this driver as a module, choose M here.
+	  The module will be called efa
+
 endif # AMAZON_DRIVER_UPDATES
