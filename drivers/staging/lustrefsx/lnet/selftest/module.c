@@ -57,10 +57,13 @@ lnet_selftest_exit(void)
         switch (lst_init_step) {
                 case LST_INIT_CONSOLE:
                         lstcon_console_fini();
+		/* Fall through */
                 case LST_INIT_FW:
                         sfw_shutdown();
+		/* Fall through */
                 case LST_INIT_RPC:
                         srpc_shutdown();
+		/* Fall through */
 		case LST_INIT_WI_TEST:
 			for (i = 0;
 			     i < cfs_cpt_number(lnet_cpt_table()); i++) {
@@ -72,12 +75,15 @@ lnet_selftest_exit(void)
 				    sizeof(lst_sched_test[0]) *
 				    cfs_cpt_number(lnet_cpt_table()));
 			lst_sched_test = NULL;
+		/* Fall through */
 
 		case LST_INIT_WI_SERIAL:
 			cfs_wi_sched_destroy(lst_sched_serial);
 			lst_sched_serial = NULL;
+		/* Fall through */
                 case LST_INIT_NONE:
                         break;
+		/* Fall through */
                 default:
                         LBUG();
         }
