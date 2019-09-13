@@ -2896,11 +2896,14 @@ void nvme_kill_queues(struct nvme_ctrl *ctrl)
 		 */
 		if (!ns->disk || test_and_set_bit(NVME_NS_DEAD, &ns->flags))
 			continue;
-		revalidate_disk(ns->disk);
 		blk_set_queue_dying(ns->queue);
 
 		/* Forcibly unquiesce queues to avoid blocking dispatch */
 		blk_mq_unquiesce_queue(ns->queue);
+		/*
+		 * Revalidate after unblocking dispatchers that may be holding bd_butex
+		 */
+		revalidate_disk(ns->disk);
 	}
 	up_read(&ctrl->namespaces_rwsem);
 }
