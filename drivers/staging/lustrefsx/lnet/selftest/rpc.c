@@ -1020,6 +1020,7 @@ srpc_handle_rpc(swi_workitem_t *wi)
                         ev->ev_status = rc;
                 }
         }
+	/* Fall through */
         case SWI_STATE_BULK_STARTED:
                 LASSERT (rpc->srpc_bulk == NULL || ev->ev_fired);
 
@@ -1218,6 +1219,7 @@ srpc_send_rpc (swi_workitem_t *wi)
 
                 wi->swi_state = SWI_STATE_REQUEST_SENT;
                 /* perhaps more events, fall thru */
+		/* Fall through */
         case SWI_STATE_REQUEST_SENT: {
                 srpc_msg_type_t type = srpc_service2reply(rpc->crpc_service);
 
@@ -1249,6 +1251,7 @@ srpc_send_rpc (swi_workitem_t *wi)
 
                 wi->swi_state = SWI_STATE_REPLY_RECEIVED;
         }
+	/* Fall through */
         case SWI_STATE_REPLY_RECEIVED:
                 if (do_bulk && !rpc->crpc_bulkev.ev_fired) break;
 
@@ -1427,6 +1430,7 @@ srpc_lnet_ev_handler(struct lnet_event *ev)
 			srpc_data.rpc_counters.rpcs_sent++;
 			spin_unlock(&srpc_data.rpc_glock);
                 }
+		/* Fall through */
         case SRPC_REPLY_RCVD:
         case SRPC_BULK_REQ_RCVD:
                 crpc = rpcev->ev_data;
@@ -1546,6 +1550,7 @@ srpc_lnet_ev_handler(struct lnet_event *ev)
 
                 if (!ev->unlinked)
                         break; /* wait for final event */
+		/* Fall through */
 
         case SRPC_BULK_PUT_SENT:
                 if (ev->status == 0 && ev->type != LNET_EVENT_UNLINK) {
@@ -1558,6 +1563,7 @@ srpc_lnet_ev_handler(struct lnet_event *ev)
 
 			spin_unlock(&srpc_data.rpc_glock);
 		}
+		/* Fall through */
 	case SRPC_REPLY_SENT:
 		srpc = rpcev->ev_data;
 		scd  = srpc->srpc_scd;
@@ -1652,6 +1658,7 @@ srpc_shutdown (void)
 		spin_unlock(&srpc_data.rpc_glock);
 
                 stt_shutdown();
+		/* Fall through */
 
         case SRPC_STATE_EQ_INIT:
                 rc = LNetClearLazyPortal(SRPC_FRAMEWORK_REQUEST_PORTAL);
@@ -1659,9 +1666,11 @@ srpc_shutdown (void)
                 LASSERT (rc == 0);
                 rc = LNetEQFree(srpc_data.rpc_lnet_eq);
                 LASSERT (rc == 0); /* the EQ should have no user by now */
+		/* Fall through */
 
         case SRPC_STATE_NI_INIT:
                 LNetNIFini();
+		/* Fall through */
         }
 
         return;
