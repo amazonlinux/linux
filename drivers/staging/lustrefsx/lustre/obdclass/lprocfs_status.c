@@ -1833,15 +1833,19 @@ static int get_mult(char unit, __u64 *mult)
 	case 'p':
 	case 'P':
 		units <<= 10;
+		/* Fall through */
 	case 't':
 	case 'T':
 		units <<= 10;
+		/* Fall through */
 	case 'g':
 	case 'G':
 		units <<= 10;
+		/* Fall through */
 	case 'm':
 	case 'M':
 		units <<= 10;
+		/* Fall through */
 	case 'k':
 	case 'K':
 		units <<= 10;
