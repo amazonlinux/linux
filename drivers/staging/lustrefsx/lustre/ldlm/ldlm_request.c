@@ -1485,6 +1485,7 @@ ldlm_cancel_no_wait_policy(struct ldlm_namespace *ns, struct ldlm_lock *lock,
 		case LDLM_IBITS:
 			if (ns->ns_cancel != NULL && ns->ns_cancel(lock) != 0)
 				break;
+			/* Fall through */
 		default:
 			result = LDLM_POLICY_SKIP_LOCK;
 			lock_res_and_lock(lock);
