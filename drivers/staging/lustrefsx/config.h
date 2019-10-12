@@ -901,6 +901,9 @@
 /* Common stacktrace infrastructure exists */
 #define HAVE_COMMON_STACKTRACE 1
 
+/* changed padata interface in 5.4 */
+#define HAVE_PADATA_INTERFACE_54
+
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
 
