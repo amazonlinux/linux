@@ -137,7 +137,11 @@ static int cfs_do_parallel(struct cfs_ptask_engine *engine,
 	ptask->pt_result = -EINPROGRESS;
 
 retry:
+#ifdef HAVE_PADATA_INTERFACE_54
+	rc = padata_do_parallel(engine->pte_pinst, padata, &ptask->pt_cbcpu);
+#else
 	rc = padata_do_parallel(engine->pte_pinst, padata, ptask->pt_cbcpu);
+#endif
 	if (rc == -EBUSY && cfs_ptask_is_retry(ptask)) {
 		/* too many tasks already in queue */
 		schedule_timeout_uninterruptible(1);
@@ -326,14 +330,18 @@ static int cfs_ptengine_padata_init(struct cfs_ptask_engine *engine,
 {
 	cpumask_var_t all_mask;
 	cpumask_var_t par_mask;
+#ifndef HAVE_PADATA_INTERFACE_54
 	unsigned int wq_flags = WQ_MEM_RECLAIM | WQ_CPU_INTENSIVE;
+#endif
 	int rc;
 
 	get_online_cpus();
 
+#ifndef HAVE_PADATA_INTERFACE_54
 	engine->pte_wq = alloc_workqueue(name, wq_flags, 1);
 	if (engine->pte_wq == NULL)
 		GOTO(err, rc = -ENOMEM);
+#endif
 
 	if (!alloc_cpumask_var(&all_mask, GFP_KERNEL))
 		GOTO(err_destroy_workqueue, rc = -ENOMEM);
@@ -384,7 +392,11 @@ static int cfs_ptengine_padata_init(struct cfs_ptask_engine *engine,
 	}
 
 	engine->pte_weight = cpumask_weight(par_mask);
+#ifdef HAVE_PADATA_INTERFACE_54
+	engine->pte_pinst  = padata_alloc_possible(name);
+#else
 	engine->pte_pinst  = padata_alloc_possible(engine->pte_wq);
+#endif
 	if (engine->pte_pinst == NULL)
 		GOTO(err_free_par_mask, rc = -ENOMEM);
 
@@ -418,8 +430,10 @@ err_free_par_mask:
 err_free_all_mask:
 	free_cpumask_var(all_mask);
 err_destroy_workqueue:
+#ifndef HAVE_PADATA_INTERFACE_54
 	destroy_workqueue(engine->pte_wq);
 err:
+#endif
 	put_online_cpus();
 	return rc;
 }
@@ -430,7 +444,9 @@ static void cfs_ptengine_padata_fini(struct cfs_ptask_engine *engine)
 	padata_unregister_cpumask_notifier(engine->pte_pinst,
 					   &engine->pte_notifier);
 	padata_free(engine->pte_pinst);
+#ifndef HAVE_PADATA_INTERFACE_54
 	destroy_workqueue(engine->pte_wq);
+#endif
 }
 
 #else  /* !CONFIG_PADATA */
