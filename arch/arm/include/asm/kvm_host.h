@@ -19,6 +19,7 @@
 #ifndef __ARM_KVM_HOST_H__
 #define __ARM_KVM_HOST_H__
 
+#include <linux/arm-smccc.h>
 #include <linux/types.h>
 #include <linux/kvm_types.h>
 #include <asm/cputype.h>
@@ -275,6 +276,11 @@ static inline int kvm_arch_dev_ioctl_check_extension(struct kvm *kvm, long ext)
 
 int kvm_perf_init(void);
 int kvm_perf_teardown(void);
+
+static inline long kvm_hypercall_pv_features(struct kvm_vcpu *vcpu)
+{
+	return SMCCC_RET_NOT_SUPPORTED;
+}
 
 void kvm_mmu_wp_memory_region(struct kvm *kvm, int slot);
 
