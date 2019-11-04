@@ -33,7 +33,13 @@
 #ifndef ENA_H
 #define ENA_H
 
+#include "kcompat.h"
 #include <linux/bitops.h>
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 3, 0)
+#include "dim.h"
+#else
+#include <linux/dim.h>
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 3, 0) */
 #include <linux/etherdevice.h>
 #include <linux/inetdevice.h>
 #include <linux/interrupt.h>
@@ -41,13 +47,12 @@
 #include <linux/skbuff.h>
 #include <linux/u64_stats_sync.h>
 
-#include "kcompat.h"
 #include "ena_com.h"
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_VER_MAJOR	2
 #define DRV_MODULE_VER_MINOR	1
-#define DRV_MODULE_VER_SUBMINOR 1
+#define DRV_MODULE_VER_SUBMINOR 3
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_VERSION
@@ -82,6 +87,8 @@
 
 #define ENA_DEFAULT_RING_SIZE	(1024)
 #define ENA_MIN_RING_SIZE	(256)
+
+#define ENA_MIN_NUM_IO_QUEUES	(1)
 
 #define ENA_TX_WAKEUP_THRESH		(MAX_SKB_FRAGS + 2)
 #define ENA_DEFAULT_RX_COPYBREAK	(256 - NET_IP_ALIGN)
@@ -158,16 +165,17 @@ struct ena_napi {
 	atomic_t unmask_interrupt;
 #endif
 	u32 qid;
+	struct dim dim;
 };
 
 struct ena_calc_queue_size_ctx {
 	struct ena_com_dev_get_features_ctx *get_feat_ctx;
 	struct ena_com_dev *ena_dev;
 	struct pci_dev *pdev;
-	u16 tx_queue_size;
-	u16 rx_queue_size;
-	u16 max_tx_queue_size;
-	u16 max_rx_queue_size;
+	u32 tx_queue_size;
+	u32 rx_queue_size;
+	u32 max_tx_queue_size;
+	u32 max_rx_queue_size;
 	u16 max_tx_sgl_size;
 	u16 max_rx_sgl_size;
 };
@@ -288,8 +296,7 @@ struct ena_ring {
 	struct ena_com_rx_buf_info ena_bufs[ENA_PKT_MAX_BUFS];
 	u32  smoothed_interval;
 	u32  per_napi_packets;
-	u32  per_napi_bytes;
-	enum ena_intr_moder_level moder_tbl_idx;
+	u16 non_empty_napi_events;
 	struct u64_stats_sync syncp;
 	union {
 		struct ena_stats_tx tx_stats;
@@ -344,7 +351,8 @@ struct ena_adapter {
 	u32 rx_copybreak;
 	u32 max_mtu;
 
-	int num_queues;
+	u32 num_io_queues;
+	u32 max_num_io_queues;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
 	struct msix_entry *msix_entries;
