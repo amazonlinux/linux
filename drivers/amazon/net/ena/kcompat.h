@@ -158,6 +158,9 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #define SLE_VERSION(a,b,c) KERNEL_VERSION(a,b,c)
 #endif
 #ifdef CONFIG_SUSE_KERNEL
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 14)
+#include <linux/suse_version.h>
+#endif
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,28) )
 /* SLES12 is at least 3.12.28+ based */
 #define SLE_VERSION_CODE SLE_VERSION(12,0,0)
@@ -166,6 +169,9 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #ifndef SLE_VERSION_CODE
 #define SLE_VERSION_CODE 0
 #endif /* SLE_VERSION_CODE */
+#ifndef SUSE_VERSION
+#define SUSE_VERSION 0
+#endif /* SUSE_VERSION */
 
 
 /******************************************************************************/
@@ -358,7 +364,9 @@ static inline u32 ethtool_rxfh_indir_default(u32 index, u32 n_rx_rings)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V3
 #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)) || \
-      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)))
+      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)))|| \
+      (SUSE_VERSION && ((SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
+      (SUSE_VERSION > 15)))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V2
 #else
 
@@ -649,6 +657,27 @@ do {									\
 
 #ifndef mmiowb
 #define MMIOWB_NOT_DEFINED
+#endif
+
+#ifndef _ULL
+#define _ULL(x) (_AC(x, ULL))
+#endif
+
+#ifndef ULL
+#define ULL(x) (_ULL(x))
+#endif
+
+#ifndef BIT_ULL
+#define BIT_ULL(nr) (ULL(1) << (nr))
+#endif
+
+#ifndef BITS_PER_TYPE
+#define BITS_PER_TYPE(type) (sizeof(type) * BITS_PER_BYTE)
+#endif
+
+#ifndef DIV_ROUND_DOWN_ULL
+#define DIV_ROUND_DOWN_ULL(ll, d) \
+	({ unsigned long long _tmp = (ll); do_div(_tmp, d); _tmp; })
 #endif
 
 #endif /* _KCOMPAT_H_ */
