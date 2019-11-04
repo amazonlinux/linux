@@ -138,7 +138,7 @@ static void ena_queue_stats(struct ena_adapter *adapter, u64 **data)
 	u64 *ptr;
 	int i, j;
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues; i++) {
 		/* Tx stats */
 		ring = &adapter->tx_ring[i];
 
@@ -205,7 +205,7 @@ static void ena_get_ethtool_stats(struct net_device *netdev,
 
 static int get_stats_sset_count(struct ena_adapter *adapter)
 {
-	return  adapter->num_queues * (ENA_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX)
+	return  adapter->num_io_queues * (ENA_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX)
 		+ ENA_STATS_ARRAY_GLOBAL + ENA_STATS_ARRAY_ENA_COM;
 }
 
@@ -228,7 +228,7 @@ static void ena_queue_strings(struct ena_adapter *adapter, u8 **data)
 	const struct ena_stats *ena_stats;
 	int i, j;
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues; i++) {
 		/* Tx stats */
 		for (j = 0; j < ENA_STATS_ARRAY_TX; j++) {
 			ena_stats = &ena_stats_tx_strings[j];
@@ -381,33 +381,43 @@ static int ena_get_coalesce(struct net_device *net_dev,
 	struct ena_adapter *adapter = netdev_priv(net_dev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 
-	if (!ena_com_interrupt_moderation_supported(ena_dev)) {
-		/* the devie doesn't support interrupt moderation */
+	if (!ena_com_interrupt_moderation_supported(ena_dev))
 		return -EOPNOTSUPP;
-	}
+
 	coalesce->tx_coalesce_usecs =
-		ena_com_get_nonadaptive_moderation_interval_tx(ena_dev) /
+		ena_com_get_nonadaptive_moderation_interval_tx(ena_dev) *
 			ena_dev->intr_delay_resolution;
-	if (!ena_com_get_adaptive_moderation_enabled(ena_dev)) {
-		coalesce->rx_coalesce_usecs =
-			ena_com_get_nonadaptive_moderation_interval_rx(ena_dev)
-			/ ena_dev->intr_delay_resolution;
-	}
+
+	coalesce->rx_coalesce_usecs =
+		ena_com_get_nonadaptive_moderation_interval_rx(ena_dev)
+		* ena_dev->intr_delay_resolution;
+
 	coalesce->use_adaptive_rx_coalesce =
 		ena_com_get_adaptive_moderation_enabled(ena_dev);
 
 	return 0;
 }
 
-static void ena_update_tx_rings_intr_moderation(struct ena_adapter *adapter)
+static void ena_update_tx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
 {
 	unsigned int val;
 	int i;
 
 	val = ena_com_get_nonadaptive_moderation_interval_tx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_queues; i++)
+	for (i = 0; i < adapter->num_io_queues; i++)
 		adapter->tx_ring[i].smoothed_interval = val;
+}
+
+static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
+{
+	unsigned int val;
+	int i;
+
+	val = ena_com_get_nonadaptive_moderation_interval_rx(adapter->ena_dev);
+
+	for (i = 0; i < adapter->num_io_queues; i++)
+		adapter->rx_ring[i].smoothed_interval = val;
 }
 
 static int ena_set_coalesce(struct net_device *net_dev,
@@ -417,63 +427,30 @@ static int ena_set_coalesce(struct net_device *net_dev,
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int rc;
 
-	if (!ena_com_interrupt_moderation_supported(ena_dev)) {
-		/* the devie doesn't support interrupt moderation */
+	if (!ena_com_interrupt_moderation_supported(ena_dev))
 		return -EOPNOTSUPP;
-	}
 
-	if (coalesce->rx_coalesce_usecs_irq ||
-	    coalesce->rx_max_coalesced_frames_irq ||
-	    coalesce->tx_coalesce_usecs_irq ||
-	    coalesce->tx_max_coalesced_frames ||
-	    coalesce->tx_max_coalesced_frames_irq ||
-	    coalesce->stats_block_coalesce_usecs ||
-	    coalesce->use_adaptive_tx_coalesce ||
-	    coalesce->pkt_rate_low ||
-	    coalesce->tx_coalesce_usecs_low ||
-	    coalesce->tx_max_coalesced_frames_low ||
-	    coalesce->pkt_rate_high ||
-	    coalesce->tx_coalesce_usecs_high ||
-	    coalesce->tx_max_coalesced_frames_high ||
-	    coalesce->rate_sample_interval)
-		return -EINVAL;
-
-	/* Note, adaptive coalescing settings are updated through sysfs */
-	if (coalesce->rx_max_coalesced_frames ||
-	    coalesce->rx_coalesce_usecs_low ||
-	    coalesce->rx_max_coalesced_frames_low ||
-	    coalesce->rx_coalesce_usecs_high ||
-	    coalesce->rx_max_coalesced_frames_high)
-		return -EINVAL;
 	rc = ena_com_update_nonadaptive_moderation_interval_tx(ena_dev,
 							       coalesce->tx_coalesce_usecs);
 	if (rc)
 		return rc;
 
-	ena_update_tx_rings_intr_moderation(adapter);
+	ena_update_tx_rings_nonadaptive_intr_moderation(adapter);
 
-	if (ena_com_get_adaptive_moderation_enabled(ena_dev)) {
-		if (!coalesce->use_adaptive_rx_coalesce) {
-			ena_com_disable_adaptive_moderation(ena_dev);
-			rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
-									       coalesce->rx_coalesce_usecs);
-			return rc;
-		} else {
-			/* was in adaptive mode and remains in it,
-			 * allow to update only tx_usecs, rx is managed through sysfs
-			 */
-			if (coalesce->rx_coalesce_usecs)
-				return -EINVAL;
-		}
-	} else { /* was in non-adaptive mode */
-		if (coalesce->use_adaptive_rx_coalesce) {
-			ena_com_enable_adaptive_moderation(ena_dev);
-		} else {
-			rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
-									       coalesce->rx_coalesce_usecs);
-			return rc;
-		}
-	}
+	rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
+							       coalesce->rx_coalesce_usecs);
+	if (rc)
+		return rc;
+
+	ena_update_rx_rings_nonadaptive_intr_moderation(adapter);
+
+	if ((coalesce->use_adaptive_rx_coalesce) &&
+	    (!ena_com_get_adaptive_moderation_enabled(ena_dev)))
+		ena_com_enable_adaptive_moderation(ena_dev);
+
+	if ((!coalesce->use_adaptive_rx_coalesce) &&
+	    (ena_com_get_adaptive_moderation_enabled(ena_dev)))
+		ena_com_disable_adaptive_moderation(ena_dev);
 
 	return 0;
 }
@@ -712,7 +689,7 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 
 	switch (info->cmd) {
 	case ETHTOOL_GRXRINGS:
-		info->data = adapter->num_queues;
+		info->data = adapter->num_io_queues;
 		rc = 0;
 		break;
 	case ETHTOOL_GRXFH:
@@ -905,12 +882,12 @@ static void ena_get_channels(struct net_device *netdev,
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
-	channels->max_rx = adapter->num_queues;
-	channels->max_tx = adapter->num_queues;
+	channels->max_rx = adapter->max_num_io_queues;
+	channels->max_tx = adapter->max_num_io_queues;
 	channels->max_other = 0;
 	channels->max_combined = 0;
-	channels->rx_count = adapter->num_queues;
-	channels->tx_count = adapter->num_queues;
+	channels->rx_count = adapter->num_io_queues;
+	channels->tx_count = adapter->num_io_queues;
 	channels->other_count = 0;
 	channels->combined_count = 0;
 }
