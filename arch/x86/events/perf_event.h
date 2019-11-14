@@ -68,15 +68,17 @@ static inline bool constraint_match(struct event_constraint *c, u64 ecode)
 #define PERF_X86_EVENT_PEBS_ST		0x0002 /* st data address sampling */
 #define PERF_X86_EVENT_PEBS_ST_HSW	0x0004 /* haswell style datala, store */
 #define PERF_X86_EVENT_COMMITTED	0x0008 /* event passed commit_txn */
-#define PERF_X86_EVENT_PEBS_LD_HSW	0x0010 /* haswell style datala, load */
-#define PERF_X86_EVENT_PEBS_NA_HSW	0x0020 /* haswell style datala, unknown */
-#define PERF_X86_EVENT_EXCL		0x0040 /* HT exclusivity on counter */
-#define PERF_X86_EVENT_DYNAMIC		0x0080 /* dynamic alloc'd constraint */
-#define PERF_X86_EVENT_RDPMC_ALLOWED	0x0100 /* grant rdpmc permission */
-#define PERF_X86_EVENT_EXCL_ACCT	0x0200 /* accounted EXCL event */
-#define PERF_X86_EVENT_AUTO_RELOAD	0x0400 /* use PEBS auto-reload */
+#define PERF_X86_EVENT_PEBS_LD_HSW	0x0008 /* haswell style datala, load */
+#define PERF_X86_EVENT_PEBS_NA_HSW	0x0010 /* haswell style datala, unknown */
+#define PERF_X86_EVENT_EXCL		0x0020 /* HT exclusivity on counter */
+#define PERF_X86_EVENT_DYNAMIC		0x0040 /* dynamic alloc'd constraint */
+#define PERF_X86_EVENT_RDPMC_ALLOWED	0x0080 /* grant rdpmc permission */
+#define PERF_X86_EVENT_EXCL_ACCT	0x0100 /* accounted EXCL event */
+#define PERF_X86_EVENT_AUTO_RELOAD	0x0200 /* use PEBS auto-reload */
 #define PERF_X86_EVENT_FREERUNNING	0x0800 /* use freerunning PEBS */
-
+#define PERF_X86_EVENT_LARGE_PEBS	0x0400 /* use large PEBS */
+#define PERF_X86_EVENT_PEBS_VIA_PT	0x0800 /* use PT buffer for PEBS */
+#define PERF_X86_EVENT_PAIR		0x1000 /* Large Increment per Cycle */
 
 struct amd_nb {
 	int nb_id;  /* NorthBridge id */
@@ -718,6 +720,7 @@ do {									\
 #define PMU_FL_EXCL_ENABLED	0x8 /* exclusive counter active */
 #define PMU_FL_PEBS_ALL         0x10 /* all events are valid PEBS events*/
 #define PMU_FL_TFA		0x20 /* deal with TSX force abort */
+#define PMU_FL_PAIR		0x40 /* merge counters for large incr. events */
 
 #define EVENT_VAR(_id)  event_attr_##_id
 #define EVENT_PTR(_id) &event_attr_##_id.attr.attr
