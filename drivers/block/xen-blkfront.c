@@ -138,7 +138,7 @@ static LIST_HEAD(info_list);
  * by the backend driver.
  */
 
-static unsigned int xen_blkif_max_segments = 32;
+static unsigned int xen_blkif_max_segments = 64;
 module_param_named(max_indirect_segments, xen_blkif_max_segments, uint, 0444);
 MODULE_PARM_DESC(max_indirect_segments,
 		 "Maximum amount of segments in indirect requests (default is 32)");
