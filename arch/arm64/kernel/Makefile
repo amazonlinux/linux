@@ -28,6 +28,9 @@ $(obj)/%.stub.o: $(obj)/%.o FORCE
 obj-$(CONFIG_COMPAT)			+= sys32.o signal32.o			\
 					   sys_compat.o
 obj-$(CONFIG_COMPAT)			+= sigreturn32.o
+ifeq ($(CONFIG_COMPAT), y)
+OBJECT_FILES_NON_STANDARD_sigreturn32.o := y
+endif
 obj-$(CONFIG_KUSER_HELPERS)		+= kuser32.o
 
 OBJECT_FILES_NON_STANDARD_kuser32.o := y
