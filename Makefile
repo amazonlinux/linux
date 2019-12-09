@@ -5,6 +5,13 @@ SUBLEVEL = 336
 EXTRAVERSION =
 NAME = Petit Gorille
 
+# Set AMZN variables
+#
+# AMZN_MAJOR: generation of Amazon Linux
+# AMZN_MINOR: point release of Amazon Linux
+AMZN_MAJOR =
+AMZN_MINOR =
+
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
 # More info can be located in ./README
@@ -1178,7 +1185,12 @@ endef
 define filechk_version.h
 	(echo \#define LINUX_VERSION_CODE $(shell                         \
 	expr $(VERSION) \* 65536 + 0$(PATCHLEVEL) \* 256 + 255); \
-	echo '#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))';)
+	echo '#define KERNEL_VERSION(a,b,c) (((a) << 16) + ((b) << 8) + (c))'; \
+	echo '#define AMZN_MAJOR $(AMZN_MAJOR)'; 			  \
+	echo '#define AMZN_MINOR $(AMZN_MINOR)'; 			  \
+	echo '#define AMZN_RELEASE_VERSION(a,b) (((a) << 8) + (b))'; 	  \
+	echo '#define AMZN_RELEASE_CODE 				  \
+                $(shell expr $(AMZN_MAJOR) \* 256 + $(AMZN_MINOR))';)
 endef
 
 $(version_h): $(srctree)/Makefile FORCE
