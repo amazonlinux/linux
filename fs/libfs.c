@@ -86,47 +86,58 @@ int dcache_dir_close(struct inode *inode, struct file *file)
 EXPORT_SYMBOL(dcache_dir_close);
 
 /* parent is locked at least shared */
-/*
- * Returns an element of siblings' list.
- * We are looking for <count>th positive after <p>; if
- * found, dentry is grabbed and passed to caller via *<res>.
- * If no such element exists, the anchor of list is returned
- * and *<res> is set to NULL.
- */
-static struct list_head *scan_positives(struct dentry *cursor,
-					struct list_head *p,
-					loff_t count,
-					struct dentry **res)
+static struct dentry *next_positive(struct dentry *parent,
+				    struct list_head *from,
+				    int count)
 {
-	struct dentry *dentry = cursor->d_parent, *found = NULL;
+	unsigned *seq = &parent->d_inode->i_dir_seq, n;
+	struct dentry *res;
+	struct list_head *p;
+	bool skipped;
+	int i;
 
-	spin_lock(&dentry->d_lock);
-	while ((p = p->next) != &dentry->d_subdirs) {
+retry:
+	i = count;
+	skipped = false;
+	n = smp_load_acquire(seq) & ~1;
+	res = NULL;
+	rcu_read_lock();
+	for (p = from->next; p != &parent->d_subdirs; p = p->next) {
 		struct dentry *d = list_entry(p, struct dentry, d_child);
-		// we must at least skip cursors, to avoid livelocks
-		if (d->d_flags & DCACHE_DENTRY_CURSOR)
-			continue;
-		if (simple_positive(d) && !--count) {
-			spin_lock_nested(&d->d_lock, DENTRY_D_LOCK_NESTED);
-			if (simple_positive(d))
-				found = dget_dlock(d);
-			spin_unlock(&d->d_lock);
-			if (likely(found))
-				break;
-			count = 1;
-		}
-		if (need_resched()) {
-			list_move(&cursor->d_child, p);
-			p = &cursor->d_child;
-			spin_unlock(&dentry->d_lock);
-			cond_resched();
-			spin_lock(&dentry->d_lock);
+		if (!simple_positive(d)) {
+			skipped = true;
+		} else if (!--i) {
+			res = d;
+			break;
 		}
 	}
-	spin_unlock(&dentry->d_lock);
-	dput(*res);
-	*res = found;
-	return p;
+	rcu_read_unlock();
+	if (skipped) {
+		smp_rmb();
+		if (unlikely(*seq != n))
+			goto retry;
+	}
+	return res;
+}
+
+static void move_cursor(struct dentry *cursor, struct list_head *after)
+{
+	struct dentry *parent = cursor->d_parent;
+	unsigned n, *seq = &parent->d_inode->i_dir_seq;
+	spin_lock(&parent->d_lock);
+	for (;;) {
+		n = *seq;
+		if (!(n & 1) && cmpxchg(seq, n, n + 1) == n)
+			break;
+		cpu_relax();
+	}
+	__list_del(cursor->d_child.prev, cursor->d_child.next);
+	if (after)
+		list_add(&cursor->d_child, after);
+	else
+		list_add_tail(&cursor->d_child, &parent->d_subdirs);
+	smp_store_release(seq, n + 2);
+	spin_unlock(&parent->d_lock);
 }
 
 loff_t dcache_dir_lseek(struct file *file, loff_t offset, int whence)
@@ -142,28 +153,17 @@ loff_t dcache_dir_lseek(struct file *file, loff_t offset, int whence)
 			return -EINVAL;
 	}
 	if (offset != file->f_pos) {
-		struct dentry *cursor = file->private_data;
-		struct dentry *to = NULL;
-		struct list_head *p;
-
 		file->f_pos = offset;
-		inode_lock_shared(dentry->d_inode);
+		if (file->f_pos >= 2) {
+			struct dentry *cursor = file->private_data;
+			struct dentry *to;
+			loff_t n = file->f_pos - 2;
 
-		if (file->f_pos > 2) {
-			p = scan_positives(cursor, &dentry->d_subdirs,
-					   file->f_pos - 2, &to);
-			spin_lock(&dentry->d_lock);
-			list_move(&cursor->d_child, p);
-			spin_unlock(&dentry->d_lock);
-		} else {
-			spin_lock(&dentry->d_lock);
-			list_del_init(&cursor->d_child);
-			spin_unlock(&dentry->d_lock);
+			inode_lock_shared(dentry->d_inode);
+			to = next_positive(dentry, &dentry->d_subdirs, n);
+			move_cursor(cursor, to ? &to->d_child : NULL);
+			inode_unlock_shared(dentry->d_inode);
 		}
-
-		dput(to);
-
-		inode_unlock_shared(dentry->d_inode);
 	}
 	return offset;
 }
@@ -185,29 +185,25 @@ int dcache_readdir(struct file *file, struct dir_context *ctx)
 {
 	struct dentry *dentry = file->f_path.dentry;
 	struct dentry *cursor = file->private_data;
-	struct list_head *anchor = &dentry->d_subdirs;
-	struct dentry *next = NULL;
-	struct list_head *p;
+	struct list_head *p = &cursor->d_child;
+	struct dentry *next;
+	bool moved = false;
 
 	if (!dir_emit_dots(file, ctx))
 		return 0;
 
 	if (ctx->pos == 2)
-		p = anchor;
-	else
-		p = &cursor->d_child;
-
-	while ((p = scan_positives(cursor, p, 1, &next)) != anchor) {
+		p = &dentry->d_subdirs;
+	while ((next = next_positive(dentry, p, 1)) != NULL) {
 		if (!dir_emit(ctx, next->d_name.name, next->d_name.len,
 			      d_inode(next)->i_ino, dt_type(d_inode(next))))
 			break;
+		moved = true;
+		p = &next->d_child;
 		ctx->pos++;
 	}
-	spin_lock(&dentry->d_lock);
-	list_move_tail(&cursor->d_child, p);
-	spin_unlock(&dentry->d_lock);
-	dput(next);
-
+	if (moved)
+		move_cursor(cursor, p);
 	return 0;
 }
 EXPORT_SYMBOL(dcache_readdir);
