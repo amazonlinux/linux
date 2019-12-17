@@ -473,63 +473,21 @@ struct page *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 	return retpage;
 }
 
-static unsigned int __swapin_nr_pages(unsigned long prev_offset,
-				      unsigned long offset,
-				      int hits,
-				      int max_pages,
-				      int prev_win)
-{
-	unsigned int pages, last_ra;
-
-	/*
-	 * This heuristic has been found to work well on both sequential and
-	 * random loads, swapping to hard disk or to SSD: please don't ask
-	 * what the "+ 2" means, it just happens to work well, that's all.
-	 */
-	pages = hits + 2;
-	if (pages == 2) {
-		/*
-		 * We can have no readahead hits to judge by: but must not get
-		 * stuck here forever, so check for an adjacent offset instead
-		 * (and don't even bother to check whether swap type is same).
-		 */
-		if (offset != prev_offset + 1 && offset != prev_offset - 1)
-			pages = 1;
-	} else {
-		unsigned int roundup = 4;
-		while (roundup < pages)
-			roundup <<= 1;
-		pages = roundup;
-	}
-
-	if (pages > max_pages)
-		pages = max_pages;
-
-	/* Don't shrink readahead too fast */
-	last_ra = prev_win / 2;
-	if (pages < last_ra)
-		pages = last_ra;
-
-	return pages;
-}
-
 static unsigned long swapin_nr_pages(unsigned long offset)
 {
-	static unsigned long prev_offset;
-	unsigned int hits, pages, max_pages;
-	static atomic_t last_readahead_pages;
+	static unsigned int prev_pages;
+	unsigned long pages, max_pages;
 
 	max_pages = 1 << READ_ONCE(page_cluster);
 	if (max_pages <= 1)
 		return 1;
 
-	hits = atomic_xchg(&swapin_readahead_hits, 0);
-	pages = __swapin_nr_pages(READ_ONCE(prev_offset), offset, hits,
-				  max_pages,
-				  atomic_read(&last_readahead_pages));
-	if (!hits)
-		WRITE_ONCE(prev_offset, offset);
-	atomic_set(&last_readahead_pages, pages);
+	pages = prev_pages + 1;
+	if (pages > max_pages) {
+		prev_pages = 0;
+		pages = max_pages;
+	} else
+		prev_pages = pages;
 
 	return pages;
 }
@@ -683,8 +641,7 @@ struct page *swap_readahead_detect(struct vm_fault *vmf,
 	pfn = PFN_DOWN(SWAP_RA_ADDR(swap_ra_info));
 	prev_win = SWAP_RA_WIN(swap_ra_info);
 	hits = SWAP_RA_HITS(swap_ra_info);
-	swap_ra->win = win = __swapin_nr_pages(pfn, fpfn, hits,
-					       max_win, prev_win);
+	swap_ra->win = win = swapin_nr_pages(fpfn);
 	atomic_long_set(&vma->swap_readahead_info,
 			SWAP_RA_VAL(faddr, win, 0));
 
