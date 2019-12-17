@@ -1006,7 +1006,7 @@ void __init swap_setup(void)
 	if (megs < 16)
 		page_cluster = 2;
 	else
-		page_cluster = 3;
+		page_cluster = 8;
 	/*
 	 * Right now other parts of the system means that we
 	 * _really_ don't want to cluster much more
