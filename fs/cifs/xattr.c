@@ -32,12 +32,62 @@
 #include "cifs_unicode.h"
 
 #define MAX_EA_VALUE_SIZE CIFSMaxBufSize
-#define CIFS_XATTR_CIFS_ACL "system.cifs_acl"
+#define CIFS_XATTR_CIFS_ACL "system.cifs_acl" /* DACL only */
+#define CIFS_XATTR_CIFS_NTSD "system.cifs_ntsd" /* owner plus DACL */
 #define CIFS_XATTR_ATTRIB "cifs.dosattrib"  /* full name: user.cifs.dosattrib */
 #define CIFS_XATTR_CREATETIME "cifs.creationtime"  /* user.cifs.creationtime */
 /* BB need to add server (Samba e.g) support for security and trusted prefix */
 
-enum { XATTR_USER, XATTR_CIFS_ACL, XATTR_ACL_ACCESS, XATTR_ACL_DEFAULT };
+enum { XATTR_USER, XATTR_CIFS_ACL, XATTR_ACL_ACCESS, XATTR_ACL_DEFAULT,
+	XATTR_CIFS_NTSD };
+
+static int cifs_attrib_set(unsigned int xid, struct cifs_tcon *pTcon,
+			   struct inode *inode, char *full_path,
+			   const void *value, size_t size)
+{
+	ssize_t rc = -EOPNOTSUPP;
+	__u32 *pattrib = (__u32 *)value;
+	__u32 attrib;
+	FILE_BASIC_INFO info_buf;
+
+	if ((value == NULL) || (size != sizeof(__u32)))
+		return -ERANGE;
+
+	memset(&info_buf, 0, sizeof(info_buf));
+	info_buf.Attributes = attrib = cpu_to_le32(*pattrib);
+
+	if (pTcon->ses->server->ops->set_file_info)
+		rc = pTcon->ses->server->ops->set_file_info(inode, full_path,
+				&info_buf, xid);
+	if (rc == 0)
+		CIFS_I(inode)->cifsAttrs = attrib;
+
+	return rc;
+}
+
+static int cifs_creation_time_set(unsigned int xid, struct cifs_tcon *pTcon,
+				  struct inode *inode, char *full_path,
+				  const void *value, size_t size)
+{
+	ssize_t rc = -EOPNOTSUPP;
+	__u64 *pcreation_time = (__u64 *)value;
+	__u64 creation_time;
+	FILE_BASIC_INFO info_buf;
+
+	if ((value == NULL) || (size != sizeof(__u64)))
+		return -ERANGE;
+
+	memset(&info_buf, 0, sizeof(info_buf));
+	info_buf.CreationTime = creation_time = cpu_to_le64(*pcreation_time);
+
+	if (pTcon->ses->server->ops->set_file_info)
+		rc = pTcon->ses->server->ops->set_file_info(inode, full_path,
+				&info_buf, xid);
+	if (rc == 0)
+		CIFS_I(inode)->createtime = creation_time;
+
+	return rc;
+}
 
 static int cifs_xattr_set(const struct xattr_handler *handler,
 			  struct dentry *dentry, struct inode *inode,
@@ -78,6 +128,21 @@ static int cifs_xattr_set(const struct xattr_handler *handler,
 
 	switch (handler->flags) {
 	case XATTR_USER:
+		cifs_dbg(FYI, "%s:setting user xattr %s\n", __func__, name);
+		if (strcmp(name, CIFS_XATTR_ATTRIB) == 0) {
+			rc = cifs_attrib_set(xid, pTcon, inode, full_path,
+					value, size);
+			if (rc == 0) /* force revalidate of the inode */
+				CIFS_I(inode)->time = 0;
+			break;
+		} else if (strcmp(name, CIFS_XATTR_CREATETIME) == 0) {
+			rc = cifs_creation_time_set(xid, pTcon, inode,
+					full_path, value, size);
+			if (rc == 0) /* force revalidate of the inode */
+				CIFS_I(inode)->time = 0;
+			break;
+		}
+
 		if (cifs_sb->mnt_cifs_flags & CIFS_MOUNT_NO_XATTR)
 			goto out;
 
@@ -87,7 +152,8 @@ static int cifs_xattr_set(const struct xattr_handler *handler,
 				cifs_sb->local_nls, cifs_sb);
 		break;
 
-	case XATTR_CIFS_ACL: {
+	case XATTR_CIFS_ACL:
+	case XATTR_CIFS_NTSD: {
 #ifdef CONFIG_CIFS_ACL
 		struct cifs_ntsd *pacl;
 
@@ -99,12 +165,25 @@ static int cifs_xattr_set(const struct xattr_handler *handler,
 		} else {
 			memcpy(pacl, value, size);
 			if (value &&
-			    pTcon->ses->server->ops->set_acl)
-				rc = pTcon->ses->server->ops->set_acl(pacl,
-						size, inode,
-						full_path, CIFS_ACL_DACL);
-			else
+			    pTcon->ses->server->ops->set_acl) {
+				rc = 0;
+				if (handler->flags == XATTR_CIFS_NTSD) {
+					/* set owner and DACL */
+					rc = pTcon->ses->server->ops->set_acl(
+							pacl, size, inode,
+							full_path,
+							CIFS_ACL_OWNER);
+				}
+				if (rc == 0) {
+					/* set DACL */
+					rc = pTcon->ses->server->ops->set_acl(
+							pacl, size, inode,
+							full_path,
+							CIFS_ACL_DACL);
+				}
+			} else {
 				rc = -EOPNOTSUPP;
+			}
 			if (rc == 0) /* force revalidate of the inode */
 				CIFS_I(inode)->time = 0;
 			kfree(pacl);
@@ -173,7 +252,7 @@ static int cifs_creation_time_get(struct dentry *dentry, struct inode *inode,
 				  void *value, size_t size)
 {
 	ssize_t rc;
-	__u64 * pcreatetime;
+	__u64 *pcreatetime;
 
 	rc = cifs_revalidate_dentry_attr(dentry);
 	if (rc)
@@ -236,7 +315,9 @@ static int cifs_xattr_get(const struct xattr_handler *handler,
 				full_path, name, value, size, cifs_sb);
 		break;
 
-	case XATTR_CIFS_ACL: {
+	case XATTR_CIFS_ACL:
+	case XATTR_CIFS_NTSD: {
+		/* the whole ntsd is fetched regardless */
 #ifdef CONFIG_CIFS_ACL
 		u32 acllen;
 		struct cifs_ntsd *pacl;
@@ -363,6 +444,13 @@ static const struct xattr_handler cifs_cifs_acl_xattr_handler = {
 	.set = cifs_xattr_set,
 };
 
+static const struct xattr_handler cifs_cifs_ntsd_xattr_handler = {
+	.name = CIFS_XATTR_CIFS_NTSD,
+	.flags = XATTR_CIFS_NTSD,
+	.get = cifs_xattr_get,
+	.set = cifs_xattr_set,
+};
+
 static const struct xattr_handler cifs_posix_acl_access_xattr_handler = {
 	.name = XATTR_NAME_POSIX_ACL_ACCESS,
 	.flags = XATTR_ACL_ACCESS,
@@ -381,6 +469,7 @@ const struct xattr_handler *cifs_xattr_handlers[] = {
 	&cifs_user_xattr_handler,
 	&cifs_os2_xattr_handler,
 	&cifs_cifs_acl_xattr_handler,
+	&cifs_cifs_ntsd_xattr_handler,
 	&cifs_posix_acl_access_xattr_handler,
 	&cifs_posix_acl_default_xattr_handler,
 	NULL
