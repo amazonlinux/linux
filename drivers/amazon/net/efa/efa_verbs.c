@@ -90,8 +90,6 @@ static const char *const efa_stats_names[] = {
 #define EFA_CHUNK_USED_SIZE \
 	((EFA_PTRS_PER_CHUNK * EFA_CHUNK_PAYLOAD_PTR_SIZE) + EFA_CHUNK_PTR_SIZE)
 
-#define EFA_SUPPORTED_ACCESS_FLAGS IB_ACCESS_LOCAL_WRITE
-
 struct pbl_chunk {
 	dma_addr_t dma_addr;
 	u64 *buf;
@@ -153,6 +151,11 @@ static inline struct efa_cq *to_ecq(struct ib_cq *ibcq)
 static inline struct efa_ah *to_eah(struct ib_ah *ibah)
 {
 	return container_of(ibah, struct efa_ah, ibah);
+}
+
+static inline bool is_rdma_read_cap(struct efa_dev *dev)
+{
+	return dev->dev_attr.device_caps & EFA_ADMIN_FEATURE_DEVICE_ATTR_DESC_RDMA_READ_MASK;
 }
 
 #define field_avail(x, fld, sz) (offsetof(typeof(x), fld) + \
@@ -407,13 +410,14 @@ int efa_query_device(struct ib_device *ibdev,
 	props->max_cqe = dev_attr->max_cq_depth;
 	props->max_qp_wr = min_t(u32, dev_attr->max_sq_depth,
 				 dev_attr->max_rq_depth);
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-	props->max_sge = min_t(u16, dev_attr->max_sq_sge,
-			       dev_attr->max_rq_sge);
-#else
+#ifdef HAVE_MAX_SEND_RCV_SGE
 	props->max_send_sge = dev_attr->max_sq_sge;
 	props->max_recv_sge = dev_attr->max_rq_sge;
+#else
+	props->max_sge = min_t(u16, dev_attr->max_sq_sge,
+			       dev_attr->max_rq_sge);
 #endif
+	props->max_sge_rd = dev_attr->max_wr_rdma_sge;
 
 #ifdef HAVE_IB_QUERY_DEVICE_UDATA
 	if (udata && udata->outlen) {
@@ -421,6 +425,10 @@ int efa_query_device(struct ib_device *ibdev,
 		resp.max_rq_sge = dev_attr->max_rq_sge;
 		resp.max_sq_wr = dev_attr->max_sq_depth;
 		resp.max_rq_wr = dev_attr->max_rq_depth;
+		resp.max_rdma_size = dev_attr->max_rdma_size;
+
+		if (is_rdma_read_cap(dev))
+			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_RDMA_READ;
 
 		err = ib_copy_to_udata(udata, &resp,
 				       min(sizeof(resp), udata->outlen));
@@ -443,19 +451,19 @@ int efa_query_port(struct ib_device *ibdev, u8 port,
 	props->lmc = 1;
 
 	props->state = IB_PORT_ACTIVE;
-	props->phys_state = 5;
+	props->phys_state = IB_PORT_PHYS_STATE_LINK_UP;
 	props->gid_tbl_len = 1;
 	props->pkey_tbl_len = 1;
 	props->active_speed = IB_SPEED_EDR;
 	props->active_width = IB_WIDTH_4X;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 10, 0)
-	props->max_mtu = ib_mtu_int_to_enum(dev->mtu);
-	props->active_mtu = ib_mtu_int_to_enum(dev->mtu);
+	props->max_mtu = ib_mtu_int_to_enum(dev->dev_attr.mtu);
+	props->active_mtu = ib_mtu_int_to_enum(dev->dev_attr.mtu);
 #else
 	props->max_mtu = IB_MTU_4096;
 	props->active_mtu = IB_MTU_4096;
 #endif
-	props->max_msg_sz = dev->mtu;
+	props->max_msg_sz = dev->dev_attr.mtu;
 	props->max_vl_num = 1;
 
 	return 0;
@@ -516,7 +524,7 @@ int efa_query_gid(struct ib_device *ibdev, u8 port, int index,
 {
 	struct efa_dev *dev = to_edev(ibdev);
 
-	memcpy(gid->raw, dev->addr, sizeof(dev->addr));
+	memcpy(gid->raw, dev->dev_attr.addr, sizeof(dev->dev_attr.addr));
 
 	return 0;
 }
@@ -1000,7 +1008,7 @@ static int efa_modify_qp_validate(struct efa_dev *dev, struct efa_qp *qp,
 		return -EOPNOTSUPP;
 	}
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+#ifdef HAVE_IB_MODIFY_QP_IS_OK_FOUR_PARAMS
 	if (!ib_modify_qp_is_ok(cur_state, new_state, IB_QPT_UD,
 				qp_attr_mask)) {
 #else
@@ -1916,6 +1924,7 @@ struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	struct efa_com_reg_mr_params params = {};
 	struct efa_com_reg_mr_result result = {};
 	struct pbl_context pbl;
+	int supp_access_flags;
 	unsigned int pg_sz;
 	struct efa_mr *mr;
 	int inline_size;
@@ -1942,10 +1951,14 @@ struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		goto err_out;
 	}
 
-	if (access_flags & ~EFA_SUPPORTED_ACCESS_FLAGS) {
+	supp_access_flags =
+		IB_ACCESS_LOCAL_WRITE |
+		(is_rdma_read_cap(dev) ? IB_ACCESS_REMOTE_READ : 0);
+
+	if (access_flags & ~supp_access_flags) {
 		ibdev_dbg(&dev->ibdev,
 			  "Unsupported access flags[%#x], supported[%#x]\n",
-			  access_flags, EFA_SUPPORTED_ACCESS_FLAGS);
+			  access_flags, supp_access_flags);
 		err = -EOPNOTSUPP;
 		goto err_out;
 	}
@@ -1972,7 +1985,7 @@ struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 	params.pd = to_epd(ibpd)->pdn;
 	params.iova = virt_addr;
 	params.mr_length_in_bytes = length;
-	params.permissions = access_flags & 0x1;
+	params.permissions = access_flags;
 
 #ifdef HAVE_IB_UMEM_FIND_SINGLE_PG_SIZE
 	pg_sz = ib_umem_find_best_pgsz(mr->umem,
@@ -2195,8 +2208,8 @@ static int __efa_mmap(struct efa_dev *dev, struct efa_ucontext *ucontext,
 {
 	struct efa_mmap_entry *entry;
 	unsigned long va;
+	int err = 0;
 	u64 pfn;
-	int err;
 
 	entry = mmap_entry_get(dev, ucontext, key, length);
 	if (!entry) {
@@ -2212,7 +2225,7 @@ static int __efa_mmap(struct efa_dev *dev, struct efa_ucontext *ucontext,
 	pfn = entry->address >> PAGE_SHIFT;
 	switch (entry->mmap_flag) {
 	case EFA_MMAP_IO_NC:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+#ifdef HAVE_RDMA_USER_MMAP_IO
 		err = rdma_user_mmap_io(&ucontext->ibucontext, vma, pfn, length,
 					pgprot_noncached(vma->vm_page_prot));
 #else
@@ -2222,7 +2235,7 @@ static int __efa_mmap(struct efa_dev *dev, struct efa_ucontext *ucontext,
 #endif
 		break;
 	case EFA_MMAP_IO_WC:
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,20,0)
+#ifdef HAVE_RDMA_USER_MMAP_IO
 		err = rdma_user_mmap_io(&ucontext->ibucontext, vma, pfn, length,
 					pgprot_writecombine(vma->vm_page_prot));
 #else
@@ -2614,14 +2627,14 @@ int efa_get_hw_stats(struct ib_device *ibdev, struct rdma_hw_stats *stats,
 #endif
 
 #ifndef HAVE_NO_KVERBS_DRIVERS
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-int efa_post_send(struct ib_qp *ibqp,
-		  struct ib_send_wr *wr,
-		  struct ib_send_wr **bad_wr)
-#else
+#ifdef HAVE_POST_CONST_WR
 int efa_post_send(struct ib_qp *ibqp,
 		  const struct ib_send_wr *wr,
 		  const struct ib_send_wr **bad_wr)
+#else
+int efa_post_send(struct ib_qp *ibqp,
+		  struct ib_send_wr *wr,
+		  struct ib_send_wr **bad_wr)
 #endif
 {
 	struct efa_dev *dev = to_edev(ibqp->device);
@@ -2630,14 +2643,14 @@ int efa_post_send(struct ib_qp *ibqp,
 	return -EOPNOTSUPP;
 }
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-int efa_post_recv(struct ib_qp *ibqp,
-		  struct ib_recv_wr *wr,
-		  struct ib_recv_wr **bad_wr)
-#else
+#ifdef HAVE_POST_CONST_WR
 int efa_post_recv(struct ib_qp *ibqp,
 		  const struct ib_recv_wr *wr,
 		  const struct ib_recv_wr **bad_wr)
+#else
+int efa_post_recv(struct ib_qp *ibqp,
+		  struct ib_recv_wr *wr,
+		  struct ib_recv_wr **bad_wr)
 #endif
 {
 	struct efa_dev *dev = to_edev(ibqp->device);
