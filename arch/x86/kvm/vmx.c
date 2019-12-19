@@ -9618,6 +9618,11 @@ static bool vmx_xsaves_supported(void)
 		SECONDARY_EXEC_XSAVES;
 }
 
+static inline bool vmx_pku_supported(void)
+{
+	return boot_cpu_has(X86_FEATURE_PKU);
+}
+
 static void vmx_recover_nmi_blocking(struct vcpu_vmx *vmx)
 {
 	u32 exit_intr_info;
@@ -12961,6 +12966,7 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 	.handle_external_intr = vmx_handle_external_intr,
 	.mpx_supported = vmx_mpx_supported,
 	.xsaves_supported = vmx_xsaves_supported,
+	.pku_supported = vmx_pku_supported,
 
 	.check_nested_events = vmx_check_nested_events,
 
