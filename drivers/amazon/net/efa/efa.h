@@ -66,8 +66,6 @@ struct efa_dev {
 	u64 mem_bar_len;
 	u64 db_bar_addr;
 	u64 db_bar_len;
-	u8 addr[EFA_GID_SIZE];
-	u32 mtu;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
 	struct msix_entry admin_msix_entry;
@@ -271,23 +269,23 @@ int efa_destroy_ah(struct ib_ah *ibah, u32 flags);
 int efa_destroy_ah(struct ib_ah *ibah);
 #endif
 #ifndef HAVE_NO_KVERBS_DRIVERS
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-int efa_post_send(struct ib_qp *ibqp,
-		  struct ib_send_wr *wr,
-		  struct ib_send_wr **bad_wr);
-#else
+#ifdef HAVE_POST_CONST_WR
 int efa_post_send(struct ib_qp *ibqp,
 		  const struct ib_send_wr *wr,
 		  const struct ib_send_wr **bad_wr);
-#endif
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 19, 0)
-int efa_post_recv(struct ib_qp *ibqp,
-		  struct ib_recv_wr *wr,
-		  struct ib_recv_wr **bad_wr);
 #else
+int efa_post_send(struct ib_qp *ibqp,
+		  struct ib_send_wr *wr,
+		  struct ib_send_wr **bad_wr);
+#endif
+#ifdef HAVE_POST_CONST_WR
 int efa_post_recv(struct ib_qp *ibqp,
 		  const struct ib_recv_wr *wr,
 		  const struct ib_recv_wr **bad_wr);
+#else
+int efa_post_recv(struct ib_qp *ibqp,
+		  struct ib_recv_wr *wr,
+		  struct ib_recv_wr **bad_wr);
 #endif
 int efa_poll_cq(struct ib_cq *ibcq, int num_entries,
 		struct ib_wc *wc);
