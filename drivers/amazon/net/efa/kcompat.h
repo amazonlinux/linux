@@ -19,6 +19,27 @@
 #endif
 
 /******************************************************************************/
+/**************************** SuSE macros *************************************/
+/******************************************************************************/
+
+/* SuSE version macro is the same as Linux kernel version */
+#ifndef SLE_VERSION
+#define SLE_VERSION(a,b,c) KERNEL_VERSION(a,b,c)
+#endif
+#ifdef CONFIG_SUSE_KERNEL
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 14)
+#include <linux/suse_version.h>
+#define SLE_VERSION_CODE SLE_VERSION(SUSE_VERSION, SUSE_PATCHLEVEL, SUSE_AUXRELEASE)
+#endif
+#endif /* CONFIG_SUSE_KERNEL */
+#ifndef SLE_VERSION_CODE
+#define SLE_VERSION_CODE 0
+#endif /* SLE_VERSION_CODE */
+#ifndef SUSE_VERSION
+#define SUSE_VERSION 0
+#endif /* SUSE_VERSION */
+
+/******************************************************************************/
 /**************************** RHEL macros *************************************/
 /******************************************************************************/
 
@@ -69,6 +90,26 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 11, 0) || \
 	(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,6))
 #define HAVE_DEV_PARENT
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 17, 0) || \
+	(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,7))
+#define HAVE_DRIVER_ID
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0) || \
+	(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,7)) || \
+	(SLE_VERSION_CODE && SLE_VERSION_CODE >= SLE_VERSION(15, 1, 0))
+#define HAVE_POST_CONST_WR
+#define HAVE_MAX_SEND_RCV_SGE
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 20, 0) || \
+	(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,7)) || \
+	(SLE_VERSION_CODE && SLE_VERSION_CODE >= SLE_VERSION(15, 1, 0))
+#define HAVE_IB_REGISTER_DEVICE_NAME_PARAM
+#define HAVE_IB_MODIFY_QP_IS_OK_FOUR_PARAMS
+#define HAVE_RDMA_USER_MMAP_IO
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
@@ -146,9 +187,14 @@ free:
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4,16,0) && \
-	RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(7,6)
+#if !(LINUX_VERSION_CODE >= KERNEL_VERSION(4,16,0) || \
+	(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,6)) || \
+	(SLE_VERSION_CODE && SLE_VERSION_CODE >= SLE_VERSION(15, 1, 0)))
 #define IB_QPT_DRIVER 0xFF
+#endif
+
+#if defined(HAVE_DRIVER_ID) && !defined(HAVE_UPSTREAM_EFA)
+#define RDMA_DRIVER_EFA 17
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)
@@ -188,6 +234,10 @@ static inline void *kvzalloc(size_t size, gfp_t flags)
 
 	return vzalloc(size);
 }
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 4, 0)
+#define IB_PORT_PHYS_STATE_LINK_UP 5
 #endif
 
 #endif /* _KCOMPAT_H_ */
