@@ -22,7 +22,7 @@ static const struct pci_device_id efa_pci_tbl[] = {
 };
 
 #define DRV_MODULE_VER_MAJOR           1
-#define DRV_MODULE_VER_MINOR           4
+#define DRV_MODULE_VER_MINOR           5
 #define DRV_MODULE_VER_SUBMINOR        0
 
 #ifndef DRV_MODULE_VERSION
@@ -33,6 +33,7 @@ static const struct pci_device_id efa_pci_tbl[] = {
 #endif
 
 MODULE_VERSION(DRV_MODULE_VERSION);
+MODULE_SOFTDEP("pre: ib_uverbs");
 
 static char version[] = DEVICE_NAME " v" DRV_MODULE_VERSION;
 
@@ -59,15 +60,6 @@ static unsigned int efa_everbs_major;
 static int efa_everbs_dev_init(struct efa_dev *dev, int devnum);
 static void efa_everbs_dev_destroy(struct efa_dev *dev);
 #endif
-
-static void efa_update_network_attr(struct efa_dev *dev,
-				    struct efa_com_get_network_attr_result *network_attr)
-{
-	memcpy(dev->addr, network_attr->addr, sizeof(network_attr->addr));
-	dev->mtu = network_attr->mtu;
-
-	dev_dbg(&dev->pdev->dev, "Full address %pI6\n", dev->addr);
-}
 
 /* This handler will called for unknown event group or unimplemented handlers */
 static void unimplemented_aenq_handler(void *data,
@@ -306,7 +298,6 @@ static const struct ib_device_ops efa_dev_ops = {
 
 static int efa_ib_device_add(struct efa_dev *dev)
 {
-	struct efa_com_get_network_attr_result network_attr;
 	struct efa_com_get_hw_hints_result hw_hints;
 	struct pci_dev *pdev = dev->pdev;
 #ifdef HAVE_CUSTOM_COMMANDS
@@ -329,12 +320,6 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	err = efa_request_doorbell_bar(dev);
 	if (err)
 		return err;
-
-	err = efa_com_get_network_attr(&dev->edev, &network_attr);
-	if (err)
-		goto err_release_doorbell_bar;
-
-	efa_update_network_attr(dev, &network_attr);
 
 	err = efa_com_get_hw_hints(&dev->edev, &hw_hints);
 	if (err)
@@ -384,7 +369,7 @@ static int efa_ib_device_add(struct efa_dev *dev)
 #endif
 
 #ifndef HAVE_IB_DEVICE_OPS_COMMON
-#ifdef HAVE_UPSTREAM_EFA
+#ifdef HAVE_DRIVER_ID
 	dev->ibdev.driver_id = RDMA_DRIVER_EFA;
 #endif
 	dev->ibdev.uverbs_abi_ver = EFA_UVERBS_ABI_VERSION;
@@ -429,15 +414,15 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	dev->ibdev.req_notify_cq = efa_req_notify_cq;
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+#ifdef HAVE_IB_REGISTER_DEVICE_TWO_PARAMS
+	err = ib_register_device(&dev->ibdev, "efa_%d");
+#elif defined(HAVE_IB_REGISTER_DEVICE_NAME_PARAM)
+	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
+#else
 	strlcpy(dev->ibdev.name, "efa_%d",
 		sizeof(dev->ibdev.name));
 
 	err = ib_register_device(&dev->ibdev, NULL);
-#elif defined(HAVE_IB_REGISTER_DEVICE_TWO_PARAMS)
-	err = ib_register_device(&dev->ibdev, "efa_%d");
-#else
-	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
 #endif
 	if (err)
 		goto err_release_doorbell_bar;
@@ -445,7 +430,11 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	ibdev_info(&dev->ibdev, "IB device registered\n");
 
 #ifdef HAVE_CUSTOM_COMMANDS
-	sscanf(dev_name(&dev->ibdev.dev), "efa_%d\n", &devnum);
+	if (sscanf(dev_name(&dev->ibdev.dev), "efa_%d\n", &devnum) != 1) {
+		err = -EINVAL;
+		goto err_unregister_ibdev;
+	}
+
 	err = efa_everbs_dev_init(dev, devnum);
 	if (err)
 		goto err_unregister_ibdev;
