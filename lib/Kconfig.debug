@@ -1634,6 +1634,8 @@ config DMA_API_DEBUG
 
 	  If unsure, say N.
 
+source "lib/kunit/Kconfig"
+
 menu "Runtime Testing"
 
 config LKDTM
