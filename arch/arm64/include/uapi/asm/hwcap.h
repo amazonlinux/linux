@@ -50,4 +50,5 @@
 #define HWCAP_FLAGM		(1 << 27)
 #define HWCAP_SSBS		(1 << 28)
 
+#define HWCAP2_RNG		(1 << 16)
 #endif /* _UAPI__ASM_HWCAP_H */
