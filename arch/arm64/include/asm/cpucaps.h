@@ -47,7 +47,7 @@
 #define ARM64_SSBS				27
 #define ARM64_WORKAROUND_1418040		28
 #define ARM64_WORKAROUND_1542419		29
+#define ARM64_HAS_RNG				49
 
-#define ARM64_NCAPS				30
-
+#define ARM64_NCAPS				50
 #endif /* __ASM_CPUCAPS_H */
