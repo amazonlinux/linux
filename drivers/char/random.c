@@ -109,8 +109,10 @@ bool rng_is_initialized(void)
 }
 EXPORT_SYMBOL(rng_is_initialized);
 
+#ifdef CONFIG_RANDOM_WAIT_JITTER
 /* Used by wait_for_random_bytes(), and considered an entropy collector, below. */
 static void try_to_generate_entropy(void);
+#endif /* CONFIG_RANDOM_WAIT_JITTER */
 
 /*
  * Wait for the input pool to be seeded and thus guaranteed to supply
@@ -125,12 +127,16 @@ static void try_to_generate_entropy(void);
 int wait_for_random_bytes(void)
 {
 	while (!crng_ready()) {
+#ifdef CONFIG_RANDOM_WAIT_JITTER
 		int ret;
 
 		try_to_generate_entropy();
 		ret = wait_event_interruptible_timeout(crng_init_wait, crng_ready(), HZ);
 		if (ret)
 			return ret > 0 ? 0 : ret;
+#else
+		return wait_event_interruptible(crng_init_wait, crng_ready());
+#endif /* CONFIG_RANDOM_WAIT_JITTER */
 	}
 	return 0;
 }
@@ -1130,6 +1136,7 @@ void __cold rand_initialize_disk(struct gendisk *disk)
 }
 #endif
 
+#ifdef CONFIG_RANDOM_WAIT_JITTER
 /*
  * Each time the timer fires, we expect that we got an unpredictable
  * jump in the cycle counter. Even if the timer is running on another
@@ -1178,7 +1185,7 @@ static void __cold try_to_generate_entropy(void)
 	destroy_timer_on_stack(&stack.timer);
 	mix_pool_bytes(&stack.entropy, sizeof(stack.entropy));
 }
-
+#endif /* CONFIG_RANDOM_WAIT_JITTER */
 
 /**********************************************************************
  *
