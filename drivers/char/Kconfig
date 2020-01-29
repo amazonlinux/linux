@@ -626,3 +626,11 @@ config RANDOM_TRUST_BOOTLOADER
 	  at boot time with "random.trust_bootloader=on/off".
 
 endmenu
+
+config RANDOM_WAIT_JITTER
+        bool "Actively generate jitter entropy if there isn't enough"
+        help
+	This option actively tries to generate jitter entropy when
+	there isn't enough available to satisfy a request for random
+	data. This requires a fast enough cycle counter to work,
+	it's a no-op if the cycle counter isn't fast enough.
