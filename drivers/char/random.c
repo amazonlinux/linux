@@ -1643,6 +1643,7 @@ void get_random_bytes(void *buf, int nbytes)
 }
 EXPORT_SYMBOL(get_random_bytes);
 
+#ifdef CONFIG_RANDOM_WAIT_JITTER
 
 /*
  * Each time the timer fires, we expect that we got an unpredictable
@@ -1692,6 +1693,7 @@ static void try_to_generate_entropy(void)
 	destroy_timer_on_stack(&stack.timer);
 	mix_pool_bytes(&input_pool, &stack.now, sizeof(stack.now));
 }
+#endif
 
 /*
  * Wait for the urandom pool to be seeded and thus guaranteed to supply
@@ -1708,6 +1710,7 @@ int wait_for_random_bytes(void)
 	if (likely(crng_ready()))
 		return 0;
 
+#ifdef CONFIG_RANDOM_WAIT_JITTER
 	do {
 		int ret;
 		ret = wait_event_interruptible_timeout(crng_init_wait, crng_ready(), HZ);
@@ -1718,6 +1721,9 @@ int wait_for_random_bytes(void)
 	} while (!crng_ready());
 
 	return 0;
+#else
+	return wait_event_interruptible(crng_init_wait, crng_ready());
+#endif
 }
 EXPORT_SYMBOL(wait_for_random_bytes);
 
