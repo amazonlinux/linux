@@ -19,6 +19,7 @@ bool dim_on_top(struct dim *dim)
 		return (dim->steps_right > 1) && (dim->steps_left == 1);
 	}
 }
+EXPORT_SYMBOL(dim_on_top);
 
 void dim_turn(struct dim *dim)
 {
@@ -36,6 +37,7 @@ void dim_turn(struct dim *dim)
 		break;
 	}
 }
+EXPORT_SYMBOL(dim_turn);
 
 void dim_park_on_top(struct dim *dim)
 {
@@ -44,6 +46,7 @@ void dim_park_on_top(struct dim *dim)
 	dim->tired        = 0;
 	dim->tune_state   = DIM_PARKING_ON_TOP;
 }
+EXPORT_SYMBOL(dim_park_on_top);
 
 void dim_park_tired(struct dim *dim)
 {
@@ -51,6 +54,7 @@ void dim_park_tired(struct dim *dim)
 	dim->steps_left   = 0;
 	dim->tune_state   = DIM_PARKING_TIRED;
 }
+EXPORT_SYMBOL(dim_park_tired);
 
 void dim_calc_stats(struct dim_sample *start, struct dim_sample *end,
 		    struct dim_stats *curr_stats)
@@ -78,5 +82,6 @@ void dim_calc_stats(struct dim_sample *start, struct dim_sample *end,
 		curr_stats->cpe_ratio = 0;
 
 }
+EXPORT_SYMBOL(dim_calc_stats);
 
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 3, 0) */
