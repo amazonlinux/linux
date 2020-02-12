@@ -137,7 +137,9 @@ static int cfs_do_parallel(struct cfs_ptask_engine *engine,
 	ptask->pt_result = -EINPROGRESS;
 
 retry:
-#ifdef HAVE_PADATA_INTERFACE_54
+#ifdef HAVE_PADATA_INTERFACE_56
+	rc = padata_do_parallel(engine->pte_pshell, padata, &ptask->pt_cbcpu);
+#elif HAVE_PADATA_INTERFACE_54
 	rc = padata_do_parallel(engine->pte_pinst, padata, &ptask->pt_cbcpu);
 #else
 	rc = padata_do_parallel(engine->pte_pinst, padata, ptask->pt_cbcpu);
@@ -400,11 +402,17 @@ static int cfs_ptengine_padata_init(struct cfs_ptask_engine *engine,
 	if (engine->pte_pinst == NULL)
 		GOTO(err_free_par_mask, rc = -ENOMEM);
 
+#ifdef HAVE_PADATA_INTERFACE_56
+	engine->pte_pshell = padata_alloc_shell(engine->pte_pinst);
+	if (engine->pte_pshell == NULL)
+		GOTO(err_free_padata, rc = -ENOMEM);
+#endif
+
 	engine->pte_notifier.notifier_call = cfs_ptask_cpumask_change_notify;
 	rc = padata_register_cpumask_notifier(engine->pte_pinst,
 					      &engine->pte_notifier);
 	if (rc)
-		GOTO(err_free_padata, rc);
+		GOTO(err_free_pashell, rc);
 
 	rc = cfs_ptengine_set_cpumask(engine, par_mask);
 	if (rc)
@@ -423,6 +431,10 @@ static int cfs_ptengine_padata_init(struct cfs_ptask_engine *engine,
 err_unregister:
 	padata_unregister_cpumask_notifier(engine->pte_pinst,
 					   &engine->pte_notifier);
+err_free_pashell:
+#ifdef HAVE_PADATA_INTERFACE_56
+	padata_free_shell(engine->pte_pshell);
+#endif
 err_free_padata:
 	padata_free(engine->pte_pinst);
 err_free_par_mask:
@@ -443,6 +455,9 @@ static void cfs_ptengine_padata_fini(struct cfs_ptask_engine *engine)
 	padata_stop(engine->pte_pinst);
 	padata_unregister_cpumask_notifier(engine->pte_pinst,
 					   &engine->pte_notifier);
+#ifdef HAVE_PADATA_INTERFACE_56
+	padata_free_shell(engine->pte_pshell);
+#endif
 	padata_free(engine->pte_pinst);
 #ifndef HAVE_PADATA_INTERFACE_54
 	destroy_workqueue(engine->pte_wq);
