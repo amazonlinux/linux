@@ -904,6 +904,9 @@
 /* changed padata interface in 5.4 */
 #define HAVE_PADATA_INTERFACE_54
 
+/* changed padata interface in 5.6 (and the 5.4 -stable branch) */
+#define HAVE_PADATA_INTERFACE_56
+
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
 
