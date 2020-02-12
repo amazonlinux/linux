@@ -25,6 +25,9 @@ struct padata_instance {};
 
 struct cfs_ptask_engine {
 	struct padata_instance	*pte_pinst;
+#ifdef HAVE_PADATA_INTERFACE_56
+	struct padata_shell	*pte_pshell;
+#endif
 #ifndef HAVE_PADATA_INTERFACE_54
 	struct workqueue_struct	*pte_wq;
 #endif
