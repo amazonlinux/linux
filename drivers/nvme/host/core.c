@@ -1233,7 +1233,7 @@ static void __nvme_revalidate_disk(struct gendisk *disk, struct nvme_id_ns *id)
 	if (ns->ms && !(ns->ms == 8 && ns->pi_type) && !blk_get_integrity(disk))
 		set_capacity(disk, 0);
 	else
-		set_capacity(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9));
+		set_capacity_revalidate_and_notify(disk, le64_to_cpup(&id->nsze) << (ns->lba_shift - 9), false);
 
 	if (ctrl->oncs & NVME_CTRL_ONCS_DSM)
 		nvme_config_discard(ns);
