@@ -364,9 +364,10 @@ static inline u32 ethtool_rxfh_indir_default(u32 index, u32 n_rx_rings)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V3
 #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)) || \
-      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)))|| \
-      (SUSE_VERSION && ((SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
-      (SUSE_VERSION > 15)))
+      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0))) || \
+      (SUSE_VERSION && ((SUSE_VERSION == 12 && SUSE_PATCHLEVEL >= 5) || \
+		        (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
+			(SUSE_VERSION > 15)))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V2
 #else
 
@@ -659,6 +660,15 @@ do {									\
 #define MMIOWB_NOT_DEFINED
 #endif
 
+/* In the driver we currently only support CRC32 and Toeplitz.
+ * Since in kernel erlier than 4.12 the CRC32 define didn't exist
+ * We define it here to be XOR. Any user who wishes to select CRC32
+ * as the hash function, can do so by choosing xor through ethtool.
+ */
+#ifndef ETH_RSS_HASH_CRC32
+#define ETH_RSS_HASH_CRC32 ETH_RSS_HASH_XOR
+#endif
+
 #ifndef _ULL
 #define _ULL(x) (_AC(x, ULL))
 #endif
@@ -680,4 +690,13 @@ do {									\
 	({ unsigned long long _tmp = (ll); do_div(_tmp, d); _tmp; })
 #endif
 
+/* values are taken from here: https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md */
+
+#if defined(CONFIG_BPF) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+#define ENA_XDP_SUPPORT
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
+#define HAVE_NDO_TX_TIMEOUT_STUCK_QUEUE_PARAMETER
+#endif
 #endif /* _KCOMPAT_H_ */
