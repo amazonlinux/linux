@@ -1,4 +1,3 @@
-/* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
  * Copyright 2015 - 2018 Amazon.com, Inc. or its affiliates.
  *
@@ -46,4 +45,4 @@ struct ena_common_mem_addr {
 	u16 reserved16;
 };
 
-#endif /*_ENA_COMMON_H_ */
+#endif /* _ENA_COMMON_H_ */
