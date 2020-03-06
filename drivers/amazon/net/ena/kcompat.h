@@ -158,6 +158,9 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #define SLE_VERSION(a,b,c) KERNEL_VERSION(a,b,c)
 #endif
 #ifdef CONFIG_SUSE_KERNEL
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 12, 14)
+#include <linux/suse_version.h>
+#endif
 #if ( LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,28) )
 /* SLES12 is at least 3.12.28+ based */
 #define SLE_VERSION_CODE SLE_VERSION(12,0,0)
@@ -166,6 +169,9 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #ifndef SLE_VERSION_CODE
 #define SLE_VERSION_CODE 0
 #endif /* SLE_VERSION_CODE */
+#ifndef SUSE_VERSION
+#define SUSE_VERSION 0
+#endif /* SUSE_VERSION */
 
 
 /******************************************************************************/
@@ -208,9 +214,17 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #define HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
 #endif /* RHEL >= 6.4 && RHEL < 7.0 */
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,10,0) || \
+	(SLE_VERSION_CODE && \
+	 LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,48)))
+#define HAVE_MTU_MIN_MAX_IN_NET_DEVICE
+#endif
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(4,11,0) || \
-	 (RHEL_RELEASE_CODE && \
-      RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,5)))
+     (RHEL_RELEASE_CODE && \
+      RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,5)) || \
+     (SLE_VERSION_CODE && \
+      LINUX_VERSION_CODE >= KERNEL_VERSION(4,4,50)))
 #define NDO_GET_STATS_64_V2
 #endif
 
@@ -347,7 +361,13 @@ static inline u32 ethtool_rxfh_indir_default(u32 index, u32 n_rx_rings)
 #endif
 #endif /* >= 3.8.0 */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0))
+#define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V3
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)) || \
+      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0))) || \
+      (SUSE_VERSION && ((SUSE_VERSION == 12 && SUSE_PATCHLEVEL >= 5) || \
+		        (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
+			(SUSE_VERSION > 15)))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V2
 #else
 
@@ -601,8 +621,82 @@ static inline void __iomem *devm_ioremap_wc(struct device *dev,
 #endif
 
 #if RHEL_RELEASE_CODE && \
-    RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,5)
+    RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 5) && \
+    LINUX_VERSION_CODE < KERNEL_VERSION(4, 14, 0)
 #define ndo_change_mtu ndo_change_mtu_rh74
 #endif
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0))
+#ifndef dma_zalloc_coherent
+#define dma_zalloc_coherent(d, s, h, f) dma_alloc_coherent(d, s, h, f)
+#endif
+#endif
+
+#ifndef dev_info_once
+#ifdef CONFIG_PRINTK
+#define dev_info_once(dev, fmt, ...)			\
+do {									\
+	static bool __print_once __read_mostly;				\
+									\
+	if (!__print_once) {						\
+		__print_once = true;					\
+		dev_info(dev, fmt, ##__VA_ARGS__);			\
+	}								\
+} while (0)
+#else
+#define dev_info_once(dev, fmt, ...)			\
+do {									\
+	if (0)								\
+		dev_info(dev, fmt, ##__VA_ARGS__);			\
+} while (0)
+#endif
+#endif
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
+#define netdev_xmit_more() ((skb->xmit_more))
+#endif
+
+#ifndef mmiowb
+#define MMIOWB_NOT_DEFINED
+#endif
+
+/* In the driver we currently only support CRC32 and Toeplitz.
+ * Since in kernel erlier than 4.12 the CRC32 define didn't exist
+ * We define it here to be XOR. Any user who wishes to select CRC32
+ * as the hash function, can do so by choosing xor through ethtool.
+ */
+#ifndef ETH_RSS_HASH_CRC32
+#define ETH_RSS_HASH_CRC32 ETH_RSS_HASH_XOR
+#endif
+
+#ifndef _ULL
+#define _ULL(x) (_AC(x, ULL))
+#endif
+
+#ifndef ULL
+#define ULL(x) (_ULL(x))
+#endif
+
+#ifndef BIT_ULL
+#define BIT_ULL(nr) (ULL(1) << (nr))
+#endif
+
+#ifndef BITS_PER_TYPE
+#define BITS_PER_TYPE(type) (sizeof(type) * BITS_PER_BYTE)
+#endif
+
+#ifndef DIV_ROUND_DOWN_ULL
+#define DIV_ROUND_DOWN_ULL(ll, d) \
+	({ unsigned long long _tmp = (ll); do_div(_tmp, d); _tmp; })
+#endif
+
+/* values are taken from here: https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md */
+
+#if defined(CONFIG_BPF) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+#define ENA_XDP_SUPPORT
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,5,0)
+#define HAVE_NDO_TX_TIMEOUT_STUCK_QUEUE_PARAMETER
+#endif
 #endif /* _KCOMPAT_H_ */
