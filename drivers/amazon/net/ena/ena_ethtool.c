@@ -66,6 +66,8 @@ static const struct ena_stats ena_stats_global_strings[] = {
 	ENA_STAT_GLOBAL_ENTRY(interface_up),
 	ENA_STAT_GLOBAL_ENTRY(interface_down),
 	ENA_STAT_GLOBAL_ENTRY(admin_q_pause),
+	ENA_STAT_GLOBAL_ENTRY(rx_drops),
+	ENA_STAT_GLOBAL_ENTRY(tx_drops),
 };
 
 static const struct ena_stats ena_stats_tx_strings[] = {
@@ -83,18 +85,20 @@ static const struct ena_stats ena_stats_tx_strings[] = {
 	ENA_STAT_TX_ENTRY(bad_req_id),
 	ENA_STAT_TX_ENTRY(llq_buffer_copy),
 	ENA_STAT_TX_ENTRY(missed_tx),
+	ENA_STAT_TX_ENTRY(unmask_interrupt),
 };
 
 static const struct ena_stats ena_stats_rx_strings[] = {
 	ENA_STAT_RX_ENTRY(cnt),
 	ENA_STAT_RX_ENTRY(bytes),
+	ENA_STAT_RX_ENTRY(rx_copybreak_pkt),
+	ENA_STAT_RX_ENTRY(csum_good),
 	ENA_STAT_RX_ENTRY(refil_partial),
 	ENA_STAT_RX_ENTRY(bad_csum),
 	ENA_STAT_RX_ENTRY(page_alloc_fail),
 	ENA_STAT_RX_ENTRY(skb_alloc_fail),
 	ENA_STAT_RX_ENTRY(dma_mapping_err),
 	ENA_STAT_RX_ENTRY(bad_desc_num),
-	ENA_STAT_RX_ENTRY(rx_copybreak_pkt),
 #if ENA_BUSY_POLL_SUPPORT
 	ENA_STAT_RX_ENTRY(bp_yield),
 	ENA_STAT_RX_ENTRY(bp_missed),
@@ -137,7 +141,7 @@ static void ena_queue_stats(struct ena_adapter *adapter, u64 **data)
 	u64 *ptr;
 	int i, j;
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues; i++) {
 		/* Tx stats */
 		ring = &adapter->tx_ring[i];
 
@@ -202,24 +206,15 @@ static void ena_get_ethtool_stats(struct net_device *netdev,
 	ena_dev_admin_queue_stats(adapter, &data);
 }
 
-static int get_stats_sset_count(struct ena_adapter *adapter)
-{
-	return  adapter->num_queues * (ENA_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX)
-		+ ENA_STATS_ARRAY_GLOBAL + ENA_STATS_ARRAY_ENA_COM;
-}
-
 int ena_get_sset_count(struct net_device *netdev, int sset)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
-	switch (sset) {
-	case ETH_SS_STATS:
-		return get_stats_sset_count(adapter);
-	case ETH_SS_PRIV_FLAGS:
-		return adapter->ena_extra_properties_count;
-	default:
+	if (sset != ETH_SS_STATS)
 		return -EOPNOTSUPP;
-	}
+
+	return adapter->num_io_queues * (ENA_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX)
+	       + ENA_STATS_ARRAY_GLOBAL + ENA_STATS_ARRAY_ENA_COM;
 }
 
 static void ena_queue_strings(struct ena_adapter *adapter, u8 **data)
@@ -227,7 +222,7 @@ static void ena_queue_strings(struct ena_adapter *adapter, u8 **data)
 	const struct ena_stats *ena_stats;
 	int i, j;
 
-	for (i = 0; i < adapter->num_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues; i++) {
 		/* Tx stats */
 		for (j = 0; j < ENA_STATS_ARRAY_TX; j++) {
 			ena_stats = &ena_stats_tx_strings[j];
@@ -261,54 +256,23 @@ static void ena_com_dev_strings(u8 **data)
 	}
 }
 
-static void get_stats_strings(struct ena_adapter *adapter, u8 *data)
+static void ena_get_strings(struct net_device *netdev, u32 sset, u8 *data)
 {
+	struct ena_adapter *adapter = netdev_priv(netdev);
 	const struct ena_stats *ena_stats;
 	int i;
+
+	if (sset != ETH_SS_STATS)
+		return;
 
 	for (i = 0; i < ENA_STATS_ARRAY_GLOBAL; i++) {
 		ena_stats = &ena_stats_global_strings[i];
 		memcpy(data, ena_stats->name, ETH_GSTRING_LEN);
 		data += ETH_GSTRING_LEN;
 	}
+
 	ena_queue_strings(adapter, &data);
 	ena_com_dev_strings(&data);
-}
-
-static void get_private_flags_strings(struct ena_adapter *adapter, u8 *data)
-{
-	struct ena_com_dev *ena_dev = adapter->ena_dev;
-	u8 *strings = ena_dev->extra_properties_strings.virt_addr;
-	int i;
-
-	if (unlikely(!strings)) {
-		adapter->ena_extra_properties_count = 0;
-		netif_err(adapter, drv, adapter->netdev,
-			  "Failed to allocate extra properties strings\n");
-		return;
-	}
-
-	for (i = 0; i < adapter->ena_extra_properties_count; i++) {
-		snprintf(data, ETH_GSTRING_LEN, "%s",
-			 strings + ENA_ADMIN_EXTRA_PROPERTIES_STRING_LEN * i);
-		data += ETH_GSTRING_LEN;
-	}
-}
-
-static void ena_get_strings(struct net_device *netdev, u32 sset, u8 *data)
-{
-	struct ena_adapter *adapter = netdev_priv(netdev);
-
-	switch (sset) {
-	case ETH_SS_STATS:
-		get_stats_strings(adapter, data);
-		break;
-	case ETH_SS_PRIV_FLAGS:
-		get_private_flags_strings(adapter, data);
-		break;
-	default:
-		break;
-	}
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
@@ -382,33 +346,43 @@ static int ena_get_coalesce(struct net_device *net_dev,
 	struct ena_adapter *adapter = netdev_priv(net_dev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 
-	if (!ena_com_interrupt_moderation_supported(ena_dev)) {
-		/* the devie doesn't support interrupt moderation */
+	if (!ena_com_interrupt_moderation_supported(ena_dev))
 		return -EOPNOTSUPP;
-	}
+
 	coalesce->tx_coalesce_usecs =
-		ena_com_get_nonadaptive_moderation_interval_tx(ena_dev) /
+		ena_com_get_nonadaptive_moderation_interval_tx(ena_dev) *
 			ena_dev->intr_delay_resolution;
-	if (!ena_com_get_adaptive_moderation_enabled(ena_dev)) {
-		coalesce->rx_coalesce_usecs =
-			ena_com_get_nonadaptive_moderation_interval_rx(ena_dev)
-			/ ena_dev->intr_delay_resolution;
-	}
+
+	coalesce->rx_coalesce_usecs =
+		ena_com_get_nonadaptive_moderation_interval_rx(ena_dev)
+		* ena_dev->intr_delay_resolution;
+
 	coalesce->use_adaptive_rx_coalesce =
 		ena_com_get_adaptive_moderation_enabled(ena_dev);
 
 	return 0;
 }
 
-static void ena_update_tx_rings_intr_moderation(struct ena_adapter *adapter)
+static void ena_update_tx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
 {
 	unsigned int val;
 	int i;
 
 	val = ena_com_get_nonadaptive_moderation_interval_tx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_queues; i++)
+	for (i = 0; i < adapter->num_io_queues; i++)
 		adapter->tx_ring[i].smoothed_interval = val;
+}
+
+static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
+{
+	unsigned int val;
+	int i;
+
+	val = ena_com_get_nonadaptive_moderation_interval_rx(adapter->ena_dev);
+
+	for (i = 0; i < adapter->num_io_queues; i++)
+		adapter->rx_ring[i].smoothed_interval = val;
 }
 
 static int ena_set_coalesce(struct net_device *net_dev,
@@ -418,63 +392,30 @@ static int ena_set_coalesce(struct net_device *net_dev,
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int rc;
 
-	if (!ena_com_interrupt_moderation_supported(ena_dev)) {
-		/* the devie doesn't support interrupt moderation */
+	if (!ena_com_interrupt_moderation_supported(ena_dev))
 		return -EOPNOTSUPP;
-	}
 
-	if (coalesce->rx_coalesce_usecs_irq ||
-	    coalesce->rx_max_coalesced_frames_irq ||
-	    coalesce->tx_coalesce_usecs_irq ||
-	    coalesce->tx_max_coalesced_frames ||
-	    coalesce->tx_max_coalesced_frames_irq ||
-	    coalesce->stats_block_coalesce_usecs ||
-	    coalesce->use_adaptive_tx_coalesce ||
-	    coalesce->pkt_rate_low ||
-	    coalesce->tx_coalesce_usecs_low ||
-	    coalesce->tx_max_coalesced_frames_low ||
-	    coalesce->pkt_rate_high ||
-	    coalesce->tx_coalesce_usecs_high ||
-	    coalesce->tx_max_coalesced_frames_high ||
-	    coalesce->rate_sample_interval)
-		return -EINVAL;
-
-	/* Note, adaptive coalescing settings are updated through sysfs */
-	if (coalesce->rx_max_coalesced_frames ||
-	    coalesce->rx_coalesce_usecs_low ||
-	    coalesce->rx_max_coalesced_frames_low ||
-	    coalesce->rx_coalesce_usecs_high ||
-	    coalesce->rx_max_coalesced_frames_high)
-		return -EINVAL;
 	rc = ena_com_update_nonadaptive_moderation_interval_tx(ena_dev,
 							       coalesce->tx_coalesce_usecs);
 	if (rc)
 		return rc;
 
-	ena_update_tx_rings_intr_moderation(adapter);
+	ena_update_tx_rings_nonadaptive_intr_moderation(adapter);
 
-	if (ena_com_get_adaptive_moderation_enabled(ena_dev)) {
-		if (!coalesce->use_adaptive_rx_coalesce) {
-			ena_com_disable_adaptive_moderation(ena_dev);
-			rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
-									       coalesce->rx_coalesce_usecs);
-			return rc;
-		} else {
-			/* was in adaptive mode and remains in it,
-			 * allow to update only tx_usecs, rx is managed through sysfs
-			 */
-			if (coalesce->rx_coalesce_usecs)
-				return -EINVAL;
-		}
-	} else { /* was in non-adaptive mode */
-		if (coalesce->use_adaptive_rx_coalesce) {
-			ena_com_enable_adaptive_moderation(ena_dev);
-		} else {
-			rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
-									       coalesce->rx_coalesce_usecs);
-			return rc;
-		}
-	}
+	rc = ena_com_update_nonadaptive_moderation_interval_rx(ena_dev,
+							       coalesce->rx_coalesce_usecs);
+	if (rc)
+		return rc;
+
+	ena_update_rx_rings_nonadaptive_intr_moderation(adapter);
+
+	if (coalesce->use_adaptive_rx_coalesce &&
+	    !ena_com_get_adaptive_moderation_enabled(ena_dev))
+		ena_com_enable_adaptive_moderation(ena_dev);
+
+	if (!coalesce->use_adaptive_rx_coalesce &&
+	    ena_com_get_adaptive_moderation_enabled(ena_dev))
+		ena_com_disable_adaptive_moderation(ena_dev);
 
 	return 0;
 }
@@ -502,20 +443,41 @@ static void ena_get_drvinfo(struct net_device *dev,
 	strlcpy(info->version, DRV_MODULE_VERSION, sizeof(info->version));
 	strlcpy(info->bus_info, pci_name(adapter->pdev),
 		sizeof(info->bus_info));
-	info->n_priv_flags = adapter->ena_extra_properties_count;
 }
 
 static void ena_get_ringparam(struct net_device *netdev,
 			      struct ethtool_ringparam *ring)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
-	struct ena_ring *tx_ring = &adapter->tx_ring[0];
-	struct ena_ring *rx_ring = &adapter->rx_ring[0];
 
-	ring->rx_max_pending = rx_ring->ring_size;
-	ring->tx_max_pending = tx_ring->ring_size;
-	ring->rx_pending = rx_ring->ring_size;
-	ring->tx_pending = tx_ring->ring_size;
+	ring->tx_max_pending = adapter->max_tx_ring_size;
+	ring->rx_max_pending = adapter->max_rx_ring_size;
+	ring->tx_pending = adapter->tx_ring[0].ring_size;
+	ring->rx_pending = adapter->rx_ring[0].ring_size;
+}
+
+static int ena_set_ringparam(struct net_device *netdev,
+			     struct ethtool_ringparam *ring)
+{
+	struct ena_adapter *adapter = netdev_priv(netdev);
+	u32 new_tx_size, new_rx_size;
+
+	if (ring->rx_mini_pending || ring->rx_jumbo_pending)
+		return -EINVAL;
+
+	new_tx_size = clamp_val(ring->tx_pending, ENA_MIN_RING_SIZE,
+				adapter->max_tx_ring_size);
+	new_tx_size = rounddown_pow_of_two(new_tx_size);
+
+	new_rx_size = clamp_val(ring->rx_pending, ENA_MIN_RING_SIZE,
+				adapter->max_rx_ring_size);
+	new_rx_size = rounddown_pow_of_two(new_rx_size);
+
+	if (new_tx_size == adapter->requested_tx_ring_size &&
+	    new_rx_size == adapter->requested_rx_ring_size)
+		return 0;
+
+	return ena_update_queue_sizes(adapter, new_tx_size, new_rx_size);
 }
 
 #ifdef ETHTOOL_GRXRINGS
@@ -691,7 +653,7 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 
 	switch (info->cmd) {
 	case ETHTOOL_GRXRINGS:
-		info->data = adapter->num_queues;
+		info->data = adapter->num_io_queues;
 		rc = 0;
 		break;
 	case ETHTOOL_GRXFH:
@@ -723,21 +685,74 @@ static u32 ena_get_rxfh_key_size(struct net_device *netdev)
 }
 #endif
 
+
+static int ena_indirection_table_set(struct ena_adapter *adapter,
+				     const u32 *indir)
+{
+	struct ena_com_dev *ena_dev = adapter->ena_dev;
+	int i, rc;
+
+	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++) {
+		rc = ena_com_indirect_table_fill_entry(ena_dev,
+						       i,
+						       ENA_IO_RXQ_IDX(indir[i]));
+		if (unlikely(rc)) {
+			netif_err(adapter, drv, adapter->netdev,
+				  "Cannot fill indirect table (index is too large)\n");
+			return rc;
+		}
+	}
+
+	rc = ena_com_indirect_table_set(ena_dev);
+	if (rc) {
+		netif_err(adapter, drv, adapter->netdev,
+			  "Cannot set indirect table\n");
+		return rc == -EPERM ? -EOPNOTSUPP : rc;
+	}
+	return rc;
+}
+
+static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
+{
+	struct ena_com_dev *ena_dev = adapter->ena_dev;
+	int i, rc;
+
+	if (!indir)
+		return 0;
+
+	rc = ena_com_indirect_table_get(ena_dev, indir);
+	if (rc)
+		return rc;
+
+	/* Our internal representation of the indices is: even indices
+	 * for Tx and uneven indices for Rx. We need to convert the Rx
+	 * indices to be consecutive
+	 */
+	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++)
+		indir[i] = ENA_IO_RXQ_IDX_TO_COMBINED_IDX(indir[i]);
+
+	return rc;
+}
+
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 			u8 *hfunc)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
-	enum ena_admin_hash_functions ena_func;
+	enum ena_admin_hash_functions ena_func = ENA_ADMIN_TOEPLITZ;
 	u8 func;
 	int rc;
 
-	rc = ena_com_indirect_table_get(adapter->ena_dev, indir);
+	rc = ena_indirection_table_get(adapter, indir);
 	if (rc)
 		return rc;
 
-	rc = ena_com_get_hash_function(adapter->ena_dev, &ena_func, key);
+	rc = ena_com_get_hash_key(adapter->ena_dev, key);
 	if (rc)
+		return rc;
+
+	rc = ena_com_get_hash_function(adapter->ena_dev, &ena_func);
+	if (rc && rc != -EOPNOTSUPP)
 		return rc;
 
 	switch (ena_func) {
@@ -745,7 +760,7 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 		func = ETH_RSS_HASH_TOP;
 		break;
 	case ENA_ADMIN_CRC32:
-		func = ETH_RSS_HASH_XOR;
+		func = ETH_RSS_HASH_CRC32;
 		break;
 	default:
 		netif_err(adapter, drv, netdev,
@@ -756,7 +771,7 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 	if (hfunc)
 		*hfunc = func;
 
-	return rc;
+	return 0;
 }
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
 static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
@@ -764,14 +779,13 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	int rc;
 
-	rc = ena_com_indirect_table_get(adapter->ena_dev, indir);
+	rc = ena_indirection_table_get(adapter, indir);
 	if (rc)
 		return rc;
 
-	rc = ena_com_get_hash_function(adapter->ena_dev, NULL, key);
-	if (rc) {
+	rc = ena_com_get_hash_key(adapter->ena_dev, key);
+	if (rc)
 		return rc;
-	}
 
 	return rc;
 }
@@ -780,7 +794,7 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
-	return ena_com_indirect_table_get(adapter->ena_dev, indir);
+	return ena_indirection_table_get(adapter, indir);
 }
 #endif /* >= 3.8.0 */
 
@@ -795,35 +809,24 @@ static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
-	enum ena_admin_hash_functions func;
-	int rc, i;
+	enum ena_admin_hash_functions func = 0;
+	int rc;
 
 	if (indir) {
-		for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++) {
-			rc = ena_com_indirect_table_fill_entry(ena_dev,
-							       ENA_IO_RXQ_IDX(indir[i]),
-							       i);
-			if (unlikely(rc)) {
-				netif_err(adapter, drv, netdev,
-					  "Cannot fill indirect table (index is too large)\n");
-				return rc;
-			}
-		}
-
-		rc = ena_com_indirect_table_set(ena_dev);
-		if (rc) {
-			netif_err(adapter, drv, netdev,
-				  "Cannot set indirect table\n");
-			return rc == -EPERM ? -EOPNOTSUPP : rc;
-		}
+		rc = ena_indirection_table_set(adapter, indir);
+		if (rc)
+			return rc;
 	}
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 	switch (hfunc) {
+	case ETH_RSS_HASH_NO_CHANGE:
+		func = ena_com_get_current_hash_function(ena_dev);
+		break;
 	case ETH_RSS_HASH_TOP:
 		func = ENA_ADMIN_TOEPLITZ;
 		break;
-	case ETH_RSS_HASH_XOR:
+	case ETH_RSS_HASH_CRC32:
 		func = ENA_ADMIN_CRC32;
 		break;
 	default:
@@ -835,7 +838,7 @@ static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
 	func = ENA_ADMIN_TOEPLITZ;
 #endif
 
-	if (key) {
+	if (key || func) {
 		rc = ena_com_fill_hash_function(ena_dev, func, key,
 						ENA_HASH_KEY_SIZE,
 						0xFFFFFFFF);
@@ -851,30 +854,14 @@ static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
 static int ena_set_rxfh(struct net_device *netdev, const u32 *indir)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
-	struct ena_com_dev *ena_dev = adapter->ena_dev;
-	int rc, i;
+	int rc = 0;
 
-	if (!indir)
-		return 0;
-	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++) {
-		rc = ena_com_indirect_table_fill_entry(ena_dev, i,
-						       ENA_IO_RXQ_IDX(indir[i]));
-		if (unlikely(rc)) {
-			netif_err(adapter, drv, netdev,
-				  "Cannot fill indirect table (index is too large)\n");
-			return rc;
-		}
-	}
+	if (indir)
+		rc = ena_indirection_table_set(adapter, indir);
 
-	rc = ena_com_indirect_table_set(ena_dev);
-	if (unlikely(rc)) {
-		netif_err(adapter, drv, netdev, "Cannot set indirect table\n");
-		return rc == -EPERM ? -EOPNOTSUPP : rc;
-	}
-
-	return 0;
+	return rc;
 }
-#endif /* Kernel > 3.16 */
+#endif /* Kernel >= 3.8 */
 #endif /* ETHTOOL_GRXFH */
 #ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
 
@@ -884,14 +871,29 @@ static void ena_get_channels(struct net_device *netdev,
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
-	channels->max_rx = adapter->num_queues;
-	channels->max_tx = adapter->num_queues;
-	channels->max_other = 0;
-	channels->max_combined = 0;
-	channels->rx_count = adapter->num_queues;
-	channels->tx_count = adapter->num_queues;
-	channels->other_count = 0;
-	channels->combined_count = 0;
+	channels->max_combined = adapter->max_num_io_queues;
+	channels->combined_count = adapter->num_io_queues;
+}
+
+static int ena_set_channels(struct net_device *netdev,
+			    struct ethtool_channels *channels)
+{
+	struct ena_adapter *adapter = netdev_priv(netdev);
+	u32 count = channels->combined_count;
+	/* The check for max value is already done in ethtool */
+#ifdef ENA_XDP_SUPPORT
+	if (count < ENA_MIN_NUM_IO_QUEUES ||
+	    (ena_xdp_present(adapter) &&
+	    !ena_xdp_legal_queue_count(adapter, channels->combined_count)))
+#else
+	if (count < ENA_MIN_NUM_IO_QUEUES)
+#endif /* ENA_XDP_SUPPORT */
+		return -EINVAL;
+	if (count > adapter->max_num_io_queues)
+		return -EINVAL;
+
+
+	return ena_update_queue_count(adapter, count);
 }
 #endif /* ETHTOOL_SCHANNELS */
 
@@ -941,20 +943,6 @@ static int ena_set_tunable(struct net_device *netdev,
 }
 #endif /* 3.18.0 */
 
-static u32 ena_get_priv_flags(struct net_device *netdev)
-{
-	struct ena_adapter *adapter = netdev_priv(netdev);
-	struct ena_com_dev *ena_dev = adapter->ena_dev;
-	struct ena_admin_get_feat_resp get_resp;
-	u32 rc;
-
-	rc = ena_com_get_extra_properties_flags(ena_dev, &get_resp);
-	if (!rc)
-		return get_resp.u.extra_properties_flags.flags;
-
-	return 0;
-}
-
 static const struct ethtool_ops ena_ethtool_ops = {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 6, 0)
 	.get_link_ksettings	= ena_get_link_ksettings,
@@ -968,6 +956,7 @@ static const struct ethtool_ops ena_ethtool_ops = {
 	.get_coalesce		= ena_get_coalesce,
 	.set_coalesce		= ena_set_coalesce,
 	.get_ringparam		= ena_get_ringparam,
+	.set_ringparam		= ena_set_ringparam,
 	.get_sset_count         = ena_get_sset_count,
 	.get_strings		= ena_get_strings,
 	.get_ethtool_stats      = ena_get_ethtool_stats,
@@ -989,13 +978,16 @@ static const struct ethtool_ops ena_ethtool_ops = {
 #ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
 #ifdef ETHTOOL_SCHANNELS
 	.get_channels		= ena_get_channels,
+	.set_channels		= ena_set_channels,
 #endif /* ETHTOOL_SCHANNELS */
 #endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0)
 	.get_tunable		= ena_get_tunable,
 	.set_tunable		= ena_set_tunable,
 #endif
-	.get_priv_flags		= ena_get_priv_flags,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
+	.get_ts_info            = ethtool_op_get_ts_info,
+#endif
 };
 
 void ena_set_ethtool_ops(struct net_device *netdev)
