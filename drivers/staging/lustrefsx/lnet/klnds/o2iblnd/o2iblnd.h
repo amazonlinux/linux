@@ -43,7 +43,6 @@
 
 #endif
 
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
@@ -65,9 +64,6 @@
 #include <linux/kmod.h>
 #include <linux/sysctl.h>
 #include <linux/pci.h>
-#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,32)
-#include <linux/pci-dma.h>
-#endif
 
 #include <net/sock.h>
 #include <linux/in.h>
@@ -125,15 +121,16 @@ extern kib_tunables_t  kiblnd_tunables;
 					t->lnd_peercredits_hiw)
 
 #ifdef HAVE_RDMA_CREATE_ID_5ARG
-# define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(current->nsproxy->net_ns, \
-								cb, dev, \
-								ps, qpt)
+# define kiblnd_rdma_create_id(ns, cb, dev, ps, qpt) rdma_create_id(ns, cb, \
+								    dev, ps, \
+								    qpt)
 #else
 # ifdef HAVE_RDMA_CREATE_ID_4ARG
-#  define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(cb, dev, \
-								 ps, qpt)
+#  define kiblnd_rdma_create_id(ns, cb, dev, ps, qpt) rdma_create_id(cb, dev, \
+								     ps, qpt)
 # else
-#  define kiblnd_rdma_create_id(cb, dev, ps, qpt) rdma_create_id(cb, dev, ps)
+#  define kiblnd_rdma_create_id(ns, cb, dev, ps, qpt) rdma_create_id(cb, dev, \
+								     ps)
 # endif
 #endif
 
@@ -161,10 +158,9 @@ extern kib_tunables_t  kiblnd_tunables;
 
 /* WRs and CQEs (per connection) */
 #define IBLND_RECV_WRS(c)            IBLND_RX_MSGS(c)
-#define IBLND_SEND_WRS(c)	\
-	((c->ibc_max_frags + 1) * kiblnd_concurrent_sends(c->ibc_version, \
-							  c->ibc_peer->ibp_ni))
-#define IBLND_CQ_ENTRIES(c)         (IBLND_RECV_WRS(c) + IBLND_SEND_WRS(c))
+
+/* 2 = LNet msg + Transfer chain */
+#define IBLND_CQ_ENTRIES(c)	(IBLND_RECV_WRS(c) + kiblnd_send_wrs(c))
 
 struct kib_hca_dev;
 
@@ -578,7 +574,7 @@ typedef struct kib_rx                           /* receive message */
 	/* message buffer (I/O addr) */
 	__u64			rx_msgaddr;
 	/* for dma_unmap_single() */
-	DECLARE_PCI_UNMAP_ADDR(rx_msgunmap);
+	DEFINE_DMA_UNMAP_ADDR(rx_msgunmap);
 	/* receive work item... */
 	struct ib_recv_wr	rx_wrq;
 	/* ...and its memory */
@@ -617,7 +613,7 @@ typedef struct kib_tx                           /* transmit message */
 	/* message buffer (I/O addr) */
 	__u64			tx_msgaddr;
 	/* for dma_unmap_single() */
-	DECLARE_PCI_UNMAP_ADDR(tx_msgunmap);
+	DEFINE_DMA_UNMAP_ADDR(tx_msgunmap);
 	/** sge for tx_msgaddr */
 	struct ib_sge		tx_msgsge;
 	/* # send work items */
@@ -1204,7 +1200,7 @@ int  kiblnd_cm_callback(struct rdma_cm_id *cmid,
                         struct rdma_cm_event *event);
 int  kiblnd_translate_mtu(int value);
 
-int  kiblnd_dev_failover(kib_dev_t *dev);
+int  kiblnd_dev_failover(kib_dev_t *dev, struct net *ns);
 int kiblnd_create_peer(struct lnet_ni *ni, kib_peer_ni_t **peerp,
 		       lnet_nid_t nid);
 void kiblnd_destroy_peer (kib_peer_ni_t *peer);
