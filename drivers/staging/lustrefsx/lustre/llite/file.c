@@ -1300,11 +1300,13 @@ restart:
 				pos += io->ci_nob;
 
 			args->u.normal.via_iocb->ki_pos = pos;
+			if (io->ci_pio) {
 #ifdef HAVE_KIOCB_KI_LEFT
-			args->u.normal.via_iocb->ki_left = count;
+				args->u.normal.via_iocb->ki_left = count;
 #elif defined(HAVE_KI_NBYTES)
-			args->u.normal.via_iocb->ki_nbytes = count;
+				args->u.normal.via_iocb->ki_nbytes = count;
 #endif
+			}
 		} else {
 			/* for splice */
 			pos = io->u.ci_rw.rw_range.cir_pos;
