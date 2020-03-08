@@ -323,6 +323,9 @@
 /* get_user_pages takes gup_flags in arguments */
 #undef HAVE_GET_USER_PAGES_GUP_FLAGS
 
+/* get_user_pages takes gup_flags in arguments with 7 args */
+#undef HAVE_GET_USER_PAGES_GUP_FLAGS_7ARGS
+
 /* struct group_info has member gid */
 #undef HAVE_GROUP_INFO_GID
 
@@ -370,6 +373,9 @@
 
 /* ib_map_mr_sg has 5 arguments */
 #undef HAVE_IB_MAP_MR_SG_5ARGS
+
+/* ib_post_send and ib_post_recv have const parameters */
+#undef HAVE_IB_POST_SEND_RECV_CONST
 
 /* struct ib_rdma_wr is defined */
 #undef HAVE_IB_RDMA_WR
@@ -794,6 +800,9 @@
 /* tcp_sendpage use socket as first parameter */
 #undef HAVE_TCP_SENDPAGE_USE_SOCKET
 
+/* timer_setup has replaced setup_timer */
+#undef HAVE_TIMER_SETUP
+
 /* 'struct timespec64' is available */
 #undef HAVE_TIMESPEC64
 
@@ -844,6 +853,9 @@
 
 /* needs inode parameter */
 #undef HAVE_XATTR_HANDLER_INODE_PARAM
+
+/* xattr_handler has a name member */
+#undef HAVE_XATTR_HANDLER_NAME
 
 /* handler pointer is parameter */
 #undef HAVE_XATTR_HANDLER_SIMPLIFIED

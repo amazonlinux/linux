@@ -297,7 +297,7 @@ struct ldlm_valblock_ops {
 	/* Return size of lvb data appropriate RPC size can be reserved */
 	int (*lvbo_size)(struct ldlm_lock *lock);
 	/* Called to fill in lvb data to RPC buffer @buf */
-	int (*lvbo_fill)(struct ldlm_lock *lock, void *buf, int buflen);
+	int (*lvbo_fill)(struct ldlm_lock *lock, void *buf, int *buflen);
 };
 
 /**
@@ -416,6 +416,7 @@ struct ldlm_namespace {
 	struct list_head	ns_unused_list;
 	/** Number of locks in the LRU list above */
 	int			ns_nr_unused;
+	struct list_head	*ns_last_pos;
 
 	/**
 	 * Maximum number of locks permitted in the LRU. If 0, means locks
@@ -815,12 +816,6 @@ struct ldlm_lock {
 	wait_queue_head_t	l_waitq;
 
 	/**
-	 * Seconds. It will be updated if there is any activity related to
-	 * the lock, e.g. enqueue the lock or send blocking AST.
-	 */
-	time64_t		l_last_activity;
-
-	/**
 	 * Time, in nanoseconds, last used by e.g. being matched by lock match.
 	 */
 	ktime_t			l_last_used;
@@ -843,6 +838,16 @@ struct ldlm_lock {
 
 	/** Private storage for lock user. Opaque to LDLM. */
 	void			*l_ast_data;
+
+	union {
+	/**
+	 * Seconds. It will be updated if there is any activity related to
+	 * the lock at client, e.g. enqueue the lock. For server it is the
+	 * time when blocking ast was sent.
+	 */
+		time64_t        l_activity;
+		time64_t        l_blast_sent;
+	};
 
 	/*
 	 * Server-side-only members.
@@ -1083,7 +1088,7 @@ static inline int ldlm_lvbo_size(struct ldlm_lock *lock)
 	return 0;
 }
 
-static inline int ldlm_lvbo_fill(struct ldlm_lock *lock, void *buf, int len)
+static inline int ldlm_lvbo_fill(struct ldlm_lock *lock, void *buf, int *len)
 {
 	struct ldlm_namespace *ns = ldlm_lock_to_ns(lock);
 	int rc;

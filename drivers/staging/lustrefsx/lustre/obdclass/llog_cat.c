@@ -386,8 +386,7 @@ static struct llog_handle *llog_cat_current_log(struct llog_handle *cathandle,
 
 		down_write_nested(&loghandle->lgh_lock, LLOGH_LOG);
 		llh = loghandle->lgh_hdr;
-		LASSERT(llh);
-		if (!llog_is_full(loghandle))
+		if (llh == NULL || !llog_is_full(loghandle))
 			GOTO(out_unlock, loghandle);
 		else
 			up_write(&loghandle->lgh_lock);
