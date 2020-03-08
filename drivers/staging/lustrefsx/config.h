@@ -325,6 +325,9 @@
 /* get_user_pages takes gup_flags in arguments */
 #define HAVE_GET_USER_PAGES_GUP_FLAGS 1
 
+/* get_user_pages takes gup_flags in arguments with 7 args */
+/* #undef HAVE_GET_USER_PAGES_GUP_FLAGS_7ARGS */
+
 /* struct group_info has member gid */
 #define HAVE_GROUP_INFO_GID 1
 
@@ -372,6 +375,9 @@
 
 /* ib_map_mr_sg has 5 arguments */
 #define HAVE_IB_MAP_MR_SG_5ARGS 1
+
+/* ib_post_send and ib_post_recv have const parameters */
+/* #undef HAVE_IB_POST_SEND_RECV_CONST */
 
 /* struct ib_rdma_wr is defined */
 #define HAVE_IB_RDMA_WR 1
@@ -458,7 +464,7 @@
 #define HAVE_KEY_PAYLOAD_DATA_ARRAY 1
 
 /* key_type->instantiate has two args */
-/* #undef HAVE_KEY_TYPE_INSTANTIATE_2ARGS */
+#define HAVE_KEY_TYPE_INSTANTIATE_2ARGS 1
 
 /* ki_left exist */
 /* #undef HAVE_KIOCB_KI_LEFT */
@@ -637,7 +643,7 @@
 #define HAVE_PROTECT_I_NLINK 1
 
 /* have quota64 */
-/* #undef HAVE_QUOTA64 */
+#define HAVE_QUOTA64 1
 
 /* radix_tree_exceptional_entry exist */
 #define HAVE_RADIX_EXCEPTION_ENTRY 1
@@ -796,6 +802,9 @@
 /* tcp_sendpage use socket as first parameter */
 /* #undef HAVE_TCP_SENDPAGE_USE_SOCKET */
 
+/* timer_setup has replaced setup_timer */
+#define HAVE_TIMER_SETUP 1
+
 /* 'struct timespec64' is available */
 #define HAVE_TIMESPEC64 1
 
@@ -819,9 +828,6 @@
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
-
-/* xattr_handler has a name member */
-#define HAVE_XATTR_HANDLER_NAME 1
 
 /* kernel has vfs_rename with 5 args */
 /* #undef HAVE_VFS_RENAME_5ARGS */
@@ -849,6 +855,9 @@
 
 /* needs inode parameter */
 #define HAVE_XATTR_HANDLER_INODE_PARAM 1
+
+/* xattr_handler has a name member */
+#define HAVE_XATTR_HANDLER_NAME 1
 
 /* handler pointer is parameter */
 /* #undef HAVE_XATTR_HANDLER_SIMPLIFIED */
@@ -894,10 +903,10 @@
 #define LUSTRE_MINOR 10
 
 /* Third number in the Lustre version */
-#define LUSTRE_PATCH 5
+#define LUSTRE_PATCH 8
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.10.5"
+#define LUSTRE_VERSION_STRING "2.10.8"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -924,13 +933,13 @@
 #define PACKAGE "lustre"
 
 /* Define to the address where bug reports for this package should be sent. */
-#define PACKAGE_BUGREPORT "https://jira.hpdd.intel.com/"
+#define PACKAGE_BUGREPORT "https://jira.whamcloud.com/"
 
 /* Define to the full name of this package. */
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.10.5"
+#define PACKAGE_STRING "Lustre 2.10.8"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -939,7 +948,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.10.5"
+#define PACKAGE_VERSION "2.10.8"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -980,7 +989,7 @@
 /* #undef USE_LU_REF */
 
 /* Version number of package */
-#define VERSION "2.10.5"
+#define VERSION "2.10.8"
 
 /* zfs fix version */
 /* #undef ZFS_FIX */
