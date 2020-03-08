@@ -192,7 +192,12 @@ kiblnd_post_rx (kib_rx_t *rx, int credit)
 	 * own this rx (and rx::rx_conn) anymore, LU-5678.
 	 */
 	kiblnd_conn_addref(conn);
+#ifdef HAVE_IB_POST_SEND_RECV_CONST
+	rc = ib_post_recv(conn->ibc_cmid->qp, &rx->rx_wrq,
+			  (const struct ib_recv_wr **)&bad_wrq);
+#else
 	rc = ib_post_recv(conn->ibc_cmid->qp, &rx->rx_wrq, &bad_wrq);
+#endif
 	if (unlikely(rc != 0)) {
 		CERROR("Can't post rx for %s: %d, bad_wrq: %p\n",
 		       libcfs_nid2str(conn->ibc_peer->ibp_nid), rc, bad_wrq);
@@ -841,7 +846,12 @@ __must_hold(&conn->ibc_lock)
 			 libcfs_nid2str(conn->ibc_peer->ibp_nid));
 
 		bad = NULL;
+#ifdef HAVE_IB_POST_SEND_RECV_CONST
+		rc = ib_post_send(conn->ibc_cmid->qp, wr,
+				  (const struct ib_send_wr **)&bad);
+#else
 		rc = ib_post_send(conn->ibc_cmid->qp, wr, &bad);
+#endif
 	}
 
         conn->ibc_last_send = jiffies;
@@ -1252,8 +1262,9 @@ kiblnd_connect_peer (kib_peer_ni_t *peer_ni)
         LASSERT (net != NULL);
         LASSERT (peer_ni->ibp_connecting > 0);
 
-        cmid = kiblnd_rdma_create_id(kiblnd_cm_callback, peer_ni, RDMA_PS_TCP,
-                                     IB_QPT_RC);
+	cmid = kiblnd_rdma_create_id(peer_ni->ibp_ni->ni_net_ns,
+				     kiblnd_cm_callback, peer_ni,
+				     RDMA_PS_TCP, IB_QPT_RC);
 
         if (IS_ERR(cmid)) {
                 CERROR("Can't create CMID for %s: %ld\n",
@@ -3680,6 +3691,7 @@ kiblnd_failover_thread(void *arg)
 {
 	rwlock_t	*glock = &kiblnd_data.kib_global_lock;
 	kib_dev_t	*dev;
+	struct net *ns = arg;
 	wait_queue_entry_t wait;
 	unsigned long	 flags;
 	int		 rc;
@@ -3709,7 +3721,7 @@ kiblnd_failover_thread(void *arg)
                         dev->ibd_failover = 1;
 			write_unlock_irqrestore(glock, flags);
 
-			rc = kiblnd_dev_failover(dev);
+			rc = kiblnd_dev_failover(dev, ns);
 
 			write_lock_irqsave(glock, flags);
 
