@@ -8,7 +8,7 @@
  *   Author: Phil Schwan <phil@clusterfs.com>
  *   Author: Eric Barton <eric@bartonsoftware.com>
  *
- *   This file is part of Lustre, https://wiki.hpdd.intel.com/
+ *   This file is part of Lustre, https://wiki.whamcloud.com/
  *
  *   Portals is free software; you can redistribute it and/or
  *   modify it under the terms of version 2 of the GNU General Public
@@ -1913,7 +1913,8 @@ ksocknal_connect (ksock_route_t *route)
 
                 rc = lnet_connect(&sock, peer_ni->ksnp_id.nid,
                                   route->ksnr_myipaddr,
-                                  route->ksnr_ipaddr, route->ksnr_port);
+				  route->ksnr_ipaddr, route->ksnr_port,
+				  peer_ni->ksnp_ni->ni_net_ns);
                 if (rc != 0)
                         goto failed;
 
