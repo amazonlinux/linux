@@ -2620,7 +2620,7 @@ ksocknal_shutdown(struct lnet_ni *ni)
 }
 
 static int
-ksocknal_enumerate_interfaces(ksock_net_t *net)
+ksocknal_enumerate_interfaces(ksock_net_t *net, struct net *ns)
 {
         char      **names;
         int         i;
@@ -2628,7 +2628,7 @@ ksocknal_enumerate_interfaces(ksock_net_t *net)
         int         rc;
         int         n;
 
-	n = lnet_ipif_enumerate(&names);
+	n = lnet_ipif_enumerate(&names, ns);
         if (n <= 0) {
                 CERROR("Can't enumerate interfaces: %d\n", n);
                 return n;
@@ -2642,7 +2642,7 @@ ksocknal_enumerate_interfaces(ksock_net_t *net)
                 if (!strcmp(names[i], "lo")) /* skip the loopback IF */
                         continue;
 
-		rc = lnet_ipif_query(names[i], &up, &ip, &mask);
+		rc = lnet_ipif_query(names[i], &up, &ip, &mask, ns);
                 if (rc != 0) {
                         CWARN("Can't get interface %s info: %d\n",
                               names[i], rc);
@@ -2829,7 +2829,7 @@ ksocknal_startup(struct lnet_ni *ni)
 
 
 	if (ni->ni_interfaces[0] == NULL) {
-		rc = ksocknal_enumerate_interfaces(net);
+		rc = ksocknal_enumerate_interfaces(net, ni->ni_net_ns);
 		if (rc <= 0)
 			goto fail_1;
 
@@ -2843,7 +2843,8 @@ ksocknal_startup(struct lnet_ni *ni)
 
 			rc = lnet_ipif_query(ni->ni_interfaces[i], &up,
 				&net->ksnn_interfaces[i].ksni_ipaddr,
-				&net->ksnn_interfaces[i].ksni_netmask);
+				&net->ksnn_interfaces[i].ksni_netmask,
+				ni->ni_net_ns);
 
 			if (rc != 0) {
 				CERROR("Can't get interface %s info: %d\n",
@@ -2865,7 +2866,7 @@ ksocknal_startup(struct lnet_ni *ni)
 		net->ksnn_ninterfaces = i;
 	}
 
-	net_dev = dev_get_by_name(&init_net,
+	net_dev = dev_get_by_name(ni->ni_net_ns,
 				  net->ksnn_interfaces[0].ksni_name);
 	if (net_dev != NULL) {
 		node_id = dev_to_node(&net_dev->dev);
