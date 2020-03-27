@@ -619,6 +619,11 @@ __bad_stack:
 	ASM_BUG()
 	.endm
 
+SYM_CODE_START_LOCAL(el0_fiq_invalid)
+	inv_entry 0, BAD_FIQ
+SYM_CODE_END(el0_fiq_invalid)
+
+#ifndef CONFIG_COMPAT
 SYM_CODE_START_LOCAL(el0_sync_invalid)
 	inv_entry 0, BAD_SYNC
 SYM_CODE_END(el0_sync_invalid)
@@ -627,19 +632,16 @@ SYM_CODE_START_LOCAL(el0_irq_invalid)
 	inv_entry 0, BAD_IRQ
 SYM_CODE_END(el0_irq_invalid)
 
-SYM_CODE_START_LOCAL(el0_fiq_invalid)
-	inv_entry 0, BAD_FIQ
-SYM_CODE_END(el0_fiq_invalid)
-
 SYM_CODE_START_LOCAL(el0_error_invalid)
 	inv_entry 0, BAD_ERROR
 SYM_CODE_END(el0_error_invalid)
 
-#ifdef CONFIG_COMPAT
+#else
+
 SYM_CODE_START_LOCAL(el0_fiq_invalid_compat)
 	inv_entry 0, BAD_FIQ, 32
 SYM_CODE_END(el0_fiq_invalid_compat)
-#endif
+#endif /* CONFIG_COMPAT */
 
 SYM_CODE_START_LOCAL(el1_sync_invalid)
 	inv_entry 1, BAD_SYNC
