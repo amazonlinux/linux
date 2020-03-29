@@ -20,7 +20,7 @@
 /*
  * u64 __guest_enter(struct kvm_vcpu *vcpu);
  */
-SYM_FUNC_START(__guest_enter)
+SYM_CODE_START(__guest_enter)
 	// x0: vcpu
 	// x1-x17: clobbered by macros
 	// x29: guest context
@@ -203,4 +203,4 @@ abort_guest_exit_end:
 	msr	spsr_el2, x4
 	orr	x0, x0, x5
 1:	ret
-SYM_FUNC_END(__guest_enter)
+SYM_CODE_END(__guest_enter)
