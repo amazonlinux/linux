@@ -222,8 +222,8 @@ SYM_FUNC_END(idmap_cpu_replace_ttbr1)
  *
  * Called exactly once from stop_machine context by each CPU found during boot.
  */
-__idmap_kpti_flag:
-	.long	1
+SYM_DATA_LOCAL(__idmap_kpti_flag, .long	1)
+
 SYM_FUNC_START(idmap_kpti_install_ng_mappings)
 	cpu		.req	w0
 	num_cpus	.req	w1
