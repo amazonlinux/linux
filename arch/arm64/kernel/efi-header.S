@@ -28,6 +28,7 @@
 	.macro	__EFI_PE_HEADER
 #ifdef CONFIG_EFI
 	.set	.Lpe_header_offset, . - .L_head
+SYM_DATA_START_LOCAL(arm64_efi_header)
 	.long	PE_MAGIC
 	.short	IMAGE_FILE_MACHINE_ARM64		// Machine
 	.short	.Lsection_count				// NumberOfSections
@@ -167,6 +168,7 @@
 	 */
 	.balign	SEGMENT_ALIGN
 .Lefi_header_end:
+SYM_DATA_END_LABEL(arm64_efi_header, SYM_L_LOCAL, efi_header_end)
 #else
 	.set	.Lpe_header_offset, 0x0
 #endif
