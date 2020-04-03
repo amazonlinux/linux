@@ -4,7 +4,10 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+#include <linux/objtool.h>
+
 #include <asm/insn.h>
+#include <asm/unwind_hints.h>
 
 #include <objtool/check.h>
 #include <objtool/arch.h>
@@ -169,7 +172,12 @@ static int is_arm64(const struct elf *elf)
 
 int arch_decode_hint_reg(u8 sp_reg, int *base)
 {
-	return -1;
+	if (sp_reg == UNWIND_HINT_REG_UNDEFINED)
+		*base = CFI_UNDEFINED;
+	else
+		*base = sp_reg;
+
+	return 0;
 }
 
 static struct stack_op *arm_make_store_op(enum aarch64_insn_register base,
