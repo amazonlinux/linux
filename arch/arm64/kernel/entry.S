@@ -761,11 +761,11 @@ SYM_CODE_START_NOALIGN(tramp_vectors)
 	generate_tramp_vector	kpti=1, bhb=BHB_MITIGATION_NONE
 SYM_CODE_END(tramp_vectors)
 
-SYM_CODE_START(tramp_exit_native)
+SYM_CODE_START_LOCAL(tramp_exit_native)
 	tramp_exit
 SYM_CODE_END(tramp_exit_native)
 
-SYM_CODE_START(tramp_exit_compat)
+SYM_CODE_START_LOCAL(tramp_exit_compat)
 	tramp_exit	32
 SYM_CODE_END(tramp_exit_compat)
 
