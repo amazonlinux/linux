@@ -241,6 +241,7 @@ struct blkfront_info
 	struct list_head requests;
 	struct bio_list bio_list;
 	struct completion wait_backend_disconnected;
+	struct work_struct work;
 };
 
 static unsigned int nr_minors;
@@ -1370,6 +1371,13 @@ static void kick_pending_request_queues(struct blkfront_ring_info *rinfo)
 	spin_unlock_irqrestore(lock, flags);
 }
 
+static void blkif_update_cache(struct work_struct *work)
+{
+	struct blkfront_info *info = container_of(work, struct blkfront_info, work);
+
+	xlvbd_flush(info);
+}
+
 static void blkif_restart_queue(struct work_struct *work)
 {
 	struct blkfront_ring_info *rinfo = container_of(work, struct blkfront_ring_info, work);
@@ -1794,7 +1802,7 @@ static irqreturn_t blkif_interrupt(int irq, void *dev_id)
 						BLK_STS_OK);
 				info->feature_fua = 0;
 				info->feature_flush = 0;
-				xlvbd_flush(info);
+				schedule_work(&info->work);
 			}
 			/* fall through */
 		case BLKIF_OP_READ:
@@ -2159,6 +2167,7 @@ static int blkfront_probe(struct xenbus_device *dev,
 	mutex_init(&info->mutex);
 	info->vdevice = vdevice;
 	info->connected = BLKIF_STATE_DISCONNECTED;
+	INIT_WORK(&info->work, blkif_update_cache);
 
 	/* Front end dir is a number, which is used as the id. */
 	info->handle = simple_strtoul(strrchr(dev->nodename, '/')+1, NULL, 0);
@@ -2723,6 +2732,9 @@ static int blkfront_remove(struct xenbus_device *xbdev)
 		return 0;
 
 	blkif_free(info, 0);
+
+	/* Queue stopped; flush any remaining write cache updates */
+	flush_work(&info->work);
 
 	mutex_lock(&info->mutex);
 
