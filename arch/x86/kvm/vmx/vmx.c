@@ -249,12 +249,9 @@ static int vmx_setup_l1d_flush(enum vmx_l1d_flush_state l1tf)
 		l1tf = VMENTER_L1D_FLUSH_ALWAYS;
 	}
 
-	if (l1tf != VMENTER_L1D_FLUSH_NEVER && !vmx_l1d_flush_pages &&
-	    !boot_cpu_has(X86_FEATURE_FLUSH_L1D)) {
-		vmx_l1d_flush_pages = l1d_flush_alloc_pages();
-		if (!vmx_l1d_flush_pages)
+	if (l1tf != VMENTER_L1D_FLUSH_NEVER)
+		if (l1d_flush_init_once())
 			return -ENOMEM;
-	}
 
 	l1tf_vmx_mitigation = l1tf;
 
@@ -6063,12 +6060,7 @@ static void vmx_l1d_flush(struct kvm_vcpu *vcpu)
 	}
 
 	vcpu->stat.l1d_flush++;
-
-	if (!l1d_flush_hw())
-		return;
-
-	l1d_flush_populate_tlb(vmx_l1d_flush_pages);
-	l1d_flush_sw(vmx_l1d_flush_pages);
+	arch_l1d_flush(L1D_FLUSH_POPULATE_TLB);
 }
 
 static void update_cr8_intercept(struct kvm_vcpu *vcpu, int tpr, int irr)
@@ -8007,10 +7999,6 @@ static struct kvm_x86_ops vmx_x86_ops __ro_after_init = {
 
 static void vmx_cleanup_l1d_flush(void)
 {
-	if (vmx_l1d_flush_pages) {
-		l1d_flush_cleanup_pages(vmx_l1d_flush_pages);
-		vmx_l1d_flush_pages = NULL;
-	}
 	/* Restore state so sysfs ignores VMX */
 	l1tf_vmx_mitigation = VMENTER_L1D_FLUSH_AUTO;
 }
