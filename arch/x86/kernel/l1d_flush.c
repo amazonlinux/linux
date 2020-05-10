@@ -4,10 +4,10 @@
 
 #include <asm/cacheflush.h>
 
-void *l1d_flush_alloc_pages(void)
+static void *l1d_flush_alloc_pages(void)
 {
 	struct page *page;
-	void *l1d_flush_pages = NULL;
+	void *flush_pages = NULL;
 	int i;
 
 	/*
@@ -17,7 +17,7 @@ void *l1d_flush_alloc_pages(void)
 	page = alloc_pages(GFP_KERNEL, L1D_CACHE_ORDER);
 	if (!page)
 		return NULL;
-	l1d_flush_pages = page_address(page);
+	flush_pages = page_address(page);
 
 	/*
 	 * Initialize each page with a different pattern in
@@ -25,20 +25,13 @@ void *l1d_flush_alloc_pages(void)
 	 * virtualization case.
 	 */
 	for (i = 0; i < 1u << L1D_CACHE_ORDER; ++i) {
-		memset(l1d_flush_pages + i * PAGE_SIZE, i + 1,
+		memset(flush_pages + i * PAGE_SIZE, i + 1,
 				PAGE_SIZE);
 	}
-	return l1d_flush_pages;
+	return flush_pages;
 }
-EXPORT_SYMBOL_GPL(l1d_flush_alloc_pages);
 
-void l1d_flush_cleanup_pages(void *l1d_flush_pages)
-{
-	free_pages((unsigned long)l1d_flush_pages, L1D_CACHE_ORDER);
-}
-EXPORT_SYMBOL_GPL(l1d_flush_cleanup_pages);
-
-void l1d_flush_populate_tlb(void *l1d_flush_pages)
+static void l1d_flush_populate_tlb(void *l1d_flush_pages)
 {
 	int size = PAGE_SIZE << L1D_CACHE_ORDER;
 
@@ -56,9 +49,8 @@ void l1d_flush_populate_tlb(void *l1d_flush_pages)
 		    [size] "r" (size)
 		: "eax", "ebx", "ecx", "edx");
 }
-EXPORT_SYMBOL_GPL(l1d_flush_populate_tlb);
 
-int l1d_flush_hw(void)
+static int l1d_flush_hw(void)
 {
 	if (static_cpu_has(X86_FEATURE_FLUSH_L1D)) {
 		wrmsrl(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
@@ -66,9 +58,8 @@ int l1d_flush_hw(void)
 	}
 	return -ENOTSUPP;
 }
-EXPORT_SYMBOL_GPL(l1d_flush_hw);
 
-void l1d_flush_sw(void *l1d_flush_pages)
+static void l1d_flush_sw(void *l1d_flush_pages)
 {
 	int size = PAGE_SIZE << L1D_CACHE_ORDER;
 
@@ -85,4 +76,45 @@ void l1d_flush_sw(void *l1d_flush_pages)
 			[size] "r" (size)
 			: "eax", "ecx");
 }
-EXPORT_SYMBOL_GPL(l1d_flush_sw);
+
+static void *l1d_flush_pages;
+static DEFINE_MUTEX(l1d_flush_mutex);
+
+/*
+ * Initialize and setup L1D flush once, each caller will reuse the
+ * l1d_flush_pages for flushing, no per CPU allocations or NUMA aware
+ * allocations at the moment.
+ */
+int l1d_flush_init_once(void)
+{
+	int ret = 0;
+
+	if (boot_cpu_data.x86_vendor != X86_VENDOR_INTEL)
+		return -ENOTSUPP;
+
+	if (static_cpu_has(X86_FEATURE_FLUSH_L1D) || l1d_flush_pages)
+		return ret;
+
+	mutex_lock(&l1d_flush_mutex);
+	if (!l1d_flush_pages)
+		l1d_flush_pages = l1d_flush_alloc_pages();
+	ret = l1d_flush_pages ? 0 : -ENOMEM;
+	mutex_unlock(&l1d_flush_mutex);
+	return ret;
+}
+EXPORT_SYMBOL_GPL(l1d_flush_init_once);
+
+void arch_l1d_flush(enum l1d_flush_options options)
+{
+	if (!l1d_flush_hw())
+		return;
+
+	if (WARN_ON_ONCE(!l1d_flush_pages))
+		return;
+
+	if (options & L1D_FLUSH_POPULATE_TLB)
+		l1d_flush_populate_tlb(l1d_flush_pages);
+
+	l1d_flush_sw(l1d_flush_pages);
+}
+EXPORT_SYMBOL_GPL(arch_l1d_flush);
