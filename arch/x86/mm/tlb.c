@@ -13,6 +13,7 @@
 #include <asm/mmu_context.h>
 #include <asm/nospec-branch.h>
 #include <asm/cache.h>
+#include <asm/cacheflush.h>
 #include <asm/apic.h>
 #include <asm/uv/uv.h>
 
@@ -33,13 +34,19 @@
  */
 
 /*
- * Bits to mangle the TIF_SPEC_IB state into the mm pointer which is
+ * Bits to mangle the TIF_SPEC_* state into the mm pointer which is
  * stored in cpu_tlb_state.last_user_mm_spec.
  */
 #define LAST_USER_MM_IBPB	0x1UL
-#define LAST_USER_MM_SPEC_MASK	(LAST_USER_MM_IBPB)
+#define LAST_USER_MM_L1D_FLUSH	0x2UL
+#define LAST_USER_MM_SPEC_MASK	(LAST_USER_MM_IBPB | LAST_USER_MM_L1D_FLUSH)
 
-/* Bits to set when tlbstate and flush is (re)initialized */
+/*
+ * Bits to set when tlbstate and flush is (re)initialized
+ *
+ * Don't add LAST_USER_MM_L1D_FLUSH to the init bits as the initializaion
+ * is done during early boot and l1d_flush_pages are not yet allocated.
+ */
 #define LAST_USER_MM_INIT	LAST_USER_MM_IBPB
 
 /*
@@ -155,6 +162,23 @@ void leave_mm(int cpu)
 }
 EXPORT_SYMBOL_GPL(leave_mm);
 
+int enable_l1d_flush_for_task(struct task_struct *tsk)
+{
+	int ret = l1d_flush_init_once();
+
+	if (ret < 0)
+		return ret;
+
+	set_ti_thread_flag(&tsk->thread_info, TIF_SPEC_L1D_FLUSH);
+	return ret;
+}
+
+int disable_l1d_flush_for_task(struct task_struct *tsk)
+{
+	clear_ti_thread_flag(&tsk->thread_info, TIF_SPEC_L1D_FLUSH);
+	return 0;
+}
+
 void switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	       struct task_struct *tsk)
 {
@@ -197,6 +221,8 @@ static inline unsigned long mm_mangle_tif_spec_bits(struct task_struct *next)
 {
 	unsigned long next_tif = task_thread_info(next)->flags;
 	unsigned long spec_bits = (next_tif >> TIF_SPEC_IB) & LAST_USER_MM_SPEC_MASK;
+
+	BUILD_BUG_ON(TIF_SPEC_L1D_FLUSH != TIF_SPEC_IB + 1);
 
 	return (unsigned long)next->mm | spec_bits;
 }
@@ -273,6 +299,14 @@ static void cond_mitigation(struct task_struct *next)
 		if ((prev_mm & ~LAST_USER_MM_SPEC_MASK) !=
 					(unsigned long)next->mm)
 			indirect_branch_prediction_barrier();
+	}
+
+	if (prev_mm & LAST_USER_MM_L1D_FLUSH) {
+		/*
+		 * Don't populate the TLB for the software fallback flush.
+		 * Populate TLB is not needed for this use case.
+		 */
+		arch_l1d_flush(0);
 	}
 
 	this_cpu_write(cpu_tlbstate.last_user_mm_spec, next_mm);
