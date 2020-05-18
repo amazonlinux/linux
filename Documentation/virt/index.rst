@@ -9,6 +9,7 @@ Linux Virtualization Support
 
    kvm/index
    paravirt_ops
+   ne_overview
 
 .. only:: html and subproject
 
