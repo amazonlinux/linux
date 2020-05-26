@@ -364,9 +364,10 @@ static inline u32 ethtool_rxfh_indir_default(u32 index, u32 n_rx_rings)
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V3
 #elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)) || \
-      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0)))|| \
-      (SUSE_VERSION && ((SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
-      (SUSE_VERSION > 15)))
+      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0))) || \
+      (SUSE_VERSION && ((SUSE_VERSION == 12 && SUSE_PATCHLEVEL >= 5) || \
+		        (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
+			(SUSE_VERSION > 15)))
 #define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V2
 #else
 
@@ -651,12 +652,23 @@ do {									\
 #endif
 #endif
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0))
-#define netdev_xmit_more() ((skb->xmit_more))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)) || \
+	(RHEL_RELEASE_CODE && \
+	RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 2))
+#define HAVE_NETDEV_XMIT_MORE
 #endif
 
 #ifndef mmiowb
 #define MMIOWB_NOT_DEFINED
+#endif
+
+/* In the driver we currently only support CRC32 and Toeplitz.
+ * Since in kernel erlier than 4.12 the CRC32 define didn't exist
+ * We define it here to be XOR. Any user who wishes to select CRC32
+ * as the hash function, can do so by choosing xor through ethtool.
+ */
+#ifndef ETH_RSS_HASH_CRC32
+#define ETH_RSS_HASH_CRC32 ETH_RSS_HASH_XOR
 #endif
 
 #ifndef _ULL
@@ -678,6 +690,49 @@ do {									\
 #ifndef DIV_ROUND_DOWN_ULL
 #define DIV_ROUND_DOWN_ULL(ll, d) \
 	({ unsigned long long _tmp = (ll); do_div(_tmp, d); _tmp; })
+#endif
+
+/* values are taken from here: https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md */
+
+#if defined(CONFIG_BPF) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+#define ENA_XDP_SUPPORT
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
+#define HAVE_NDO_TX_TIMEOUT_STUCK_QUEUE_PARAMETER
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0) && \
+    !(RHEL_RELEASE_CODE && ((RHEL_RELEASE_CODE != RHEL_RELEASE_VERSION(7, 1)) && \
+                            (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(6, 6)))) && \
+                            !(UBUNTU_VERSION_CODE) && \
+                            !defined(UEK3_RELEASE)
+
+#define DO_ONCE(func, ...)						     \
+	({								     \
+		static bool ___done = false;				     \
+		if (unlikely(!___done)) {				     \
+				func(__VA_ARGS__);			     \
+				___done = true;				     \
+		}							     \
+	})
+
+#define get_random_once(buf, nbytes)					     \
+	DO_ONCE(get_random_bytes, (buf), (nbytes))
+
+#define net_get_random_once(buf, nbytes)				     \
+	get_random_once((buf), (nbytes))
+
+/* RSS keys are 40 or 52 bytes long */
+#define NETDEV_RSS_KEY_LEN 52
+static u8 netdev_rss_key[NETDEV_RSS_KEY_LEN];
+
+static inline void netdev_rss_key_fill(void *buffer, size_t len)
+{
+	BUG_ON(len > sizeof(netdev_rss_key));
+	net_get_random_once(netdev_rss_key, sizeof(netdev_rss_key));
+	memcpy(buffer, netdev_rss_key, len);
+}
 #endif
 
 #endif /* _KCOMPAT_H_ */
