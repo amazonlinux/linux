@@ -836,7 +836,7 @@ __u32 lustre_msg_get_flags(struct lustre_msg *msg)
 
 		CERROR("invalid msg %p: no ptlrpc body!\n", msg);
 	}
-	/* no break */
+	/* Fall through */
 	default:
 		/* flags might be printed in debug code while message
 		 * uninitialized */
@@ -899,7 +899,7 @@ __u32 lustre_msg_get_op_flags(struct lustre_msg *msg)
 
 		CERROR("invalid msg %p: no ptlrpc body!\n", msg);
 	}
-	/* no break */
+	/* Fall through */
 	default:
 		return 0;
 	}
@@ -1104,7 +1104,7 @@ int lustre_msg_get_status(struct lustre_msg *msg)
 			return pb->pb_status;
 		CERROR("invalid msg %p: no ptlrpc body!\n", msg);
 	}
-	/* no break */
+	/* Fall through */
 	default:
 		/* status might be printed in debug code while message
 		* uninitialized */
