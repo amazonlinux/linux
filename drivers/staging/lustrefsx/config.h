@@ -293,7 +293,7 @@
 #define HAVE_FILLDIR_USE_CTX 1
 
 /* fpu/api.h is present */
-#define HAVE_FPU_API_HEADER 1
+/* #undef HAVE_FPU_API_HEADER */
 
 /* struct file_system_type has mount field */
 #define HAVE_FSTYPE_MOUNT 1
@@ -335,10 +335,10 @@
 /* #undef HAVE_GSS */
 
 /* Define this if you enable gss keyring backend */
-/* #undef HAVE_GSS_KEYRING */
+#define HAVE_GSS_KEYRING 1
 
 /* Define this if the Kerberos GSS library supports gss_krb5_ccache_name */
-/* #undef HAVE_GSS_KRB5_CCACHE_NAME */
+#define HAVE_GSS_KRB5_CCACHE_NAME 1
 
 /* Define this if you have Heimdal Kerberos libraries */
 /* #undef HAVE_HEIMDAL */
@@ -364,6 +364,9 @@
 /* struct ib_device.attrs is defined */
 #define HAVE_IB_DEVICE_ATTRS 1
 
+/* if struct ib_device_ops is defined */
+/* #undef HAVE_IB_DEVICE_OPS */
+
 /* ib_get_dma_mr is defined */
 /* #undef HAVE_IB_GET_DMA_MR */
 
@@ -381,6 +384,9 @@
 
 /* struct ib_rdma_wr is defined */
 #define HAVE_IB_RDMA_WR 1
+
+/* if ib_sg_dma_address wrapper exists */
+#define HAVE_IB_SG_DMA_ADDRESS 1
 
 /* inode_operations .getattr member function can gather advance stats */
 #define HAVE_INODEOPS_ENHANCED_GETATTR 1
@@ -436,6 +442,9 @@
 /* inode_operations has {get,set,remove}xattr members */
 /* #undef HAVE_IOP_XATTR */
 
+/* if iov_iter has member type */
+#define HAVE_IOV_ITER_HAS_TYPE_MEMBER 1
+
 /* iov_iter_init handles directional tag */
 #define HAVE_IOV_ITER_INIT_DIRECTION 1
 
@@ -445,8 +454,14 @@
 /* iov_iter_truncate exists */
 #define HAVE_IOV_ITER_TRUNCATE 1
 
+/* if iov_iter_type exists */
+/* #undef HAVE_IOV_ITER_TYPE */
+
 /* is_sxid is defined */
 #define HAVE_IS_SXID 1
+
+/* struct address_space has i_pages */
+/* #undef HAVE_I_PAGES */
 
 /* i_uid_read is present */
 #define HAVE_I_UID_READ 1
@@ -456,6 +471,9 @@
 
 /* 'struct sock' accept function requires bool argument */
 #define HAVE_KERN_SOCK_ACCEPT_FLAG_ARG 1
+
+/* 'getname' has two args */
+/* #undef HAVE_KERN_SOCK_GETNAME_2ARGS */
 
 /* struct key_match_data exist */
 #define HAVE_KEY_MATCH_DATA 1
@@ -479,16 +497,16 @@
 /* #undef HAVE_KMAP_TO_PAGE */
 
 /* Define this if you have MIT Kerberos libraries */
-/* #undef HAVE_KRB5 */
+#define HAVE_KRB5 1
 
 /* Define this if the function krb5int_derive_key is available */
-/* #undef HAVE_KRB5INT_DERIVE_KEY */
+#define HAVE_KRB5INT_DERIVE_KEY 1
 
 /* Define this if the function krb5_derive_key is available */
 /* #undef HAVE_KRB5_DERIVE_KEY */
 
 /* Define this if the function krb5_get_error_message is available */
-/* #undef HAVE_KRB5_GET_ERROR_MESSAGE */
+#define HAVE_KRB5_GET_ERROR_MESSAGE 1
 
 /* Define this if the function krb5_get_init_creds_opt_set_addressless is
    available */
@@ -496,6 +514,9 @@
 
 /* kernel has kstrtoul */
 #define HAVE_KSTRTOUL 1
+
+/* kernel has ksys_close */
+/* #undef HAVE_KSYS_CLOSE */
 
 /* kthread_worker found */
 /* #undef HAVE_KTHREAD_WORK */
@@ -540,7 +561,7 @@
 /* #undef HAVE_LIBEFENCE */
 
 /* Define to 1 if you have the `keyutils' library (-lkeyutils). */
-/* #undef HAVE_LIBKEYUTILS */
+#define HAVE_LIBKEYUTILS 1
 
 /* build with libmount */
 /* #undef HAVE_LIBMOUNT */
@@ -554,6 +575,9 @@
 /* Define to 1 if you have the <linux/random.h> header file. */
 #define HAVE_LINUX_RANDOM_H 1
 
+/* if linux/selinux.h exists */
+#define HAVE_LINUX_SELINUX_IS_ENABLED 1
+
 /* Define to 1 if you have the <linux/types.h> header file. */
 #define HAVE_LINUX_TYPES_H 1
 
@@ -562,6 +586,9 @@
 
 /* Define to 1 if you have the <linux/version.h> header file. */
 #define HAVE_LINUX_VERSION_H 1
+
+/* lock_manager_operations has lm_compare_owner */
+#define HAVE_LM_COMPARE_OWNER 1
 
 /* lock-manager ops renamed to lm_xxx */
 #define HAVE_LM_XXX_LOCK_MANAGER_OPS 1
@@ -577,7 +604,7 @@
 
 /* Define this if the Kerberos GSS library supports
    gss_krb5_export_lucid_sec_context */
-/* #undef HAVE_LUCID_CONTEXT_SUPPORT */
+#define HAVE_LUCID_CONTEXT_SUPPORT 1
 
 /* Define to 1 if you have the <memory.h> header file. */
 #define HAVE_MEMORY_H 1
@@ -616,7 +643,7 @@
 /* #undef HAVE_PAGEVEC_INIT_ONE_PARAM */
 
 /* have PCLMULQDQ instruction */
-#define HAVE_PCLMULQDQ 1
+/* #undef HAVE_PCLMULQDQ */
 
 /* percpu_counter_init uses GFP_* flag */
 #define HAVE_PERCPU_COUNTER_INIT_GFP_FLAG 1
@@ -701,7 +728,7 @@
 
 /* Define this if the Kerberos GSS library supports
    gss_krb5_set_allowable_enctypes */
-/* #undef HAVE_SET_ALLOWABLE_ENCTYPES */
+#define HAVE_SET_ALLOWABLE_ENCTYPES 1
 
 /* shrinker has count_objects member */
 #define HAVE_SHRINKER_COUNT 1
@@ -741,6 +768,9 @@
 
 /* stacktrace_ops.warning is exist */
 /* #undef HAVE_STACKTRACE_WARNING */
+
+/* stack_trace_print() exists */
+/* #undef HAVE_STACK_TRACE_PRINT */
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1
@@ -817,11 +847,17 @@
 /* topology_sibling_cpumask is available */
 #define HAVE_TOPOLOGY_SIBLING_CPUMASK 1
 
+/* if totalram_pages is a function */
+/* #undef HAVE_TOTALRAM_PAGES_AS_FUNC */
+
 /* kernel export truncate_complete_page */
 /* #undef HAVE_TRUNCATE_COMPLETE_PAGE */
 
 /* kernel has truncate_inode_pages_final */
 #define HAVE_TRUNCATE_INODE_PAGES_FINAL 1
+
+/* if MS_RDONLY was moved to uapi/linux/mount.h */
+/* #undef HAVE_UAPI_LINUX_MOUNT_H */
 
 /* uidgid.h is present */
 #define HAVE_UIDGID_HEADER 1
@@ -844,6 +880,9 @@
 /* virtual_address has been replaced by address field */
 #define HAVE_VM_FAULT_ADDRESS 1
 
+/* if vm_fault_t type exists */
+/* #undef HAVE_VM_FAULT_T */
+
 /* 'struct vm_operations' remove struct vm_area_struct argument */
 #define HAVE_VM_OPS_USE_VM_FAULT_ONLY 1
 
@@ -861,6 +900,9 @@
 
 /* handler pointer is parameter */
 /* #undef HAVE_XATTR_HANDLER_SIMPLIFIED */
+
+/* xa_is_value exist */
+/* #undef HAVE_XA_IS_VALUE */
 
 /* Have zap_add_by_dnode() in ZFS */
 /* #undef HAVE_ZAP_ADD_BY_DNODE */
@@ -881,7 +923,7 @@
 /* #undef JOURNAL_START_HAS_3ARGS */
 
 /* Define this as the Kerberos version number */
-/* #undef KRB5_VERSION */
+#define KRB5_VERSION 1151
 
 /* enable libcfs LASSERT, LASSERTF */
 #define LIBCFS_DEBUG 1
@@ -918,10 +960,10 @@
 #define MKE2FS "mke2fs"
 
 /* need pclmulqdq based crc32c */
-/* #undef NEED_CRC32C_ACCEL */
+#define NEED_CRC32C_ACCEL 1
 
 /* need pclmulqdq based crc32 */
-/* #undef NEED_CRC32_ACCEL */
+#define NEED_CRC32_ACCEL 1
 
 /* 'ktime_get_real_ns' is not available */
 /* #undef NEED_KTIME_GET_REAL_NS */
