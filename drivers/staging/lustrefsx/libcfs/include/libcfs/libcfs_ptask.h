@@ -9,6 +9,16 @@
 #include <linux/notifier.h>
 #include <linux/workqueue.h>
 #include <linux/completion.h>
+
+/*
+ * Unconditionaly disable PADATA.
+ *
+ * Padata is needed for PIO client feature. This feature is disabled by default
+ * and was removed from Lustre code during 2.13 development (2b0a34fe43bf).
+ * Instead of adapting the code to Linux 5.4+ change, just disable it.
+ */
+#undef CONFIG_PADATA
+
 #ifdef CONFIG_PADATA
 #include <linux/padata.h>
 #else
