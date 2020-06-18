@@ -214,6 +214,7 @@ static int osc_extent_sanity_check0(struct osc_extent *ext,
 			GOTO(out, rc = 60);
 		if (ext->oe_fsync_wait && !ext->oe_urgent && !ext->oe_hp)
 			GOTO(out, rc = 65);
+		/* Fall through */
 	default:
 		if (atomic_read(&ext->oe_users) > 0)
 			GOTO(out, rc = 70);
