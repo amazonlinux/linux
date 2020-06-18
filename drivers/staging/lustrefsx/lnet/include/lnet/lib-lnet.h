@@ -71,6 +71,18 @@ extern struct lnet the_lnet;			/* THE network */
 /** exclusive lock */
 #define LNET_LOCK_EX		CFS_PERCPT_LOCK_EX
 
+#ifdef HAVE_KERN_SOCK_GETNAME_2ARGS
+#define lnet_kernel_getpeername(sock, addr, addrlen) \
+		kernel_getpeername(sock, addr)
+#define lnet_kernel_getsockname(sock, addr, addrlen) \
+		kernel_getsockname(sock, addr)
+#else
+#define lnet_kernel_getpeername(sock, addr, addrlen) \
+		kernel_getpeername(sock, addr, addrlen)
+#define lnet_kernel_getsockname(sock, addr, addrlen) \
+		kernel_getsockname(sock, addr, addrlen)
+#endif
+
 static inline int lnet_is_route_alive(struct lnet_route *route)
 {
 	if (!route->lr_gateway->lpni_alive)
