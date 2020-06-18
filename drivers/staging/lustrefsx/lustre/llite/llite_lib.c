@@ -49,6 +49,9 @@
 #include <linux/security.h>
 
 #include <uapi/linux/lustre_ioctl.h>
+#ifdef HAVE_UAPI_LINUX_MOUNT_H
+#include <uapi/linux/mount.h>
+#endif
 #include <lustre_ha.h>
 #include <lustre_dlm.h>
 #include <lprocfs_status.h>
@@ -231,29 +234,29 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 	if (OBD_FAIL_CHECK(OBD_FAIL_MDC_LIGHTWEIGHT))
 		/* flag mdc connection as lightweight, only used for test
 		 * purpose, use with care */
-                data->ocd_connect_flags |= OBD_CONNECT_LIGHTWEIGHT;
+		data->ocd_connect_flags |= OBD_CONNECT_LIGHTWEIGHT;
 
-        data->ocd_ibits_known = MDS_INODELOCK_FULL;
-        data->ocd_version = LUSTRE_VERSION_CODE;
+	data->ocd_ibits_known = MDS_INODELOCK_FULL;
+	data->ocd_version = LUSTRE_VERSION_CODE;
 
-        if (sb->s_flags & MS_RDONLY)
-                data->ocd_connect_flags |= OBD_CONNECT_RDONLY;
-        if (sbi->ll_flags & LL_SBI_USER_XATTR)
-                data->ocd_connect_flags |= OBD_CONNECT_XATTR;
+	if (sb->s_flags & SB_RDONLY)
+		data->ocd_connect_flags |= OBD_CONNECT_RDONLY;
+	if (sbi->ll_flags & LL_SBI_USER_XATTR)
+		data->ocd_connect_flags |= OBD_CONNECT_XATTR;
 
-#ifdef MS_NOSEC
+#ifdef SB_NOSEC
 	/* Setting this indicates we correctly support S_NOSEC (See kernel
 	 * commit 9e1f1de02c2275d7172e18dc4e7c2065777611bf)
 	 */
-	sb->s_flags |= MS_NOSEC;
+	sb->s_flags |= SB_NOSEC;
 #endif
 
-        if (sbi->ll_flags & LL_SBI_FLOCK)
-                sbi->ll_fop = &ll_file_operations_flock;
-        else if (sbi->ll_flags & LL_SBI_LOCALFLOCK)
-                sbi->ll_fop = &ll_file_operations;
-        else
-                sbi->ll_fop = &ll_file_operations_noflock;
+	if (sbi->ll_flags & LL_SBI_FLOCK)
+		sbi->ll_fop = &ll_file_operations_flock;
+	else if (sbi->ll_flags & LL_SBI_LOCALFLOCK)
+		sbi->ll_fop = &ll_file_operations;
+	else
+		sbi->ll_fop = &ll_file_operations_noflock;
 
 	/* always ping even if server suppress_pings */
 	if (sbi->ll_flags & LL_SBI_ALWAYS_PING)
@@ -266,16 +269,16 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 	data->ocd_brw_size = MD_MAX_BRW_SIZE;
 
         err = obd_connect(NULL, &sbi->ll_md_exp, obd, &sbi->ll_sb_uuid, data, NULL);
-        if (err == -EBUSY) {
-                LCONSOLE_ERROR_MSG(0x14f, "An MDT (md %s) is performing "
-                                   "recovery, of which this client is not a "
-                                   "part. Please wait for recovery to complete,"
-                                   " abort, or time out.\n", md);
-                GOTO(out, err);
-        } else if (err) {
-                CERROR("cannot connect to %s: rc = %d\n", md, err);
-                GOTO(out, err);
-        }
+	if (err == -EBUSY) {
+		LCONSOLE_ERROR_MSG(0x14f, "An MDT (md %s) is performing "
+				   "recovery, of which this client is not a "
+				   "part. Please wait for recovery to complete,"
+				   " abort, or time out.\n", md);
+		GOTO(out, err);
+	} else if (err) {
+		CERROR("cannot connect to %s: rc = %d\n", md, err);
+		GOTO(out, err);
+	}
 
 	sbi->ll_md_exp->exp_connect_data = *data;
 
@@ -337,28 +340,28 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt,
 	sbi->ll_namelen = osfs->os_namelen;
 	sbi->ll_mnt.mnt = current->fs->root.mnt;
 
-        if ((sbi->ll_flags & LL_SBI_USER_XATTR) &&
-            !(data->ocd_connect_flags & OBD_CONNECT_XATTR)) {
-                LCONSOLE_INFO("Disabling user_xattr feature because "
-                              "it is not supported on the server\n");
-                sbi->ll_flags &= ~LL_SBI_USER_XATTR;
-        }
+	if ((sbi->ll_flags & LL_SBI_USER_XATTR) &&
+	    !(data->ocd_connect_flags & OBD_CONNECT_XATTR)) {
+		LCONSOLE_INFO("Disabling user_xattr feature because "
+			      "it is not supported on the server\n");
+		sbi->ll_flags &= ~LL_SBI_USER_XATTR;
+	}
 
-        if (data->ocd_connect_flags & OBD_CONNECT_ACL) {
-#ifdef MS_POSIXACL
-                sb->s_flags |= MS_POSIXACL;
+	if (data->ocd_connect_flags & OBD_CONNECT_ACL) {
+#ifdef SB_POSIXACL
+		sb->s_flags |= SB_POSIXACL;
 #endif
-                sbi->ll_flags |= LL_SBI_ACL;
-        } else {
-                LCONSOLE_INFO("client wants to enable acl, but mdt not!\n");
-#ifdef MS_POSIXACL
-                sb->s_flags &= ~MS_POSIXACL;
+		sbi->ll_flags |= LL_SBI_ACL;
+	} else {
+		LCONSOLE_INFO("client wants to enable acl, but mdt not!\n");
+#ifdef SB_POSIXACL
+		sb->s_flags &= ~SB_POSIXACL;
 #endif
-                sbi->ll_flags &= ~LL_SBI_ACL;
-        }
+		sbi->ll_flags &= ~LL_SBI_ACL;
+	}
 
-        if (data->ocd_connect_flags & OBD_CONNECT_64BITHASH)
-                sbi->ll_flags |= LL_SBI_64BIT_HASH;
+	if (data->ocd_connect_flags & OBD_CONNECT_64BITHASH)
+		sbi->ll_flags |= LL_SBI_64BIT_HASH;
 
 	if (data->ocd_connect_flags & OBD_CONNECT_LAYOUTLOCK)
 		sbi->ll_flags |= LL_SBI_LAYOUT_LOCK;
@@ -723,8 +726,8 @@ void ll_kill_super(struct super_block *sb)
 	struct ll_sb_info *sbi;
 	ENTRY;
 
-        /* not init sb ?*/
-	if (!(sb->s_flags & MS_ACTIVE))
+	/* not init sb ?*/
+	if (!(sb->s_flags & SB_ACTIVE))
 		return;
 
 	sbi = ll_s2sbi(sb);
@@ -1230,9 +1233,9 @@ static struct inode *ll_iget_anon_dir(struct super_block *sb,
 		LASSERTF(S_ISDIR(inode->i_mode), "Not slave inode "DFID"\n",
 			 PFID(fid));
 
-		LTIME_S(inode->i_mtime) = 0;
-		LTIME_S(inode->i_atime) = 0;
-		LTIME_S(inode->i_ctime) = 0;
+		inode->i_mtime.tv_sec = 0;
+		inode->i_atime.tv_sec = 0;
+		inode->i_ctime.tv_sec = 0;
 		inode->i_rdev = 0;
 
 #ifdef HAVE_BACKING_DEV_INFO
@@ -1459,7 +1462,6 @@ void ll_clear_inode(struct inode *inode)
 #ifdef CONFIG_FS_POSIX_ACL
 	forget_all_cached_acls(inode);
 	if (lli->lli_posix_acl) {
-		LASSERT(atomic_read(&lli->lli_posix_acl->a_refcount) == 1);
 		posix_acl_release(lli->lli_posix_acl);
 		lli->lli_posix_acl = NULL;
 	}
@@ -1611,9 +1613,9 @@ int ll_setattr_raw(struct dentry *dentry, struct iattr *attr, bool hsm_import)
         }
 
         if (attr->ia_valid & (ATTR_MTIME | ATTR_CTIME))
-		CDEBUG(D_INODE, "setting mtime %lu, ctime %lu, now = %llu\n",
-                       LTIME_S(attr->ia_mtime), LTIME_S(attr->ia_ctime),
-		       (s64)ktime_get_real_seconds());
+		CDEBUG(D_INODE, "setting mtime %lld, ctime %lld, now = %lld\n",
+		       (s64)attr->ia_mtime.tv_sec, (s64)attr->ia_ctime.tv_sec,
+		       ktime_get_real_seconds());
 
 	if (S_ISREG(inode->i_mode)) {
 		if (attr->ia_valid & ATTR_SIZE)
@@ -1887,24 +1889,25 @@ int ll_update_inode(struct inode *inode, struct lustre_md *md)
 	inode->i_generation = cl_fid_build_gen(&body->mbo_fid1);
 
 	if (body->mbo_valid & OBD_MD_FLATIME) {
-		if (body->mbo_atime > LTIME_S(inode->i_atime))
-			LTIME_S(inode->i_atime) = body->mbo_atime;
+		if (body->mbo_atime > inode->i_atime.tv_sec)
+			inode->i_atime.tv_sec = body->mbo_atime;
 		lli->lli_atime = body->mbo_atime;
 	}
 
 	if (body->mbo_valid & OBD_MD_FLMTIME) {
-		if (body->mbo_mtime > LTIME_S(inode->i_mtime)) {
-			CDEBUG(D_INODE, "setting ino %lu mtime from %lu "
-			       "to %llu\n", inode->i_ino,
-			       LTIME_S(inode->i_mtime), body->mbo_mtime);
-			LTIME_S(inode->i_mtime) = body->mbo_mtime;
+		if (body->mbo_mtime > inode->i_mtime.tv_sec) {
+			CDEBUG(D_INODE,
+			       "setting ino %lu mtime from %lld to %llu\n",
+			       inode->i_ino, (s64)inode->i_mtime.tv_sec,
+			       body->mbo_mtime);
+			inode->i_mtime.tv_sec = body->mbo_mtime;
 		}
 		lli->lli_mtime = body->mbo_mtime;
 	}
 
 	if (body->mbo_valid & OBD_MD_FLCTIME) {
-		if (body->mbo_ctime > LTIME_S(inode->i_ctime))
-			LTIME_S(inode->i_ctime) = body->mbo_ctime;
+		if (body->mbo_ctime > inode->i_ctime.tv_sec)
+			inode->i_ctime.tv_sec = body->mbo_ctime;
 		lli->lli_ctime = body->mbo_ctime;
 	}
 
@@ -1990,11 +1993,12 @@ int ll_read_inode2(struct inode *inode, void *opaque)
         /* Core attributes from the MDS first.  This is a new inode, and
          * the VFS doesn't zero times in the core inode so we have to do
          * it ourselves.  They will be overwritten by either MDS or OST
-         * attributes - we just need to make sure they aren't newer. */
-        LTIME_S(inode->i_mtime) = 0;
-        LTIME_S(inode->i_atime) = 0;
-        LTIME_S(inode->i_ctime) = 0;
-        inode->i_rdev = 0;
+	 * attributes - we just need to make sure they aren't newer.
+	 */
+	inode->i_mtime.tv_sec = 0;
+	inode->i_atime.tv_sec = 0;
+	inode->i_ctime.tv_sec = 0;
+	inode->i_rdev = 0;
 	rc = ll_update_inode(inode, md);
 	if (rc != 0)
 		RETURN(rc);
@@ -2053,9 +2057,9 @@ void ll_delete_inode(struct inode *inode)
 	 */
 	nrpages = mapping->nrpages;
 	if (nrpages) {
-		spin_lock_irq(&mapping->tree_lock);
+		xa_lock_irq(&mapping->i_pages);
 		nrpages = mapping->nrpages;
-		spin_unlock_irq(&mapping->tree_lock);
+		xa_unlock_irq(&mapping->i_pages);
 	} /* Workaround end */
 
 	LASSERTF(nrpages == 0, "%s: inode="DFID"(%p) nrpages=%lu, "
@@ -2224,34 +2228,34 @@ void ll_umount_begin(struct super_block *sb)
 
 int ll_remount_fs(struct super_block *sb, int *flags, char *data)
 {
-        struct ll_sb_info *sbi = ll_s2sbi(sb);
-        char *profilenm = get_profile_name(sb);
-        int err;
-        __u32 read_only;
+	struct ll_sb_info *sbi = ll_s2sbi(sb);
+	char *profilenm = get_profile_name(sb);
+	int err;
+	__u32 read_only;
 
-        if ((*flags & MS_RDONLY) != (sb->s_flags & MS_RDONLY)) {
-                read_only = *flags & MS_RDONLY;
-                err = obd_set_info_async(NULL, sbi->ll_md_exp,
-                                         sizeof(KEY_READ_ONLY),
-                                         KEY_READ_ONLY, sizeof(read_only),
-                                         &read_only, NULL);
-                if (err) {
-                        LCONSOLE_WARN("Failed to remount %s %s (%d)\n",
-                                      profilenm, read_only ?
-                                      "read-only" : "read-write", err);
-                        return err;
-                }
+	if ((*flags & MS_RDONLY) != (sb->s_flags & SB_RDONLY)) {
+		read_only = *flags & MS_RDONLY;
+		err = obd_set_info_async(NULL, sbi->ll_md_exp,
+					 sizeof(KEY_READ_ONLY),
+					 KEY_READ_ONLY, sizeof(read_only),
+					 &read_only, NULL);
+		if (err) {
+			LCONSOLE_WARN("Failed to remount %s %s (%d)\n",
+				      profilenm, read_only ?
+				      "read-only" : "read-write", err);
+			return err;
+		}
 
-                if (read_only)
-                        sb->s_flags |= MS_RDONLY;
-                else
-                        sb->s_flags &= ~MS_RDONLY;
+		if (read_only)
+			sb->s_flags |= SB_RDONLY;
+		else
+			sb->s_flags &= ~SB_RDONLY;
 
-                if (sbi->ll_flags & LL_SBI_VERBOSE)
-                        LCONSOLE_WARN("Remounted %s %s\n", profilenm,
-                                      read_only ?  "read-only" : "read-write");
-        }
-        return 0;
+		if (sbi->ll_flags & LL_SBI_VERBOSE)
+			LCONSOLE_WARN("Remounted %s %s\n", profilenm,
+				      read_only ?  "read-only" : "read-write");
+	}
+	return 0;
 }
 
 /**
