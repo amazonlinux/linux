@@ -2299,6 +2299,7 @@ ksocknal_base_shutdown(void)
         switch (ksocknal_data.ksnd_init) {
         default:
                 LASSERT (0);
+		/* Fall through */
 
         case SOCKNAL_INIT_ALL:
         case SOCKNAL_INIT_DATA:
