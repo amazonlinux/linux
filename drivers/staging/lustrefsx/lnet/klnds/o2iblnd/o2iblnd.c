@@ -988,7 +988,6 @@ kiblnd_destroy_conn(kib_conn_t *conn, bool free_conn)
 {
 	struct rdma_cm_id *cmid = conn->ibc_cmid;
 	kib_peer_ni_t        *peer_ni = conn->ibc_peer;
-	int                rc;
 
 	LASSERT (!in_interrupt());
 	LASSERT (atomic_read(&conn->ibc_refcount) == 0);
@@ -1019,11 +1018,8 @@ kiblnd_destroy_conn(kib_conn_t *conn, bool free_conn)
 	if (cmid != NULL && cmid->qp != NULL)
 		rdma_destroy_qp(cmid);
 
-	if (conn->ibc_cq != NULL) {
-		rc = ib_destroy_cq(conn->ibc_cq);
-		if (rc != 0)
-			CWARN("Error destroying CQ: %d\n", rc);
-	}
+	if (conn->ibc_cq)
+		ib_destroy_cq(conn->ibc_cq);
 
 	if (conn->ibc_rx_pages != NULL)
 		kiblnd_unmap_rx_descs(conn);
@@ -1673,10 +1669,17 @@ kiblnd_create_fmr_pool(kib_fmr_poolset_t *fps, kib_fmr_pool_t **pp_fpo)
 
 	/* Check for FMR or FastReg support */
 	fpo->fpo_is_fmr = 0;
+#ifdef HAVE_IB_DEVICE_OPS
+	if (fpo->fpo_hdev->ibh_ibdev->ops.alloc_fmr &&
+	    fpo->fpo_hdev->ibh_ibdev->ops.dealloc_fmr &&
+	    fpo->fpo_hdev->ibh_ibdev->ops.map_phys_fmr &&
+	    fpo->fpo_hdev->ibh_ibdev->ops.unmap_fmr) {
+#else
 	if (fpo->fpo_hdev->ibh_ibdev->alloc_fmr &&
 	    fpo->fpo_hdev->ibh_ibdev->dealloc_fmr &&
 	    fpo->fpo_hdev->ibh_ibdev->map_phys_fmr &&
 	    fpo->fpo_hdev->ibh_ibdev->unmap_fmr) {
+#endif
 		LCONSOLE_INFO("Using FMR for registration\n");
 		fpo->fpo_is_fmr = 1;
 	} else if (dev_attr->device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS) {
@@ -1822,8 +1825,7 @@ kiblnd_fmr_pool_unmap(kib_fmr_t *fmr, int status)
 	fps = fpo->fpo_owner;
 	if (fpo->fpo_is_fmr) {
 		if (fmr->fmr_pfmr) {
-			rc = ib_fmr_pool_unmap(fmr->fmr_pfmr);
-			LASSERT(!rc);
+			ib_fmr_pool_unmap(fmr->fmr_pfmr);
 			fmr->fmr_pfmr = NULL;
 		}
 
