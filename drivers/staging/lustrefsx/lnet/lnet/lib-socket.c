@@ -43,6 +43,26 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lib-lnet.h>
 
+/*
+ * kernel 5.1: commit 7f1bc6e95d7840d4305595b3e4025cddda88cee5
+ * Y2038 64-bit time.
+ *  SO_TIMESTAMP, SO_TIMESTAMPNS and SO_TIMESTAMPING options, the
+ *  way they are currently defined, are not y2038 safe.
+ *  Subsequent patches in the series add new y2038 safe versions
+ *  of these options which provide 64 bit timestamps on all
+ *  architectures uniformly.
+ *  Hence, rename existing options with OLD tag suffixes.
+ *
+ * NOTE: When updating to timespec64 change change these to '_NEW'.
+ *
+ */
+#ifndef SO_SNDTIMEO
+#define SO_SNDTIMEO SO_SNDTIMEO_OLD
+#endif
+
+#ifndef SO_RCVTIMEO
+#define SO_RCVTIMEO SO_RCVTIMEO_OLD
+#endif
 
 static int
 lnet_sock_create_kern(struct socket **sock, struct net *ns)
@@ -111,7 +131,11 @@ lnet_sock_ioctl(int cmd, unsigned long arg, struct net *ns)
 	fput(sock_filp);
 out:
 	if (fd >= 0)
+#ifdef HAVE_KSYS_CLOSE
+		ksys_close(fd);
+#else
 		sys_close(fd);
+#endif
 	return rc;
 }
 
@@ -505,14 +529,18 @@ int
 lnet_sock_getaddr(struct socket *sock, bool remote, __u32 *ip, int *port)
 {
 	struct sockaddr_in sin;
-	int		   len = sizeof(sin);
-	int		   rc;
+	int rc;
+#ifndef HAVE_KERN_SOCK_GETNAME_2ARGS
+	int len = sizeof(sin);
+#endif
 
 	if (remote)
-		rc = kernel_getpeername(sock, (struct sockaddr *)&sin, &len);
+		rc = lnet_kernel_getpeername(sock,
+					     (struct sockaddr *)&sin, &len);
 	else
-		rc = kernel_getsockname(sock, (struct sockaddr *)&sin, &len);
-	if (rc != 0) {
+		rc = lnet_kernel_getsockname(sock,
+					     (struct sockaddr *)&sin, &len);
+	if (rc < 0) {
 		CERROR("Error %d getting sock %s IP/port\n",
 			rc, remote ? "peer" : "local");
 		return rc;
