@@ -1008,17 +1008,19 @@ int ll_merge_attr(const struct lu_env *env, struct inode *inode)
 	 * if it's at least 'mdd.*.atime_diff' older.
 	 * All in all, the atime in Lustre does not strictly comply with
 	 * POSIX. Solving this problem needs to send an RPC to MDT for each
-	 * read, this will hurt performance. */
-	if (LTIME_S(inode->i_atime) < lli->lli_atime || lli->lli_update_atime) {
-		LTIME_S(inode->i_atime) = lli->lli_atime;
+	 * read, this will hurt performance.
+	 */
+	if (inode->i_atime.tv_sec < lli->lli_atime ||
+	    lli->lli_update_atime) {
+		inode->i_atime.tv_sec = lli->lli_atime;
 		lli->lli_update_atime = 0;
 	}
-	LTIME_S(inode->i_mtime) = lli->lli_mtime;
-	LTIME_S(inode->i_ctime) = lli->lli_ctime;
+	inode->i_mtime.tv_sec = lli->lli_mtime;
+	inode->i_ctime.tv_sec = lli->lli_ctime;
 
-	atime = LTIME_S(inode->i_atime);
-	mtime = LTIME_S(inode->i_mtime);
-	ctime = LTIME_S(inode->i_ctime);
+	mtime = inode->i_mtime.tv_sec;
+	atime = inode->i_atime.tv_sec;
+	ctime = inode->i_ctime.tv_sec;
 
 	cl_object_attr_lock(obj);
 	rc = cl_object_attr_get(env, obj, attr);
@@ -1042,9 +1044,9 @@ int ll_merge_attr(const struct lu_env *env, struct inode *inode)
 	i_size_write(inode, attr->cat_size);
 	inode->i_blocks = attr->cat_blocks;
 
-	LTIME_S(inode->i_atime) = atime;
-	LTIME_S(inode->i_mtime) = mtime;
-	LTIME_S(inode->i_ctime) = ctime;
+	inode->i_mtime.tv_sec = mtime;
+	inode->i_atime.tv_sec = atime;
+	inode->i_ctime.tv_sec = ctime;
 
 out_size_unlock:
 	ll_inode_size_unlock(inode);
@@ -1073,7 +1075,7 @@ static bool file_is_noatime(const struct file *file)
 	if ((mnt->mnt_flags & MNT_NODIRATIME) && S_ISDIR(inode->i_mode))
 		return true;
 
-	if ((inode->i_sb->s_flags & MS_NODIRATIME) && S_ISDIR(inode->i_mode))
+	if ((inode->i_sb->s_flags & SB_NODIRATIME) && S_ISDIR(inode->i_mode))
 		return true;
 
 	return false;
@@ -3270,6 +3272,7 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
         }
         flock.l_flock.pid = file_lock->fl_pid;
 
+#if defined(HAVE_LM_COMPARE_OWNER) || defined(lm_compare_owner)
 	/* Somewhat ugly workaround for svc lockd.
 	 * lockd installs custom fl_lmops->lm_compare_owner that checks
 	 * for the fl_owner to be the same (which it always is on local node
@@ -3279,6 +3282,7 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 	 * pointer space for current->files are not intersecting */
 	if (file_lock->fl_lmops && file_lock->fl_lmops->lm_compare_owner)
 		flock.l_flock.owner = (unsigned long)file_lock->fl_pid;
+#endif
 
 	switch (fl_type) {
         case F_RDLCK:
@@ -3782,9 +3786,9 @@ ll_inode_revalidate(struct dentry *dentry, __u64 ibits)
 				RETURN(rc);
 		}
 
-		LTIME_S(inode->i_atime) = ll_i2info(inode)->lli_atime;
-		LTIME_S(inode->i_mtime) = ll_i2info(inode)->lli_mtime;
-		LTIME_S(inode->i_ctime) = ll_i2info(inode)->lli_ctime;
+		inode->i_atime.tv_sec = ll_i2info(inode)->lli_atime;
+		inode->i_mtime.tv_sec = ll_i2info(inode)->lli_mtime;
+		inode->i_ctime.tv_sec = ll_i2info(inode)->lli_ctime;
 	} else {
 		/* In case of restore, the MDT has the right size and has
 		 * already send it back without granting the layout lock,
