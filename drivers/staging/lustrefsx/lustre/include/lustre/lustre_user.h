@@ -50,12 +50,12 @@
 # include <linux/string.h> /* snprintf() */
 # include <linux/version.h>
 #else /* !__KERNEL__ */
-# define NEED_QUOTA_DEFS
 # include <limits.h>
 # include <stdbool.h>
 # include <stdio.h> /* snprintf() */
 # include <string.h>
-# include <sys/quota.h>
+# define NEED_QUOTA_DEFS
+/* # include <sys/quota.h> - this causes complaints about caddr_t */
 # include <sys/stat.h>
 #endif /* __KERNEL__ */
 #include <lustre/ll_fiemap.h>
@@ -73,7 +73,15 @@
     "project",	/* PRJQUOTA */ \
     "undefined", \
 };
+#ifndef USRQUOTA
+#define USRQUOTA 0
+#endif
+#ifndef GRPQUOTA
+#define GRPQUOTA 1
+#endif
+#ifndef PRJQUOTA
 #define PRJQUOTA 2
+#endif
 
 #if defined(__x86_64__) || defined(__ia64__) || defined(__ppc64__) || \
     defined(__craynv) || defined(__mips64__) || defined(__powerpc64__) || \
@@ -183,16 +191,51 @@ struct ost_layout {
 	__u32	ol_comp_id;
 } __attribute__((packed));
 
-/* keep this one for compatibility */
-struct filter_fid_old {
-	struct lu_fid	ff_parent;
-	__u64		ff_objid;
-	__u64		ff_seq;
+/* The filter_fid structure has changed several times over its lifetime.
+ * For a long time "trusted.fid" held the MDT inode parent FID/IGIF and
+ * stripe_index and the "self FID" (objid/seq) to be able to recover the
+ * OST objects in case of corruption.  With the move to 2.4 and OSD-API for
+ * the OST, the "trusted.lma" xattr was added to the OST objects to store
+ * the "self FID" to be consistent with the MDT on-disk format, and the
+ * filter_fid only stored the MDT inode parent FID and stripe index.
+ *
+ * In 2.10, the addition of PFL composite layouts required more information
+ * to be stored into the filter_fid in order to be able to identify which
+ * component the OST object belonged.  As well, the stripe size may vary
+ * between components, so it was no longer safe to assume the stripe size
+ * or stripe_count of a file.  This is also more robust for plain layouts.
+ *
+ * For ldiskfs OSTs that were formatted with 256-byte inodes, there is not
+ * enough space to store both the filter_fid and LMA in the inode, so they
+ * are packed into struct lustre_ost_attrs on disk in trusted.lma to avoid
+ * an extra seek for every OST object access.
+ *
+ * In 2.11, FLR mirror layouts also need to store the layout version and
+ * range so that writes to old versions of the layout are not allowed.
+ * That ensures that mirrored objects are not modified by evicted clients,
+ * and ensures that the components are correctly marked stale on the MDT.
+ */
+struct filter_fid_18_23 {
+	struct lu_fid		ff_parent;	/* stripe_idx in f_ver */
+	__u64			ff_objid;
+	__u64			ff_seq;
+};
+
+struct filter_fid_24_29 {
+	struct lu_fid		ff_parent;	/* stripe_idx in f_ver */
+};
+
+struct filter_fid_210 {
+	struct lu_fid		ff_parent;	/* stripe_idx in f_ver */
+	struct ost_layout	ff_layout;
 };
 
 struct filter_fid {
-	struct lu_fid		ff_parent;
+	struct lu_fid		ff_parent;	/* stripe_idx in f_ver */
 	struct ost_layout	ff_layout;
+	__u32			ff_layout_version;
+	__u32			ff_range; /* range of layout version that
+					   * write are allowed */
 } __attribute__((packed));
 
 /* Userspace should treat lu_fid as opaque, and only use the following methods
@@ -410,6 +453,9 @@ enum ll_lease_type {
 /* To be compatible with old statically linked binary we keep the check for
  * the older 0100000000 flag.  This is already removed upstream.  LU-812. */
 #define O_LOV_DELAY_CREATE_1_8	0100000000 /* FMODE_NONOTIFY masked in 2.6.36 */
+#ifndef FASYNC
+#define FASYNC			00020000   /* fcntl, for BSD compatibility */
+#endif
 #define O_LOV_DELAY_CREATE_MASK	(O_NOCTTY | FASYNC)
 #define O_LOV_DELAY_CREATE		(O_LOV_DELAY_CREATE_1_8 | \
 					 O_LOV_DELAY_CREATE_MASK)
