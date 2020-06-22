@@ -415,11 +415,11 @@ int client_obd_setup(struct obd_device *obddev, struct lustre_cfg *lcfg)
 
 	if (!strcmp(name, LUSTRE_MDC_NAME)) {
 		cli->cl_max_rpcs_in_flight = OBD_MAX_RIF_DEFAULT;
-	} else if (TOTALRAM_PAGES >> (20 - PAGE_SHIFT) <= 128 /* MB */) {
+	} else if (cfs_totalram_pages() >> (20 - PAGE_SHIFT) <= 128 /* MB */) {
 		cli->cl_max_rpcs_in_flight = 2;
-	} else if (TOTALRAM_PAGES >> (20 - PAGE_SHIFT) <= 256 /* MB */) {
+	} else if (cfs_totalram_pages() >> (20 - PAGE_SHIFT) <= 256 /* MB */) {
 		cli->cl_max_rpcs_in_flight = 3;
-	} else if (TOTALRAM_PAGES >> (20 - PAGE_SHIFT) <= 512 /* MB */) {
+	} else if (cfs_totalram_pages() >> (20 - PAGE_SHIFT) <= 512 /* MB */) {
 		cli->cl_max_rpcs_in_flight = 4;
 	} else {
 		if (osc_on_mdt(obddev->obd_name))
@@ -1164,6 +1164,7 @@ int target_handle_connect(struct ptlrpc_request *req)
 			 * cause namespace inconsistency */
 			spin_lock(&export->exp_lock);
 			export->exp_connecting = 1;
+			export->exp_conn_cnt = 0;
 			spin_unlock(&export->exp_lock);
 			conn.cookie = export->exp_handle.h_cookie;
 			rc = EALREADY;
@@ -1205,18 +1206,19 @@ no_export:
                               target->obd_name, cluuid.uuid,
                               libcfs_nid2str(req->rq_peer.nid),
 			      atomic_read(&export->exp_refcount));
-                GOTO(out, rc = -EBUSY);
-        } else if (lustre_msg_get_conn_cnt(req->rq_reqmsg) == 1) {
-                if (!strstr(cluuid.uuid, "mdt"))
-                        LCONSOLE_WARN("%s: Rejecting reconnect from the "
-                                      "known client %s (at %s) because it "
-                                      "is indicating it is a new client",
-                                      target->obd_name, cluuid.uuid,
-                                      libcfs_nid2str(req->rq_peer.nid));
-                GOTO(out, rc = -EALREADY);
-        } else {
-                OBD_FAIL_TIMEOUT(OBD_FAIL_TGT_DELAY_RECONNECT, 2 * obd_timeout);
-        }
+			GOTO(out, rc = -EBUSY);
+	} else if (lustre_msg_get_conn_cnt(req->rq_reqmsg) == 1 &&
+		   rc != EALREADY) {
+		if (!strstr(cluuid.uuid, "mdt"))
+			LCONSOLE_WARN("%s: Rejecting reconnect from the "
+				      "known client %s (at %s) because it "
+				      "is indicating it is a new client",
+				      target->obd_name, cluuid.uuid,
+				      libcfs_nid2str(req->rq_peer.nid));
+		GOTO(out, rc = -EALREADY);
+	} else {
+		OBD_FAIL_TIMEOUT(OBD_FAIL_TGT_DELAY_RECONNECT, 2 * obd_timeout);
+	}
 
         if (rc < 0) {
                 GOTO(out, rc);
@@ -2621,9 +2623,9 @@ void target_recovery_fini(struct obd_device *obd)
 }
 EXPORT_SYMBOL(target_recovery_fini);
 
-static void target_recovery_expired(unsigned long castmeharder)
+static void target_recovery_expired(cfs_timer_cb_arg_t data)
 {
-	struct obd_device *obd = (struct obd_device *)castmeharder;
+	struct obd_device *obd = cfs_from_timer(obd, data, obd_recovery_timer);
 	CDEBUG(D_HA, "%s: recovery timed out; %d clients are still in recovery"
 	       " after %llus (%d clients connected)\n",
 	       obd->obd_name, atomic_read(&obd->obd_lock_replay_clients),
@@ -2655,8 +2657,8 @@ void target_recovery_init(struct lu_target *lut, svc_handler_t handler)
         obd->obd_recovery_start = 0;
         obd->obd_recovery_end = 0;
 
-	setup_timer(&obd->obd_recovery_timer, target_recovery_expired,
-		    (unsigned long)obd);
+	cfs_timer_setup(&obd->obd_recovery_timer, target_recovery_expired,
+			(unsigned long)obd, 0);
 	target_start_recovery_thread(lut, handler);
 }
 EXPORT_SYMBOL(target_recovery_init);
