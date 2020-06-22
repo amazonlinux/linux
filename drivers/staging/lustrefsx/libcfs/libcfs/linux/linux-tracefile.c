@@ -34,7 +34,6 @@
 #define LUSTRE_TRACEFILE_PRIVATE
 
 #include <libcfs/libcfs.h>
-#include <lustre_compat.h>
 #include "tracefile.h"
 
 /* percents to share the total debug memory for each type */
@@ -267,7 +266,7 @@ void cfs_print_to_console(struct ptldebug_header *hdr, int mask,
 
 int cfs_trace_max_debug_mb(void)
 {
-	int  total_mb = (TOTALRAM_PAGES >> (20 - PAGE_SHIFT));
+	int  total_mb = (cfs_totalram_pages() >> (20 - PAGE_SHIFT));
 
 	return MAX(512, (total_mb * 80)/100);
 }
