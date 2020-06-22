@@ -678,6 +678,7 @@ repeat_fid2path:
 	if (remote_gf != NULL) {
 		struct getinfo_fid2path *ori_gf;
 		char *ptr;
+		int len;
 
 		ori_gf = (struct getinfo_fid2path *)karg;
 		if (strlen(ori_gf->gf_u.gf_path) +
@@ -686,13 +687,12 @@ repeat_fid2path:
 
 		ptr = ori_gf->gf_u.gf_path;
 
-		memmove(ptr + strlen(gf->gf_u.gf_path) + 1, ptr,
-			strlen(ori_gf->gf_u.gf_path));
-
-		strncpy(ptr, gf->gf_u.gf_path,
-			strlen(gf->gf_u.gf_path));
-		ptr += strlen(gf->gf_u.gf_path);
-		*ptr = '/';
+		len = strlen(gf->gf_u.gf_path);
+		/* move the current path to the right to release space
+		 * for closer-to-root part */
+		memmove(ptr + len + 1, ptr, strlen(ori_gf->gf_u.gf_path));
+		memcpy(ptr, gf->gf_u.gf_path, len);
+		ptr[len] = '/';
 	}
 
 	CDEBUG(D_INFO, "%s: get path %s "DFID" rec: %llu ln: %u\n",
@@ -3096,13 +3096,12 @@ static int lmv_merge_attr(struct obd_export *exp,
 	for (i = 0; i < lsm->lsm_md_stripe_count; i++) {
 		struct inode *inode = lsm->lsm_md_oinfo[i].lmo_root;
 
-		CDEBUG(D_INFO, ""DFID" size %llu, blocks %llu nlink %u,"
-		       " atime " LTIME_FMT " ctime " LTIME_FMT
-		       ", mtime " LTIME_FMT ".\n",
+		CDEBUG(D_INFO,
+		       "" DFID " size %llu, blocks %llu nlink %u, atime %lld ctime %lld, mtime %lld.\n",
 		       PFID(&lsm->lsm_md_oinfo[i].lmo_fid),
 		       i_size_read(inode), (unsigned long long)inode->i_blocks,
-		       inode->i_nlink, LTIME_S(inode->i_atime),
-		       LTIME_S(inode->i_ctime), LTIME_S(inode->i_mtime));
+		       inode->i_nlink, (s64)inode->i_atime.tv_sec,
+		       (s64)inode->i_ctime.tv_sec, (s64)inode->i_mtime.tv_sec);
 
 		/* for slave stripe, it needs to subtract nlink for . and .. */
 		if (i != 0)
@@ -3113,14 +3112,14 @@ static int lmv_merge_attr(struct obd_export *exp,
 		attr->cat_size += i_size_read(inode);
 		attr->cat_blocks += inode->i_blocks;
 
-		if (attr->cat_atime < LTIME_S(inode->i_atime))
-			attr->cat_atime = LTIME_S(inode->i_atime);
+		if (attr->cat_atime < inode->i_atime.tv_sec)
+			attr->cat_atime = inode->i_atime.tv_sec;
 
-		if (attr->cat_ctime < LTIME_S(inode->i_ctime))
-			attr->cat_ctime = LTIME_S(inode->i_ctime);
+		if (attr->cat_ctime < inode->i_ctime.tv_sec)
+			attr->cat_ctime = inode->i_ctime.tv_sec;
 
-		if (attr->cat_mtime < LTIME_S(inode->i_mtime))
-			attr->cat_mtime = LTIME_S(inode->i_mtime);
+		if (attr->cat_mtime < inode->i_mtime.tv_sec)
+			attr->cat_mtime = inode->i_mtime.tv_sec;
 	}
 	return 0;
 }
