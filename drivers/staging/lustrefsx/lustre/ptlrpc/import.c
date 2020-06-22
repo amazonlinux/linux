@@ -37,6 +37,7 @@
 #define DEBUG_SUBSYSTEM S_RPC
 
 #include <linux/kthread.h>
+#include <linux/delay.h>
 #include <obd_support.h>
 #include <lustre_ha.h>
 #include <lustre_net.h>
@@ -292,6 +293,10 @@ void ptlrpc_invalidate_import(struct obd_import *imp)
 	if (!imp->imp_invalid || imp->imp_obd->obd_no_recov)
 		ptlrpc_deactivate_import(imp);
 
+	if (OBD_FAIL_PRECHECK(OBD_FAIL_PTLRPC_CONNECT_RACE)) {
+		OBD_RACE(OBD_FAIL_PTLRPC_CONNECT_RACE);
+		msleep(10 * MSEC_PER_SEC);
+	}
 	CFS_FAIL_TIMEOUT(OBD_FAIL_MGS_CONNECT_NET, 3 * cfs_fail_val / 2);
 	LASSERT(imp->imp_invalid);
 
@@ -666,6 +671,7 @@ int ptlrpc_connect_import(struct obd_import *imp)
 		CERROR("already connected\n");
 		RETURN(0);
 	} else if (imp->imp_state == LUSTRE_IMP_CONNECTING ||
+		   imp->imp_state == LUSTRE_IMP_EVICTED ||
 		   imp->imp_connected) {
 		spin_unlock(&imp->imp_lock);
 		CERROR("already connecting\n");
@@ -795,18 +801,6 @@ static int ptlrpc_connect_set_flags(struct obd_import *imp,
 {
 	static bool warned;
 	struct client_obd *cli = &imp->imp_obd->u.cli;
-
-	if ((imp->imp_connect_flags_orig & OBD_CONNECT_IBITS) &&
-	    !(ocd->ocd_connect_flags & OBD_CONNECT_IBITS)) {
-		LCONSOLE_WARN("%s: MDS %s does not support ibits "
-			      "lock, either very old or invalid: "
-			      "requested %#llx, replied %#llx\n",
-			      imp->imp_obd->obd_name,
-			      imp->imp_connection->c_remote_uuid.uuid,
-			      imp->imp_connect_flags_orig,
-			      ocd->ocd_connect_flags);
-		return -EPROTO;
-	}
 
 	spin_lock(&imp->imp_lock);
 	list_del(&imp->imp_conn_current->oic_item);
