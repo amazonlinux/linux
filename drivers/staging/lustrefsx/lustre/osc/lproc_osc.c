@@ -160,7 +160,7 @@ static ssize_t osc_max_dirty_mb_seq_write(struct file *file,
 
 	if (pages_number <= 0 ||
 	    pages_number >= OSC_MAX_DIRTY_MB_MAX << (20 - PAGE_SHIFT) ||
-	    pages_number > TOTALRAM_PAGES / 4) /* 1/4 of RAM */
+	    pages_number > cfs_totalram_pages() / 4) /* 1/4 of RAM */
 		return -ERANGE;
 
 	spin_lock(&cli->cl_loi_list_lock);
