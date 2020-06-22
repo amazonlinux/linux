@@ -173,7 +173,7 @@ lnet_net_append_cpts(__u32 *cpts, __u32 ncpts, struct lnet_net *net)
 		LIBCFS_ALLOC(net->net_cpts, sizeof(*net->net_cpts) * ncpts);
 		if (net->net_cpts == NULL)
 			return -ENOMEM;
-		memcpy(net->net_cpts, cpts, ncpts);
+		memcpy(net->net_cpts, cpts, ncpts * sizeof(*net->net_cpts));
 		net->net_ncpts = ncpts;
 		return 0;
 	}
@@ -1607,7 +1607,7 @@ lnet_ipaddr_free_enumeration(__u32 *ipaddrs, int nip)
 }
 
 static int
-lnet_ipaddr_enumerate (__u32 **ipaddrsp)
+lnet_ipaddr_enumerate(__u32 **ipaddrsp, struct net *ns)
 {
 	int	   up;
 	__u32	   netmask;
@@ -1615,7 +1615,7 @@ lnet_ipaddr_enumerate (__u32 **ipaddrsp)
 	__u32	  *ipaddrs2;
 	int	   nip;
 	char	 **ifnames;
-	int	   nif = lnet_ipif_enumerate(&ifnames);
+	int	   nif = lnet_ipif_enumerate(&ifnames, ns);
 	int	   i;
 	int	   rc;
 
@@ -1634,7 +1634,7 @@ lnet_ipaddr_enumerate (__u32 **ipaddrsp)
 			continue;
 
 		rc = lnet_ipif_query(ifnames[i], &up,
-				       &ipaddrs[nip], &netmask);
+				       &ipaddrs[nip], &netmask, ns);
 		if (rc != 0) {
 			CWARN("Can't query interface %s: %d\n",
 			      ifnames[i], rc);
@@ -1676,8 +1676,10 @@ int
 lnet_parse_ip2nets (char **networksp, char *ip2nets)
 {
 	__u32	  *ipaddrs = NULL;
-	int	   nip = lnet_ipaddr_enumerate(&ipaddrs);
+	int	   nip;
 	int	   rc;
+
+	nip = lnet_ipaddr_enumerate(&ipaddrs, current->nsproxy->net_ns);
 
 	if (nip < 0) {
 		LCONSOLE_ERROR_MSG(0x117, "Error %d enumerating local IP "
