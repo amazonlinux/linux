@@ -86,9 +86,9 @@ int cl_setattr_ost(struct cl_object *obj, const struct iattr *attr,
 	io->ci_obj = obj;
 	io->ci_verify_layout = 1;
 
-	io->u.ci_setattr.sa_attr.lvb_atime = LTIME_S(attr->ia_atime);
-	io->u.ci_setattr.sa_attr.lvb_mtime = LTIME_S(attr->ia_mtime);
-	io->u.ci_setattr.sa_attr.lvb_ctime = LTIME_S(attr->ia_ctime);
+	io->u.ci_setattr.sa_attr.lvb_atime = attr->ia_atime.tv_sec;
+	io->u.ci_setattr.sa_attr.lvb_mtime = attr->ia_mtime.tv_sec;
+	io->u.ci_setattr.sa_attr.lvb_ctime = attr->ia_ctime.tv_sec;
 	io->u.ci_setattr.sa_attr.lvb_size = attr->ia_size;
 	io->u.ci_setattr.sa_attr_flags = attr_flags;
 	io->u.ci_setattr.sa_valid = attr->ia_valid;
@@ -149,37 +149,48 @@ int cl_file_inode_init(struct inode *inode, struct lustre_md *md)
 
 	site = ll_i2sbi(inode)->ll_site;
 	lli  = ll_i2info(inode);
-        fid  = &lli->lli_fid;
-        LASSERT(fid_is_sane(fid));
+	fid  = &lli->lli_fid;
+	LASSERT(fid_is_sane(fid));
 
-        if (lli->lli_clob == NULL) {
-                /* clob is slave of inode, empty lli_clob means for new inode,
-                 * there is no clob in cache with the given fid, so it is
-                 * unnecessary to perform lookup-alloc-lookup-insert, just
-                 * alloc and insert directly. */
-                LASSERT(inode->i_state & I_NEW);
-                conf.coc_lu.loc_flags = LOC_F_NEW;
-                clob = cl_object_find(env, lu2cl_dev(site->ls_top_dev),
-                                      fid, &conf);
-                if (!IS_ERR(clob)) {
-                        /*
-                         * No locking is necessary, as new inode is
-                         * locked by I_NEW bit.
-                         */
-                        lli->lli_clob = clob;
-                        lu_object_ref_add(&clob->co_lu, "inode", inode);
-                } else
-                        result = PTR_ERR(clob);
+	if (lli->lli_clob == NULL) {
+		/* clob is slave of inode, empty lli_clob means for new inode,
+		 * there is no clob in cache with the given fid, so it is
+		 * unnecessary to perform lookup-alloc-lookup-insert, just
+		 * alloc and insert directly.
+		 */
+		if (!(inode->i_state & I_NEW)) {
+			result = -EIO;
+			CERROR("%s: unexpected not-NEW inode "DFID": rc = %d\n",
+			       ll_get_fsname(inode->i_sb, NULL, 0), PFID(fid),
+			       result);
+			goto out;
+		}
+
+		conf.coc_lu.loc_flags = LOC_F_NEW;
+		clob = cl_object_find(env, lu2cl_dev(site->ls_top_dev),
+				      fid, &conf);
+		if (!IS_ERR(clob)) {
+			/*
+			 * No locking is necessary, as new inode is
+			 * locked by I_NEW bit.
+			 */
+			lli->lli_clob = clob;
+			lu_object_ref_add(&clob->co_lu, "inode", inode);
+		} else {
+			result = PTR_ERR(clob);
+		}
 	} else {
 		result = cl_conf_set(env, lli->lli_clob, &conf);
 	}
 
-        cl_env_put(env, &refcheck);
+	if (result != 0)
+		CERROR("%s: failed to initialize cl_object "DFID": rc = %d\n",
+			ll_get_fsname(inode->i_sb, NULL, 0), PFID(fid), result);
 
-        if (result != 0)
-                CERROR("Failure to initialize cl object "DFID": %d\n",
-                       PFID(fid), result);
-        return result;
+out:
+	cl_env_put(env, &refcheck);
+
+	return result;
 }
 
 /**

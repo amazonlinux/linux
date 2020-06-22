@@ -44,16 +44,39 @@
 #include <lnet/lib-lnet.h>
 
 /*
- * Deal with the post-5.0 rename of these in-kernel values.
+ * kernel 5.1: commit 7f1bc6e95d7840d4305595b3e4025cddda88cee5
+ * Y2038 64-bit time.
+ *  SO_TIMESTAMP, SO_TIMESTAMPNS and SO_TIMESTAMPING options, the
+ *  way they are currently defined, are not y2038 safe.
+ *  Subsequent patches in the series add new y2038 safe versions
+ *  of these options which provide 64 bit timestamps on all
+ *  architectures uniformly.
+ *  Hence, rename existing options with OLD tag suffixes.
+ *
+ * NOTE: When updating to timespec64 change change these to '_NEW'.
+ *
  */
-#if !defined(SO_RCVTIMEO) && defined(SO_RCVTIMEO_OLD)
-#define SO_RCVTIMEO SO_RCVTIMEO_OLD
-#endif
-
-#if !defined(SO_SNDTIMEO) && defined(SO_SNDTIMEO_OLD)
+#ifndef SO_SNDTIMEO
 #define SO_SNDTIMEO SO_SNDTIMEO_OLD
 #endif
 
+#ifndef SO_RCVTIMEO
+#define SO_RCVTIMEO SO_RCVTIMEO_OLD
+#endif
+
+static int
+lnet_sock_create_kern(struct socket **sock, struct net *ns)
+{
+	int rc;
+
+#ifdef HAVE_SOCK_CREATE_KERN_USE_NET
+	rc = sock_create_kern(ns, PF_INET, SOCK_STREAM, 0, sock);
+#else
+	rc = sock_create_kern(PF_INET, SOCK_STREAM, 0, sock);
+#endif
+
+	return rc;
+}
 
 static int
 kernel_sock_unlocked_ioctl(struct file *filp, int cmd, unsigned long arg)
@@ -69,18 +92,14 @@ kernel_sock_unlocked_ioctl(struct file *filp, int cmd, unsigned long arg)
 }
 
 static int
-lnet_sock_ioctl(int cmd, unsigned long arg)
+lnet_sock_ioctl(int cmd, unsigned long arg, struct net *ns)
 {
 	struct file    *sock_filp;
 	struct socket  *sock;
 	int		fd = -1;
 	int		rc;
 
-#ifdef HAVE_SOCK_CREATE_KERN_USE_NET
-	rc = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, 0, &sock);
-#else
-	rc = sock_create_kern(PF_INET, SOCK_STREAM, 0, &sock);
-#endif
+	rc = lnet_sock_create_kern(&sock, ns);
 	if (rc != 0) {
 		CERROR("Can't create socket: %d\n", rc);
 		return rc;
@@ -121,7 +140,7 @@ out:
 }
 
 int
-lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask)
+lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask, struct net *ns)
 {
 	struct ifreq	ifr;
 	int		nob;
@@ -140,7 +159,7 @@ lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask)
 		return -E2BIG;
 	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 
-	rc = lnet_sock_ioctl(SIOCGIFFLAGS, (unsigned long)&ifr);
+	rc = lnet_sock_ioctl(SIOCGIFFLAGS, (unsigned long)&ifr, ns);
 	if (rc != 0) {
 		CERROR("Can't get flags for interface %s\n", name);
 		return rc;
@@ -159,7 +178,7 @@ lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask)
 	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 
 	ifr.ifr_addr.sa_family = AF_INET;
-	rc = lnet_sock_ioctl(SIOCGIFADDR, (unsigned long)&ifr);
+	rc = lnet_sock_ioctl(SIOCGIFADDR, (unsigned long)&ifr, ns);
 
 	if (rc != 0) {
 		CERROR("Can't get IP address for interface %s\n", name);
@@ -174,7 +193,7 @@ lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask)
 	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
 
 	ifr.ifr_addr.sa_family = AF_INET;
-	rc = lnet_sock_ioctl(SIOCGIFNETMASK, (unsigned long)&ifr);
+	rc = lnet_sock_ioctl(SIOCGIFNETMASK, (unsigned long)&ifr, ns);
 	if (rc != 0) {
 		CERROR("Can't get netmask for interface %s\n", name);
 		return rc;
@@ -202,7 +221,7 @@ lnet_ipif_free_enumeration(char **names, int n)
 EXPORT_SYMBOL(lnet_ipif_free_enumeration);
 
 int
-lnet_ipif_enumerate(char ***namesp)
+lnet_ipif_enumerate(char ***namesp, struct net *ns)
 {
 	/* Allocate and fill in 'names', returning # interfaces/error */
 	char	      **names;
@@ -236,7 +255,7 @@ lnet_ipif_enumerate(char ***namesp)
 		ifc.ifc_buf = (char *)ifr;
 		ifc.ifc_len = nalloc * sizeof(*ifr);
 
-		rc = lnet_sock_ioctl(SIOCGIFCONF, (unsigned long)&ifc);
+		rc = lnet_sock_ioctl(SIOCGIFCONF, (unsigned long)&ifc, ns);
 		if (rc < 0) {
 			CERROR("Error %d enumerating interfaces\n", rc);
 			goto out1;
@@ -423,7 +442,7 @@ EXPORT_SYMBOL(lnet_sock_read);
 
 static int
 lnet_sock_create(struct socket **sockp, int *fatal,
-		 __u32 local_ip, int local_port)
+		 __u32 local_ip, int local_port, struct net *ns)
 {
 	struct sockaddr_in  locaddr;
 	struct socket	   *sock;
@@ -433,11 +452,7 @@ lnet_sock_create(struct socket **sockp, int *fatal,
 	/* All errors are fatal except bind failure if the port is in use */
 	*fatal = 1;
 
-#ifdef HAVE_SOCK_CREATE_KERN_USE_NET
-	rc = sock_create_kern(&init_net, PF_INET, SOCK_STREAM, 0, &sock);
-#else
-	rc = sock_create_kern(PF_INET, SOCK_STREAM, 0, &sock);
-#endif
+	rc = lnet_sock_create_kern(&sock, ns);
 	*sockp = sock;
 	if (rc != 0) {
 		CERROR("Can't create socket: %d\n", rc);
@@ -514,23 +529,18 @@ int
 lnet_sock_getaddr(struct socket *sock, bool remote, __u32 *ip, int *port)
 {
 	struct sockaddr_in sin;
-	int		   rc;
-
-#ifdef HAVE_KERNSOCK_RETURNSLEN
-	if (remote)
-		rc = kernel_getpeername(sock, (struct sockaddr *)&sin);
-	else
-		rc = kernel_getsockname(sock, (struct sockaddr *)&sin);
-	if (rc < 0) {
-#else
-	int		   len = sizeof(sin);
-
-	if (remote)
-		rc = kernel_getpeername(sock, (struct sockaddr *)&sin, &len);
-	else
-		rc = kernel_getsockname(sock, (struct sockaddr *)&sin, &len);
-	if (rc != 0) {
+	int rc;
+#ifndef HAVE_KERN_SOCK_GETNAME_2ARGS
+	int len = sizeof(sin);
 #endif
+
+	if (remote)
+		rc = lnet_kernel_getpeername(sock,
+					     (struct sockaddr *)&sin, &len);
+	else
+		rc = lnet_kernel_getsockname(sock,
+					     (struct sockaddr *)&sin, &len);
+	if (rc < 0) {
 		CERROR("Error %d getting sock %s IP/port\n",
 			rc, remote ? "peer" : "local");
 		return rc;
@@ -561,12 +571,12 @@ EXPORT_SYMBOL(lnet_sock_getbuf);
 
 int
 lnet_sock_listen(struct socket **sockp,
-		   __u32 local_ip, int local_port, int backlog)
+		   __u32 local_ip, int local_port, int backlog, struct net *ns)
 {
 	int	 fatal;
 	int	 rc;
 
-	rc = lnet_sock_create(sockp, &fatal, local_ip, local_port);
+	rc = lnet_sock_create(sockp, &fatal, local_ip, local_port, ns);
 	if (rc != 0) {
 		if (!fatal)
 			CERROR("Can't create socket: port %d already in use\n",
@@ -640,12 +650,13 @@ failed:
 int
 lnet_sock_connect(struct socket **sockp, int *fatal,
 		  __u32 local_ip, int local_port,
-		  __u32 peer_ip, int peer_port)
+		  __u32 peer_ip, int peer_port,
+		  struct net *ns)
 {
 	struct sockaddr_in  srvaddr;
 	int		    rc;
 
-	rc = lnet_sock_create(sockp, fatal, local_ip, local_port);
+	rc = lnet_sock_create(sockp, fatal, local_ip, local_port, ns);
 	if (rc != 0)
 		return rc;
 
