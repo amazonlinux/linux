@@ -276,6 +276,8 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_OSD_COMPAT_NO_ENTRY			0x196
 #define OBD_FAIL_OSD_OST_EA_FID_SET			0x197
 
+#define OBD_FAIL_OFD_SET_OID				0x1e0
+
 #define OBD_FAIL_OST                     0x200
 #define OBD_FAIL_OST_CONNECT_NET         0x201
 #define OBD_FAIL_OST_DISCONNECT_NET      0x202
@@ -424,6 +426,8 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_PTLRPC_LONG_REQ_UNLINK  0x51b
 #define OBD_FAIL_PTLRPC_LONG_BOTH_UNLINK 0x51c
 #define OBD_FAIL_PTLRPC_CLIENT_BULK_CB3  0x520
+#define OBD_FAIL_PTLRPC_BULK_ATTACH      0x521
+#define OBD_FAIL_PTLRPC_CONNECT_RACE	 0x531
 
 #define OBD_FAIL_OBD_PING_NET            0x600
 #define OBD_FAIL_OBD_LOG_CANCEL_NET      0x601
