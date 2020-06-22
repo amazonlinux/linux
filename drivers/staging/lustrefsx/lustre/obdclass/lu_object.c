@@ -888,7 +888,7 @@ static unsigned long lu_htable_order(struct lu_device *top)
          *
          * Size of lu_object is (arbitrary) taken as 1K (together with inode).
          */
-	cache_size = TOTALRAM_PAGES;
+	cache_size = cfs_totalram_pages();
 
 #if BITS_PER_LONG == 32
         /* limit hashtable size for lowmem systems to low RAM */
