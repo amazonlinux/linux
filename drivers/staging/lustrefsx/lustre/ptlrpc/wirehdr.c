@@ -20,52 +20,25 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
+ * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
- *
- * lustre/lustre/include/lustre_idmap.h
- *
- * MDS data structures.
- * See also lustre_idl.h for wire formats of requests.
  */
 
-#ifndef _LUSTRE_IDMAP_H
-#define _LUSTRE_IDMAP_H
+#define DEBUG_SUBSYSTEM S_RPC
 
-/** \defgroup idmap idmap
- *
- * @{
- */
+#ifdef CONFIG_FS_POSIX_ACL
+# include <linux/fs.h>
+# include <linux/posix_acl_xattr.h>
+#endif /* CONFIG_FS_POSIX_ACL */
 
-#include <libcfs/libcfs.h>
-
-#ifdef HAVE_GROUP_INFO_GID
-
-#define CFS_GROUP_AT(gi, i) ((gi)->gid[(i)])
-
-#else  /* !HAVE_GROUP_INFO_GID */
-
-#define CFS_NGROUPS_PER_BLOCK   ((int)(PAGE_SIZE / sizeof(gid_t)))
-
-#define CFS_GROUP_AT(gi, i) \
-        ((gi)->blocks[(i) / CFS_NGROUPS_PER_BLOCK][(i) % CFS_NGROUPS_PER_BLOCK])
-
-#endif /* HAVE_GROUP_INFO_GID */
-
-#include <linux/cred.h>
-
-struct lu_ucred;
-
-extern void lustre_groups_from_list(struct group_info *ginfo, gid_t *glist);
-extern void lustre_groups_sort(struct group_info *group_info);
-extern int lustre_in_group_p(struct lu_ucred *mu, gid_t grp);
-
-/** @} idmap */
-
-#endif
+#include <obd_support.h>
+#include <obd_class.h>
+#include <lustre_net.h>
+#include <lustre/lustre_lfsck_user.h>
+#include <lustre_disk.h>
