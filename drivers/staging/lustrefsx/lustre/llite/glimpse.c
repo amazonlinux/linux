@@ -66,22 +66,12 @@ blkcnt_t dirty_cnt(struct inode *inode)
 {
         blkcnt_t cnt = 0;
 	struct vvp_object *vob = cl_inode2vvp(inode);
-#ifndef HAVE_ADDRESS_SPACE_XARRAY
         void              *results[1];
 
         if (inode->i_mapping != NULL)
-#ifdef HAVE_ADDRESS_SPACE_IPAGES
-                cnt += radix_tree_gang_lookup_tag(&inode->i_mapping->i_pages,
-#else
                 cnt += radix_tree_gang_lookup_tag(&inode->i_mapping->page_tree,
-#endif
                                                   results, 0, 1,
                                                   PAGECACHE_TAG_DIRTY);
-#else
-	if (inode->i_mapping && mapping_tagged(inode->i_mapping,
-				PAGECACHE_TAG_DIRTY))
-		cnt = 1;
-#endif
 	if (cnt == 0 && atomic_read(&vob->vob_mmap_cnt) > 0)
 		cnt = 1;
 
