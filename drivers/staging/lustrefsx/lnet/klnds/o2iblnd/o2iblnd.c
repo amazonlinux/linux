@@ -728,6 +728,19 @@ kiblnd_get_scheduler(int cpt)
 	return NULL;
 }
 
+static unsigned int kiblnd_send_wrs(struct kib_conn *conn)
+{
+	/*
+	 * One WR for the LNet message
+	 * And ibc_max_frags for the transfer WRs
+	 */
+	unsigned int ret = 1 + conn->ibc_max_frags;
+
+	/* account for a maximum of ibc_queue_depth in-flight transfers */
+	ret *= conn->ibc_queue_depth;
+	return ret;
+}
+
 kib_conn_t *
 kiblnd_create_conn(kib_peer_ni_t *peer_ni, struct rdma_cm_id *cmid,
 		   int state, int version)
@@ -881,8 +894,6 @@ kiblnd_create_conn(kib_peer_ni_t *peer_ni, struct rdma_cm_id *cmid,
 
 	init_qp_attr->event_handler = kiblnd_qp_event;
 	init_qp_attr->qp_context = conn;
-	init_qp_attr->cap.max_send_wr = IBLND_SEND_WRS(conn);
-	init_qp_attr->cap.max_recv_wr = IBLND_RECV_WRS(conn);
 	init_qp_attr->cap.max_send_sge = *kiblnd_tunables.kib_wrq_sge;
 	init_qp_attr->cap.max_recv_sge = 1;
 	init_qp_attr->sq_sig_type = IB_SIGNAL_REQ_WR;
@@ -893,11 +904,14 @@ kiblnd_create_conn(kib_peer_ni_t *peer_ni, struct rdma_cm_id *cmid,
 	conn->ibc_sched = sched;
 
 	do {
+		init_qp_attr->cap.max_send_wr = kiblnd_send_wrs(conn);
+		init_qp_attr->cap.max_recv_wr = IBLND_RECV_WRS(conn);
+
 		rc = rdma_create_qp(cmid, conn->ibc_hdev->ibh_pd, init_qp_attr);
-		if (!rc || init_qp_attr->cap.max_send_wr < 16)
+		if (!rc || conn->ibc_queue_depth < 2)
 			break;
 
-		init_qp_attr->cap.max_send_wr -= init_qp_attr->cap.max_send_wr / 4;
+		conn->ibc_queue_depth--;
 	} while (rc);
 
 	if (rc) {
@@ -910,9 +924,12 @@ kiblnd_create_conn(kib_peer_ni_t *peer_ni, struct rdma_cm_id *cmid,
 		goto failed_2;
 	}
 
-	if (init_qp_attr->cap.max_send_wr != IBLND_SEND_WRS(conn))
-		CDEBUG(D_NET, "original send wr %d, created with %d\n",
-			IBLND_SEND_WRS(conn), init_qp_attr->cap.max_send_wr);
+	if (conn->ibc_queue_depth != peer_ni->ibp_queue_depth)
+		CWARN("peer %s - queue depth reduced from %u to %u"
+		      "  to allow for qp creation\n",
+		      libcfs_nid2str(peer_ni->ibp_nid),
+		      peer_ni->ibp_queue_depth,
+		      conn->ibc_queue_depth);
 
 	LIBCFS_FREE(init_qp_attr, sizeof(*init_qp_attr));
 
@@ -971,7 +988,6 @@ kiblnd_destroy_conn(kib_conn_t *conn, bool free_conn)
 {
 	struct rdma_cm_id *cmid = conn->ibc_cmid;
 	kib_peer_ni_t        *peer_ni = conn->ibc_peer;
-	int                rc;
 
 	LASSERT (!in_interrupt());
 	LASSERT (atomic_read(&conn->ibc_refcount) == 0);
@@ -1002,11 +1018,8 @@ kiblnd_destroy_conn(kib_conn_t *conn, bool free_conn)
 	if (cmid != NULL && cmid->qp != NULL)
 		rdma_destroy_qp(cmid);
 
-	if (conn->ibc_cq != NULL) {
-		rc = ib_destroy_cq(conn->ibc_cq);
-		if (rc != 0)
-			CWARN("Error destroying CQ: %d\n", rc);
-	}
+	if (conn->ibc_cq)
+		ib_destroy_cq(conn->ibc_cq);
 
 	if (conn->ibc_rx_pages != NULL)
 		kiblnd_unmap_rx_descs(conn);
@@ -1656,10 +1669,17 @@ kiblnd_create_fmr_pool(kib_fmr_poolset_t *fps, kib_fmr_pool_t **pp_fpo)
 
 	/* Check for FMR or FastReg support */
 	fpo->fpo_is_fmr = 0;
+#ifdef HAVE_IB_DEVICE_OPS
+	if (fpo->fpo_hdev->ibh_ibdev->ops.alloc_fmr &&
+	    fpo->fpo_hdev->ibh_ibdev->ops.dealloc_fmr &&
+	    fpo->fpo_hdev->ibh_ibdev->ops.map_phys_fmr &&
+	    fpo->fpo_hdev->ibh_ibdev->ops.unmap_fmr) {
+#else
 	if (fpo->fpo_hdev->ibh_ibdev->alloc_fmr &&
 	    fpo->fpo_hdev->ibh_ibdev->dealloc_fmr &&
 	    fpo->fpo_hdev->ibh_ibdev->map_phys_fmr &&
 	    fpo->fpo_hdev->ibh_ibdev->unmap_fmr) {
+#endif
 		LCONSOLE_INFO("Using FMR for registration\n");
 		fpo->fpo_is_fmr = 1;
 	} else if (dev_attr->device_cap_flags & IB_DEVICE_MEM_MGT_EXTENSIONS) {
@@ -1805,8 +1825,7 @@ kiblnd_fmr_pool_unmap(kib_fmr_t *fmr, int status)
 	fps = fpo->fpo_owner;
 	if (fpo->fpo_is_fmr) {
 		if (fmr->fmr_pfmr) {
-			rc = ib_fmr_pool_unmap(fmr->fmr_pfmr);
-			LASSERT(!rc);
+			ib_fmr_pool_unmap(fmr->fmr_pfmr);
 			fmr->fmr_pfmr = NULL;
 		}
 
@@ -2644,7 +2663,7 @@ kiblnd_dummy_callback(struct rdma_cm_id *cmid, struct rdma_cm_event *event)
 }
 
 static int
-kiblnd_dev_need_failover(kib_dev_t *dev)
+kiblnd_dev_need_failover(kib_dev_t *dev, struct net *ns)
 {
         struct rdma_cm_id  *cmid;
         struct sockaddr_in  srcaddr;
@@ -2666,8 +2685,8 @@ kiblnd_dev_need_failover(kib_dev_t *dev)
          *
          * a. rdma_bind_addr(), it will conflict with listener cmid
          * b. rdma_resolve_addr() to zero addr */
-        cmid = kiblnd_rdma_create_id(kiblnd_dummy_callback, dev, RDMA_PS_TCP,
-                                     IB_QPT_RC);
+	cmid = kiblnd_rdma_create_id(ns, kiblnd_dummy_callback, dev,
+				     RDMA_PS_TCP, IB_QPT_RC);
         if (IS_ERR(cmid)) {
                 rc = PTR_ERR(cmid);
                 CERROR("Failed to create cmid for failover: %d\n", rc);
@@ -2696,7 +2715,7 @@ kiblnd_dev_need_failover(kib_dev_t *dev)
 }
 
 int
-kiblnd_dev_failover(kib_dev_t *dev)
+kiblnd_dev_failover(kib_dev_t *dev, struct net *ns)
 {
 	struct list_head    zombie_tpo = LIST_HEAD_INIT(zombie_tpo);
 	struct list_head    zombie_ppo = LIST_HEAD_INIT(zombie_ppo);
@@ -2715,7 +2734,7 @@ kiblnd_dev_failover(kib_dev_t *dev)
                  dev->ibd_can_failover ||
                  dev->ibd_hdev == NULL);
 
-        rc = kiblnd_dev_need_failover(dev);
+	rc = kiblnd_dev_need_failover(dev, ns);
         if (rc <= 0)
                 goto out;
 
@@ -2736,7 +2755,7 @@ kiblnd_dev_failover(kib_dev_t *dev)
                 rdma_destroy_id(cmid);
         }
 
-        cmid = kiblnd_rdma_create_id(kiblnd_cm_callback, dev, RDMA_PS_TCP,
+	cmid = kiblnd_rdma_create_id(ns, kiblnd_cm_callback, dev, RDMA_PS_TCP,
                                      IB_QPT_RC);
         if (IS_ERR(cmid)) {
                 rc = PTR_ERR(cmid);
@@ -2857,7 +2876,7 @@ kiblnd_destroy_dev (kib_dev_t *dev)
 }
 
 static kib_dev_t *
-kiblnd_create_dev(char *ifname)
+kiblnd_create_dev(char *ifname, struct net *ns)
 {
         struct net_device *netdev;
         kib_dev_t         *dev;
@@ -2866,7 +2885,7 @@ kiblnd_create_dev(char *ifname)
         int                up;
         int                rc;
 
-	rc = lnet_ipif_query(ifname, &up, &ip, &netmask);
+	rc = lnet_ipif_query(ifname, &up, &ip, &netmask, ns);
         if (rc != 0) {
                 CERROR("Can't query IPoIB interface %s: %d\n",
                        ifname, rc);
@@ -2882,7 +2901,7 @@ kiblnd_create_dev(char *ifname)
         if (dev == NULL)
                 return NULL;
 
-        netdev = dev_get_by_name(&init_net, ifname);
+	netdev = dev_get_by_name(ns, ifname);
         if (netdev == NULL) {
                 dev->ibd_can_failover = 0;
         } else {
@@ -2897,7 +2916,7 @@ kiblnd_create_dev(char *ifname)
         strcpy(&dev->ibd_ifname[0], ifname);
 
         /* initialize the device */
-        rc = kiblnd_dev_failover(dev);
+	rc = kiblnd_dev_failover(dev, ns);
         if (rc != 0) {
                 CERROR("Can't initialize device: %d\n", rc);
                 LIBCFS_FREE(dev, sizeof(*dev));
@@ -3056,7 +3075,7 @@ out:
 }
 
 static int
-kiblnd_base_startup(void)
+kiblnd_base_startup(struct net *ns)
 {
 	struct kib_sched_info	*sched;
 	int			rc;
@@ -3129,7 +3148,7 @@ kiblnd_base_startup(void)
         }
 
 	if (*kiblnd_tunables.kib_dev_failover != 0)
-		rc = kiblnd_thread_start(kiblnd_failover_thread, NULL,
+		rc = kiblnd_thread_start(kiblnd_failover_thread, ns,
 					 "kiblnd_failover");
 
         if (rc != 0) {
@@ -3262,7 +3281,7 @@ kiblnd_startup(struct lnet_ni *ni)
         LASSERT (ni->ni_net->net_lnd == &the_o2iblnd);
 
         if (kiblnd_data.kib_init == IBLND_INIT_NOTHING) {
-                rc = kiblnd_base_startup();
+		rc = kiblnd_base_startup(ni->ni_net_ns);
                 if (rc != 0)
                         return rc;
         }
@@ -3300,7 +3319,7 @@ kiblnd_startup(struct lnet_ni *ni)
 	newdev = ibdev == NULL;
 	/* hmm...create kib_dev even for alias */
 	if (ibdev == NULL || strcmp(&ibdev->ibd_ifname[0], ifname) != 0)
-		ibdev = kiblnd_create_dev(ifname);
+		ibdev = kiblnd_create_dev(ifname, ni->ni_net_ns);
 
 	if (ibdev == NULL)
 		goto failed;

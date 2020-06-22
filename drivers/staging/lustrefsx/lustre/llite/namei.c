@@ -699,17 +699,33 @@ static struct dentry *ll_lookup_nd(struct inode *parent, struct dentry *dentry,
 	return de;
 }
 
+#ifdef FMODE_CREATED /* added in Linux v4.18-rc1-20-g73a09dd */
+# define ll_is_opened(o, f)		((f)->f_mode & FMODE_OPENED)
+# define ll_finish_open(f, d, o)	finish_open((f), (d), NULL)
+# define ll_last_arg
+# define ll_set_created(o, f)						\
+do {									\
+	(f)->f_mode |= FMODE_CREATED;					\
+} while (0)
+
+#else
+# define ll_is_opened(o, f)		(*(o))
+# define ll_finish_open(f, d, o)	finish_open((f), (d), NULL, (o))
+# define ll_last_arg			, int *opened
+# define ll_set_created(o, f)						\
+do {									\
+	*(o) |= FILE_CREATED;						\
+} while (0)
+
+#endif
+
 /*
  * For cached negative dentry and new dentry, handle lookup/create/open
  * together.
  */
 static int ll_atomic_open(struct inode *dir, struct dentry *dentry,
 			  struct file *file, unsigned open_flags,
-			  umode_t mode
-#ifndef HAVE_ATOMIC_OPEN_NO_OPENED
-			  , int *opened
-#endif
-			  )
+			  umode_t mode ll_last_arg)
 {
 	struct lookup_intent *it;
 	struct dentry *de;
@@ -719,17 +735,11 @@ static int ll_atomic_open(struct inode *dir, struct dentry *dentry,
 	int rc = 0;
 	ENTRY;
 
-#ifdef HAVE_ATOMIC_OPEN_NO_OPENED
-	CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s, dir="DFID"(%p), file %p,"
-			   "open_flags %x, mode %x\n",
-	       dentry->d_name.len, dentry->d_name.name,
-	       PFID(ll_inode2fid(dir)), dir, file, open_flags, mode);
-#else
 	CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s, dir="DFID"(%p), file %p,"
 			   "open_flags %x, mode %x opened %d\n",
 	       dentry->d_name.len, dentry->d_name.name,
-	       PFID(ll_inode2fid(dir)), dir, file, open_flags, mode, *opened);
-#endif
+	       PFID(ll_inode2fid(dir)), dir, file, open_flags, mode,
+	       ll_is_opened(opened, file));
 
 	/* Only negative dentries enter here */
 	LASSERT(dentry->d_inode == NULL);
@@ -782,11 +792,7 @@ static int ll_atomic_open(struct inode *dir, struct dentry *dentry,
 					dput(de);
 				goto out_release;
 			}
-#ifdef HAVE_ATOMIC_OPEN_NO_OPENED
-			file->f_mode |= FMODE_CREATED;
-#else
-			*opened |= FILE_CREATED;
-#endif
+			ll_set_created(opened, file);
 		}
 		if (dentry->d_inode && it_disposition(it, DISP_OPEN_OPEN)) {
 			/* Open dentry. */
@@ -797,11 +803,7 @@ static int ll_atomic_open(struct inode *dir, struct dentry *dentry,
 				rc = finish_no_open(file, de);
 			} else {
 				file->private_data = it;
-#ifdef HAVE_ATOMIC_OPEN_NO_OPENED
-				rc = finish_open(file, dentry, NULL);
-#else
-				rc = finish_open(file, dentry, NULL, opened);
-#endif
+				rc = ll_finish_open(file, dentry, opened);
 				/* We dget in ll_splice_alias. finish_open takes
 				 * care of dget for fd open.
 				 */
@@ -1022,16 +1024,17 @@ void ll_update_times(struct ptlrpc_request *request, struct inode *inode)
 
 	LASSERT(body);
 	if (body->mbo_valid & OBD_MD_FLMTIME &&
-	    body->mbo_mtime > LTIME_S(inode->i_mtime)) {
-		CDEBUG(D_INODE, "setting fid "DFID" mtime from " LTIME_FMT
-		       " to %llu\n", PFID(ll_inode2fid(inode)),
-		       LTIME_S(inode->i_mtime), body->mbo_mtime);
-		LTIME_S(inode->i_mtime) = body->mbo_mtime;
+	    body->mbo_mtime > inode->i_mtime.tv_sec) {
+		CDEBUG(D_INODE,
+		       "setting fid " DFID " mtime from %lld to %llu\n",
+		       PFID(ll_inode2fid(inode)),
+		       (s64)inode->i_mtime.tv_sec, body->mbo_mtime);
+		inode->i_mtime.tv_sec = body->mbo_mtime;
 	}
 
 	if (body->mbo_valid & OBD_MD_FLCTIME &&
-	    body->mbo_ctime > LTIME_S(inode->i_ctime))
-		LTIME_S(inode->i_ctime) = body->mbo_ctime;
+	    body->mbo_ctime > inode->i_ctime.tv_sec)
+		inode->i_ctime.tv_sec = body->mbo_ctime;
 }
 
 static int ll_new_node(struct inode *dir, struct dentry *dchild,
