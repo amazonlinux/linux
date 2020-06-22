@@ -990,34 +990,16 @@ static struct page *mdc_page_locate(struct address_space *mapping, __u64 *hash,
 	 */
 	unsigned long offset = hash_x_index(*hash, hash64);
 	struct page *page;
-#ifdef HAVE_ADDRESS_SPACE_XARRAY
-	XA_STATE(xas, &mapping->i_pages, offset);
-
-	xas_lock_irq(&xas);
-	page = xas_find(&xas, ULONG_MAX);
-	if (xa_is_value(page))
-		page = NULL;
-	if (page) {
-#else
 	int found;
 
-	lock_mappings(mapping);
-#ifdef HAVE_ADDRESS_SPACE_IPAGES
-	found = radix_tree_gang_lookup(&mapping->i_pages,
-#else
+	xa_lock_irq(&mapping->i_pages);
 	found = radix_tree_gang_lookup(&mapping->page_tree,
-#endif
 				       (void **)&page, offset, 1);
-	if (found > 0 && !radix_tree_exceptional_entry(page)) {
-#endif
+	if (found > 0 && !xa_is_value(page)) {
 		struct lu_dirpage *dp;
 
 		get_page(page);
-#ifdef HAVE_ADDRESS_SPACE_XARRAY
-		xas_unlock_irq(&xas);
-#else
-		unlock_mappings(mapping);
-#endif
+		xa_unlock_irq(&mapping->i_pages);
 		/*
 		 * In contrast to find_lock_page() we are sure that directory
 		 * page cannot be truncated (while DLM lock is held) and,
@@ -1066,12 +1048,8 @@ static struct page *mdc_page_locate(struct address_space *mapping, __u64 *hash,
 			page = ERR_PTR(-EIO);
 		}
 	} else {
-#ifdef HAVE_ADDRESS_SPACE_XARRAY
-		xas_unlock_irq(&xas);
-#else
-		unlock_mappings(mapping);
+		xa_unlock_irq(&mapping->i_pages);
 		page = NULL;
-#endif
 	}
 	return page;
 }
