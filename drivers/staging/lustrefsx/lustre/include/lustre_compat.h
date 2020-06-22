@@ -38,6 +38,7 @@
 #include <linux/pagemap.h>
 #include <linux/bio.h>
 #include <linux/xattr.h>
+#include <linux/slab.h>
 
 #include <libcfs/libcfs.h>
 #include <lustre_patchless_compat.h>
@@ -109,14 +110,6 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
 
 #ifndef MODULE_ALIAS_FS
 #define MODULE_ALIAS_FS(name)
-#endif
-
-#define LTIME_S(time)                   (time.tv_sec)
-
-#ifdef HAVE_INODE_TIME_64BIT
-#define LTIME_FMT "%llu"
-#else
-#define LTIME_FMT "%lu"
 #endif
 
 #ifdef HAVE_GENERIC_PERMISSION_2ARGS
@@ -329,6 +322,10 @@ static inline void set_nlink(struct inode *inode, unsigned int nlink)
 # define ll_umode_t	int
 #endif
 
+#ifndef HAVE_VM_FAULT_T
+#define vm_fault_t int
+#endif
+
 #include <linux/dcache.h>
 #ifndef HAVE_D_MAKE_ROOT
 static inline struct dentry *d_make_root(struct inode *root)
@@ -394,15 +391,17 @@ static inline int radix_tree_exceptional_entry(void *arg)
 }
 #endif
 
+#ifndef HAVE_XA_IS_VALUE
+static inline bool xa_is_value(void *entry)
+{
+	return radix_tree_exceptional_entry(entry);
+}
+#endif
+
 #ifndef HAVE_TRUNCATE_INODE_PAGES_FINAL
 static inline void truncate_inode_pages_final(struct address_space *map)
 {
 	truncate_inode_pages(map, 0);
-		/* Workaround for LU-118 */
-	if (map->nrpages) {
-		spin_lock_irq(&map->tree_lock);
-		spin_unlock_irq(&map->tree_lock);
-	}	/* Workaround end */
 }
 #endif
 
@@ -549,34 +548,23 @@ static inline bool is_sxid(umode_t mode)
 #endif
 
 /*
- * Upstream Linux kernel commit e462ec50cb5fad19f6003a3d8087f4a0945dd2b1
- * differentiated the MS_ values from SB_* values. We use SB_*
- * throughout, but account here for older kernels that do not have
- * SB_*. The values below are only the ones currently used in the Lustre
- * code.
+ * mount MS_* flags split from superblock SB_* flags
+ * if the SB_* flags are not available use the MS_* flags
  */
-
-#ifndef SB_RDONLY
-
-#define SB_RDONLY	MS_RDONLY
-#define SB_ACTIVE	MS_ACTIVE
-#define SB_NODIRATIME	MS_NODIRATIME
-
-#if defined(MS_POSIXACL)
-#define SB_POSIXACL MS_POSIXACL
+#if !defined(SB_RDONLY) && defined(MS_RDONLY)
+# define SB_RDONLY MS_RDONLY
 #endif
-
-#if defined(MS_NOSEC)
-#define SB_NOSEC MS_NOSEC
+#if !defined(SB_ACTIVE) && defined(MS_ACTIVE)
+# define SB_ACTIVE MS_ACTIVE
 #endif
-
+#if !defined(SB_NOSEC) && defined(MS_NOSEC)
+# define SB_NOSEC MS_NOSEC
 #endif
-
-#ifndef SB_NOSEC
-static inline void inode_has_no_xattr(struct inode *inode)
-{
-	return;
-}
+#if !defined(SB_POSIXACL) && defined(MS_POSIXACL)
+# define SB_POSIXACL MS_POSIXACL
+#endif
+#if !defined(SB_NODIRATIME) && defined(MS_NODIRATIME)
+# define SB_NODIRATIME MS_NODIRATIME
 #endif
 
 #ifndef HAVE_FILE_OPERATIONS_READ_WRITE_ITER
@@ -704,38 +692,22 @@ static inline struct timespec current_time(struct inode *inode)
 #define __GFP_COLD 0
 #endif
 
-#ifndef HAVE_ADDRESS_SPACE_XARRAY
-static inline void lock_mappings(struct address_space *mappings)
-{
-#ifdef HAVE_ADDRESS_SPACE_IPAGES
-	xa_lock_irq(&mappings->i_pages);
+#ifdef HAVE_I_PAGES
+#define page_tree i_pages
 #else
-	spin_lock_irq(&mappings->tree_lock);
-#endif
-}
-
-static inline void unlock_mappings(struct address_space *mappings)
-{
-#ifdef HAVE_ADDRESS_SPACE_IPAGES
-	xa_unlock_irq(&mappings->i_pages);
-#else
-	spin_unlock_irq(&mappings->tree_lock);
-#endif
-}
+#define i_pages tree_lock
+#define xa_lock_irq(lockp) spin_lock_irq(lockp)
+#define xa_unlock_irq(lockp) spin_unlock_irq(lockp)
 #endif
 
-#ifdef HAVE_TOTALRAM_PAGES_FUNC
-#define TOTALRAM_PAGES totalram_pages()
-#else
-#define TOTALRAM_PAGES totalram_pages
+#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
+#define selinux_is_enabled() 1
 #endif
 
-#ifdef HAVE_VM_OPS_USE_VM_FAULT_ONLY
-# ifdef HAVE_VM_FAULT_T
-#  define VM_FAULT_T vm_fault_t
-# else
-#  define VM_FAULT_T int
-# endif
+#ifndef KMEM_CACHE_USERCOPY
+#define kmem_cache_create_usercopy(name, size, align, flags, useroffset, \
+				   usersize, ctor)			 \
+	kmem_cache_create(name, size, align, flags, ctor)
 #endif
 
 #endif /* _LUSTRE_COMPAT_H */
