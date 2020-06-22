@@ -32,6 +32,7 @@
 
 #define DEBUG_SUBSYSTEM S_LNET
 
+#include <linux/nsproxy.h>
 #include <linux/completion.h>
 #include <net/sock.h>
 #include <lnet/lib-lnet.h>
@@ -44,6 +45,7 @@ static struct {
 	int			pta_shutdown;
 	struct socket		*pta_sock;
 	struct completion	pta_signal;
+	struct net		*pta_ns;
 } lnet_acceptor_state = {
 	.pta_shutdown = 1
 };
@@ -150,7 +152,7 @@ EXPORT_SYMBOL(lnet_connect_console_error);
 
 int
 lnet_connect(struct socket **sockp, lnet_nid_t peer_nid,
-	    __u32 local_ip, __u32 peer_ip, int peer_port)
+	    __u32 local_ip, __u32 peer_ip, int peer_port, struct net *ns)
 {
 	struct lnet_acceptor_connreq cr;
 	struct socket		*sock;
@@ -167,7 +169,7 @@ lnet_connect(struct socket **sockp, lnet_nid_t peer_nid,
 
 		rc = lnet_sock_connect(&sock, &fatal,
 					 local_ip, port,
-					 peer_ip, peer_port);
+					 peer_ip, peer_port, ns);
 		if (rc != 0) {
 			if (fatal)
 				goto failed;
@@ -354,7 +356,8 @@ lnet_acceptor(void *arg)
 	cfs_block_allsigs();
 
 	rc = lnet_sock_listen(&lnet_acceptor_state.pta_sock,
-				0, accept_port, accept_backlog);
+			      0, accept_port, accept_backlog,
+			      lnet_acceptor_state.pta_ns);
 	if (rc != 0) {
 		if (rc == -EADDRINUSE)
 			LCONSOLE_ERROR_MSG(0x122, "Can't start acceptor on port"
@@ -479,6 +482,7 @@ lnet_acceptor_start(void)
 	if (lnet_count_acceptor_nets() == 0)  /* not required */
 		return 0;
 
+	lnet_acceptor_state.pta_ns = current->nsproxy->net_ns;
 	task = kthread_run(lnet_acceptor, (void *)(uintptr_t)secure,
 			   "acceptor_%03ld", secure);
 	if (IS_ERR(task)) {
