@@ -41,6 +41,7 @@
 #include <obd.h>
 #include "llite_internal.h"
 #include "vvp_internal.h"
+#include <libcfs/linux/linux-misc.h>
 
 static struct vvp_io *cl2vvp_io(const struct lu_env *env,
 				const struct cl_io_slice *slice)
@@ -427,6 +428,8 @@ static int vvp_mmap_locks(const struct lu_env *env, struct cl_io *io)
 	union ldlm_policy_data policy;
 	struct iovec iov;
 	struct iov_iter i;
+	unsigned long addr;
+	ssize_t count;
 	int result = 0;
 	ENTRY;
 
@@ -439,9 +442,15 @@ static int vvp_mmap_locks(const struct lu_env *env, struct cl_io *io)
 	if (mm == NULL)
 		RETURN(0);
 
-	iov_for_each(iov, i, io->u.ci_rw.rw_iter) {
-		unsigned long addr = (unsigned long)iov.iov_base;
-		size_t count = iov.iov_len;
+	if (!iter_is_iovec(&io->u.ci_rw.rw_iter) && !iov_iter_is_kvec(&io->u.ci_rw.rw_iter))
+		RETURN(0);
+
+	for (i = io->u.ci_rw.rw_iter;
+	     iov_iter_count(&i);
+	     iov_iter_advance(&i, iov.iov_len)) {
+		iov = iov_iter_iovec(&i);
+		addr = (unsigned long)iov.iov_base;
+		count = iov.iov_len;
 
                 if (count == 0)
                         continue;
