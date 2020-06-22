@@ -280,7 +280,6 @@ static inline int cfs_time_beforeq_64(__u64 t1, __u64 t2)
  * One jiffy
  */
 #define CFS_DURATION_T          "%ld"
-
 #ifdef HAVE_TIMER_SETUP
 #define cfs_timer_cb_arg_t struct timer_list *
 #define cfs_from_timer(var, callback_timer, timer_fieldname) \
