@@ -9,6 +9,16 @@
 #include <linux/notifier.h>
 #include <linux/workqueue.h>
 #include <linux/completion.h>
+
+/*
+ * Unconditionaly disable PADATA.
+ *
+ * Padata is needed for PIO client feature. This feature is disabled by default
+ * and was removed from Lustre code during 2.13 development (2b0a34fe43bf).
+ * Instead of adapting the code to Linux 5.4+ change, just disable it.
+ */
+#undef CONFIG_PADATA
+
 #ifdef CONFIG_PADATA
 #include <linux/padata.h>
 #else
@@ -25,12 +35,7 @@ struct padata_instance {};
 
 struct cfs_ptask_engine {
 	struct padata_instance	*pte_pinst;
-#ifdef HAVE_PADATA_INTERFACE_56
-	struct padata_shell	*pte_pshell;
-#endif
-#ifndef HAVE_PADATA_INTERFACE_54
 	struct workqueue_struct	*pte_wq;
-#endif
 	struct notifier_block	 pte_notifier;
 	int			 pte_weight;
 };
