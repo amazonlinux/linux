@@ -34,6 +34,8 @@
 #define __LIBCFS_LINUX_MISC_H__
 
 #include <linux/fs.h>
+#include <linux/uio.h>
+
 #ifdef HAVE_SYSCTL_CTLNAME
 #define INIT_CTL_NAME	.ctl_name = CTL_UNNUMBERED,
 #define INIT_STRATEGY	.strategy = &sysctl_intvec,
@@ -41,6 +43,22 @@
 #define INIT_CTL_NAME
 #define INIT_STRATEGY
 #endif
+
+#ifndef HAVE_IOV_ITER_TYPE
+#ifdef HAVE_IOV_ITER_HAS_TYPE_MEMBER
+#define iter_is_iovec(iter)		((iter)->type & ITER_IOVEC)
+#define iov_iter_is_kvec(iter)		((iter)->type & ITER_KVEC)
+#define iov_iter_is_bvec(iter)		((iter)->type & ITER_BVEC)
+#define iov_iter_is_pipe(iter)		((iter)->type & ITER_PIPE)
+#define iov_iter_is_discard(iter)	((iter)->type & ITER_DISCARD)
+#else
+#define iter_is_iovec(iter)		1
+#define iov_iter_is_kvec(iter)		0
+#define iov_iter_is_bvec(iter)		0
+#define iov_iter_is_pipe(iter)		0
+#define iov_iter_is_discard(iter)	0
+#endif
+#endif /* HAVE_IOV_ITER_TYPE */
 
 #ifndef HAVE_UIDGID_HEADER
 
