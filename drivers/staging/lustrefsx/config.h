@@ -139,9 +139,6 @@
 /* current_time() has replaced CURRENT_TIME */
 #define HAVE_CURRENT_TIME 1
 
-/* inode times are timespec64 */
-#define HAVE_INODE_TIME_64BIT 1
-
 /* dcache_lock is exist */
 /* #undef HAVE_DCACHE_LOCK */
 
@@ -296,7 +293,7 @@
 #define HAVE_FILLDIR_USE_CTX 1
 
 /* fpu/api.h is present */
-#define HAVE_FPU_API_HEADER 1
+/* #undef HAVE_FPU_API_HEADER */
 
 /* struct file_system_type has mount field */
 #define HAVE_FSTYPE_MOUNT 1
@@ -327,6 +324,9 @@
 
 /* get_user_pages takes gup_flags in arguments */
 #define HAVE_GET_USER_PAGES_GUP_FLAGS 1
+
+/* get_user_pages takes gup_flags in arguments with 7 args */
+/* #undef HAVE_GET_USER_PAGES_GUP_FLAGS_7ARGS */
 
 /* struct group_info has member gid */
 #define HAVE_GROUP_INFO_GID 1
@@ -364,6 +364,9 @@
 /* struct ib_device.attrs is defined */
 #define HAVE_IB_DEVICE_ATTRS 1
 
+/* if struct ib_device_ops is defined */
+#define HAVE_IB_DEVICE_OPS 1
+
 /* ib_get_dma_mr is defined */
 /* #undef HAVE_IB_GET_DMA_MR */
 
@@ -376,8 +379,14 @@
 /* ib_map_mr_sg has 5 arguments */
 #define HAVE_IB_MAP_MR_SG_5ARGS 1
 
+/* ib_post_send and ib_post_recv have const parameters */
+#define HAVE_IB_POST_SEND_RECV_CONST 1
+
 /* struct ib_rdma_wr is defined */
 #define HAVE_IB_RDMA_WR 1
+
+/* if ib_sg_dma_address wrapper exists */
+/* #undef HAVE_IB_SG_DMA_ADDRESS */
 
 /* inode_operations .getattr member function can gather advance stats */
 #define HAVE_INODEOPS_ENHANCED_GETATTR 1
@@ -433,6 +442,9 @@
 /* inode_operations has {get,set,remove}xattr members */
 /* #undef HAVE_IOP_XATTR */
 
+/* if iov_iter has member type */
+#define HAVE_IOV_ITER_HAS_TYPE_MEMBER 1
+
 /* iov_iter_init handles directional tag */
 #define HAVE_IOV_ITER_INIT_DIRECTION 1
 
@@ -442,8 +454,14 @@
 /* iov_iter_truncate exists */
 #define HAVE_IOV_ITER_TRUNCATE 1
 
+/* if iov_iter_type exists */
+#define HAVE_IOV_ITER_TYPE 1
+
 /* is_sxid is defined */
 #define HAVE_IS_SXID 1
+
+/* struct address_space has i_pages */
+#define HAVE_I_PAGES 1
 
 /* i_uid_read is present */
 #define HAVE_I_UID_READ 1
@@ -454,6 +472,9 @@
 /* 'struct sock' accept function requires bool argument */
 #define HAVE_KERN_SOCK_ACCEPT_FLAG_ARG 1
 
+/* 'getname' has two args */
+#define HAVE_KERN_SOCK_GETNAME_2ARGS 1
+
 /* struct key_match_data exist */
 #define HAVE_KEY_MATCH_DATA 1
 
@@ -461,7 +482,7 @@
 #define HAVE_KEY_PAYLOAD_DATA_ARRAY 1
 
 /* key_type->instantiate has two args */
-/* #undef HAVE_KEY_TYPE_INSTANTIATE_2ARGS */
+#define HAVE_KEY_TYPE_INSTANTIATE_2ARGS 1
 
 /* ki_left exist */
 /* #undef HAVE_KIOCB_KI_LEFT */
@@ -493,6 +514,9 @@
 
 /* kernel has kstrtoul */
 #define HAVE_KSTRTOUL 1
+
+/* kernel has ksys_close */
+#define HAVE_KSYS_CLOSE 1
 
 /* kthread_worker found */
 /* #undef HAVE_KTHREAD_WORK */
@@ -551,6 +575,9 @@
 /* Define to 1 if you have the <linux/random.h> header file. */
 #define HAVE_LINUX_RANDOM_H 1
 
+/* if linux/selinux.h exists */
+#define HAVE_LINUX_SELINUX_IS_ENABLED 1
+
 /* Define to 1 if you have the <linux/types.h> header file. */
 #define HAVE_LINUX_TYPES_H 1
 
@@ -559,6 +586,9 @@
 
 /* Define to 1 if you have the <linux/version.h> header file. */
 #define HAVE_LINUX_VERSION_H 1
+
+/* lock_manager_operations has lm_compare_owner */
+/* #undef HAVE_LM_COMPARE_OWNER */
 
 /* lock-manager ops renamed to lm_xxx */
 #define HAVE_LM_XXX_LOCK_MANAGER_OPS 1
@@ -613,7 +643,7 @@
 #define HAVE_PAGEVEC_INIT_ONE_PARAM 1
 
 /* have PCLMULQDQ instruction */
-#define HAVE_PCLMULQDQ 1
+/* #undef HAVE_PCLMULQDQ */
 
 /* percpu_counter_init uses GFP_* flag */
 #define HAVE_PERCPU_COUNTER_INIT_GFP_FLAG 1
@@ -640,10 +670,10 @@
 #define HAVE_PROTECT_I_NLINK 1
 
 /* have quota64 */
-/* #undef HAVE_QUOTA64 */
+#define HAVE_QUOTA64 1
 
 /* radix_tree_exceptional_entry exist */
-#define HAVE_RADIX_EXCEPTION_ENTRY 1
+/* #undef HAVE_RADIX_EXCEPTION_ENTRY */
 
 /* rdma_create_id wants 4 args */
 /* #undef HAVE_RDMA_CREATE_ID_4ARG */
@@ -685,10 +715,10 @@
 /* #undef HAVE_SECURITY_IINITSEC_QSTR */
 
 /* support for selinux */
-#define HAVE_SELINUX 1
+/* #undef HAVE_SELINUX */
 
 /* Define to 1 if you have the <selinux/selinux.h> header file. */
-#define HAVE_SELINUX_SELINUX_H 1
+/* #undef HAVE_SELINUX_SELINUX_H */
 
 /* support server */
 /* #undef HAVE_SERVER_SUPPORT */
@@ -738,6 +768,9 @@
 
 /* stacktrace_ops.warning is exist */
 /* #undef HAVE_STACKTRACE_WARNING */
+
+/* stack_trace_print() exists */
+#define HAVE_STACK_TRACE_PRINT 1
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #define HAVE_STDINT_H 1
@@ -800,7 +833,7 @@
 /* #undef HAVE_TCP_SENDPAGE_USE_SOCKET */
 
 /* timer_setup has replaced setup_timer */
-#define HAVE_TIMER_SETUP
+#define HAVE_TIMER_SETUP 1
 
 /* 'struct timespec64' is available */
 #define HAVE_TIMESPEC64 1
@@ -814,20 +847,23 @@
 /* topology_sibling_cpumask is available */
 #define HAVE_TOPOLOGY_SIBLING_CPUMASK 1
 
+/* if totalram_pages is a function */
+#define HAVE_TOTALRAM_PAGES_AS_FUNC 1
+
 /* kernel export truncate_complete_page */
 /* #undef HAVE_TRUNCATE_COMPLETE_PAGE */
 
 /* kernel has truncate_inode_pages_final */
 #define HAVE_TRUNCATE_INODE_PAGES_FINAL 1
 
+/* if MS_RDONLY was moved to uapi/linux/mount.h */
+#define HAVE_UAPI_LINUX_MOUNT_H 1
+
 /* uidgid.h is present */
 #define HAVE_UIDGID_HEADER 1
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
-
-/* xattr_handler has a name member */
-#define HAVE_XATTR_HANDLER_NAME 1
 
 /* kernel has vfs_rename with 5 args */
 /* #undef HAVE_VFS_RENAME_5ARGS */
@@ -844,6 +880,9 @@
 /* virtual_address has been replaced by address field */
 #define HAVE_VM_FAULT_ADDRESS 1
 
+/* if vm_fault_t type exists */
+#define HAVE_VM_FAULT_T 1
+
 /* 'struct vm_operations' remove struct vm_area_struct argument */
 #define HAVE_VM_OPS_USE_VM_FAULT_ONLY 1
 
@@ -856,8 +895,14 @@
 /* needs inode parameter */
 #define HAVE_XATTR_HANDLER_INODE_PARAM 1
 
+/* xattr_handler has a name member */
+#define HAVE_XATTR_HANDLER_NAME 1
+
 /* handler pointer is parameter */
 /* #undef HAVE_XATTR_HANDLER_SIMPLIFIED */
+
+/* xa_is_value exist */
+#define HAVE_XA_IS_VALUE 1
 
 /* Have zap_add_by_dnode() in ZFS */
 /* #undef HAVE_ZAP_ADD_BY_DNODE */
@@ -873,39 +918,6 @@
 
 /* __add_wait_queue_exclusive exists */
 /* #undef HAVE___ADD_WAIT_QUEUE_EXCLUSIVE */
-
-/* struct address_space uses i_pages and xa_lock */
-/* #undef HAVE_ADDRESS_SPACE_IPAGES */
-
-/* struct address_space was converted to an Xarray */
-#define HAVE_ADDRESS_SPACE_XARRAY 1
-
-/* posix acl uses the refcount interface */
-#define HAVE_POSIX_ACL_REFCOUNT 1
-
-/* sys_close was converted to ksys_close for kernel use */
-#define HAVE_KSYS_CLOSE 1
-
-/* kernel_get{sock,peer}name was converted to return the sockaddr length */
-#define HAVE_KERNSOCK_RETURNSLEN 1
-
-/* the 'opened' argument to finish_open and atomic_open was removed */
-#define HAVE_ATOMIC_OPEN_NO_OPENED 1
-
-/* totalram_pages was turned in to a function */
-#define HAVE_TOTALRAM_PAGES_FUNC 1
-
-/* vm_fault_t exists */
-#define HAVE_VM_FAULT_T 1
-
-/* Common stacktrace infrastructure exists */
-#define HAVE_COMMON_STACKTRACE 1
-
-/* changed padata interface in 5.4 */
-#define HAVE_PADATA_INTERFACE_54
-
-/* changed padata interface in 5.6 (and the 5.4 -stable branch) */
-#define HAVE_PADATA_INTERFACE_56
 
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
@@ -933,10 +945,10 @@
 #define LUSTRE_MINOR 10
 
 /* Third number in the Lustre version */
-#define LUSTRE_PATCH 5
+#define LUSTRE_PATCH 8
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.10.5"
+#define LUSTRE_VERSION_STRING "2.10.8"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -948,10 +960,10 @@
 #define MKE2FS "mke2fs"
 
 /* need pclmulqdq based crc32c */
-/* #undef NEED_CRC32C_ACCEL */
+#define NEED_CRC32C_ACCEL 1
 
 /* need pclmulqdq based crc32 */
-/* #undef NEED_CRC32_ACCEL */
+#define NEED_CRC32_ACCEL 1
 
 /* 'ktime_get_real_ns' is not available */
 /* #undef NEED_KTIME_GET_REAL_NS */
@@ -963,13 +975,13 @@
 #define PACKAGE "lustre"
 
 /* Define to the address where bug reports for this package should be sent. */
-#define PACKAGE_BUGREPORT "https://jira.hpdd.intel.com/"
+#define PACKAGE_BUGREPORT "https://jira.whamcloud.com/"
 
 /* Define to the full name of this package. */
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.10.5"
+#define PACKAGE_STRING "Lustre 2.10.8"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -978,7 +990,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.10.5"
+#define PACKAGE_VERSION "2.10.8"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1019,7 +1031,7 @@
 /* #undef USE_LU_REF */
 
 /* Version number of package */
-#define VERSION "2.10.5"
+#define VERSION "2.10.8"
 
 /* zfs fix version */
 /* #undef ZFS_FIX */
