@@ -323,6 +323,9 @@
 /* get_user_pages takes gup_flags in arguments */
 #undef HAVE_GET_USER_PAGES_GUP_FLAGS
 
+/* get_user_pages takes gup_flags in arguments with 7 args */
+#undef HAVE_GET_USER_PAGES_GUP_FLAGS_7ARGS
+
 /* struct group_info has member gid */
 #undef HAVE_GROUP_INFO_GID
 
@@ -359,6 +362,9 @@
 /* struct ib_device.attrs is defined */
 #undef HAVE_IB_DEVICE_ATTRS
 
+/* if struct ib_device_ops is defined */
+#undef HAVE_IB_DEVICE_OPS
+
 /* ib_get_dma_mr is defined */
 #undef HAVE_IB_GET_DMA_MR
 
@@ -371,8 +377,14 @@
 /* ib_map_mr_sg has 5 arguments */
 #undef HAVE_IB_MAP_MR_SG_5ARGS
 
+/* ib_post_send and ib_post_recv have const parameters */
+#undef HAVE_IB_POST_SEND_RECV_CONST
+
 /* struct ib_rdma_wr is defined */
 #undef HAVE_IB_RDMA_WR
+
+/* if ib_sg_dma_address wrapper exists */
+#undef HAVE_IB_SG_DMA_ADDRESS
 
 /* inode_operations .getattr member function can gather advance stats */
 #undef HAVE_INODEOPS_ENHANCED_GETATTR
@@ -428,6 +440,9 @@
 /* inode_operations has {get,set,remove}xattr members */
 #undef HAVE_IOP_XATTR
 
+/* if iov_iter has member type */
+#undef HAVE_IOV_ITER_HAS_TYPE_MEMBER
+
 /* iov_iter_init handles directional tag */
 #undef HAVE_IOV_ITER_INIT_DIRECTION
 
@@ -437,8 +452,14 @@
 /* iov_iter_truncate exists */
 #undef HAVE_IOV_ITER_TRUNCATE
 
+/* if iov_iter_type exists */
+#undef HAVE_IOV_ITER_TYPE
+
 /* is_sxid is defined */
 #undef HAVE_IS_SXID
+
+/* struct address_space has i_pages */
+#undef HAVE_I_PAGES
 
 /* i_uid_read is present */
 #undef HAVE_I_UID_READ
@@ -448,6 +469,9 @@
 
 /* 'struct sock' accept function requires bool argument */
 #undef HAVE_KERN_SOCK_ACCEPT_FLAG_ARG
+
+/* 'getname' has two args */
+#undef HAVE_KERN_SOCK_GETNAME_2ARGS
 
 /* struct key_match_data exist */
 #undef HAVE_KEY_MATCH_DATA
@@ -488,6 +512,9 @@
 
 /* kernel has kstrtoul */
 #undef HAVE_KSTRTOUL
+
+/* kernel has ksys_close */
+#undef HAVE_KSYS_CLOSE
 
 /* kthread_worker found */
 #undef HAVE_KTHREAD_WORK
@@ -546,6 +573,9 @@
 /* Define to 1 if you have the <linux/random.h> header file. */
 #undef HAVE_LINUX_RANDOM_H
 
+/* if linux/selinux.h exists */
+#undef HAVE_LINUX_SELINUX_IS_ENABLED
+
 /* Define to 1 if you have the <linux/types.h> header file. */
 #undef HAVE_LINUX_TYPES_H
 
@@ -554,6 +584,9 @@
 
 /* Define to 1 if you have the <linux/version.h> header file. */
 #undef HAVE_LINUX_VERSION_H
+
+/* lock_manager_operations has lm_compare_owner */
+#undef HAVE_LM_COMPARE_OWNER
 
 /* lock-manager ops renamed to lm_xxx */
 #undef HAVE_LM_XXX_LOCK_MANAGER_OPS
@@ -734,6 +767,9 @@
 /* stacktrace_ops.warning is exist */
 #undef HAVE_STACKTRACE_WARNING
 
+/* stack_trace_print() exists */
+#undef HAVE_STACK_TRACE_PRINT
+
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
 
@@ -794,6 +830,9 @@
 /* tcp_sendpage use socket as first parameter */
 #undef HAVE_TCP_SENDPAGE_USE_SOCKET
 
+/* timer_setup has replaced setup_timer */
+#undef HAVE_TIMER_SETUP
+
 /* 'struct timespec64' is available */
 #undef HAVE_TIMESPEC64
 
@@ -806,11 +845,17 @@
 /* topology_sibling_cpumask is available */
 #undef HAVE_TOPOLOGY_SIBLING_CPUMASK
 
+/* if totalram_pages is a function */
+#undef HAVE_TOTALRAM_PAGES_AS_FUNC
+
 /* kernel export truncate_complete_page */
 #undef HAVE_TRUNCATE_COMPLETE_PAGE
 
 /* kernel has truncate_inode_pages_final */
 #undef HAVE_TRUNCATE_INODE_PAGES_FINAL
+
+/* if MS_RDONLY was moved to uapi/linux/mount.h */
+#undef HAVE_UAPI_LINUX_MOUNT_H
 
 /* uidgid.h is present */
 #undef HAVE_UIDGID_HEADER
@@ -833,6 +878,9 @@
 /* virtual_address has been replaced by address field */
 #undef HAVE_VM_FAULT_ADDRESS
 
+/* if vm_fault_t type exists */
+#undef HAVE_VM_FAULT_T
+
 /* 'struct vm_operations' remove struct vm_area_struct argument */
 #undef HAVE_VM_OPS_USE_VM_FAULT_ONLY
 
@@ -845,8 +893,14 @@
 /* needs inode parameter */
 #undef HAVE_XATTR_HANDLER_INODE_PARAM
 
+/* xattr_handler has a name member */
+#undef HAVE_XATTR_HANDLER_NAME
+
 /* handler pointer is parameter */
 #undef HAVE_XATTR_HANDLER_SIMPLIFIED
+
+/* xa_is_value exist */
+#undef HAVE_XA_IS_VALUE
 
 /* Have zap_add_by_dnode() in ZFS */
 #undef HAVE_ZAP_ADD_BY_DNODE
