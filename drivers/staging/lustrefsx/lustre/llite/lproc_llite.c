@@ -308,12 +308,12 @@ ll_max_readahead_mb_seq_write(struct file *file, const char __user *buffer,
 
 	pages_number >>= PAGE_SHIFT;
 
-	if (pages_number < 0 || pages_number > TOTALRAM_PAGES / 2) {
+	if (pages_number < 0 || pages_number > cfs_totalram_pages() / 2) {
 		/* 1/2 of RAM */
 		CERROR("%s: can't set max_readahead_mb=%lu > %luMB\n",
 		       ll_get_fsname(sb, NULL, 0),
 		       (unsigned long)pages_number >> (20 - PAGE_SHIFT),
-		       TOTALRAM_PAGES >> (20 - PAGE_SHIFT + 1));
+		       cfs_totalram_pages() >> (20 - PAGE_SHIFT + 1));
 		return -ERANGE;
 	}
 
@@ -479,10 +479,10 @@ ll_max_cached_mb_seq_write(struct file *file, const char __user *buffer,
 
 	pages_number >>= PAGE_SHIFT;
 
-	if (pages_number < 0 || pages_number > TOTALRAM_PAGES) {
+	if (pages_number < 0 || pages_number > cfs_totalram_pages()) {
 		CERROR("%s: can't set max cache more than %lu MB\n",
 		       ll_get_fsname(sb, NULL, 0),
-		       TOTALRAM_PAGES >> (20 - PAGE_SHIFT));
+		       cfs_totalram_pages() >> (20 - PAGE_SHIFT));
 		RETURN(-ERANGE);
 	}
 	/* Allow enough cache so clients can make well-formed RPCs */
