@@ -722,7 +722,7 @@ struct ptlrpc_body_v2 {
 #define OBD_CONNECT_LARGE_ACL		0x200ULL /* more than 32 ACL entries */
 #define OBD_CONNECT_TRUNCLOCK           0x400ULL /*locks on server for punch */
 #define OBD_CONNECT_TRANSNO             0x800ULL /*replay sends init transno */
-#define OBD_CONNECT_IBITS              0x1000ULL /*support for inodebits locks*/
+#define OBD_CONNECT_IBITS	       0x1000ULL /* not checked in 2.11+ */
 #define OBD_CONNECT_BARRIER	       0x2000ULL /* write barrier */
 #define OBD_CONNECT_ATTRFID            0x4000ULL /*Server can GetAttr By Fid*/
 #define OBD_CONNECT_NODEVOH            0x8000ULL /*No open hndl on specl nodes*/
@@ -870,8 +870,8 @@ struct ptlrpc_body_v2 {
 #define MGS_CONNECT_SUPPORTED2 0
 
 /* Features required for this version of the client to work with server */
-#define CLIENT_CONNECT_MDT_REQD (OBD_CONNECT_IBITS | OBD_CONNECT_FID | \
-                                 OBD_CONNECT_FULL20)
+#define CLIENT_CONNECT_MDT_REQD (OBD_CONNECT_FID |	\
+				 OBD_CONNECT_FULL20)
 
 /* This structure is used for both request and reply.
  *
@@ -1062,7 +1062,11 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
 	struct lov_ost_data_v1 lmm_objects[0]; /* per-stripe data */
 };
 
-#define MAX_MD_SIZE (sizeof(struct lov_mds_md) + 4 * sizeof(struct lov_ost_data))
+#define MAX_MD_SIZE_OLD (sizeof(struct lov_mds_md) +			\
+			 4 * sizeof(struct lov_ost_data))
+#define MAX_MD_SIZE (sizeof(struct lov_comp_md_v1) +			\
+		     4 * (sizeof(struct lov_comp_md_entry_v1) +		\
+			  MAX_MD_SIZE_OLD))
 #define MIN_MD_SIZE (sizeof(struct lov_mds_md) + 1 * sizeof(struct lov_ost_data))
 
 /* This is the default MDT reply size allocated, should the striping be bigger,
@@ -1266,6 +1270,8 @@ struct hsm_state_set {
 					 */
 
 #define OBD_BRW_LOCALS (OBD_BRW_LOCAL1)
+
+#define OBD_MAX_GRANT 0x7fffffffUL /* Max grant allowed to one client: 2 GiB */
 
 #define OBD_OBJECT_EOF LUSTRE_EOF
 
@@ -1639,7 +1645,6 @@ enum {
 	 * 2. If these flags needs to be stored into inode, they will be
 	 * stored in LMA. see LMAI_XXXX */
 	LUSTRE_ORPHAN_FL = 0x00002000,
-	LUSTRE_SET_SYNC_FL = 0x00040000, /* Synchronous setattr on OSTs */
 
 	LUSTRE_LMA_FL_MASKS = LUSTRE_ORPHAN_FL,
 };
