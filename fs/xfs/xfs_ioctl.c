@@ -44,6 +44,7 @@
 #include "xfs_btree.h"
 #include <linux/fsmap.h>
 #include "xfs_fsmap.h"
+#include "xfs_sb.h"
 
 #include <linux/capability.h>
 #include <linux/cred.h>
