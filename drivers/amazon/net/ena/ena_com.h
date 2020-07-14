@@ -245,6 +245,7 @@ struct ena_com_stats_admin {
 struct ena_com_admin_queue {
 	void *q_dmadev;
 	void *bus;
+	struct ena_com_dev *ena_dev;
 	spinlock_t q_lock; /* spinlock for the admin queue */
 
 	struct ena_comp_ctx *comp_ctx;
@@ -358,6 +359,8 @@ struct ena_com_dev {
 	struct ena_intr_moder_entry *intr_moder_tbl;
 
 	struct ena_com_llq_info llq_info;
+
+	u32 ena_min_poll_delay_us;
 };
 
 struct ena_com_dev_get_features_ctx {
@@ -629,6 +632,15 @@ int ena_com_get_dev_attr_feat(struct ena_com_dev *ena_dev,
  */
 int ena_com_get_dev_basic_stats(struct ena_com_dev *ena_dev,
 				struct ena_admin_basic_stats *stats);
+
+/* ena_com_get_eni_stats - Get extended network interface statistics
+ * @ena_dev: ENA communication layer struct
+ * @stats: stats return value
+ *
+ * @return: 0 on Success and negative value otherwise.
+ */
+int ena_com_get_eni_stats(struct ena_com_dev *ena_dev,
+			  struct ena_admin_eni_stats *stats);
 
 /* ena_com_set_dev_mtu - Configure the device mtu.
  * @ena_dev: ENA communication layer struct
