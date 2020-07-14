@@ -392,7 +392,7 @@ error_unmap_dma:
 	ena_unmap_tx_buff(xdp_ring, tx_info);
 	tx_info->xdpf = NULL;
 error_drop_packet:
-
+	__free_page(tx_info->xdp_rx_page);
 	return NETDEV_TX_OK;
 }
 
@@ -1742,11 +1742,14 @@ static int ena_clean_rx_irq(struct ena_ring *rx_ring, struct napi_struct *napi,
 
 		if (unlikely(!skb)) {
 #ifdef ENA_XDP_SUPPORT
-			if (xdp_verdict == XDP_TX) {
+			/* The page might not actually be freed here since the
+			 * page reference count is incremented in
+			 * ena_xdp_xmit_buff(), and it will be decreased only
+			 * when send completion was received from the device
+			 */
+			if (xdp_verdict == XDP_TX)
 				ena_free_rx_page(rx_ring,
 						 &rx_ring->rx_buffer_info[rx_ring->ena_bufs[0].req_id]);
-				res_budget--;
-			}
 #endif /* ENA_XDP_SUPPORT */
 			for (i = 0; i < ena_rx_ctx.descs; i++) {
 				rx_ring->free_ids[next_to_clean] =
@@ -1756,8 +1759,10 @@ static int ena_clean_rx_irq(struct ena_ring *rx_ring, struct napi_struct *napi,
 							     rx_ring->ring_size);
 			}
 #ifdef ENA_XDP_SUPPORT
-			if (xdp_verdict == XDP_TX || xdp_verdict == XDP_DROP)
+			if (xdp_verdict != XDP_PASS){
+				res_budget--;
 				continue;
+			}
 #endif /* ENA_XDP_SUPPORT */
 			break;
 		}
@@ -3457,6 +3462,19 @@ err:
 	ena_com_delete_debug_area(adapter->ena_dev);
 }
 
+int ena_update_hw_stats(struct ena_adapter *adapter)
+{
+	int rc = 0;
+
+	rc = ena_com_get_eni_stats(adapter->ena_dev, &adapter->eni_stats);
+	if (rc) {
+		dev_info_once(&adapter->pdev->dev, "Failed to get ENI stats\n");
+		return rc;
+	}
+
+	return 0;
+}
+
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,36))
 #ifdef NDO_GET_STATS_64_V2
 static void ena_get_stats64(struct net_device *netdev,
@@ -4741,6 +4759,11 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	ena_config_debug_area(adapter);
+
+	if (!ena_update_hw_stats(adapter))
+		adapter->eni_stats_supported = true;
+	else
+		adapter->eni_stats_supported = false;
 
 	memcpy(adapter->netdev->perm_addr, adapter->mac_addr, netdev->addr_len);
 
