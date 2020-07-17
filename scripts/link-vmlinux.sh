@@ -64,7 +64,7 @@ objtool_link()
 	local objtoolopt;
 
 	if [ -n "${CONFIG_VMLINUX_VALIDATION}" ]; then
-		objtoolopt="check"
+		objtoolopt="check --vmlinux"
 		if [ -n "${CONFIG_CPU_UNRET_ENTRY}" ]; then
 			objtoolopt="${objtoolopt} --unret"
 		fi
