@@ -14,6 +14,14 @@
 #include <linux/pci.h>
 #include <linux/wait.h>
 
+/*
+ * The type '__poll_t' is not available in kernels older than 4.16.0
+ * so for these we define it here.
+ */
+#ifndef __poll_t
+#define __poll_t unsigned int
+#endif
+
 /**
  * struct ne_mem_region - Entry in the enclave user space memory regions list.
  * @mem_region_list_entry:	Entry in the list of enclave memory regions.
