@@ -17,6 +17,14 @@
  * DOC: Nitro Enclaves (NE) PCI device
  */
 
+/*
+ * PCI_VENDOR_ID_AMAZON is included in linux/pci_ids.h since kernel 4.18.
+ * Define it here to be available for older kernel versions.
+ */
+#ifndef PCI_VENDOR_ID_AMAZON
+#define PCI_VENDOR_ID_AMAZON   (0x1d0f)
+#endif
+
 #define PCI_DEVICE_ID_NE	(0xe4c1)
 #define PCI_BAR_NE		(0x03)
 
