@@ -57,8 +57,11 @@
  * TODO: Update logic to create new sysfs entries instead of using
  * a kernel parameter e.g. if multiple sysfs files needed.
  */
+static int ne_set_kernel_param(const char *val, const struct kernel_param *kp);
+
 static const struct kernel_param_ops ne_cpu_pool_ops = {
 	.get	= param_get_string,
+	.set	= ne_set_kernel_param,
 };
 
 static char ne_cpus[NE_CPUS_SIZE];
@@ -86,6 +89,631 @@ struct ne_cpu_pool {
 };
 
 static struct ne_cpu_pool ne_cpu_pool;
+
+#ifndef remove_cpu
+static int remove_cpu(u32 cpu_id)
+{
+	struct device *cpu_dev = NULL;
+	int rc = -EINVAL;
+
+	cpu_dev = get_cpu_device(cpu_id);
+	if (!cpu_dev) {
+		rc = -EINVAL;
+
+		pr_err("%s: Failure in getting cpu dev [rc=%d]\n",
+		ne_misc_dev.name, rc);
+
+		return rc;
+	}
+
+	rc = cpu_subsys.offline(cpu_dev);
+	if (rc < 0) {
+		pr_err("%s: Failure in cpu subsys offline [rc=%d]\n",
+		ne_misc_dev.name, rc);
+
+		return rc;
+	}
+
+	return 0;
+}
+#endif
+
+#ifndef add_cpu
+static int add_cpu(u32 cpu_id)
+{
+	struct device *cpu_dev = NULL;
+	int rc = -EINVAL;
+
+	cpu_dev = get_cpu_device(cpu_id);
+	if (!cpu_dev) {
+		rc = -EINVAL;
+
+		pr_err("%s: Failure in getting cpu dev [rc=%d]\n",
+		ne_misc_dev.name, rc);
+
+		return rc;
+	}
+
+	rc = cpu_subsys.online(cpu_dev);
+	if (rc < 0) {
+		pr_err("%s: Failure in cpu subsys online [rc=%d]\n",
+		ne_misc_dev.name, rc);
+
+		return rc;
+	}
+
+	return 0;
+}
+#endif
+
+/**
+ * ne_check_enclaves_created() - Verify if at least one enclave has been created.
+ * @void:	No parameters provided.
+ *
+ * Context: Process context.
+ * Return:
+ * * True if at least one enclave is created.
+ * * False otherwise.
+ */
+static bool ne_check_enclaves_created(void)
+{
+	struct ne_pci_dev *ne_pci_dev = NULL;
+	/* TODO: Find another way to get the NE PCI device reference. */
+	struct pci_dev *pdev = pci_get_device(PCI_VENDOR_ID_AMAZON, PCI_DEVICE_ID_NE, NULL);
+	bool ret = false;
+
+	if (!pdev)
+		return ret;
+
+	ne_pci_dev = pci_get_drvdata(pdev);
+	if (!ne_pci_dev) {
+		pci_dev_put(pdev);
+
+		return ret;
+	}
+
+	mutex_lock(&ne_pci_dev->enclaves_list_mutex);
+
+	if (!list_empty(&ne_pci_dev->enclaves_list))
+		ret = true;
+
+	mutex_unlock(&ne_pci_dev->enclaves_list_mutex);
+
+	pci_dev_put(pdev);
+
+	return ret;
+}
+
+/**
+ * ne_setup_cpu_pool() - Set the NE CPU pool after handling sanity checks such
+ *			 as not sharing CPU cores with the primary / parent VM
+ *			 or not using CPU 0, which should remain available for
+ *			 the primary / parent VM. Offline the CPUs from the
+ *			 pool after the checks passed.
+ * @ne_cpu_list:	The CPU list used for setting NE CPU pool.
+ *
+ * Context: Process context.
+ * Return:
+ * * 0 on success.
+ * * Negative return value on failure.
+ */
+static int ne_setup_cpu_pool(const char *ne_cpu_list)
+{
+	int core_id = -1;
+	unsigned int cpu = 0;
+	cpumask_var_t cpu_pool = NULL;
+	unsigned int cpu_sibling = 0;
+	unsigned int i = 0;
+	int numa_node = -1;
+	int rc = -EINVAL;
+
+	if (!ne_cpu_list)
+		return 0;
+
+	if (!zalloc_cpumask_var(&cpu_pool, GFP_KERNEL))
+		return -ENOMEM;
+
+	mutex_lock(&ne_cpu_pool.mutex);
+
+	rc = cpulist_parse(ne_cpu_list, cpu_pool);
+	if (rc < 0) {
+		pr_err("%s: Error in cpulist parse [rc=%d]\n", ne_misc_dev.name, rc);
+
+		goto free_pool_cpumask;
+	}
+
+	cpu = cpumask_any(cpu_pool);
+	if (cpu >= nr_cpu_ids) {
+		pr_err("%s: No CPUs available in CPU pool\n", ne_misc_dev.name);
+
+		rc = -EINVAL;
+
+		goto free_pool_cpumask;
+	}
+
+	/*
+	 * Check if the CPUs from the NE CPU pool are from the same NUMA node.
+	 */
+	for_each_cpu(cpu, cpu_pool) {
+		if (numa_node < 0) {
+			numa_node = cpu_to_node(cpu);
+			if (numa_node < 0) {
+				pr_err("%s: Invalid NUMA node %d\n",
+				       ne_misc_dev.name, numa_node);
+
+				rc = -EINVAL;
+
+				goto free_pool_cpumask;
+			}
+		} else {
+			if (numa_node != cpu_to_node(cpu)) {
+				pr_err("%s: CPUs with different NUMA nodes\n",
+				       ne_misc_dev.name);
+
+				rc = -EINVAL;
+
+				goto free_pool_cpumask;
+			}
+		}
+	}
+
+	/*
+	 * Check if CPU 0 and its siblings are included in the provided CPU pool
+	 * They should remain available for the primary / parent VM.
+	 */
+	if (cpumask_test_cpu(0, cpu_pool)) {
+		pr_err("%s: CPU 0 has to remain available\n", ne_misc_dev.name);
+
+		rc = -EINVAL;
+
+		goto free_pool_cpumask;
+	}
+
+	for_each_cpu(cpu_sibling, topology_sibling_cpumask(0)) {
+		if (cpumask_test_cpu(cpu_sibling, cpu_pool)) {
+			pr_err("%s: CPU sibling %d for CPU 0 is in CPU pool\n",
+			       ne_misc_dev.name, cpu_sibling);
+
+			rc = -EINVAL;
+
+			goto free_pool_cpumask;
+		}
+	}
+
+	/*
+	 * Check if CPU siblings are included in the provided CPU pool. The
+	 * expectation is that CPU cores are made available in the CPU pool for
+	 * enclaves.
+	 */
+	for_each_cpu(cpu, cpu_pool) {
+		for_each_cpu(cpu_sibling, topology_sibling_cpumask(cpu)) {
+			if (!cpumask_test_cpu(cpu_sibling, cpu_pool)) {
+				pr_err("%s: CPU %d is not in CPU pool\n",
+				       ne_misc_dev.name, cpu_sibling);
+
+				rc = -EINVAL;
+
+				goto free_pool_cpumask;
+			}
+		}
+	}
+
+	ne_cpu_pool.avail_cores_size = nr_cpu_ids / smp_num_siblings;
+
+	ne_cpu_pool.avail_cores = kcalloc(ne_cpu_pool.avail_cores_size,
+					  sizeof(*ne_cpu_pool.avail_cores),
+					  GFP_KERNEL);
+	if (!ne_cpu_pool.avail_cores) {
+		rc = -ENOMEM;
+
+		goto free_pool_cpumask;
+	}
+
+	for (i = 0; i < ne_cpu_pool.avail_cores_size; i++)
+		if (!zalloc_cpumask_var(&ne_cpu_pool.avail_cores[i], GFP_KERNEL)) {
+			rc = -ENOMEM;
+
+			goto free_cores_cpumask;
+		}
+
+	/* Split the NE CPU pool in CPU cores. */
+	for_each_cpu(cpu, cpu_pool) {
+		core_id = topology_core_id(cpu);
+		if (core_id < 0 || core_id >= ne_cpu_pool.avail_cores_size) {
+			pr_err("%s: Invalid core id  %d\n",
+			       ne_misc_dev.name, core_id);
+
+			rc = -EINVAL;
+
+			goto clear_cpumask;
+		}
+
+		cpumask_set_cpu(cpu, ne_cpu_pool.avail_cores[core_id]);
+	}
+
+	/*
+	 * CPUs that are given to enclave(s) should not be considered online
+	 * by Linux anymore, as the hypervisor will degrade them to floating.
+	 * The physical CPUs (full cores) are carved out of the primary / parent
+	 * VM and given to the enclave VM. The same number of vCPUs would run
+	 * on less pCPUs for the primary / parent VM.
+	 *
+	 * We offline them here, to not degrade performance and expose correct
+	 * topology to Linux and user space.
+	 */
+	for_each_cpu(cpu, cpu_pool) {
+		rc = remove_cpu(cpu);
+		if (rc != 0) {
+			pr_err("%s: CPU %d is not offlined [rc=%d]\n",
+			       ne_misc_dev.name, cpu, rc);
+
+			goto online_cpus;
+		}
+	}
+
+	free_cpumask_var(cpu_pool);
+
+	ne_cpu_pool.numa_node = numa_node;
+
+	mutex_unlock(&ne_cpu_pool.mutex);
+
+	return 0;
+
+online_cpus:
+	for_each_cpu(cpu, cpu_pool)
+		add_cpu(cpu);
+clear_cpumask:
+	for (i = 0; i < ne_cpu_pool.avail_cores_size; i++)
+		cpumask_clear(ne_cpu_pool.avail_cores[i]);
+free_cores_cpumask:
+	for (i = 0; i < ne_cpu_pool.avail_cores_size; i++)
+		free_cpumask_var(ne_cpu_pool.avail_cores[i]);
+	kfree(ne_cpu_pool.avail_cores);
+	ne_cpu_pool.avail_cores_size = 0;
+free_pool_cpumask:
+	free_cpumask_var(cpu_pool);
+	mutex_unlock(&ne_cpu_pool.mutex);
+
+	return rc;
+}
+
+/**
+ * ne_teardown_cpu_pool() - Online the CPUs from the NE CPU pool and cleanup the
+ *			    CPU pool.
+ * @void:	No parameters provided.
+ *
+ * Context: Process context.
+ */
+static void ne_teardown_cpu_pool(void)
+{
+	unsigned int cpu = 0;
+	unsigned int i = 0;
+	int rc = -EINVAL;
+
+	mutex_lock(&ne_cpu_pool.mutex);
+
+	if (!ne_cpu_pool.avail_cores_size) {
+		mutex_unlock(&ne_cpu_pool.mutex);
+
+		return;
+	}
+
+	for (i = 0; i < ne_cpu_pool.avail_cores_size; i++) {
+		for_each_cpu(cpu, ne_cpu_pool.avail_cores[i]) {
+			rc = add_cpu(cpu);
+			if (rc != 0)
+				pr_err("%s: CPU %d is not onlined [rc=%d]\n",
+				       ne_misc_dev.name, cpu, rc);
+		}
+
+		cpumask_clear(ne_cpu_pool.avail_cores[i]);
+
+		free_cpumask_var(ne_cpu_pool.avail_cores[i]);
+	}
+
+	kfree(ne_cpu_pool.avail_cores);
+	ne_cpu_pool.avail_cores_size = 0;
+
+	mutex_unlock(&ne_cpu_pool.mutex);
+}
+
+/**
+ * ne_set_kernel_param() - Set the NE CPU pool value via the NE kernel parameter.
+ * @val:	NE CPU pool string value.
+ * @kp :	NE kernel parameter associated with the NE CPU pool.
+ *
+ * Context: Process context.
+ * Return:
+ * * 0 on success.
+ * * Negative return value on failure.
+ */
+static int ne_set_kernel_param(const char *val, const struct kernel_param *kp)
+{
+	char error_val[] = "";
+	int rc = -EINVAL;
+
+	if (!capable(CAP_SYS_ADMIN))
+		return -EPERM;
+
+	if (ne_check_enclaves_created()) {
+		pr_err("%s: The CPU pool is used by enclave(s)\n", ne_misc_dev.name);
+
+		return -EPERM;
+	}
+
+	ne_teardown_cpu_pool();
+
+	rc = ne_setup_cpu_pool(val);
+	if (rc < 0) {
+		pr_err("%s: Error in setup CPU pool [rc=%d]\n", ne_misc_dev.name, rc);
+
+		param_set_copystring(error_val, kp);
+
+		return rc;
+	}
+
+	return param_set_copystring(val, kp);
+}
+
+/**
+ * ne_get_cpu_from_cpu_pool() - Get a CPU from the NE CPU pool, either from the
+ *				remaining sibling(s) of a CPU core or the first
+ *				sibling of a new CPU core.
+ * @ne_enclave :	Private data associated with the current enclave.
+ *
+ * Context: Process context. This function is called with the ne_enclave mutex held.
+ * Return:
+ * * vCPU id.
+ * * 0, if no CPU available in the pool.
+ */
+static unsigned int ne_get_cpu_from_cpu_pool(struct ne_enclave *ne_enclave)
+{
+	int core_id = -1;
+	unsigned int cpu = 0;
+	unsigned int i = 0;
+	unsigned int vcpu_id = 0;
+
+	/* There are CPU siblings available to choose from. */
+	for (i = 0; i < ne_enclave->avail_cpu_cores_size; i++)
+		for_each_cpu(cpu, ne_enclave->avail_cpu_cores[i])
+			if (!cpumask_test_cpu(cpu, ne_enclave->vcpu_ids)) {
+				vcpu_id = cpu;
+
+				goto out;
+			}
+
+	mutex_lock(&ne_cpu_pool.mutex);
+
+	/* Choose a CPU from the available NE CPU pool. */
+	for (i = 0; i < ne_cpu_pool.avail_cores_size; i++)
+		if (!cpumask_empty(ne_cpu_pool.avail_cores[i])) {
+			core_id = i;
+
+			break;
+		}
+
+	if (core_id < 0) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "No CPUs available in NE CPU pool\n");
+
+		goto unlock_mutex;
+	}
+
+	if (core_id >= ne_enclave->avail_cpu_cores_size) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Invalid core id %d - ne_enclave\n", core_id);
+
+		goto unlock_mutex;
+	}
+
+	vcpu_id = cpumask_any(ne_cpu_pool.avail_cores[core_id]);
+
+	for_each_cpu(cpu, ne_cpu_pool.avail_cores[core_id])
+		cpumask_set_cpu(cpu, ne_enclave->avail_cpu_cores[core_id]);
+
+	cpumask_clear(ne_cpu_pool.avail_cores[core_id]);
+
+unlock_mutex:
+	mutex_unlock(&ne_cpu_pool.mutex);
+out:
+	return vcpu_id;
+}
+
+/**
+ * ne_check_cpu_in_cpu_pool() - Check if the given vCPU is in the available CPUs
+ *				from the pool.
+ * @ne_enclave :	Private data associated with the current enclave.
+ * @vcpu_id:		ID of the vCPU to check if available in the NE CPU pool.
+ *
+ * Context: Process context. This function is called with the ne_enclave mutex held.
+ * Return:
+ * * 0 on success.
+ * * Negative return value on failure.
+ */
+static int ne_check_cpu_in_cpu_pool(struct ne_enclave *ne_enclave, u32 vcpu_id)
+{
+	int core_id = -1;
+	unsigned int cpu = 0;
+	unsigned int i = 0;
+
+	if (cpumask_test_cpu(vcpu_id, ne_enclave->vcpu_ids)) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "CPU %d already used\n", vcpu_id);
+
+		return -NE_ERR_VCPU_ALREADY_USED;
+	}
+
+	for (i = 0; i < ne_enclave->avail_cpu_cores_size; i++)
+		if (cpumask_test_cpu(vcpu_id, ne_enclave->avail_cpu_cores[i]))
+			return 0;
+
+	mutex_lock(&ne_cpu_pool.mutex);
+
+	for (i = 0; i < ne_cpu_pool.avail_cores_size; i++)
+		if (cpumask_test_cpu(vcpu_id, ne_cpu_pool.avail_cores[i])) {
+			core_id = i;
+
+			break;
+	}
+
+	if (core_id < 0) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "CPU %d is not in NE CPU pool\n", vcpu_id);
+
+		mutex_unlock(&ne_cpu_pool.mutex);
+
+		return -NE_ERR_VCPU_NOT_IN_CPU_POOL;
+	}
+
+	if (core_id >= ne_enclave->avail_cpu_cores_size) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Invalid core id %d - ne_enclave\n", core_id);
+
+		mutex_unlock(&ne_cpu_pool.mutex);
+
+		return -NE_ERR_VCPU_INVALID_CPU_CORE;
+	}
+
+	for_each_cpu(cpu, ne_cpu_pool.avail_cores[core_id])
+		cpumask_set_cpu(cpu, ne_enclave->avail_cpu_cores[core_id]);
+
+	cpumask_clear(ne_cpu_pool.avail_cores[core_id]);
+
+	mutex_unlock(&ne_cpu_pool.mutex);
+
+	return 0;
+}
+
+/**
+ * ne_add_vcpu_ioctl() - Add a vCPU to the slot associated with the current
+ *			 enclave.
+ * @ne_enclave :	Private data associated with the current enclave.
+ * @vcpu_id:		ID of the CPU to be associated with the given slot,
+ *			apic id on x86.
+ *
+ * Context: Process context. This function is called with the ne_enclave mutex held.
+ * Return:
+ * * 0 on success.
+ * * Negative return value on failure.
+ */
+static int ne_add_vcpu_ioctl(struct ne_enclave *ne_enclave, u32 vcpu_id)
+{
+	struct ne_pci_dev_cmd_reply cmd_reply = {};
+	int rc = -EINVAL;
+	struct slot_add_vcpu_req slot_add_vcpu_req = {};
+
+	if (ne_enclave->mm != current->mm)
+		return -EIO;
+
+	slot_add_vcpu_req.slot_uid = ne_enclave->slot_uid;
+	slot_add_vcpu_req.vcpu_id = vcpu_id;
+
+	rc = ne_do_request(ne_enclave->pdev, SLOT_ADD_VCPU, &slot_add_vcpu_req,
+			   sizeof(slot_add_vcpu_req), &cmd_reply, sizeof(cmd_reply));
+	if (rc < 0) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Error in slot add vCPU [rc=%d]\n", rc);
+
+		return rc;
+	}
+
+	cpumask_set_cpu(vcpu_id, ne_enclave->vcpu_ids);
+
+	ne_enclave->nr_vcpus++;
+
+	return 0;
+}
+
+/**
+ * ne_enclave_ioctl() - Ioctl function provided by the enclave file.
+ * @file:	File associated with this ioctl function.
+ * @cmd:	The command that is set for the ioctl call.
+ * @arg:	The argument that is provided for the ioctl call.
+ *
+ * Context: Process context.
+ * Return:
+ * * 0 on success.
+ * * Negative return value on failure.
+ */
+static long ne_enclave_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct ne_enclave *ne_enclave = file->private_data;
+
+	switch (cmd) {
+	case NE_ADD_VCPU: {
+		int rc = -EINVAL;
+		u32 vcpu_id = 0;
+
+		if (copy_from_user(&vcpu_id, (void __user *)arg, sizeof(vcpu_id)))
+			return -EFAULT;
+
+		mutex_lock(&ne_enclave->enclave_info_mutex);
+
+		if (ne_enclave->state != NE_STATE_INIT) {
+			dev_err_ratelimited(ne_misc_dev.this_device,
+					    "Enclave is not in init state\n");
+
+			mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+			return -NE_ERR_NOT_IN_INIT_STATE;
+		}
+
+		if (vcpu_id >= (ne_enclave->avail_cpu_cores_size * smp_num_siblings)) {
+			dev_err_ratelimited(ne_misc_dev.this_device,
+					    "vCPU id higher than max CPU id\n");
+
+			mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+			return -NE_ERR_INVALID_VCPU;
+		}
+
+		if (!vcpu_id) {
+			/* Use the CPU pool for choosing a CPU for the enclave. */
+			vcpu_id = ne_get_cpu_from_cpu_pool(ne_enclave);
+			if (!vcpu_id) {
+				dev_err_ratelimited(ne_misc_dev.this_device,
+						    "Error in getting CPU from pool\n");
+
+				mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+				return -NE_ERR_NO_CPUS_AVAIL_IN_POOL;
+			}
+		} else {
+			/* Check if the vCPU is available in the NE CPU pool. */
+			rc = ne_check_cpu_in_cpu_pool(ne_enclave, vcpu_id);
+			if (rc < 0) {
+				dev_err_ratelimited(ne_misc_dev.this_device,
+						    "Error in checking if CPU is in pool\n");
+
+				mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+				return rc;
+			}
+		}
+
+		rc = ne_add_vcpu_ioctl(ne_enclave, vcpu_id);
+		if (rc < 0) {
+			cpumask_clear_cpu(vcpu_id, ne_enclave->vcpu_ids);
+
+			mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+			return rc;
+		}
+
+		mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+		if (copy_to_user((void __user *)arg, &vcpu_id, sizeof(vcpu_id)))
+			return -EFAULT;
+
+		return 0;
+	}
+
+	default:
+		return -ENOTTY;
+	}
+
+	return 0;
+}
 
 /**
  * ne_enclave_poll() - Poll functionality used for enclave out-of-band events.
@@ -115,6 +743,7 @@ static const struct file_operations ne_enclave_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= noop_llseek,
 	.poll		= ne_enclave_poll,
+	.unlocked_ioctl	= ne_enclave_ioctl,
 };
 
 /**
@@ -338,6 +967,8 @@ static int __init ne_init(void)
 static void __exit ne_exit(void)
 {
 	pci_unregister_driver(&ne_pci_driver);
+
+	ne_teardown_cpu_pool();
 }
 
 /* TODO: Handle actions such as reboot, kexec. */
