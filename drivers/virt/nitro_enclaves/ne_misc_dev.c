@@ -890,6 +890,77 @@ free_mem_region:
 }
 
 /**
+ * ne_start_enclave_ioctl() - Trigger enclave start after the enclave resources,
+ *			      such as memory and CPU, have been set.
+ * @ne_enclave :		Private data associated with the current enclave.
+ * @enclave_start_info :	Enclave info that includes enclave cid and flags.
+ *
+ * Context: Process context. This function is called with the ne_enclave mutex held.
+ * Return:
+ * * 0 on success.
+ * * Negative return value on failure.
+ */
+static int ne_start_enclave_ioctl(struct ne_enclave *ne_enclave,
+	struct ne_enclave_start_info *enclave_start_info)
+{
+	struct ne_pci_dev_cmd_reply cmd_reply = {};
+	unsigned int cpu = 0;
+	struct enclave_start_req enclave_start_req = {};
+	unsigned int i = 0;
+	int rc = -EINVAL;
+
+	if (!ne_enclave->nr_mem_regions) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Enclave has no mem regions\n");
+
+		return -NE_ERR_NO_MEM_REGIONS_ADDED;
+	}
+
+	if (ne_enclave->mem_size < NE_MIN_ENCLAVE_MEM_SIZE) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Enclave memory is less than %ld\n",
+				    NE_MIN_ENCLAVE_MEM_SIZE);
+
+		return -NE_ERR_ENCLAVE_MEM_MIN_SIZE;
+	}
+
+	if (!ne_enclave->nr_vcpus) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Enclave has no vCPUs\n");
+
+		return -NE_ERR_NO_VCPUS_ADDED;
+	}
+
+	for (i = 0; i < ne_enclave->avail_cpu_cores_size; i++)
+		for_each_cpu(cpu, ne_enclave->avail_cpu_cores[i])
+			if (!cpumask_test_cpu(cpu, ne_enclave->vcpu_ids)) {
+				dev_err_ratelimited(ne_misc_dev.this_device,
+						    "Full CPU cores not used\n");
+
+				return -NE_ERR_FULL_CORES_NOT_USED;
+			}
+
+	enclave_start_req.enclave_cid = enclave_start_info->enclave_cid;
+	enclave_start_req.flags = enclave_start_info->flags;
+	enclave_start_req.slot_uid = ne_enclave->slot_uid;
+
+	rc = ne_do_request(ne_enclave->pdev, ENCLAVE_START, &enclave_start_req,
+			   sizeof(enclave_start_req), &cmd_reply, sizeof(cmd_reply));
+	if (rc < 0) {
+		dev_err_ratelimited(ne_misc_dev.this_device,
+				    "Error in enclave start [rc=%d]\n", rc);
+
+		return rc;
+	}
+
+	ne_enclave->state = NE_STATE_RUNNING;
+
+	enclave_start_info->enclave_cid = cmd_reply.enclave_cid;
+
+	return 0;
+}
+
+/**
  * ne_enclave_ioctl() - Ioctl function provided by the enclave file.
  * @file:	File associated with this ioctl function.
  * @cmd:	The command that is set for the ioctl call.
@@ -1032,6 +1103,44 @@ static long ne_enclave_ioctl(struct file *file, unsigned int cmd, unsigned long 
 		}
 
 		mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+		return 0;
+	}
+
+	case NE_START_ENCLAVE: {
+		struct ne_enclave_start_info enclave_start_info = {};
+		int rc = -EINVAL;
+
+		if (copy_from_user(&enclave_start_info, (void __user *)arg,
+				   sizeof(enclave_start_info)))
+			return -EFAULT;
+
+		if (enclave_start_info.flags >= NE_ENCLAVE_START_MAX_FLAG_VAL)
+			return -EINVAL;
+
+		mutex_lock(&ne_enclave->enclave_info_mutex);
+
+		if (ne_enclave->state != NE_STATE_INIT) {
+			dev_err_ratelimited(ne_misc_dev.this_device,
+					    "Enclave is not in init state\n");
+
+			mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+			return -NE_ERR_NOT_IN_INIT_STATE;
+		}
+
+		rc = ne_start_enclave_ioctl(ne_enclave, &enclave_start_info);
+		if (rc < 0) {
+			mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+			return rc;
+		}
+
+		mutex_unlock(&ne_enclave->enclave_info_mutex);
+
+		if (copy_to_user((void __user *)arg, &enclave_start_info,
+				 sizeof(enclave_start_info)))
+			return -EFAULT;
 
 		return 0;
 	}
