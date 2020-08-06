@@ -454,10 +454,6 @@ err:
 	return -1;
 }
 
-static struct section *elf_create_reloc_section(struct elf *elf,
-						struct section *base,
-						int reltype);
-
 int elf_add_reloc(struct elf *elf, struct section *sec, unsigned long offset,
 		  unsigned int type, struct symbol *sym, s64 addend)
 {
@@ -1067,7 +1063,7 @@ static struct section *elf_create_rela_reloc_section(struct elf *elf, struct sec
 	return sec;
 }
 
-static struct section *elf_create_reloc_section(struct elf *elf,
+struct section *elf_create_reloc_section(struct elf *elf,
 					 struct section *base,
 					 int reltype)
 {
