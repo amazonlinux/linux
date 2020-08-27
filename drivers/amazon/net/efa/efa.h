@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
- * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef _EFA_H_
@@ -46,6 +46,7 @@ struct efa_sw_stats {
 	atomic64_t reg_mr_err;
 	atomic64_t alloc_ucontext_err;
 	atomic64_t create_ah_err;
+	atomic64_t mmap_err;
 };
 
 /* Don't use anything other than atomic64 */
@@ -67,7 +68,7 @@ struct efa_dev {
 	u64 db_bar_addr;
 	u64 db_bar_len;
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
+#ifndef HAVE_PCI_IRQ_VECTOR
 	struct msix_entry admin_msix_entry;
 #else
 	int admin_msix_vector_idx;
@@ -89,15 +90,13 @@ struct efa_dev {
 
 struct efa_ucontext {
 	struct ib_ucontext ibucontext;
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 1, 0)
-	struct xarray mmap_xa;
-#else
+	u16 uarn;
+#ifndef HAVE_CORE_MMAP_XA
 	/* Protects ucontext state */
 	struct mutex lock;
 	struct list_head pending_mmaps;
-#endif
-	u32 mmap_xa_page;
-	u16 uarn;
+	u32 mmap_page;
+#endif /* !defined(HAVE_CORE_MMAP_XA) */
 };
 
 struct efa_pd {
@@ -108,6 +107,10 @@ struct efa_pd {
 struct efa_mr {
 	struct ib_mr ibmr;
 	struct ib_umem *umem;
+#ifdef HAVE_EFA_GDR
+	struct efa_nvmem *nvmem;
+	u64 nvmem_ticket;
+#endif
 };
 
 struct efa_cq {
@@ -115,6 +118,7 @@ struct efa_cq {
 	struct efa_ucontext *ucontext;
 	dma_addr_t dma_addr;
 	void *cpu_addr;
+	struct rdma_user_mmap_entry *mmap_entry;
 	size_t size;
 	u16 cq_idx;
 };
@@ -125,6 +129,13 @@ struct efa_qp {
 	void *rq_cpu_addr;
 	size_t rq_size;
 	enum ib_qp_state state;
+
+	/* Used for saving mmap_xa entries */
+	struct rdma_user_mmap_entry *sq_db_mmap_entry;
+	struct rdma_user_mmap_entry *llq_desc_mmap_entry;
+	struct rdma_user_mmap_entry *rq_db_mmap_entry;
+	struct rdma_user_mmap_entry *rq_mmap_entry;
+
 	u32 qp_handle;
 	u32 max_send_wr;
 	u32 max_recv_wr;
@@ -234,13 +245,20 @@ struct ib_ucontext *efa_kzalloc_ucontext(struct ib_device *ibdev,
 #endif
 int efa_mmap(struct ib_ucontext *ibucontext,
 	     struct vm_area_struct *vma);
+#ifdef HAVE_CORE_MMAP_XA
+void efa_mmap_free(struct rdma_user_mmap_entry *rdma_entry);
+#endif
 int efa_create_ah(struct ib_ah *ibah,
+#ifdef HAVE_CREATE_AH_INIT_ATTR
+		  struct rdma_ah_init_attr *init_attr,
+#else
 #ifdef HAVE_CREATE_AH_RDMA_ATTR
 		  struct rdma_ah_attr *ah_attr,
 #else
 		  struct ib_ah_attr *ah_attr,
 #endif
 		  u32 flags,
+#endif
 		  struct ib_udata *udata);
 #ifndef HAVE_AH_CORE_ALLOCATION
 #ifdef HAVE_CREATE_DESTROY_AH_FLAGS
