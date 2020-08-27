@@ -1,28 +1,36 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2019 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/utsname.h>
+#include <linux/version.h>
 
 #include <rdma/ib_user_verbs.h>
 
 #include "efa.h"
 #include "efa_sysfs.h"
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 18, 0)
+#ifdef HAVE_EFA_GDR
+#include "efa_gdr.h"
+#endif
+
+#ifndef HAVE_PCI_VENDOR_ID_AMAZON
 #define PCI_VENDOR_ID_AMAZON 0x1d0f
 #endif
-#define PCI_DEV_ID_EFA_VF 0xefa0
+#define PCI_DEV_ID_EFA0_VF 0xefa0
+#define PCI_DEV_ID_EFA1_VF 0xefa1
 
 static const struct pci_device_id efa_pci_tbl[] = {
-	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA_VF) },
+	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA0_VF) },
+	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA1_VF) },
 	{ }
 };
 
 #define DRV_MODULE_VER_MAJOR           1
-#define DRV_MODULE_VER_MINOR           4
+#define DRV_MODULE_VER_MINOR           9
 #define DRV_MODULE_VER_SUBMINOR        0
 
 #ifndef DRV_MODULE_VERSION
@@ -33,6 +41,7 @@ static const struct pci_device_id efa_pci_tbl[] = {
 #endif
 
 MODULE_VERSION(DRV_MODULE_VERSION);
+MODULE_SOFTDEP("pre: ib_uverbs");
 
 static char version[] = DEVICE_NAME " v" DRV_MODULE_VERSION;
 
@@ -40,6 +49,9 @@ MODULE_AUTHOR("Amazon.com, Inc. or its affiliates");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION(DEVICE_NAME);
 MODULE_DEVICE_TABLE(pci, efa_pci_tbl);
+#ifdef HAVE_EFA_GDR
+MODULE_INFO(gdr, "Y");
+#endif
 
 #define EFA_REG_BAR 0
 #define EFA_MEM_BAR 2
@@ -59,15 +71,6 @@ static unsigned int efa_everbs_major;
 static int efa_everbs_dev_init(struct efa_dev *dev, int devnum);
 static void efa_everbs_dev_destroy(struct efa_dev *dev);
 #endif
-
-static void efa_update_network_attr(struct efa_dev *dev,
-				    struct efa_com_get_network_attr_result *network_attr)
-{
-	memcpy(dev->addr, network_attr->addr, sizeof(network_attr->addr));
-	dev->mtu = network_attr->mtu;
-
-	dev_dbg(&dev->pdev->dev, "Full address %pI6\n", dev->addr);
-}
 
 /* This handler will called for unknown event group or unimplemented handlers */
 static void unimplemented_aenq_handler(void *data,
@@ -142,7 +145,7 @@ static void efa_setup_mgmnt_irq(struct efa_dev *dev)
 	dev->admin_irq.handler = efa_intr_msix_mgmnt;
 	dev->admin_irq.data = dev;
 	dev->admin_irq.vector =
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
+#ifndef HAVE_PCI_IRQ_VECTOR
 		dev->admin_msix_entry.vector;
 #else
 		pci_irq_vector(dev->pdev, dev->admin_msix_vector_idx);
@@ -230,6 +233,57 @@ static void efa_stats_init(struct efa_dev *dev)
 		atomic64_set(s, 0);
 }
 
+static void efa_set_host_info(struct efa_dev *dev)
+{
+	struct efa_admin_set_feature_resp resp = {};
+	struct efa_admin_set_feature_cmd cmd = {};
+	struct efa_admin_host_info *hinf;
+	u32 bufsz = sizeof(*hinf);
+	dma_addr_t hinf_dma;
+
+	if (!efa_com_check_supported_feature_id(&dev->edev,
+						EFA_ADMIN_HOST_INFO))
+		return;
+
+	/* Failures in host info set shall not disturb probe */
+	hinf = dma_alloc_coherent(&dev->pdev->dev, bufsz, &hinf_dma,
+				  GFP_KERNEL);
+	if (!hinf)
+		return;
+
+	strlcpy(hinf->os_dist_str, utsname()->release,
+		min(sizeof(hinf->os_dist_str), sizeof(utsname()->release)));
+	hinf->os_type = EFA_ADMIN_OS_LINUX;
+	strlcpy(hinf->kernel_ver_str, utsname()->version,
+		min(sizeof(hinf->kernel_ver_str), sizeof(utsname()->version)));
+	hinf->kernel_ver = LINUX_VERSION_CODE;
+	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_MAJOR,
+		DRV_MODULE_VER_MAJOR);
+	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_MINOR,
+		DRV_MODULE_VER_MINOR);
+	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_SUB_MINOR,
+		DRV_MODULE_VER_SUBMINOR);
+	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_MODULE_TYPE,
+		"g"[0]);
+	EFA_SET(&hinf->bdf, EFA_ADMIN_HOST_INFO_BUS, dev->pdev->bus->number);
+	EFA_SET(&hinf->bdf, EFA_ADMIN_HOST_INFO_DEVICE,
+		PCI_SLOT(dev->pdev->devfn));
+	EFA_SET(&hinf->bdf, EFA_ADMIN_HOST_INFO_FUNCTION,
+		PCI_FUNC(dev->pdev->devfn));
+	EFA_SET(&hinf->spec_ver, EFA_ADMIN_HOST_INFO_SPEC_MAJOR,
+		EFA_COMMON_SPEC_VERSION_MAJOR);
+	EFA_SET(&hinf->spec_ver, EFA_ADMIN_HOST_INFO_SPEC_MINOR,
+		EFA_COMMON_SPEC_VERSION_MINOR);
+#ifdef HAVE_EFA_GDR
+	EFA_SET(&hinf->flags, EFA_ADMIN_HOST_INFO_GDR, 1);
+#endif
+
+	efa_com_set_feature_ex(&dev->edev, &resp, &cmd, EFA_ADMIN_HOST_INFO,
+			       hinf_dma, bufsz);
+
+	dma_free_coherent(&dev->pdev->dev, bufsz, hinf, hinf_dma);
+}
+
 #ifdef HAVE_IB_DEV_OPS
 static const struct ib_device_ops efa_dev_ops = {
 #ifdef HAVE_IB_DEVICE_OPS_COMMON
@@ -273,6 +327,9 @@ static const struct ib_device_ops efa_dev_ops = {
 	.get_link_layer = efa_port_link_layer,
 	.get_port_immutable = efa_get_port_immutable,
 	.mmap = efa_mmap,
+#ifdef HAVE_CORE_MMAP_XA
+	.mmap_free = efa_mmap_free,
+#endif
 	.modify_qp = efa_modify_qp,
 #ifndef HAVE_NO_KVERBS_DRIVERS
 	.poll_cq = efa_poll_cq,
@@ -306,7 +363,6 @@ static const struct ib_device_ops efa_dev_ops = {
 
 static int efa_ib_device_add(struct efa_dev *dev)
 {
-	struct efa_com_get_network_attr_result network_attr;
 	struct efa_com_get_hw_hints_result hw_hints;
 	struct pci_dev *pdev = dev->pdev;
 #ifdef HAVE_CUSTOM_COMMANDS
@@ -314,7 +370,7 @@ static int efa_ib_device_add(struct efa_dev *dev)
 #endif
 	int err;
 
-#ifndef HAVE_CREATE_AH_UDATA
+#ifdef HAVE_CREATE_AH_NO_UDATA
 	INIT_LIST_HEAD(&dev->efa_ah_list);
 	mutex_init(&dev->ah_list_lock);
 #endif
@@ -330,12 +386,6 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	if (err)
 		return err;
 
-	err = efa_com_get_network_attr(&dev->edev, &network_attr);
-	if (err)
-		goto err_release_doorbell_bar;
-
-	efa_update_network_attr(dev, &network_attr);
-
 	err = efa_com_get_hw_hints(&dev->edev, &hw_hints);
 	if (err)
 		goto err_release_doorbell_bar;
@@ -347,11 +397,9 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	if (err)
 		goto err_release_doorbell_bar;
 
-#ifdef HAVE_UPSTREAM_EFA
+	efa_set_host_info(dev);
+
 	dev->ibdev.node_type = RDMA_NODE_UNSPECIFIED;
-#else
-	dev->ibdev.node_type = RDMA_NODE_IB_CA;
-#endif
 	dev->ibdev.phys_port_cnt = 1;
 	dev->ibdev.num_comp_vectors = 1;
 #ifdef HAVE_DEV_PARENT
@@ -384,7 +432,7 @@ static int efa_ib_device_add(struct efa_dev *dev)
 #endif
 
 #ifndef HAVE_IB_DEVICE_OPS_COMMON
-#ifdef HAVE_UPSTREAM_EFA
+#ifdef HAVE_DRIVER_ID
 	dev->ibdev.driver_id = RDMA_DRIVER_EFA;
 #endif
 	dev->ibdev.uverbs_abi_ver = EFA_UVERBS_ABI_VERSION;
@@ -429,15 +477,15 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	dev->ibdev.req_notify_cq = efa_req_notify_cq;
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 20, 0)
+#ifdef HAVE_IB_REGISTER_DEVICE_TWO_PARAMS
+	err = ib_register_device(&dev->ibdev, "efa_%d");
+#elif defined(HAVE_IB_REGISTER_DEVICE_NAME_PARAM)
+	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
+#else
 	strlcpy(dev->ibdev.name, "efa_%d",
 		sizeof(dev->ibdev.name));
 
 	err = ib_register_device(&dev->ibdev, NULL);
-#elif defined(HAVE_IB_REGISTER_DEVICE_TWO_PARAMS)
-	err = ib_register_device(&dev->ibdev, "efa_%d");
-#else
-	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
 #endif
 	if (err)
 		goto err_release_doorbell_bar;
@@ -445,7 +493,11 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	ibdev_info(&dev->ibdev, "IB device registered\n");
 
 #ifdef HAVE_CUSTOM_COMMANDS
-	sscanf(dev_name(&dev->ibdev.dev), "efa_%d\n", &devnum);
+	if (sscanf(dev_name(&dev->ibdev.dev), "efa_%d\n", &devnum) != 1) {
+		err = -EINVAL;
+		goto err_unregister_ibdev;
+	}
+
 	err = efa_everbs_dev_init(dev, devnum);
 	if (err)
 		goto err_unregister_ibdev;
@@ -466,7 +518,7 @@ err_release_doorbell_bar:
 
 static void efa_ib_device_remove(struct efa_dev *dev)
 {
-#ifndef HAVE_CREATE_AH_UDATA
+#ifdef HAVE_CREATE_AH_NO_UDATA
 	WARN_ON(!list_empty(&dev->efa_ah_list));
 #endif
 	efa_com_dev_reset(&dev->edev, EFA_REGS_RESET_NORMAL);
@@ -480,7 +532,7 @@ static void efa_ib_device_remove(struct efa_dev *dev)
 
 static void efa_disable_msix(struct efa_dev *dev)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
+#ifndef HAVE_PCI_IRQ_VECTOR
 	pci_disable_msix(dev->pdev);
 #else
 	pci_free_irq_vectors(dev->pdev);
@@ -496,7 +548,7 @@ static int efa_enable_msix(struct efa_dev *dev)
 	dev_dbg(&dev->pdev->dev, "Trying to enable MSI-X, vectors %d\n",
 		msix_vecs);
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
+#ifndef HAVE_PCI_IRQ_VECTOR
 	dev->admin_msix_entry.entry = EFA_MGMNT_MSIX_VEC_IDX;
 	irq_num = pci_enable_msix_range(dev->pdev,
 					&dev->admin_msix_entry,
@@ -631,7 +683,7 @@ static struct efa_dev *efa_probe_device(struct pci_dev *pdev)
 	if (err)
 		goto err_reg_read_destroy;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 8, 0)
+#ifdef HAVE_PCI_IRQ_VECTOR
 	edev->aq.msix_vector_idx = dev->admin_msix_vector_idx;
 	edev->aenq.msix_vector_idx = dev->admin_msix_vector_idx;
 #else
@@ -729,7 +781,7 @@ static ssize_t
 (*efa_everbs_cmd_table[EFA_EVERBS_CMD_MAX])(struct efa_dev *dev,
 					    const char __user *buf, int in_len,
 					    int out_len) = {
-#ifndef HAVE_CREATE_AH_UDATA
+#ifdef HAVE_CREATE_AH_NO_UDATA
 	[EFA_EVERBS_CMD_GET_AH] = efa_everbs_cmd_get_ah,
 #endif
 #ifndef HAVE_IB_QUERY_DEVICE_UDATA
@@ -869,6 +921,10 @@ static int __init efa_init(void)
 		pr_err("Couldn't register efa driver\n");
 		goto err_register;
 	}
+
+#ifdef HAVE_EFA_GDR
+	nvmem_init();
+#endif
 
 	return 0;
 
