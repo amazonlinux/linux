@@ -4,6 +4,18 @@
 
 void arch_handle_alternative(unsigned short feature, struct special_alt *alt)
 {
+	if (alt->orig_len && !alt->new_len) {
+		/*
+		 * ARM64_CB_PATCH has no alternative instruction.
+		 * a callback is called at alternative replacement time
+		 * to dynamically change the original instructions.
+		 *
+		 * ARM64_CB_PATCH is the last ARM64 feature, it's value changes
+		 * every time a new feature is added. So the orig/alt region
+		 * length are used to detect those alternatives
+		 */
+		alt->skip_alt = true;
+	}
 }
 
 bool arch_support_alt_relocation(struct special_alt *special_alt,
