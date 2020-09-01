@@ -447,7 +447,6 @@ static void virtblk_config_changed_work(struct work_struct *work)
 	struct virtio_device *vdev = vblk->vdev;
 	struct request_queue *q = vblk->disk->queue;
 	char cap_str_2[10], cap_str_10[10];
-	char *envp[] = { "RESIZE=1", NULL };
 	unsigned long long nblocks;
 	u64 capacity;
 
