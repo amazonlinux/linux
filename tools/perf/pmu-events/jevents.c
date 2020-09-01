@@ -195,6 +195,7 @@ static struct map {
 	{ "SBO", "uncore_sbox" },
 	{ "iMPH-U", "uncore_arb" },
 	{ "L3PMC", "amd_l3" },
+	{ "DFPMC", "amd_df" },
 	{}
 };
 
