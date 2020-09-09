@@ -11,10 +11,10 @@
 #include <linux/sizes.h>
 #include <linux/types.h>
 
-#include <asm/debug-monitors.h>
+#include <asm/debug-monitors.h> /* __ignore_sync_check__ */
 #include <asm/errno.h>
 #include <asm/insn.h>
-#include <asm/kprobes.h>
+#include <asm/kprobes.h> /* __ignore_sync_check__ */
 
 #define AARCH64_INSN_SF_BIT	BIT(31)
 #define AARCH64_INSN_N_BIT	BIT(22)
