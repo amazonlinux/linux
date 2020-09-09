@@ -18,12 +18,18 @@ arch/x86/lib/x86-opcode-map.txt
 arch/x86/tools/gen-insn-attr-x86.awk
 include/linux/static_call_types.h
 "
-
 SYNC_CHECK_FILES='
 arch/x86/include/asm/inat.h
 arch/x86/include/asm/insn.h
 arch/x86/lib/inat.c
 arch/x86/lib/insn.c
+'
+elif [ "$SRCARCH" = "arm64" ]; then
+FILES="$FILES
+arch/arm64/include/asm/insn.h
+"
+SYNC_CHECK_FILES='
+arch/arm64/lib/insn.c
 '
 fi
 
