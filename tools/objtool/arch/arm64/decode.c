@@ -244,6 +244,13 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			/* Remaining branch opcodes are conditional */
 			*type = INSN_JUMP_CONDITIONAL;
 			*immediate = aarch64_get_branch_offset(insn);
+		} else if (aarch64_insn_is_eret(insn)) {
+			*type = INSN_CONTEXT_SWITCH;
+		} else if (aarch64_insn_is_steppable_hint(insn)) {
+			*type = INSN_NOP;
+		} else if (aarch64_insn_is_brk(insn)) {
+			*immediate = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_16, insn);
+			*type = INSN_BUG;
 		} else {
 			*type = INSN_OTHER;
 		}
