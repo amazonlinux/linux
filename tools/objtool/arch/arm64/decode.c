@@ -105,6 +105,48 @@ int arch_decode_hint_reg(u8 sp_reg, int *base)
 	return -1;
 }
 
+static struct stack_op *arm_make_store_op(enum aarch64_insn_register base,
+					  enum aarch64_insn_register reg,
+					  int offset)
+{
+	struct stack_op *op;
+
+	op = calloc(1, sizeof(*op));
+	if (!op) {
+		WARN("calloc failed");
+		return NULL;
+	}
+	op->dest.type = OP_DEST_REG_INDIRECT;
+	op->dest.reg = base;
+	op->dest.offset = offset;
+	op->src.type = OP_SRC_REG;
+	op->src.reg = reg;
+	op->src.offset = 0;
+
+	return op;
+}
+
+static struct stack_op *arm_make_load_op(enum aarch64_insn_register base,
+					 enum aarch64_insn_register reg,
+					 int offset)
+{
+	struct stack_op *op;
+
+	op = calloc(1, sizeof(*op));
+	if (!op) {
+		WARN("calloc failed");
+		return NULL;
+	}
+	op->dest.type = OP_DEST_REG;
+	op->dest.reg = reg;
+	op->dest.offset = 0;
+	op->src.type = OP_SRC_REG_INDIRECT;
+	op->src.reg = base;
+	op->src.offset = offset;
+
+	return op;
+}
+
 static struct stack_op *arm_make_add_op(enum aarch64_insn_register dest,
 					enum aarch64_insn_register src,
 					int val)
@@ -123,6 +165,101 @@ static struct stack_op *arm_make_add_op(enum aarch64_insn_register dest,
 	op->src.offset = val;
 
 	return op;
+}
+
+static int arm_decode_load_store(u32 insn, enum insn_type *type,
+				 unsigned long *immediate,
+				 struct list_head *ops_list)
+{
+	enum aarch64_insn_register base;
+	enum aarch64_insn_register rt;
+	struct stack_op *op;
+	int size;
+	int offset;
+
+	*type = INSN_OTHER;
+
+	if (aarch64_insn_is_store_single(insn) ||
+	    aarch64_insn_is_load_single(insn))
+		size = 1 << ((insn & GENMASK(31, 30)) >> 30);
+	else
+		size = 4 << ((insn >> 31) & 1);
+
+	if (aarch64_insn_is_store_imm(insn) || aarch64_insn_is_load_imm(insn))
+		*immediate = size * aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12,
+								  insn);
+	else if (aarch64_insn_is_store_pre(insn) ||
+		 aarch64_insn_is_load_pre(insn) ||
+		 aarch64_insn_is_store_post(insn) ||
+		 aarch64_insn_is_load_post(insn))
+		*immediate = sign_extend(aarch64_insn_decode_immediate(AARCH64_INSN_IMM_9,
+								       insn),
+					 9);
+	else if (aarch64_insn_is_stp(insn) || aarch64_insn_is_ldp(insn) ||
+		 aarch64_insn_is_stp_pre(insn) ||
+		 aarch64_insn_is_ldp_pre(insn) ||
+		 aarch64_insn_is_stp_post(insn) ||
+		 aarch64_insn_is_ldp_post(insn))
+		*immediate = size * sign_extend(aarch64_insn_decode_immediate(AARCH64_INSN_IMM_7,
+									      insn),
+						7);
+	else
+		return 1;
+
+	base = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+	if (base != AARCH64_INSN_REG_FP && base != AARCH64_INSN_REG_SP)
+		return 0;
+
+	offset = *immediate;
+
+	if (aarch64_insn_is_store_pre(insn) || aarch64_insn_is_stp_pre(insn) ||
+	    aarch64_insn_is_store_post(insn) || aarch64_insn_is_stp_post(insn)) {
+		op = arm_make_add_op(base, base, *immediate);
+		list_add_tail(&op->list, ops_list);
+
+		if (aarch64_insn_is_store_post(insn) || aarch64_insn_is_stp_post(insn))
+			offset = -*immediate;
+		else
+			offset = 0;
+	} else if (aarch64_insn_is_load_post(insn) || aarch64_insn_is_ldp_post(insn)) {
+		offset = 0;
+	}
+
+	/* First register */
+	rt = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT, insn);
+	if (aarch64_insn_is_store_single(insn) ||
+	    aarch64_insn_is_store_pair(insn))
+		op = arm_make_store_op(base, rt, offset);
+	else
+		op = arm_make_load_op(base, rt, offset);
+
+	if (!op)
+		return -1;
+	list_add_tail(&op->list, ops_list);
+
+	/* Second register (if present) */
+	if (aarch64_insn_is_store_pair(insn) ||
+	    aarch64_insn_is_load_pair(insn)) {
+		rt = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RT2,
+						  insn);
+		if (aarch64_insn_is_store_pair(insn))
+			op = arm_make_store_op(base, rt, offset + size);
+		else
+			op = arm_make_load_op(base, rt, offset + size);
+		if (!op)
+			return -1;
+		list_add_tail(&op->list, ops_list);
+	}
+
+	if (aarch64_insn_is_load_pre(insn) || aarch64_insn_is_ldp_pre(insn) ||
+	    aarch64_insn_is_load_post(insn) || aarch64_insn_is_ldp_post(insn)) {
+		op = arm_make_add_op(base, base, *immediate);
+		if (!op)
+			return -1;
+		list_add_tail(&op->list, ops_list);
+	}
+
+	return 0;
 }
 
 static int arm_decode_add_sub_imm(u32 instr, bool set_flags,
@@ -244,6 +381,17 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			*type = INSN_OTHER;
 		}
 		break;
+	case AARCH64_INSN_CLS_LDST:
+	{
+		int ret;
+
+		ret = arm_decode_load_store(insn, type, immediate, ops_list);
+		if (ret <= 0)
+			return ret;
+
+		*type = INSN_OTHER;
+		break;
+	}
 	default:
 		*type = INSN_OTHER;
 		break;
