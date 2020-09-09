@@ -24,6 +24,14 @@ arch/x86/include/asm/insn.h
 arch/x86/lib/inat.c
 arch/x86/lib/insn.c
 '
+elif [ "$SRCARCH" = "arm64" ]; then
+FILES="$FILES
+arch/arm64/include/asm/insn.h
+"
+
+SYNC_CHECK_FILES='
+arch/arm64/lib/insn.c
+'
 fi
 
 check_2 () {
@@ -67,7 +75,7 @@ done <<EOF
 $FILES
 EOF
 
-if [ "$SRCARCH" = "x86" ]; then
+if [ "$SRCARCH" = "x86" ] || [ "$SRCARCH" = "arm64" ]; then
 	for i in $SYNC_CHECK_FILES; do
 		check $i '-I "^.*\/\*.*__ignore_sync_check__.*\*\/.*$"'
 	done
