@@ -59,6 +59,8 @@
 // deliver much less improvement, likely *negative* on Cortex-A5x.
 // Which is why NEON support is limited to SHA256.]
 
+#include <linux/linkage.h>
+
 #ifndef	__KERNEL__
 # include "arm_arch.h"
 #endif
@@ -72,11 +74,11 @@
 sha256_block_data_order:
 #ifndef	__KERNEL__
 # ifdef	__ILP32__
-	ldrsw	x16,.LOPENSSL_armcap_P
+	ldrsw	x16,OPENSSL_armcap_P_rel
 # else
-	ldr	x16,.LOPENSSL_armcap_P
+	ldr	x16,OPENSSL_armcap_P_rel
 # endif
-	adr	x17,.LOPENSSL_armcap_P
+	adr	x17,OPENSSL_armcap_P_rel
 	add	x16,x16,x17
 	ldr	w16,[x16]
 	tst	w16,#ARMV8_SHA256
@@ -99,7 +101,7 @@ sha256_block_data_order:
 	ldp	w24,w25,[x0,#4*4]
 	add	x2,x1,x2,lsl#6	// end of input
 	ldp	w26,w27,[x0,#6*4]
-	adr	x30,.LK256
+	adr	x30,K256
 	stp	x0,x2,[x29,#96]
 
 .Loop:
@@ -1047,8 +1049,7 @@ sha256_block_data_order:
 .size	sha256_block_data_order,.-sha256_block_data_order
 
 .align	6
-.type	.LK256,%object
-.LK256:
+SYM_DATA_START_LOCAL(K256)
 	.long	0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5
 	.long	0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5
 	.long	0xd807aa98,0x12835b01,0x243185be,0x550c7dc3
@@ -1066,17 +1067,20 @@ sha256_block_data_order:
 	.long	0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208
 	.long	0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
 	.long	0	//terminator
-.size	.LK256,.-.LK256
+SYM_DATA_END(K256)
 #ifndef	__KERNEL__
 .align	3
-.LOPENSSL_armcap_P:
+SYM_DATA_START_LOCAL(OPENSSL_armcap_P_rel)
 # ifdef	__ILP32__
 	.long	OPENSSL_armcap_P-.
 # else
 	.quad	OPENSSL_armcap_P-.
 # endif
+SYM_DATA_END(OPENSSL_armcap_P_rel)
 #endif
+SYM_DATA_START_LOCAL(OPENSSL_str)
 .asciz	"SHA256 block transform for ARMv8, CRYPTOGAMS by <appro@openssl.org>"
+SYM_DATA_END(OPENSSL_str)
 .align	2
 #ifndef	__KERNEL__
 .type	sha256_block_armv8,%function
@@ -1087,7 +1091,7 @@ sha256_block_armv8:
 	add		x29,sp,#0
 
 	ld1		{v0.4s,v1.4s},[x0]
-	adr		x3,.LK256
+	adr		x3,K256
 
 .Loop_hw:
 	ld1		{v4.16b-v7.16b},[x1],#64
@@ -1227,7 +1231,7 @@ sha256_block_neon:
 .Lneon_entry:
 	sub	sp,sp,#16*4
 
-	adr	x16,.LK256
+	adr	x16,K256
 	add	x2,x1,x2,lsl#6	// len to point at the end of inp
 
 	ld1	{v0.16b},[x1], #16
