@@ -59,6 +59,8 @@
 // deliver much less improvement, likely *negative* on Cortex-A5x.
 // Which is why NEON support is limited to SHA256.]
 
+#include <linux/linkage.h>
+
 #ifndef	__KERNEL__
 # include "arm_arch.h"
 #endif
@@ -85,7 +87,7 @@ sha512_block_data_order:
 	ldp	x24,x25,[x0,#4*8]
 	add	x2,x1,x2,lsl#7	// end of input
 	ldp	x26,x27,[x0,#6*8]
-	adr	x30,.LK512
+	adr	x30,K512
 	stp	x0,x2,[x29,#96]
 
 .Loop:
@@ -1033,8 +1035,7 @@ sha512_block_data_order:
 .size	sha512_block_data_order,.-sha512_block_data_order
 
 .align	6
-.type	.LK512,%object
-.LK512:
+SYM_DATA_START_LOCAL(K512)
 	.quad	0x428a2f98d728ae22,0x7137449123ef65cd
 	.quad	0xb5c0fbcfec4d3b2f,0xe9b5dba58189dbbc
 	.quad	0x3956c25bf348b538,0x59f111f1b605d019
@@ -1076,17 +1077,21 @@ sha512_block_data_order:
 	.quad	0x4cc5d4becb3e42b6,0x597f299cfc657e2a
 	.quad	0x5fcb6fab3ad6faec,0x6c44198c4a475817
 	.quad	0	// terminator
-.size	.LK512,.-.LK512
+SYM_DATA_END(K512)
+
 #ifndef	__KERNEL__
 .align	3
-.LOPENSSL_armcap_P:
+SYM_DATA_START_LOCAL(OPENSSL_armcap_P_rel)
 # ifdef	__ILP32__
 	.long	OPENSSL_armcap_P-.
 # else
 	.quad	OPENSSL_armcap_P-.
 # endif
+SYM_DATA_END(OPENSSL_armcap_P_rel)
 #endif
+SYM_DATA_START_LOCAL(OPENSSL_str)
 .asciz	"SHA512 block transform for ARMv8, CRYPTOGAMS by <appro@openssl.org>"
+SYM_DATA_END(OPENSSL_str)
 .align	2
 #ifndef	__KERNEL__
 .comm	OPENSSL_armcap_P,4,4
