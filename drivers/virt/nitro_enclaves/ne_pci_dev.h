@@ -17,6 +17,10 @@
  * DOC: Nitro Enclaves (NE) PCI device
  */
 
+#ifndef PCI_VENDOR_ID_AMAZON
+#define PCI_VENDOR_ID_AMAZON   (0x1d0f)
+#endif
+
 /**
  * PCI_DEVICE_ID_NE - Nitro Enclaves PCI device id.
  */
