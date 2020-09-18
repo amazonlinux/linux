@@ -23,6 +23,7 @@
  */
 #define PCI_DMA_BUS_IS_PHYS	(0)
 
+#define arch_can_pci_mmap_wc() 1
 #define ARCH_GENERIC_PCI_MMAP_RESOURCE	1
 
 extern int isa_dma_bridge_buggy;
