@@ -41,10 +41,16 @@ static __init u64 get_kaslr_seed(void *fdt)
 	return ret;
 }
 
-static __init const u8 *kaslr_get_cmdline(void *fdt)
+static __init bool cmdline_contains_nokaslr(const u8 *cmdline)
 {
-	static __initconst const u8 default_cmdline[] = CONFIG_CMDLINE;
+	const u8 *str;
 
+	str = strstr(cmdline, "nokaslr");
+	return str == cmdline || (str > cmdline && *(str - 1) == ' ');
+}
+
+static __init bool is_kaslr_disabled_cmdline(void *fdt)
+{
 	if (!IS_ENABLED(CONFIG_CMDLINE_FORCE)) {
 		int node;
 		const u8 *prop;
@@ -56,10 +62,10 @@ static __init const u8 *kaslr_get_cmdline(void *fdt)
 		prop = fdt_getprop(fdt, node, "bootargs", NULL);
 		if (!prop)
 			goto out;
-		return prop;
+		return cmdline_contains_nokaslr(prop);
 	}
 out:
-	return default_cmdline;
+	return cmdline_contains_nokaslr(CONFIG_CMDLINE);
 }
 
 /*
@@ -105,9 +111,7 @@ u64 __init kaslr_early_init(u64 dt_phys)
 	 * Check if 'nokaslr' appears on the command line, and
 	 * return 0 if that is the case.
 	 */
-	cmdline = kaslr_get_cmdline(fdt);
-	str = strstr(cmdline, "nokaslr");
-	if (str == cmdline || (str > cmdline && *(str - 1) == ' '))
+	if (is_kaslr_disabled_cmdline(fdt))
 		return 0;
 
 	/*
