@@ -6,7 +6,7 @@ config AMAZON_DRIVER_UPDATES
 	bool "Amazon Driver Updates"
 	default y
 	depends on PCI || EXPERIMENTAL
-	---help---
+	help
 	 Amazon driver updates includes out-of-tree drivers and/or modifeid
 	 versions of the drivers present in the stable kernel tree.
 
@@ -15,7 +15,7 @@ if AMAZON_DRIVER_UPDATES
 config AMAZON_ENA_ETHERNET
 	tristate "Elastic Network Adapter (ENA) support"
 	depends on PCI_MSI && !ENA_ETHERNET
-	---help---
+	help
 	  This driver supports Elastic Network Adapter (ENA)
 
 	  To compile this driver as a module, choose M here.
