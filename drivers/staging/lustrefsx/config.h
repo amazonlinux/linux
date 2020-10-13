@@ -922,8 +922,11 @@
 /* __add_wait_queue_exclusive exists */
 /* #undef HAVE___ADD_WAIT_QUEUE_EXCLUSIVE */
 
-/* NR_UNSTABLE_NFS is still in use */
+/* NR_UNSTABLE_NFS is still in use. */
 /* #undef HAVE_NR_UNSTABLE_NFS */
+
+/* rdma_reject has 4 arguments */
+#define HAVE_RDMA_REJECT_4ARGS
 
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
