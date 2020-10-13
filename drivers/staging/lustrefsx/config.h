@@ -548,6 +548,9 @@
 /* 'ktime_to_timespec64' is available */
 #define HAVE_KTIME_TO_TIMESPEC64 1
 
+/* ns_to_timespec64 is available */
+#define HAVE_NS_TO_TIMESPEC64
+
 /* enable use of ldiskfsprogs package */
 /* #undef HAVE_LDISKFSPROGS */
 
