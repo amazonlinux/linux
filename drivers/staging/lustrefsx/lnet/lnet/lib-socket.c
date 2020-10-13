@@ -43,27 +43,6 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lib-lnet.h>
 
-/*
- * kernel 5.1: commit 7f1bc6e95d7840d4305595b3e4025cddda88cee5
- * Y2038 64-bit time.
- *  SO_TIMESTAMP, SO_TIMESTAMPNS and SO_TIMESTAMPING options, the
- *  way they are currently defined, are not y2038 safe.
- *  Subsequent patches in the series add new y2038 safe versions
- *  of these options which provide 64 bit timestamps on all
- *  architectures uniformly.
- *  Hence, rename existing options with OLD tag suffixes.
- *
- * NOTE: When updating to timespec64 change change these to '_NEW'.
- *
- */
-#ifndef SO_SNDTIMEO
-#define SO_SNDTIMEO SO_SNDTIMEO_OLD
-#endif
-
-#ifndef SO_RCVTIMEO
-#define SO_RCVTIMEO SO_RCVTIMEO_OLD
-#endif
-
 static int
 lnet_sock_create_kern(struct socket **sock, struct net *ns)
 {
@@ -318,10 +297,9 @@ EXPORT_SYMBOL(lnet_ipif_enumerate);
 int
 lnet_sock_write(struct socket *sock, void *buffer, int nob, int timeout)
 {
-	int		rc;
-	long		jiffies_left = timeout * msecs_to_jiffies(MSEC_PER_SEC);
-	unsigned long	then;
-	struct timeval	tv;
+	int rc;
+	long jiffies_left = cfs_time_seconds(timeout);
+	unsigned long then;
 
 	LASSERT(nob > 0);
 	/* Caller may pass a zero timeout if she thinks the socket buffer is
@@ -337,24 +315,11 @@ lnet_sock_write(struct socket *sock, void *buffer, int nob, int timeout)
 		};
 
 		if (timeout != 0) {
-			/* Set send timeout to remaining time */
-			tv = (struct timeval) {
-				.tv_sec = jiffies_left /
-					  msecs_to_jiffies(MSEC_PER_SEC),
-				.tv_usec = ((jiffies_left %
-					     msecs_to_jiffies(MSEC_PER_SEC)) *
-					     USEC_PER_SEC) /
-					     msecs_to_jiffies(MSEC_PER_SEC)
-			};
+			struct sock *sk = sock->sk;
 
-			rc = kernel_setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO,
-					       (char *)&tv, sizeof(tv));
-			if (rc != 0) {
-				CERROR("Can't set socket send timeout "
-				       "%ld.%06d: %d\n",
-				       (long)tv.tv_sec, (int)tv.tv_usec, rc);
-				return rc;
-			}
+			lock_sock(sk);
+			sk->sk_sndtimeo = jiffies_left;
+			release_sock(sk);
 		}
 
 		then = jiffies;
@@ -385,10 +350,9 @@ EXPORT_SYMBOL(lnet_sock_write);
 int
 lnet_sock_read(struct socket *sock, void *buffer, int nob, int timeout)
 {
-	int		rc;
-	long		jiffies_left = timeout * msecs_to_jiffies(MSEC_PER_SEC);
-	unsigned long	then;
-	struct timeval	tv;
+	int rc;
+	long jiffies_left = cfs_time_seconds(timeout);
+	unsigned long then;
 
 	LASSERT(nob > 0);
 	LASSERT(jiffies_left > 0);
@@ -401,22 +365,12 @@ lnet_sock_read(struct socket *sock, void *buffer, int nob, int timeout)
 		struct msghdr msg = {
 			.msg_flags	= 0
 		};
+		struct sock *sk = sock->sk;
 
 		/* Set receive timeout to remaining time */
-		tv = (struct timeval) {
-			.tv_sec = jiffies_left / msecs_to_jiffies(MSEC_PER_SEC),
-			.tv_usec = ((jiffies_left %
-					msecs_to_jiffies(MSEC_PER_SEC)) *
-					USEC_PER_SEC) /
-					msecs_to_jiffies(MSEC_PER_SEC)
-		};
-		rc = kernel_setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO,
-				       (char *)&tv, sizeof(tv));
-		if (rc != 0) {
-			CERROR("Can't set socket recv timeout %ld.%06d: %d\n",
-			       (long)tv.tv_sec, (int)tv.tv_usec, rc);
-			return rc;
-		}
+		lock_sock(sk);
+		sk->sk_rcvtimeo = jiffies_left;
+		release_sock(sk);
 
 		then = jiffies;
 		rc = kernel_recvmsg(sock, &msg, &iov, 1, nob, 0);
