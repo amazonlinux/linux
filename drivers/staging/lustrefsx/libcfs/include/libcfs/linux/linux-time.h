@@ -143,6 +143,12 @@ static inline struct timespec timespec64_to_timespec(const struct timespec64 ts6
 
 #endif /* HAVE_TIMESPEC64 */
 
+#if __BITS_PER_LONG == 64
+#define time_t long
+#else
+#error "lustre is not supported on 32bit"
+#endif
+
 #ifndef HAVE_KTIME_ADD
 # define ktime_add(lhs, rhs) ({ (ktime_t){ .tv64 = (lhs).tv64 + (rhs).tv64 }; })
 #endif /* !HAVE_KTIME_ADD */
