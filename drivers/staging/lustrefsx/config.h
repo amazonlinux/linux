@@ -922,6 +922,9 @@
 /* __add_wait_queue_exclusive exists */
 /* #undef HAVE___ADD_WAIT_QUEUE_EXCLUSIVE */
 
+/* NR_UNSTABLE_NFS is still in use */
+/* #undef HAVE_NR_UNSTABLE_NFS */
+
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
 
