@@ -48,13 +48,25 @@
 #include <libcfs/libcfs.h>
 #include <lustre/lustre_idl.h>
 
+/*
+ * Linux 5.6 introduces proc_ops with v5.5-8862-gd56c0d45f0e2
+ * Now that proc and debugfs use separate operation vector types
+ * separate containers are also needed.
+ */
 struct lprocfs_vars {
+	const char			*name;
+	const struct proc_ops		*fops;
+	void				*data;
+	/** /proc file mode. */
+	mode_t				 proc_mode;
+};
+
+/** Provide a debugfs container */
+struct ldebugfs_vars {
 	const char			*name;
 	const struct file_operations	*fops;
 	void				*data;
-	/**
-	 * /proc file mode.
-	 */
+	/** debugfs file mode. */
 	mode_t				 proc_mode;
 };
 
@@ -478,7 +490,7 @@ static inline int lprocfs_exp_cleanup(struct obd_export *exp)
 #endif
 extern struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
-		   void *data, const struct file_operations *fops);
+		   void *data, const struct proc_ops *fops);
 extern struct proc_dir_entry *
 lprocfs_add_symlink(const char *name, struct proc_dir_entry *parent,
                     const char *format, ...);
@@ -495,14 +507,14 @@ extern int lprocfs_register_stats(struct proc_dir_entry *root, const char *name,
                                   struct lprocfs_stats *stats);
 
 /* lprocfs_status.c */
-extern int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *var,
+extern int ldebugfs_add_vars(struct dentry *parent, struct ldebugfs_vars *var,
 			     void *data);
 extern int lprocfs_add_vars(struct proc_dir_entry *root,
 			    struct lprocfs_vars *var, void *data);
 
 extern struct dentry *ldebugfs_register(const char *name,
 					struct dentry *parent,
-					struct lprocfs_vars *list,
+					struct ldebugfs_vars *list,
 					void *data);
 extern struct proc_dir_entry *
 lprocfs_register(const char *name, struct proc_dir_entry *parent,
@@ -537,7 +549,7 @@ static inline int LPROCFS_ENTRY_CHECK(struct inode *inode)
 extern int lprocfs_obd_setup(struct obd_device *dev);
 extern int lprocfs_obd_cleanup(struct obd_device *obd);
 #ifdef HAVE_SERVER_SUPPORT
-extern const struct file_operations lprocfs_evict_client_fops;
+extern const struct proc_ops lprocfs_evict_client_fops;
 #endif
 
 extern int ldebugfs_seq_create(struct dentry *parent, const char *name,
@@ -546,11 +558,11 @@ extern int ldebugfs_seq_create(struct dentry *parent, const char *name,
 			       void *data);
 extern int lprocfs_seq_create(struct proc_dir_entry *parent, const char *name,
 			      mode_t mode,
-			      const struct file_operations *seq_fops,
+			      const struct proc_ops *seq_fops,
 			      void *data);
 extern int lprocfs_obd_seq_create(struct obd_device *dev, const char *name,
 				  mode_t mode,
-				  const struct file_operations *seq_fops,
+				  const struct proc_ops *seq_fops,
 				  void *data);
 
 /* Generic callbacks */
@@ -678,13 +690,12 @@ static int name##_single_open(struct inode *inode, struct file *file)	\
 	return single_open(file, name##_seq_show,			\
 			   inode->i_private ? : PDE_DATA(inode));	\
 }									\
-static const struct file_operations name##_fops = {			\
-	.owner	 = THIS_MODULE,						\
-	.open	 = name##_single_open,					\
-	.read	 = seq_read,						\
-	.write	 = custom_seq_write,					\
-	.llseek	 = seq_lseek,						\
-	.release = lprocfs_single_release,				\
+static const struct proc_ops name##_fops = {			\
+	.proc_open	 = name##_single_open,				\
+	.proc_read	 = seq_read,					\
+	.proc_write	 = custom_seq_write,				\
+	.proc_lseek	 = seq_lseek,					\
+	.proc_release = lprocfs_single_release,				\
 }
 
 #define LPROC_SEQ_FOPS_RO(name)		__LPROC_SEQ_FOPS(name, NULL)
@@ -724,10 +735,10 @@ static const struct file_operations name##_fops = {			\
 		return single_open(file, NULL,				\
 				   inode->i_private ? : PDE_DATA(inode));\
 	}								\
-	static const struct file_operations name##_##type##_fops = {	\
-		.open	 = name##_##type##_open,			\
-		.write	 = name##_##type##_write,			\
-		.release = lprocfs_single_release,			\
+	static const struct proc_ops name##_##type##_fops = {	\
+		.proc_open	 = name##_##type##_open,		\
+		.proc_write	 = name##_##type##_write,		\
+		.proc_release = lprocfs_single_release,			\
 	};
 
 struct lustre_attr {
@@ -866,7 +877,7 @@ static inline int lprocfs_exp_cleanup(struct obd_export *exp)
 { return 0; }
 static inline struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
-		   void *data, const struct file_operations *fops)
+		   void *data, const struct proc_ops *fops)
 {return 0; }
 static inline struct proc_dir_entry *
 lprocfs_add_symlink(const char *name, struct proc_dir_entry *parent,
