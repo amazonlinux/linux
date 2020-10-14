@@ -43,8 +43,8 @@
 
 #ifndef __KERNEL__
 #include <stddef.h>
-#include <linux/fiemap.h>
 #endif
+#include <linux/fiemap.h>
 
 /* XXX: We use fiemap_extent::fe_reserved[0] */
 #define fe_device	fe_reserved[0]
