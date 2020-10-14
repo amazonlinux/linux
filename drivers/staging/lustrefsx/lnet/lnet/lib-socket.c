@@ -43,6 +43,23 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lib-lnet.h>
 
+#ifndef HAVE_KERNEL_SETSOCKOPT
+int kernel_setsockopt(struct socket *sock, int level, int optname,
+			char *val, unsigned int optlen)
+{
+	sockptr_t optval = KERNEL_SOCKPTR(val);
+	int err;
+
+	if (level == SOL_SOCKET)
+		err = sock_setsockopt(sock, level, optname, optval, optlen);
+	else
+		err = sock->ops->setsockopt(sock, level, optname, optval,
+					    optlen);
+	return err;
+}
+EXPORT_SYMBOL(kernel_setsockopt);
+#endif
+
 static int
 lnet_sock_create_kern(struct socket **sock, struct net *ns)
 {
