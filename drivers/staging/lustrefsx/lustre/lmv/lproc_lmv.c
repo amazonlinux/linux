@@ -162,11 +162,10 @@ struct lprocfs_vars lprocfs_lmv_obd_vars[] = {
 	{ NULL }
 };
 
-struct file_operations lmv_proc_target_fops = {
-        .owner                = THIS_MODULE,
-        .open                 = lmv_target_seq_open,
-        .read                 = seq_read,
-        .llseek               = seq_lseek,
-        .release              = seq_release,
+struct proc_ops lmv_proc_target_fops = {
+        .proc_open                 = lmv_target_seq_open,
+        .proc_read                 = seq_read,
+        .proc_lseek                = seq_lseek,
+        .proc_release              = seq_release,
 };
 #endif /* CONFIG_PROC_FS */
