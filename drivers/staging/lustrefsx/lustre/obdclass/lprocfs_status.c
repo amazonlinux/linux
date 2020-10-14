@@ -62,7 +62,7 @@ EXPORT_SYMBOL(lprocfs_seq_release);
 
 struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
-		   void *data, const struct file_operations *fops)
+		   void *data, const struct proc_ops *fops)
 {
 	struct proc_dir_entry *proc;
 	mode_t mode = 0;
@@ -70,9 +70,9 @@ lprocfs_add_simple(struct proc_dir_entry *root, char *name,
 	if (root == NULL || name == NULL || fops == NULL)
                 return ERR_PTR(-EINVAL);
 
-	if (fops->read)
+	if (fops->proc_read)
 		mode = 0444;
-	if (fops->write)
+	if (fops->proc_write)
 		mode |= 0200;
 	proc = proc_create_data(name, mode, root, fops, data);
 	if (!proc) {
@@ -112,9 +112,9 @@ struct proc_dir_entry *lprocfs_add_symlink(const char *name,
 }
 EXPORT_SYMBOL(lprocfs_add_symlink);
 
-static const struct file_operations lprocfs_generic_fops = { };
+static const struct file_operations ldebugfs_empty_ops = { };
 
-int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *list,
+int ldebugfs_add_vars(struct dentry *parent, struct ldebugfs_vars *list,
 		      void *data)
 {
 	if (IS_ERR_OR_NULL(parent) || IS_ERR_OR_NULL(list))
@@ -134,7 +134,7 @@ int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *list,
 		}
 		entry = debugfs_create_file(list->name, mode, parent,
 					    list->data ? : data,
-					    list->fops ? : &lprocfs_generic_fops);
+					    list->fops ? : &ldebugfs_empty_ops);
 		if (IS_ERR_OR_NULL(entry))
 			return entry ? PTR_ERR(entry) : -ENOMEM;
 		list++;
@@ -142,6 +142,8 @@ int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *list,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ldebugfs_add_vars);
+
+static const struct proc_ops lprocfs_empty_ops = { };
 
 /**
  * Add /proc entries.
@@ -168,13 +170,13 @@ lprocfs_add_vars(struct proc_dir_entry *root, struct lprocfs_vars *list,
 		if (list->proc_mode != 0000) {
 			mode = list->proc_mode;
 		} else if (list->fops) {
-			if (list->fops->read)
+			if (list->fops->proc_read)
 				mode = 0444;
-			if (list->fops->write)
+			if (list->fops->proc_write)
 				mode |= 0200;
 		}
 		proc = proc_create_data(list->name, mode, root,
-					list->fops ?: &lprocfs_generic_fops,
+					list->fops ?: &lprocfs_empty_ops,
 					list->data ?: data);
 		if (proc == NULL)
 			return -ENOMEM;
@@ -301,7 +303,7 @@ void lprocfs_remove_proc_entry(const char *name, struct proc_dir_entry *parent)
 EXPORT_SYMBOL(lprocfs_remove_proc_entry);
 
 struct dentry *ldebugfs_register(const char *name, struct dentry *parent,
-				 struct lprocfs_vars *list, void *data)
+				 struct ldebugfs_vars *list, void *data)
 {
 	struct dentry *entry;
 
@@ -1497,7 +1499,15 @@ static int lprocfs_stats_seq_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations lprocfs_stats_seq_fops = {
+static const struct proc_ops lprocfs_stats_seq_fops = {
+        .proc_open    = lprocfs_stats_seq_open,
+        .proc_read    = seq_read,
+        .proc_write   = lprocfs_stats_seq_write,
+        .proc_lseek   = seq_lseek,
+        .proc_release = lprocfs_seq_release,
+};
+
+static const struct file_operations ldebugfs_stats_seq_fops = {
         .owner   = THIS_MODULE,
         .open    = lprocfs_stats_seq_open,
         .read    = seq_read,
@@ -1514,7 +1524,7 @@ int ldebugfs_register_stats(struct dentry *parent, const char *name,
 	LASSERT(!IS_ERR_OR_NULL(parent));
 
 	entry = debugfs_create_file(name, 0644, parent, stats,
-				    &lprocfs_stats_seq_fops);
+				    &ldebugfs_stats_seq_fops);
 	if (IS_ERR_OR_NULL(entry))
 		return entry ? PTR_ERR(entry) : -ENOMEM;
 
@@ -2199,14 +2209,14 @@ EXPORT_SYMBOL_GPL(ldebugfs_seq_create);
 int lprocfs_seq_create(struct proc_dir_entry *parent,
 		       const char *name,
 		       mode_t mode,
-		       const struct file_operations *seq_fops,
+		       const struct proc_ops *seq_fops,
 		       void *data)
 {
 	struct proc_dir_entry *entry;
 	ENTRY;
 
 	/* Disallow secretly (un)writable entries. */
-	LASSERT((seq_fops->write == NULL) == ((mode & 0222) == 0));
+	LASSERT((seq_fops->proc_write == NULL) == ((mode & 0222) == 0));
 
 	entry = proc_create_data(name, mode, parent, seq_fops, data);
 
@@ -2220,7 +2230,7 @@ EXPORT_SYMBOL(lprocfs_seq_create);
 int lprocfs_obd_seq_create(struct obd_device *dev,
 			   const char *name,
 			   mode_t mode,
-			   const struct file_operations *seq_fops,
+			   const struct proc_ops *seq_fops,
 			   void *data)
 {
         return (lprocfs_seq_create(dev->obd_proc_entry, name,
