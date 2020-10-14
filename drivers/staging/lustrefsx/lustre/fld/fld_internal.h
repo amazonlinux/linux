@@ -179,7 +179,7 @@ void fld_server_mod_exit(void);
 int fld_server_read(const struct lu_env *env, struct lu_server_fld *fld,
 		    struct lu_seq_range *range, void *data, int data_len);
 #ifdef CONFIG_PROC_FS
-extern const struct file_operations fld_proc_seq_fops;
+extern const struct proc_ops fld_proc_seq_fops;
 extern struct lprocfs_vars fld_server_proc_list[];
 #endif
 
