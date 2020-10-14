@@ -47,9 +47,9 @@ struct proc_dir_entry *proc_lustre_fs_root;
 
 #ifdef CONFIG_PROC_FS
 /* /proc/lustre/llite mount point registration */
-static const struct file_operations ll_rw_extents_stats_fops;
-static const struct file_operations ll_rw_extents_stats_pp_fops;
-static const struct file_operations ll_rw_offset_stats_fops;
+static const struct proc_ops ll_rw_extents_stats_fops;
+static const struct proc_ops ll_rw_extents_stats_pp_fops;
+static const struct proc_ops ll_rw_offset_stats_fops;
 static __s64 ll_stats_pid_write(const char __user *buf, size_t len);
 
 static int ll_blksize_seq_show(struct seq_file *m, void *v)
