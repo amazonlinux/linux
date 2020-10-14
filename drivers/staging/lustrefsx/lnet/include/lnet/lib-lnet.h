@@ -83,6 +83,11 @@ extern struct lnet the_lnet;			/* THE network */
 		kernel_getsockname(sock, addr, addrlen)
 #endif
 
+#ifndef HAVE_KERNEL_SETSOCKOPT
+int kernel_setsockopt(struct socket *sock, int level, int optname,
+                        char *optval, unsigned int optlen);
+#endif
+
 static inline int lnet_is_route_alive(struct lnet_route *route)
 {
 	if (!route->lr_gateway->lpni_alive)
