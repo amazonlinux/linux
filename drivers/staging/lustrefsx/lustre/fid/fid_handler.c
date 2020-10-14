@@ -458,7 +458,7 @@ LU_KEY_INIT_FINI(seq, struct seq_thread_info);
 /* context key: seq_thread_key */
 LU_CONTEXT_KEY_DEFINE(seq, LCT_MD_THREAD | LCT_DT_THREAD);
 
-extern const struct file_operations seq_fld_proc_seq_fops;
+extern const struct proc_ops seq_fld_proc_seq_fops;
 
 static int seq_server_proc_init(struct lu_server_seq *seq)
 {
