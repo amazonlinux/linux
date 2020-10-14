@@ -1129,12 +1129,11 @@ void ptlrpc_lprocfs_register_service(struct proc_dir_entry *entry,
 		  .data = svc },
 		{ NULL }
         };
-        static struct file_operations req_history_fops = {
-                .owner       = THIS_MODULE,
-                .open        = ptlrpc_lprocfs_svc_req_history_open,
-                .read        = seq_read,
-                .llseek      = seq_lseek,
-                .release     = lprocfs_seq_release,
+        static struct proc_ops req_history_fops = {
+                .proc_open        = ptlrpc_lprocfs_svc_req_history_open,
+                .proc_read        = seq_read,
+                .proc_lseek       = seq_lseek,
+                .proc_release     = lprocfs_seq_release,
         };
 
         int rc;
