@@ -435,8 +435,8 @@ ksocknal_lib_get_conn_tunables (ksock_conn_t *conn, int *txmem, int *rxmem, int 
 	rc = lnet_sock_getbuf(sock, txmem, rxmem);
         if (rc == 0) {
                 len = sizeof(*nagle);
-		rc = kernel_getsockopt(sock, SOL_TCP, TCP_NODELAY,
-				       (char *)nagle, &len);
+		rc = sock->ops->getsockopt(sock, SOL_TCP, TCP_NODELAY,
+					   (char *)nagle, &len);
         }
 
         ksocknal_connsock_decref(conn);
