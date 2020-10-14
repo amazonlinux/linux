@@ -496,12 +496,11 @@ out:
 	RETURN(rc < 0 ? rc : len);
 }
 
-const struct file_operations seq_fld_proc_seq_fops = {
-	.owner	 = THIS_MODULE,
-	.open	 = fldb_seq_open,
-	.read	 = seq_read,
-	.write	 = fldb_seq_write,
-	.release = fldb_seq_release,
+const struct proc_ops seq_fld_proc_seq_fops = {
+	.proc_open	 = fldb_seq_open,
+	.proc_read	 = seq_read,
+	.proc_write	 = fldb_seq_write,
+	.proc_release	= fldb_seq_release,
 };
 
 #endif /* HAVE_SERVER_SUPPORT */
