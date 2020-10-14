@@ -337,7 +337,7 @@ enum ldlm_policy_res {
 
 static inline void
 ldlm_add_var(struct lprocfs_vars *vars, struct proc_dir_entry *proc_dir,
-	     const char *name, void *data, const struct file_operations *ops)
+	     const char *name, void *data, const struct proc_ops *ops)
 {
 	snprintf((char *)vars->name, MAX_STRING_SIZE, "%s", name);
 	vars->data = data;
