@@ -7,6 +7,9 @@
 /* have device ops alloc_pd without ucontext */
 #define HAVE_ALLOC_PD_NO_UCONTEXT 1
 
+/* atomic64_fetch_inc exists */
+#define HAVE_ATOMIC64_FETCH_INC 1
+
 /* have bitfield.h */
 #define HAVE_BITFIELD_H 1
 
@@ -179,7 +182,7 @@
 #define PACKAGE_NAME "efa"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "efa 1.9.0"
+#define PACKAGE_STRING "efa 1.10.1"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "efa"
@@ -188,7 +191,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "1.9.0"
+#define PACKAGE_VERSION "1.10.1"
 
 /* Version number of package */
-#define VERSION "1.9.0"
+#define VERSION "1.10.1"
