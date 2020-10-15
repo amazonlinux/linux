@@ -39,7 +39,8 @@ struct efa_irq {
 	char name[EFA_IRQNAME_SIZE];
 };
 
-struct efa_sw_stats {
+/* Don't use anything other than atomic64 */
+struct efa_stats {
 	atomic64_t alloc_pd_err;
 	atomic64_t create_qp_err;
 	atomic64_t create_cq_err;
@@ -47,11 +48,6 @@ struct efa_sw_stats {
 	atomic64_t alloc_ucontext_err;
 	atomic64_t create_ah_err;
 	atomic64_t mmap_err;
-};
-
-/* Don't use anything other than atomic64 */
-struct efa_stats {
-	struct efa_sw_stats sw_stats;
 	atomic64_t keep_alive_rcvd;
 };
 
@@ -156,6 +152,7 @@ int efa_query_device(struct ib_device *ibdev,
 		     struct ib_device_attr *props,
 		     struct ib_udata *udata);
 #else
+#warning deprecated api
 int efa_query_device(struct ib_device *ibdev,
 		     struct ib_device_attr *props);
 #endif
@@ -204,6 +201,7 @@ int efa_destroy_cq(struct ib_cq *ibcq);
 int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		  struct ib_udata *udata);
 #else
+#warning deprecated api
 int efa_create_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
 #endif
 #ifndef HAVE_CQ_CORE_ALLOCATION
