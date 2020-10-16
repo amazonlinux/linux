@@ -57,8 +57,8 @@ struct vm_area_struct *our_vma(struct mm_struct *mm, unsigned long addr,
         struct vm_area_struct *vma, *ret = NULL;
         ENTRY;
 
-        /* mmap_sem must have been held by caller. */
-        LASSERT(!down_write_trylock(&mm->mmap_sem));
+        /* mmap_lock must have been held by caller. */
+        LASSERT(!down_write_trylock(&mm->mmap_lock));
 
         for(vma = find_vma(mm, addr);
             vma != NULL && vma->vm_start < (addr + count); vma = vma->vm_next) {
