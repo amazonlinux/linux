@@ -2381,6 +2381,7 @@ do_mmap_pgoff(struct file *file, unsigned long addr,
 {
 	return do_mmap(file, addr, len, prot, flags, 0, pgoff, populate, uf);
 }
+extern int do_madvise(struct mm_struct *mm, unsigned long start, size_t len_in, int behavior);
 
 #ifdef CONFIG_MMU
 extern int __mm_populate(unsigned long addr, unsigned long len,
