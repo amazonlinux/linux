@@ -44,6 +44,7 @@ extern u8 boot_cpu_apic_version;
 extern unsigned long mp_lapic_addr;
 
 #ifdef CONFIG_X86_LOCAL_APIC
+extern bool virt_ext_dest_id;
 extern int smp_found_config;
 #else
 # define smp_found_config 0
