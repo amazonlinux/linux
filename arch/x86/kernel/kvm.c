@@ -557,11 +557,17 @@ static uint32_t __init kvm_detect(void)
 	return kvm_cpuid_base();
 }
 
+static bool __init kvm_msi_ext_dest_id(void)
+{
+	return kvm_para_has_feature(KVM_FEATURE_MSI_EXT_DEST_ID);
+}
+
 const __initconst struct hypervisor_x86 x86_hyper_kvm = {
 	.name			= "KVM",
 	.detect			= kvm_detect,
 	.type			= X86_HYPER_KVM,
 	.init.x2apic_available	= kvm_para_available,
+	.init.msi_ext_dest_id	= kvm_msi_ext_dest_id,
 };
 
 static __init int activate_jump_labels(void)
