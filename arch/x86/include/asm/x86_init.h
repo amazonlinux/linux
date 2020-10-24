@@ -118,11 +118,13 @@ struct x86_init_pci {
  * struct x86_hyper_init - x86 hypervisor init functions
  * @init_platform:		platform setup
  * @x2apic_available:		X2APIC detection
+ * @msi_ext_dest_id:		MSI supports 15-bit APIC IDs
  * @init_mem_mapping:		setup early mappings during init_mem_mapping()
  */
 struct x86_hyper_init {
 	void (*init_platform)(void);
 	bool (*x2apic_available)(void);
+	bool (*msi_ext_dest_id)(void);
 	void (*init_mem_mapping)(void);
 };
 
