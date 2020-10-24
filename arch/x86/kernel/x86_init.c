@@ -87,6 +87,7 @@ struct x86_init_ops x86_init __initdata = {
 	.hyper = {
 		.init_platform		= x86_init_noop,
 		.x2apic_available	= bool_x86_init_noop,
+		.msi_ext_dest_id	= bool_x86_init_noop,
 		.init_mem_mapping	= x86_init_noop,
 	},
 };
