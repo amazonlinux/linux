@@ -11,6 +11,7 @@
 
 #include "check.h"
 #include "warn.h"
+#include "endianness.h"
 
 static int init_orc_entry(struct orc_entry *orc, struct cfi_state *cfi,
 			  struct instruction *insn)
@@ -96,6 +97,8 @@ static int write_orc_entry(struct elf *elf, struct section *orc_sec,
 	/* populate ORC data */
 	orc = (struct orc_entry *)orc_sec->data->d_buf + idx;
 	memcpy(orc, o, sizeof(*orc));
+	orc->sp_offset = bswap_if_needed(orc->sp_offset);
+	orc->bp_offset = bswap_if_needed(orc->bp_offset);
 
 	/* populate reloc for ip */
 	if (elf_add_reloc_to_insn(elf, ip_sec, idx * sizeof(int), R_X86_64_PC32,
