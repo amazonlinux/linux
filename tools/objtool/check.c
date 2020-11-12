@@ -15,6 +15,7 @@
 #include "special.h"
 #include "warn.h"
 #include "arch_elf.h"
+#include "endianness.h"
 
 #include <linux/objtool.h>
 #include <linux/hashtable.h>
@@ -1823,7 +1824,7 @@ static int read_unwind_hints(struct objtool_file *file)
 			return -1;
 		}
 
-		cfi.cfa.offset = hint->sp_offset;
+		cfi.cfa.offset = bswap_if_needed(hint->sp_offset);
 		cfi.type = hint->type;
 		cfi.end = hint->end;
 
