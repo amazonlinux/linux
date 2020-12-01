@@ -1,33 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB */
 /*
- * Copyright 2015 Amazon.com, Inc. or its affiliates.
- *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * BSD license below:
- *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
- *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
- *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and/or other materials
- *        provided with the distribution.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Copyright 2015-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef ENA_H
@@ -52,8 +25,8 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	2
-#define DRV_MODULE_GEN_SUBMINOR 10
+#define DRV_MODULE_GEN_MINOR	4
+#define DRV_MODULE_GEN_SUBMINOR 0
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -75,7 +48,7 @@
  * 16kB.
  */
 #if PAGE_SIZE > SZ_16K
-#define ENA_PAGE_SIZE SZ_16K
+#define ENA_PAGE_SIZE (_AC(SZ_16K, UL))
 #else
 #define ENA_PAGE_SIZE PAGE_SIZE
 #endif
@@ -141,7 +114,7 @@
 #define ENA_IO_IRQ_FIRST_IDX		1
 #define ENA_IO_IRQ_IDX(q)		(ENA_IO_IRQ_FIRST_IDX + (q))
 
-#define ENA_POLL_DELAY_US 5000
+#define ENA_ADMIN_POLL_DELAY_US 5000
 
 /* ENA device should send keep alive msg every 1 sec.
  * We wait for 6 sec just to be on the safe side.
@@ -158,8 +131,14 @@
  */
 
 #ifdef ENA_XDP_SUPPORT
+#ifdef XDP_HAS_FRAME_SZ
+#define ENA_XDP_MAX_MTU (ENA_PAGE_SIZE - ETH_HLEN - ETH_FCS_LEN -	\
+			 VLAN_HLEN - XDP_PACKET_HEADROOM -		\
+			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
+#else
 #define ENA_XDP_MAX_MTU (ENA_PAGE_SIZE - ETH_HLEN - ETH_FCS_LEN - \
 				VLAN_HLEN - XDP_PACKET_HEADROOM)
+#endif
 
 #define ENA_IS_XDP_INDEX(adapter, index) (((index) >= (adapter)->xdp_first_ring) && \
 	((index) < (adapter)->xdp_first_ring + (adapter)->xdp_num_queues))
@@ -184,7 +163,7 @@ struct ena_napi {
 	struct ena_ring *xdp_ring;
 #endif /* ENA_XDP_SUPPORT */
 	bool first_interrupt;
-	atomic_t unmask_interrupt;
+	bool interrupts_masked;
 	u32 qid;
 	struct dim dim;
 };
@@ -215,12 +194,6 @@ struct ena_tx_buffer {
 	 * the xdp queues
 	 */
 	struct xdp_frame *xdpf;
-	/* The rx page for the rx buffer that was received in rx and
-	 * re transmitted on xdp tx queues as a result of XDP_TX action.
-	 * We need to free the page once we finished cleaning the buffer in
-	 * clean_xdp_irq()
-	 */
-	struct page *xdp_rx_page;
 #endif /* ENA_XDP_SUPPORT */
 
 	/* Indicate if bufs[0] map the linear data of the skb. */
@@ -285,7 +258,41 @@ struct ena_stats_rx {
 	u64 bad_req_id;
 	u64 empty_rx_ring;
 	u64 csum_unchecked;
+#ifdef ENA_XDP_SUPPORT
+	u64 xdp_aborted;
+	u64 xdp_drop;
+	u64 xdp_pass;
+	u64 xdp_tx;
+	u64 xdp_invalid;
+	u64 xdp_redirect;
+#endif
+	u64 lpc_warm_up;
+	u64 lpc_full;
+	u64 lpc_wrong_numa;
 };
+
+/* LPC definitions */
+#define ENA_LPC_DEFAULT_MULTIPLIER 2
+#define ENA_LPC_MAX_MULTIPLIER 32
+#define ENA_LPC_MULTIPLIER_UNIT 1024
+#define ENA_LPC_MIN_NUM_OF_CHANNELS 16
+
+/* Store DMA address along with the page */
+struct ena_page {
+	struct page *page;
+	dma_addr_t dma_addr;
+};
+
+struct ena_page_cache {
+	/* How many pages are produced */
+	u32 head;
+	/* How many of the entries were initialized */
+	u32 current_size;
+	/* Maximum number of pages the cache can hold */
+	u32 max_size;
+
+	struct ena_page cache[0];
+} ____cacheline_aligned;
 
 struct ena_ring {
 	/* Holds the empty requests for TX/RX
@@ -303,6 +310,7 @@ struct ena_ring {
 	struct pci_dev *pdev;
 	struct napi_struct *napi;
 	struct net_device *netdev;
+	struct ena_page_cache *page_cache;
 	struct ena_com_dev *ena_dev;
 	struct ena_adapter *adapter;
 	struct ena_com_io_cq *ena_com_io_cq;
@@ -310,6 +318,7 @@ struct ena_ring {
 #ifdef ENA_XDP_SUPPORT
 	struct bpf_prog *xdp_bpf_prog;
 	struct xdp_rxq_info xdp_rxq;
+	spinlock_t xdp_tx_lock;	/* synchronize XDP TX/Redirect traffic */
 #endif
 
 	u16 next_to_use;
@@ -601,8 +610,8 @@ static inline bool ena_xdp_present_ring(struct ena_ring *ring)
 	return !!ring->xdp_bpf_prog;
 }
 
-static inline int ena_xdp_legal_queue_count(struct ena_adapter *adapter,
-					    u32 queues)
+static inline bool ena_xdp_legal_queue_count(struct ena_adapter *adapter,
+					     u32 queues)
 {
 	return 2 * queues <= adapter->max_num_io_queues;
 }
