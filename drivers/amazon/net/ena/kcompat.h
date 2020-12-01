@@ -76,6 +76,9 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #include <linux/sizes.h>
 #endif
 
+/* For ACCESS_ONCE, WRITE_ONCE and READ_ONCE macros */
+#include<linux/compiler.h>
+
 #ifndef SZ_256
 #define SZ_256 0x0000100
 #endif
@@ -696,9 +699,19 @@ do {									\
 
 #if defined(CONFIG_BPF) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
 #define ENA_XDP_SUPPORT
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+#define XDP_HAS_FRAME_SZ
+#define XDP_CONVERT_TO_FRAME_NAME_CHANGED
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
+#define ENA_XDP_QUERY_IN_KERNEL
+#endif
+
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0) || \
+    (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 3)))
 #define HAVE_NDO_TX_TIMEOUT_STUCK_QUEUE_PARAMETER
 #endif
 
@@ -734,5 +747,58 @@ static inline void netdev_rss_key_fill(void *buffer, size_t len)
 	memcpy(buffer, netdev_rss_key, len);
 }
 #endif
+
+#ifndef WRITE_ONCE
+#define WRITE_ONCE(x, val) (ACCESS_ONCE(x) = val)
+#endif
+#ifndef READ_ONCE
+#define READ_ONCE(x) ACCESS_ONCE(x)
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9 ,0)
+#define ENA_GENERIC_PM_OPS
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5 ,0)
+static inline int page_ref_count(struct page *page)
+{
+	return atomic_read(&page->_count);
+}
+
+static inline void page_ref_inc(struct page *page)
+{
+	atomic_inc(&page->_count);
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
+static inline struct page *dev_alloc_page()
+{
+	gfp_t gfp_mask = GFP_ATOMIC | __GFP_NOWARN;
+
+	gfp_mask |= __GFP_COLD | __GFP_COMP;
+
+	return alloc_pages_node(NUMA_NO_NODE, gfp_mask, 0);
+}
+#endif
+
+/* This entry might seem strange because of the #ifndef numa_mem_id(),
+ * but these defines were taken from the Linux kernel
+ */
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34)
+#ifndef numa_mem_id
+#ifdef CONFIG_HAVE_MEMORYLESS_NODES
+static inline int numa_mem_id(void)
+{
+	return __this_cpu_read(_numa_mem_);
+}
+#else /* CONFIG_HAVE_MEMORYLESS_NODES */
+static inline int numa_mem_id(void)
+{
+	return numa_node_id();
+}
+#endif /* CONFIG_HAVE_MEMORYLESS_NODES */
+#endif /* numa_mem_id */
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 34) */
 
 #endif /* _KCOMPAT_H_ */
