@@ -579,7 +579,7 @@
 #define HAVE_LINUX_RANDOM_H 1
 
 /* if linux/selinux.h exists */
-#define HAVE_LINUX_SELINUX_IS_ENABLED 1
+#undef HAVE_LINUX_SELINUX_IS_ENABLED
 
 /* Define to 1 if you have the <linux/types.h> header file. */
 #define HAVE_LINUX_TYPES_H 1
