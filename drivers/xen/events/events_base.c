@@ -116,8 +116,6 @@ static bool (*pirq_needs_eoi)(unsigned irq);
 /* Xen will never allocate port zero for any purpose. */
 #define VALID_EVTCHN(chn)	((chn) != 0)
 
-static struct irq_info *legacy_info_ptrs[NR_IRQS_LEGACY];
-
 static struct irq_chip xen_dynamic_chip;
 static struct irq_chip xen_lateeoi_chip;
 static struct irq_chip xen_percpu_chip;
@@ -193,18 +191,7 @@ int get_evtchn_to_irq(unsigned evtchn)
 /* Get info for IRQ */
 struct irq_info *info_for_irq(unsigned irq)
 {
-	if (irq < nr_legacy_irqs())
-		return legacy_info_ptrs[irq];
-	else
-		return irq_get_chip_data(irq);
-}
-
-static void set_info_for_irq(unsigned int irq, struct irq_info *info)
-{
-	if (irq < nr_legacy_irqs())
-		legacy_info_ptrs[irq] = info;
-	else
-		irq_set_chip_data(irq, info);
+	return irq_get_chip_data(irq);
 }
 
 static void delayed_free_irq(struct work_struct *work)
@@ -214,7 +201,7 @@ static void delayed_free_irq(struct work_struct *work)
 	unsigned int irq = info->irq;
 
 	/* Remove the info pointer only now, with no potential users left. */
-	set_info_for_irq(irq, NULL);
+	irq_set_chip_data(irq, NULL);
 
 	kfree(info);
 
@@ -645,7 +632,7 @@ static void xen_irq_init(unsigned irq)
 	info->refcnt = -1;
 	INIT_WORK(&info->work, delayed_free_irq);
 
-	set_info_for_irq(irq, info);
+	irq_set_chip_data(irq, info);
 
 	INIT_LIST_HEAD(&info->eoi_list);
 	list_add_tail(&info->list, &xen_irq_list_head);
@@ -695,7 +682,7 @@ static int __must_check xen_allocate_irq_gsi(unsigned gsi)
 
 static void xen_free_irq(unsigned irq)
 {
-	struct irq_info *info = info_for_irq(irq);
+	struct irq_info *info = irq_get_chip_data(irq);
 
 	if (WARN_ON(!info))
 		return;
@@ -874,7 +861,7 @@ EXPORT_SYMBOL_GPL(xen_irq_from_gsi);
 static void __unbind_from_irq(unsigned int irq)
 {
 	int evtchn = evtchn_from_irq(irq);
-	struct irq_info *info = info_for_irq(irq);
+	struct irq_info *info = irq_get_chip_data(irq);
 
 	if (info->refcnt > 0) {
 		info->refcnt--;
@@ -1452,7 +1439,7 @@ int bind_ipi_to_irqhandler(enum ipi_vector ipi,
 
 void unbind_from_irqhandler(unsigned int irq, void *dev_id)
 {
-	struct irq_info *info = info_for_irq(irq);
+	struct irq_info *info = irq_get_chip_data(irq);
 
 	if (WARN_ON(!info))
 		return;
@@ -1486,7 +1473,7 @@ int evtchn_make_refcounted(unsigned int evtchn)
 	if (irq == -1)
 		return -ENOENT;
 
-	info = info_for_irq(irq);
+	info = irq_get_chip_data(irq);
 
 	if (!info)
 		return -ENOENT;
@@ -1514,7 +1501,7 @@ int evtchn_get(unsigned int evtchn)
 	if (irq == -1)
 		goto done;
 
-	info = info_for_irq(irq);
+	info = irq_get_chip_data(irq);
 
 	if (!info)
 		goto done;
