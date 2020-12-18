@@ -34,12 +34,13 @@
 #define MAX_EA_VALUE_SIZE CIFSMaxBufSize
 #define CIFS_XATTR_CIFS_ACL "system.cifs_acl" /* DACL only */
 #define CIFS_XATTR_CIFS_NTSD "system.cifs_ntsd" /* owner plus DACL */
+#define CIFS_XATTR_CIFS_NTSD_FULL "system.cifs_ntsd_full" /* owner/DACL/SACL */
 #define CIFS_XATTR_ATTRIB "cifs.dosattrib"  /* full name: user.cifs.dosattrib */
 #define CIFS_XATTR_CREATETIME "cifs.creationtime"  /* user.cifs.creationtime */
 /* BB need to add server (Samba e.g) support for security and trusted prefix */
 
 enum { XATTR_USER, XATTR_CIFS_ACL, XATTR_ACL_ACCESS, XATTR_ACL_DEFAULT,
-	XATTR_CIFS_NTSD };
+	XATTR_CIFS_NTSD, XATTR_CIFS_NTSD_FULL };
 
 static int cifs_attrib_set(unsigned int xid, struct cifs_tcon *pTcon,
 			   struct inode *inode, char *full_path,
@@ -153,7 +154,8 @@ static int cifs_xattr_set(const struct xattr_handler *handler,
 		break;
 
 	case XATTR_CIFS_ACL:
-	case XATTR_CIFS_NTSD: {
+	case XATTR_CIFS_NTSD:
+	case XATTR_CIFS_NTSD_FULL: {
 #ifdef CONFIG_CIFS_ACL
 		struct cifs_ntsd *pacl;
 
@@ -164,23 +166,27 @@ static int cifs_xattr_set(const struct xattr_handler *handler,
 			rc = -ENOMEM;
 		} else {
 			memcpy(pacl, value, size);
-			if (value &&
-			    pTcon->ses->server->ops->set_acl) {
+			if (pTcon->ses->server->ops->set_acl) {
+				int aclflags = 0;
 				rc = 0;
-				if (handler->flags == XATTR_CIFS_NTSD) {
-					/* set owner and DACL */
-					rc = pTcon->ses->server->ops->set_acl(
-							pacl, size, inode,
-							full_path,
-							CIFS_ACL_OWNER);
+
+				switch (handler->flags) {
+				case XATTR_CIFS_NTSD_FULL:
+					aclflags = (CIFS_ACL_OWNER |
+						    CIFS_ACL_DACL |
+						    CIFS_ACL_SACL);
+					break;
+				case XATTR_CIFS_NTSD:
+					aclflags = (CIFS_ACL_OWNER |
+						    CIFS_ACL_DACL);
+					break;
+				case XATTR_CIFS_ACL:
+				default:
+					aclflags = CIFS_ACL_DACL;
 				}
-				if (rc == 0) {
-					/* set DACL */
-					rc = pTcon->ses->server->ops->set_acl(
-							pacl, size, inode,
-							full_path,
-							CIFS_ACL_DACL);
-				}
+
+				rc = pTcon->ses->server->ops->set_acl(pacl,
+					size, inode, full_path, aclflags);
 			} else {
 				rc = -EOPNOTSUPP;
 			}
@@ -316,17 +322,28 @@ static int cifs_xattr_get(const struct xattr_handler *handler,
 		break;
 
 	case XATTR_CIFS_ACL:
-	case XATTR_CIFS_NTSD: {
-		/* the whole ntsd is fetched regardless */
+	case XATTR_CIFS_NTSD:
+	case XATTR_CIFS_NTSD_FULL: {
 #ifdef CONFIG_CIFS_ACL
-		u32 acllen;
+		/*
+		 * fetch owner, DACL, and SACL if asked for full descriptor,
+		 * fetch owner and DACL otherwise
+		 */
+		u32 acllen, additional_info = 0;
 		struct cifs_ntsd *pacl;
 
 		if (pTcon->ses->server->ops->get_acl == NULL)
 			goto out; /* rc already EOPNOTSUPP */
 
+		if (handler->flags == XATTR_CIFS_NTSD_FULL) {
+			additional_info = OWNER_SECINFO | GROUP_SECINFO |
+				DACL_SECINFO | SACL_SECINFO;
+		} else {
+			additional_info = OWNER_SECINFO | GROUP_SECINFO |
+				DACL_SECINFO;
+		}
 		pacl = pTcon->ses->server->ops->get_acl(cifs_sb,
-				inode, full_path, &acllen);
+				inode, full_path, &acllen, additional_info);
 		if (IS_ERR(pacl)) {
 			rc = PTR_ERR(pacl);
 			cifs_dbg(VFS, "%s: error %zd getting sec desc\n",
@@ -451,6 +468,13 @@ static const struct xattr_handler cifs_cifs_ntsd_xattr_handler = {
 	.set = cifs_xattr_set,
 };
 
+static const struct xattr_handler cifs_cifs_ntsd_full_xattr_handler = {
+	.name = CIFS_XATTR_CIFS_NTSD_FULL,
+	.flags = XATTR_CIFS_NTSD_FULL,
+	.get = cifs_xattr_get,
+	.set = cifs_xattr_set,
+};
+
 static const struct xattr_handler cifs_posix_acl_access_xattr_handler = {
 	.name = XATTR_NAME_POSIX_ACL_ACCESS,
 	.flags = XATTR_ACL_ACCESS,
@@ -470,6 +494,7 @@ const struct xattr_handler *cifs_xattr_handlers[] = {
 	&cifs_os2_xattr_handler,
 	&cifs_cifs_acl_xattr_handler,
 	&cifs_cifs_ntsd_xattr_handler,
+	&cifs_cifs_ntsd_full_xattr_handler,
 	&cifs_posix_acl_access_xattr_handler,
 	&cifs_posix_acl_default_xattr_handler,
 	NULL
