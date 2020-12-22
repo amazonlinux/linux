@@ -46,7 +46,6 @@ typedef int (*cfs_ptask_cb_t)(struct cfs_ptask *);
 struct cfs_ptask {
 	struct padata_priv	 pt_padata;
 	struct completion	 pt_completion;
-	mm_segment_t		 pt_fs;
 	struct mm_struct	*pt_mm;
 	unsigned int		 pt_flags;
 	int			 pt_cbcpu;
