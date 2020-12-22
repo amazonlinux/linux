@@ -43,6 +43,8 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lib-lnet.h>
 
+#include <linux/inetdevice.h>
+
 #ifndef HAVE_KERNEL_SETSOCKOPT
 int kernel_setsockopt(struct socket *sock, int level, int optname,
 			char *val, unsigned int optlen)
@@ -74,240 +76,156 @@ lnet_sock_create_kern(struct socket **sock, struct net *ns)
 	return rc;
 }
 
-static int
-kernel_sock_unlocked_ioctl(struct file *filp, int cmd, unsigned long arg)
-{
-	mm_segment_t oldfs = get_fs();
-	int err;
-
-	set_fs(KERNEL_DS);
-	err = filp->f_op->unlocked_ioctl(filp, cmd, arg);
-	set_fs(oldfs);
-
-	return err;
-}
-
-static int
-lnet_sock_ioctl(int cmd, unsigned long arg, struct net *ns)
-{
-	struct file    *sock_filp;
-	struct socket  *sock;
-	int		fd = -1;
-	int		rc;
-
-	rc = lnet_sock_create_kern(&sock, ns);
-	if (rc != 0) {
-		CERROR("Can't create socket: %d\n", rc);
-		return rc;
-	}
-
-#if !defined(HAVE_SOCK_ALLOC_FILE) && !defined(HAVE_SOCK_ALLOC_FILE_3ARGS)
-	fd = sock_map_fd(sock, 0);
-	if (fd < 0) {
-		rc = fd;
-		sock_release(sock);
-		goto out;
-	}
-	sock_filp = fget(fd);
-#else
-# ifdef HAVE_SOCK_ALLOC_FILE_3ARGS
-	sock_filp = sock_alloc_file(sock, 0, NULL);
-# else
-	sock_filp = sock_alloc_file(sock, 0);
-# endif
-#endif
-	if (IS_ERR(sock_filp)) {
-		rc = PTR_ERR(sock_filp);
-		sock_release(sock);
-		goto out;
-	}
-
-	rc = kernel_sock_unlocked_ioctl(sock_filp, cmd, arg);
-
-	fput(sock_filp);
-out:
-	if (fd >= 0)
-#ifdef HAVE_KSYS_CLOSE
-		ksys_close(fd);
-#else
-		sys_close(fd);
-#endif
-	return rc;
-}
-
 int
 lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask, struct net *ns)
 {
-	struct ifreq	ifr;
-	int		nob;
-	int		rc;
-	__u32		val;
+	struct net_device *dev;
+	struct in_device *in_dev;
+	const struct in_ifaddr *ifa;
+	unsigned int flags;
+	char *colon, *ifname;
+	int ret;
+	size_t slen;
 
-	nob = strnlen(name, IFNAMSIZ);
-	if (nob == IFNAMSIZ) {
-		CERROR("Interface name %s too long\n", name);
-		return -EINVAL;
+	/*
+	 * Copy the interface name, since we may be about to modify it.
+	 */
+	slen = strlen(name) + 1;
+	ifname = kzalloc(slen, GFP_KERNEL);
+	if (ifname == NULL)
+		return -ENOMEM;
+
+	memcpy(ifname, name, slen);
+	colon = strchr(ifname, ':');
+	if (colon)
+		*colon = 0;
+
+	dev_load(ns, ifname);
+	ret = -ENODEV;
+
+	rtnl_lock();
+
+	dev = __dev_get_by_name(ns, ifname);
+
+	if (colon)
+		*colon = ':';
+
+	if (dev == NULL) {
+		CERROR("Can't find interface %s\n", name);
+		goto out;
 	}
 
-	CLASSERT(sizeof(ifr.ifr_name) >= IFNAMSIZ);
-
-	if (strlen(name) > sizeof(ifr.ifr_name)-1)
-		return -E2BIG;
-	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
-
-	rc = lnet_sock_ioctl(SIOCGIFFLAGS, (unsigned long)&ifr, ns);
-	if (rc != 0) {
-		CERROR("Can't get flags for interface %s\n", name);
-		return rc;
-	}
-
-	if ((ifr.ifr_flags & IFF_UP) == 0) {
+	flags = dev_get_flags(dev);
+	if ((flags & IFF_UP) == 0) {
 		CDEBUG(D_NET, "Interface %s down\n", name);
 		*up = 0;
 		*ip = *mask = 0;
-		return 0;
-	}
-	*up = 1;
-
-	if (strlen(name) > sizeof(ifr.ifr_name)-1)
-		return -E2BIG;
-	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
-
-	ifr.ifr_addr.sa_family = AF_INET;
-	rc = lnet_sock_ioctl(SIOCGIFADDR, (unsigned long)&ifr, ns);
-
-	if (rc != 0) {
-		CERROR("Can't get IP address for interface %s\n", name);
-		return rc;
+		ret = 0;
+		goto out;
 	}
 
-	val = ((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr.s_addr;
-	*ip = ntohl(val);
+	/*
+	 * Only support IPv4, so just walk the list of IPv4 assigned
+	 * addresses to a device.
+	 */
+	in_dev = __in_dev_get_rtnl(dev);
 
-	if (strlen(name) > sizeof(ifr.ifr_name)-1)
-		return -E2BIG;
-	strncpy(ifr.ifr_name, name, sizeof(ifr.ifr_name));
-
-	ifr.ifr_addr.sa_family = AF_INET;
-	rc = lnet_sock_ioctl(SIOCGIFNETMASK, (unsigned long)&ifr, ns);
-	if (rc != 0) {
-		CERROR("Can't get netmask for interface %s\n", name);
-		return rc;
+	in_dev_for_each_ifa_rtnl(ifa, in_dev) {
+		if (!strcmp(ifa->ifa_label, ifname))
+			break;
 	}
 
-	val = ((struct sockaddr_in *)&ifr.ifr_netmask)->sin_addr.s_addr;
-	*mask = ntohl(val);
+	if (ifa != NULL) {
+		*up = 1;
+		*mask = ntohl(ifa->ifa_mask);
+		*ip = ntohl(ifa->ifa_local);
+		ret = 0;
+	} else {
+		CERROR("Can't get mask/ip for interface %s\n", name);
+	}
 
-	return 0;
+out:
+	rtnl_unlock();
+	kfree(ifname);
+	return ret;
 }
 EXPORT_SYMBOL(lnet_ipif_query);
 
 void
 lnet_ipif_free_enumeration(char **names, int n)
 {
-	int	i;
-
-	LASSERT(n > 0);
-
-	for (i = 0; i < n && names[i] != NULL; i++)
-		LIBCFS_FREE(names[i], IFNAMSIZ);
-
-	LIBCFS_FREE(names, n * sizeof(*names));
+	LIBCFS_FREE(names, PAGE_SIZE / IFNAMSIZ);
+	LIBCFS_FREE(names[0], PAGE_SIZE);
 }
 EXPORT_SYMBOL(lnet_ipif_free_enumeration);
 
 int
 lnet_ipif_enumerate(char ***namesp, struct net *ns)
 {
-	/* Allocate and fill in 'names', returning # interfaces/error */
-	char	      **names;
-	int		toobig;
-	int		nalloc;
-	int		nfound;
-	struct ifreq   *ifr;
-	struct ifconf	ifc;
-	int		rc;
-	int		nob;
-	int		i;
+	char **names;
+	char *space;
+	const struct in_ifaddr *ifa;
+	struct net_device *dev;
+	struct in_device *in_dev;
+	int maxifs, nifs, toobig;
+	size_t used, slen;
 
-	nalloc = 16;	/* first guess at max interfaces */
+	maxifs = PAGE_SIZE / IFNAMSIZ;
+	nifs = 0;
+	used = 0;
 	toobig = 0;
-	for (;;) {
-		if (nalloc * sizeof(*ifr) > PAGE_SIZE) {
-			toobig = 1;
-			nalloc = PAGE_SIZE / sizeof(*ifr);
-			CWARN("Too many interfaces: only enumerating "
-			      "first %d\n", nalloc);
-		}
 
-		LIBCFS_ALLOC(ifr, nalloc * sizeof(*ifr));
-		if (ifr == NULL) {
-			CERROR("ENOMEM enumerating up to %d interfaces\n",
-			       nalloc);
-			rc = -ENOMEM;
-			goto out0;
-		}
+	/*
+	 * For simplicity, just allocate the maximum number of names
+	 * that can be dealt with. The free function will ignore the
+	 * arg
+	 */
+	LIBCFS_ALLOC(names, maxifs * sizeof (*names));
+	if (names == NULL)
+		return -ENOMEM;
 
-		ifc.ifc_buf = (char *)ifr;
-		ifc.ifc_len = nalloc * sizeof(*ifr);
-
-		rc = lnet_sock_ioctl(SIOCGIFCONF, (unsigned long)&ifc, ns);
-		if (rc < 0) {
-			CERROR("Error %d enumerating interfaces\n", rc);
-			goto out1;
-		}
-
-		LASSERT(rc == 0);
-
-		nfound = ifc.ifc_len/sizeof(*ifr);
-		LASSERT(nfound <= nalloc);
-
-		if (nfound < nalloc || toobig)
-			break;
-
-		LIBCFS_FREE(ifr, nalloc * sizeof(*ifr));
-		nalloc *= 2;
+	LIBCFS_ALLOC(space, PAGE_SIZE);
+	if (space == NULL) {
+		LIBCFS_FREE(names, maxifs * sizeof (*names));
+		return -ENOMEM;
 	}
 
-	if (nfound == 0)
-		goto out1;
+	/*
+	 * Only IPv4 is supported, so just loop all network
+	 * devices, and loop the IPv4 interfaces (addresses)
+	 * assigned to each device.
+	 */
+	rtnl_lock();
+	for_each_netdev(ns, dev) {
+		in_dev = __in_dev_get_rtnl(dev);
+		if (!in_dev)
+			continue;
 
-	LIBCFS_ALLOC(names, nfound * sizeof(*names));
-	if (names == NULL) {
-		rc = -ENOMEM;
-		goto out1;
-	}
+		in_dev_for_each_ifa_rtnl(ifa, in_dev) {
+			nifs++;
+			if (toobig)
+				continue;
 
-	for (i = 0; i < nfound; i++) {
-		nob = strnlen(ifr[i].ifr_name, IFNAMSIZ);
-		if (nob == IFNAMSIZ) {
-			/* no space for terminating NULL */
-			CERROR("interface name %.*s too long (%d max)\n",
-			       nob, ifr[i].ifr_name, IFNAMSIZ);
-			rc = -ENAMETOOLONG;
-			goto out2;
+			if (nifs > maxifs) {
+				toobig = 1;
+				continue;
+			}
+
+			slen = strlen(ifa->ifa_label) + 1;
+			if (used + slen > PAGE_SIZE) {
+				toobig = 1;
+				continue;
+			}
+			memcpy(space + used, ifa->ifa_label, slen);
+			names[nifs - 1] = space + used;
+			used += slen;
 		}
-
-		LIBCFS_ALLOC(names[i], IFNAMSIZ);
-		if (names[i] == NULL) {
-			rc = -ENOMEM;
-			goto out2;
-		}
-
-		memcpy(names[i], ifr[i].ifr_name, nob);
-		names[i][nob] = 0;
 	}
+	rtnl_unlock();
 
 	*namesp = names;
-	rc = nfound;
 
- out2:
-	if (rc < 0)
-		lnet_ipif_free_enumeration(names, nfound);
- out1:
-	LIBCFS_FREE(ifr, nalloc * sizeof(*ifr));
- out0:
-	return rc;
+	return nifs;
 }
 EXPORT_SYMBOL(lnet_ipif_enumerate);
 
