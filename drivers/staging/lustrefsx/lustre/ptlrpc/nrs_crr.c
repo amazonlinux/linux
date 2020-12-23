@@ -718,7 +718,7 @@ ptlrpc_lprocfs_nrs_crrn_quantum_seq_write(struct file *file,
         if (count > (sizeof(kernbuf) - 1))
                 return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 
         kernbuf[count] = '\0';
