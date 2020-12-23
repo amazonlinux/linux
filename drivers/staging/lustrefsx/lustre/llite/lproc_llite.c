@@ -50,7 +50,8 @@ struct proc_dir_entry *proc_lustre_fs_root;
 static const struct proc_ops ll_rw_extents_stats_fops;
 static const struct proc_ops ll_rw_extents_stats_pp_fops;
 static const struct proc_ops ll_rw_offset_stats_fops;
-static __s64 ll_stats_pid_write(const char __user *buf, size_t len);
+static __s64 ll_stats_pid_write(struct file *file,
+				const char __user *buf, size_t len);
 
 static int ll_blksize_seq_show(struct seq_file *m, void *v)
 {
@@ -86,7 +87,7 @@ static ssize_t ll_stat_blksize_seq_write(struct file *file,
 	__s64 val;
 	int rc;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -248,7 +249,7 @@ static ssize_t ll_xattr_cache_seq_write(struct file *file,
 	__s64 val;
 	int rc;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -302,7 +303,8 @@ ll_max_readahead_mb_seq_write(struct file *file, const char __user *buffer,
 	__s64 pages_number;
 	int rc;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &pages_number, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count,
+			&pages_number, 'M');
 	if (rc)
 		return rc;
 
@@ -350,7 +352,8 @@ ll_max_readahead_per_file_mb_seq_write(struct file *file,
 	int rc;
 	__s64 pages_number;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &pages_number, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count,
+			&pages_number, 'M');
 	if (rc)
 		return rc;
 
@@ -397,7 +400,8 @@ ll_max_read_ahead_whole_mb_seq_write(struct file *file,
 	int rc;
 	__s64 pages_number;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &pages_number, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count,
+			&pages_number, 'M');
 	if (rc)
 		return rc;
 
@@ -467,13 +471,14 @@ ll_max_cached_mb_seq_write(struct file *file, const char __user *buffer,
 	if (count >= sizeof(kernbuf))
 		RETURN(-EINVAL);
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		RETURN(-EFAULT);
 	kernbuf[count] = 0;
 
 	buffer += lprocfs_find_named_value(kernbuf, "max_cached_mb:", &count) -
 		  kernbuf;
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &pages_number, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count,
+			&pages_number, 'M');
 	if (rc)
 		RETURN(rc);
 
@@ -577,7 +582,7 @@ static ssize_t ll_checksum_seq_write(struct file *file,
 		/* Not set up yet */
 		return -EAGAIN;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val)
@@ -609,14 +614,15 @@ static int ll_rd_track_id(struct seq_file *m, enum stats_track_type type)
 	return 0;
 }
 
-static int ll_wr_track_id(const char __user *buffer, unsigned long count,
+static int ll_wr_track_id(struct file *file,
+			  const char __user *buffer, unsigned long count,
 			  void *data, enum stats_track_type type)
 {
 	struct super_block *sb = data;
 	int rc;
 	__s64 pid;
 
-	rc = lprocfs_str_to_s64(buffer, count, &pid);
+	rc = lprocfs_str_to_s64(file, buffer, count, &pid);
 	if (rc)
 		return rc;
 	if (pid > INT_MAX || pid < 0)
@@ -641,7 +647,8 @@ static ssize_t ll_track_pid_seq_write(struct file *file,
 				      size_t count, loff_t *off)
 {
 	struct seq_file *seq = file->private_data;
-	return ll_wr_track_id(buffer, count, seq->private, STATS_TRACK_PID);
+	return ll_wr_track_id(file, buffer, count, seq->private,
+			STATS_TRACK_PID);
 }
 LPROC_SEQ_FOPS(ll_track_pid);
 
@@ -655,7 +662,8 @@ static ssize_t ll_track_ppid_seq_write(struct file *file,
 				       size_t count, loff_t *off)
 {
 	struct seq_file *seq = file->private_data;
-	return ll_wr_track_id(buffer, count, seq->private, STATS_TRACK_PPID);
+	return ll_wr_track_id(file, buffer, count, seq->private,
+			STATS_TRACK_PPID);
 }
 LPROC_SEQ_FOPS(ll_track_ppid);
 
@@ -669,7 +677,8 @@ static ssize_t ll_track_gid_seq_write(struct file *file,
 				      size_t count, loff_t *off)
 {
 	struct seq_file *seq = file->private_data;
-	return ll_wr_track_id(buffer, count, seq->private, STATS_TRACK_GID);
+	return ll_wr_track_id(file, buffer, count, seq->private,
+			STATS_TRACK_GID);
 }
 LPROC_SEQ_FOPS(ll_track_gid);
 
@@ -692,7 +701,7 @@ static ssize_t ll_statahead_running_max_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -726,7 +735,7 @@ static ssize_t ll_statahead_max_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -760,7 +769,7 @@ static ssize_t ll_statahead_agl_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -807,7 +816,7 @@ static ssize_t ll_lazystatfs_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -891,7 +900,7 @@ static ssize_t ll_default_easize_seq_write(struct file *file,
 	if (count == 0)
 		return 0;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > INT_MAX)
@@ -948,7 +957,7 @@ ll_fast_read_seq_write(struct file *file, const char __user *buffer,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -981,7 +990,7 @@ static ssize_t ll_pio_seq_write(struct file *file, const char __user *buffer,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -1029,13 +1038,13 @@ static ssize_t ll_unstable_stats_seq_write(struct file *file,
 	if (count >= sizeof(kernbuf))
 		return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 	kernbuf[count] = 0;
 
 	buffer += lprocfs_find_named_value(kernbuf, "unstable_check:", &count) -
 		  kernbuf;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -1067,7 +1076,7 @@ static ssize_t ll_root_squash_seq_write(struct file *file,
 	struct ll_sb_info *sbi = ll_s2sbi(sb);
 	struct root_squash_info *squash = &sbi->ll_squash;
 
-	return lprocfs_wr_root_squash(buffer, count, squash,
+	return lprocfs_wr_root_squash(file, buffer, count, squash,
 				      ll_get_fsname(sb, NULL, 0));
 }
 LPROC_SEQ_FOPS(ll_root_squash);
@@ -1103,7 +1112,7 @@ static ssize_t ll_nosquash_nids_seq_write(struct file *file,
 	struct root_squash_info *squash = &sbi->ll_squash;
 	int rc;
 
-	rc = lprocfs_wr_nosquash_nids(buffer, count, squash,
+	rc = lprocfs_wr_nosquash_nids(file, buffer, count, squash,
 				      ll_get_fsname(sb, NULL, 0));
 	if (rc < 0)
 		return rc;
@@ -1525,7 +1534,7 @@ static ssize_t ll_rw_extents_stats_pp_seq_write(struct file *file,
 	if (len == 0)
 		return -EINVAL;
 
-	value = ll_stats_pid_write(buf, len);
+	value = ll_stats_pid_write(file, buf, len);
 
 	if (value == 0)
 		sbi->ll_rw_stats_on = 0;
@@ -1583,7 +1592,7 @@ static ssize_t ll_rw_extents_stats_seq_write(struct file *file,
 	if (len == 0)
 		return -EINVAL;
 
-	value = ll_stats_pid_write(buf, len);
+	value = ll_stats_pid_write(file, buf, len);
 
 	if (value == 0)
 		sbi->ll_rw_stats_on = 0;
@@ -1772,7 +1781,7 @@ static ssize_t ll_rw_offset_stats_seq_write(struct file *file,
 	if (len == 0)
 		return -EINVAL;
 
-	value = ll_stats_pid_write(buf, len);
+	value = ll_stats_pid_write(file, buf, len);
 
 	if (value == 0)
 		sbi->ll_rw_stats_on = 0;
@@ -1804,17 +1813,18 @@ static ssize_t ll_rw_offset_stats_seq_write(struct file *file,
  * equivalent of a number is written, that number is returned. Otherwise,
  * 1 is returned. Non-zero return values indicate collection should be enabled.
  */
-static __s64 ll_stats_pid_write(const char __user *buf, size_t len)
+static __s64 ll_stats_pid_write(struct file *file, const char __user *buf,
+				size_t len)
 {
 	__s64 value = 1;
 	int rc;
 	char kernbuf[16];
 
-	rc = lprocfs_str_to_s64(buf, len, &value);
+	rc = lprocfs_str_to_s64(file, buf, len, &value);
 
 	if (rc < 0 && len < sizeof(kernbuf)) {
 
-		if (copy_from_user(kernbuf, buf, len))
+		if (lprocfs_copy_from_user(file, kernbuf, buf, len))
 			return -EFAULT;
 		kernbuf[len] = 0;
 
