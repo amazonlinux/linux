@@ -60,8 +60,8 @@
  * safe for production use.
  */
 static int
-lprocfs_fid_write_common(const char __user *buffer, size_t count,
-				struct lu_seq_range *range)
+lprocfs_fid_write_common(struct file *file, const char __user *buffer,
+				size_t count, struct lu_seq_range *range)
 {
 	struct lu_seq_range tmp = {
 		.lsr_start = 0,
@@ -74,7 +74,7 @@ lprocfs_fid_write_common(const char __user *buffer, size_t count,
 	if (count >= sizeof(kernbuf))
 		RETURN(-EINVAL);
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		RETURN(-EFAULT);
 
 	kernbuf[count] = 0;
@@ -110,7 +110,7 @@ lprocfs_server_fid_space_seq_write(struct file *file, const char __user *buffer,
 	LASSERT(seq != NULL);
 
 	mutex_lock(&seq->lss_mutex);
-	rc = lprocfs_fid_write_common(buffer, count, &seq->lss_space);
+	rc = lprocfs_fid_write_common(file, buffer, count, &seq->lss_space);
 	if (rc == 0) {
 		CDEBUG(D_INFO, "%s: Space: "DRANGE"\n",
 			seq->lss_name, PRANGE(&seq->lss_space));
@@ -171,7 +171,7 @@ lprocfs_server_fid_width_seq_write(struct file *file, const char __user *buffer,
 
 	mutex_lock(&seq->lss_mutex);
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc) {
 		CERROR("%s: invalid FID sequence width: rc = %d\n",
 		       seq->lss_name, rc);
@@ -517,7 +517,7 @@ lprocfs_client_fid_space_seq_write(struct file *file, const char __user *buffer,
 	LASSERT(seq != NULL);
 
 	mutex_lock(&seq->lcs_mutex);
-	rc = lprocfs_fid_write_common(buffer, count, &seq->lcs_space);
+	rc = lprocfs_fid_write_common(file, buffer, count, &seq->lcs_space);
 	if (rc == 0) {
 		CDEBUG(D_INFO, "%s: Space: "DRANGE"\n",
                        seq->lcs_name, PRANGE(&seq->lcs_space));
@@ -558,7 +558,7 @@ lprocfs_client_fid_width_seq_write(struct file *file, const char __user *buffer,
 
 	mutex_lock(&seq->lcs_mutex);
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc) {
 		GOTO(out_unlock, count = rc);
 	}
