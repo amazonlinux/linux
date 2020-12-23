@@ -62,7 +62,7 @@ static ssize_t lov_stripesize_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0)
@@ -97,7 +97,7 @@ static ssize_t lov_stripeoffset_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < -1)
@@ -131,7 +131,7 @@ static ssize_t lov_stripetype_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < INT_MIN || val > INT_MAX)
@@ -169,7 +169,7 @@ static ssize_t lov_stripecount_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < -1)

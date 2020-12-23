@@ -621,9 +621,10 @@ extern int lprocfs_filesfree_seq_show(struct seq_file *m, void *data);
 extern int lprocfs_seq_read_frac_helper(struct seq_file *m, long val, int mult);
 extern int lprocfs_read_frac_helper(char *buffer, unsigned long count,
                                     long val, int mult);
-extern int lprocfs_str_to_s64(const char __user *buffer, unsigned long count,
-			      __s64 *val);
-extern int lprocfs_str_with_units_to_s64(const char __user *buffer,
+extern int lprocfs_str_to_s64(struct file *, const char __user *buffer,
+			      unsigned long count, __s64 *val);
+extern int lprocfs_str_with_units_to_s64(struct file *,
+					 const char __user *buffer,
 					 unsigned long count, __s64 *val,
 					 char defunit);
 
@@ -749,6 +750,19 @@ struct lustre_attr {
 			 const char *buf, size_t len);
 };
 
+/*
+ * Hacks to get around set_fs removal.
+ */
+void lprocfs_file_set_kernel(struct file *file);
+bool lprocfs_file_is_kernel(struct file *file);
+
+/*
+ * Version of copy_from_user() that uses the above hacks to determine
+ * whether it's dealing with user or kernel space.
+ */
+unsigned long lprocfs_copy_from_user(struct file *file, void *to,
+				     const void __user *from, unsigned long n);
+
 #define LUSTRE_ATTR(name, mode, show, store) \
 static struct lustre_attr lustre_attr_##name = __ATTR(name, mode, show, store)
 
@@ -795,9 +809,11 @@ ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 						size_t count, loff_t *off);
 
 struct root_squash_info;
-int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
+int lprocfs_wr_root_squash(struct file *file, const char __user *buffer,
+			   unsigned long count,
 			   struct root_squash_info *squash, char *name);
-int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
+int lprocfs_wr_nosquash_nids(struct file *file, const char __user *buffer,
+			     unsigned long count,
 			     struct root_squash_info *squash, char *name);
 
 #else /* !CONFIG_PROC_FS */
