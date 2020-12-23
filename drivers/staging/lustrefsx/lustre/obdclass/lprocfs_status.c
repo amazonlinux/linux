@@ -48,6 +48,43 @@ MODULE_PARM_DESC(lprocfs_no_percpu_stats, "Do not alloc percpu data for lprocfs 
 
 #define MAX_STRING_SIZE 128
 
+static const struct file_operations lprocfs_kernel_dummy = {};
+
+/*
+ * Awful hacks to mark procfs seq writes as going to kernel space. Used
+ * to be done with set_fs(KERNEL_DS), but that function is no more.
+ * This should only be called from class_process_proc_param(), which passes
+ * in a fake file structure. It should never, ever be used for anything else.
+ */
+void lprocfs_file_set_kernel(struct file *file)
+{
+	LASSERT(file->f_op == NULL);
+	file->f_op = &lprocfs_kernel_dummy;
+}
+EXPORT_SYMBOL(lprocfs_file_set_kernel);
+
+bool lprocfs_file_is_kernel(struct file *file)
+{
+	return (file->f_op == &lprocfs_kernel_dummy);
+}
+EXPORT_SYMBOL(lprocfs_file_is_kernel);
+
+unsigned long
+lprocfs_copy_from_user(struct file *file, void *to,
+		       const void __user *from, unsigned long n)
+{
+	unsigned long res;
+
+	if (lprocfs_file_is_kernel(file)) {
+		memcpy(to, from, n);
+		res = 0;
+	} else
+		res = copy_from_user(to, from, n);
+
+	return res;
+}
+EXPORT_SYMBOL(lprocfs_copy_from_user);
+
 int lprocfs_single_release(struct inode *inode, struct file *file)
 {
         return single_release(inode, file);
@@ -370,7 +407,7 @@ int lprocfs_wr_uint(struct file *file, const char __user *buffer,
 	if (count == 0)
 		return 0;
 
-	if (copy_from_user(dummy, buffer, count))
+	if (lprocfs_copy_from_user(file, dummy, buffer, count))
 		return -EFAULT;
 
 	dummy[count] = 0;
@@ -391,7 +428,7 @@ ssize_t lprocfs_uint_seq_write(struct file *file, const char __user *buffer,
 	int rc;
 	__s64 val = 0;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -424,7 +461,7 @@ lprocfs_atomic_seq_write(struct file *file, const char __user *buffer,
 	__s64 val = 0;
 	int rc;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -2051,7 +2088,8 @@ static int str_to_u64_parse(char *buffer, unsigned long count,
  * of the signed integer.
  */
 static int str_to_s64_internal(const char __user *buffer, unsigned long count,
-			       __s64 *val, __u64 def_mult, bool allow_units)
+			       __s64 *val, __u64 def_mult, bool allow_units,
+			       bool kernel_space)
 {
 	char kernbuf[22];
 	__u64 tmp;
@@ -2063,8 +2101,12 @@ static int str_to_s64_internal(const char __user *buffer, unsigned long count,
 	if (count > (sizeof(kernbuf) - 1))
 		return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
-		return -EFAULT;
+	if (kernel_space) {
+		memcpy(kernbuf, buffer, count);
+	} else {
+		if (copy_from_user(kernbuf, buffer, count))
+			return -EFAULT;
+	}
 
 	kernbuf[count] = '\0';
 
@@ -2103,10 +2145,13 @@ static int str_to_s64_internal(const char __user *buffer, unsigned long count,
  * \retval		0 on success
  * \retval		negative number on error
  */
-int lprocfs_str_to_s64(const char __user *buffer, unsigned long count,
-		       __s64 *val)
+int lprocfs_str_to_s64(struct file *file, const char __user *buffer,
+		       unsigned long count, __s64 *val)
 {
-	return str_to_s64_internal(buffer, count, val, 1, false);
+	bool kernel_space;
+
+	kernel_space = lprocfs_file_is_kernel(file);
+	return str_to_s64_internal(buffer, count, val, 1, false, kernel_space);
 }
 EXPORT_SYMBOL(lprocfs_str_to_s64);
 
@@ -2127,11 +2172,12 @@ EXPORT_SYMBOL(lprocfs_str_to_s64);
  * \retval		0 on success
  * \retval		negative number on error
  */
-int lprocfs_str_with_units_to_s64(const char __user *buffer,
+int lprocfs_str_with_units_to_s64(struct file *file, const char __user *buffer,
 				  unsigned long count, __s64 *val, char defunit)
 {
 	__u64 mult = 1;
 	int rc;
+	bool kernel_space;
 
 	if (defunit != '1') {
 		rc = get_mult(defunit, &mult);
@@ -2139,7 +2185,10 @@ int lprocfs_str_with_units_to_s64(const char __user *buffer,
 			return rc;
 	}
 
-	return str_to_s64_internal(buffer, count, val, mult, true);
+	kernel_space = lprocfs_file_is_kernel(file);
+
+	return str_to_s64_internal(buffer, count, val, mult, true,
+			kernel_space);
 }
 EXPORT_SYMBOL(lprocfs_str_with_units_to_s64);
 
@@ -2326,7 +2375,7 @@ ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 	int chunk_mask, rc;
 	__s64 val;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &val, '1');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count, &val, '1');
 	if (rc)
 		return rc;
 	if (val < 0)
@@ -2356,8 +2405,9 @@ ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 }
 EXPORT_SYMBOL(lprocfs_obd_max_pages_per_rpc_seq_write);
 
-int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
-			   struct root_squash_info *squash, char *name)
+int lprocfs_wr_root_squash(struct file *file, const char __user *buffer,
+			   unsigned long count, struct root_squash_info *squash,
+			   char *name)
 {
 	int rc;
 	char kernbuf[64], *tmp, *errmsg;
@@ -2368,7 +2418,7 @@ int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
 		errmsg = "string too long";
 		GOTO(failed_noprint, rc = -EINVAL);
 	}
-	if (copy_from_user(kernbuf, buffer, count)) {
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count)) {
 		errmsg = "bad address";
 		GOTO(failed_noprint, rc = -EFAULT);
 	}
@@ -2418,7 +2468,8 @@ failed_noprint:
 EXPORT_SYMBOL(lprocfs_wr_root_squash);
 
 
-int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
+int lprocfs_wr_nosquash_nids(struct file *file, const char __user *buffer,
+			     unsigned long count,
 			     struct root_squash_info *squash, char *name)
 {
 	int rc;
@@ -2438,7 +2489,7 @@ int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
 		errmsg = "no memory";
 		GOTO(failed, rc = -ENOMEM);
 	}
-	if (copy_from_user(kernbuf, buffer, count)) {
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count)) {
 		errmsg = "bad address";
 		GOTO(failed, rc = -EFAULT);
 	}
