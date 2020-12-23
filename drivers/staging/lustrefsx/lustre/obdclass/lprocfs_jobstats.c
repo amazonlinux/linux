@@ -515,7 +515,7 @@ static ssize_t lprocfs_jobstats_seq_write(struct file *file,
 	if (stats->ojs_hash == NULL)
 		return -ENODEV;
 
-	if (copy_from_user(jobid, buf, len))
+	if (lprocfs_copy_from_user(file, jobid, buf, len))
 		return -EFAULT;
 	jobid[len] = 0;
 
@@ -655,7 +655,7 @@ lprocfs_job_interval_seq_write(struct file *file, const char __user *buffer,
 
 	stats = &obd->u.obt.obt_jobstats;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > UINT_MAX)
