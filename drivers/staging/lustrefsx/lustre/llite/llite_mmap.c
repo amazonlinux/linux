@@ -267,7 +267,8 @@ static vm_fault_t ll_fault0(struct vm_area_struct *vma, struct vm_fault *vmf)
 	if (IS_ERR(env))
 		RETURN(PTR_ERR(env));
 
-	if (ll_sbi_has_fast_read(ll_i2sbi(file_inode(vma->vm_file)))) {
+	if (fault_flag_allow_retry_first(vmf->flags) &&
+	    ll_sbi_has_fast_read(ll_i2sbi(file_inode(vma->vm_file)))) {
 		/* do fast fault */
 		ll_cl_add(vma->vm_file, env, NULL, LCC_MMAP);
 		fault_ret = ll_filemap_fault(vma, vmf);
