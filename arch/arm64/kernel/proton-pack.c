@@ -22,6 +22,7 @@
 #include <linux/cpu.h>
 #include <linux/device.h>
 #include <linux/nospec.h>
+#include <linux/objtool.h>
 #include <linux/prctl.h>
 #include <linux/sched/task_stack.h>
 
@@ -300,6 +301,7 @@ static void qcom_link_stack_sanitisation(void)
 		     "mov	x30, %0		\n"
 		     : "=&r" (tmp));
 }
+STACK_FRAME_NON_STANDARD(qcom_link_stack_sanitisation);
 
 static bp_hardening_cb_t spectre_v2_get_sw_mitigation_cb(void)
 {
