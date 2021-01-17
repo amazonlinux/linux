@@ -524,7 +524,7 @@ static struct attribute *smmu_pmu_cpumask_attrs[] = {
 	NULL
 };
 
-static struct attribute_group smmu_pmu_cpumask_group = {
+static const struct attribute_group smmu_pmu_cpumask_group = {
 	.attrs = smmu_pmu_cpumask_attrs,
 };
 
@@ -579,7 +579,7 @@ static umode_t smmu_pmu_event_is_visible(struct kobject *kobj,
 	return 0;
 }
 
-static struct attribute_group smmu_pmu_events_group = {
+static const struct attribute_group smmu_pmu_events_group = {
 	.name = "events",
 	.attrs = smmu_pmu_events,
 	.is_visible = smmu_pmu_event_is_visible,
@@ -599,7 +599,7 @@ static struct attribute *smmu_pmu_formats[] = {
 	NULL
 };
 
-static struct attribute_group smmu_pmu_format_group = {
+static const struct attribute_group smmu_pmu_format_group = {
 	.name = "format",
 	.attrs = smmu_pmu_formats,
 };
