@@ -396,8 +396,23 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 
 	switch (aarch64_get_insn_class(insn)) {
 	case AARCH64_INSN_CLS_UNKNOWN:
-		WARN("can't decode instruction at %s:0x%lx", sec->name, offset);
-		return -1;
+	{
+		/*
+		 * There are a few reasons we might have non-valid opcodes in
+		 * code sections:
+		 * - For load literal, assembler can generate the data to be
+		 *   loaded in the code section
+		 * - Compiler/assembler can generate zeroes to pad function that
+		 *   do not end on 8-byte alignment
+		 */
+		/* Compiler might put zeroes as padding */
+		if (record_invalid_insn(sec, offset, insn == 0x0))
+			return -1;
+
+		*type = INSN_OTHER;
+
+		break;
+	}
 	case AARCH64_INSN_CLS_DP_IMM:
 		/* Mov register to and from SP are aliases of add_imm */
 		if (aarch64_insn_is_add_imm(insn) ||
