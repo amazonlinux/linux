@@ -617,6 +617,11 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 	return 0;
 }
 
+int arch_post_process_instructions(struct objtool_file *file)
+{
+	return 0;
+}
+
 void arch_initial_func_cfi_state(struct cfi_init_state *state)
 {
 	int i;
