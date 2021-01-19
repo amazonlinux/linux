@@ -66,6 +66,7 @@ struct stack_op {
 	struct list_head list;
 };
 
+struct objtool_file;
 struct instruction;
 
 void arch_initial_func_cfi_state(struct cfi_init_state *state);
@@ -75,6 +76,8 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			    unsigned int *len, enum insn_type *type,
 			    unsigned long *immediate,
 			    struct list_head *ops_list);
+
+int arch_post_process_instructions(struct objtool_file *file);
 
 bool arch_callee_saved_reg(unsigned char reg);
 
