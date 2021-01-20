@@ -756,6 +756,7 @@ SYM_CODE_END(el0_error)
  * "slow" syscall return path.
  */
 SYM_CODE_START_LOCAL(ret_to_user)
+	UNWIND_HINT_REGS
 	disable_daif
 	gic_prio_kentry_setup tmp=x3
 #ifdef CONFIG_TRACE_IRQFLAGS
@@ -1049,6 +1050,7 @@ NOKPROBE(cpu_switch_to)
  * This is how we return from a fork.
  */
 SYM_CODE_START(ret_from_fork)
+	UNWIND_HINT_REGS
 	bl	schedule_tail
 	cbz	x19, 1f				// not a kernel thread
 	mov	x0, x20
