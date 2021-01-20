@@ -462,6 +462,13 @@ SYM_CODE_END(__swpan_exit_el0)
 #endif
 
 9998:
+	/*
+         * The irq stack might either have no content or already contain a
+         * pt_regs frame. Objtool currently does not support instructions that
+         * can have different stack states, so lets pretend we always have
+         * a clean stack.
+	 */
+	UNWIND_HINT_FUNC
 	.endm
 
 	/*
@@ -474,6 +481,8 @@ SYM_CODE_END(__swpan_exit_el0)
 #ifdef CONFIG_SHADOW_CALL_STACK
 	mov	scs_sp, x24
 #endif
+	/* Switch back to the stack that had the PT regs */
+	UNWIND_HINT_REGS
 	.endm
 
 /* GPRs used by entry code */
