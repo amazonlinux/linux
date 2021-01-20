@@ -13,6 +13,7 @@
 #include <asm/cputype.h>
 #include <asm/memory.h>
 #include <asm/page.h>
+#include <asm/unwind_hints.h>
 #include <asm/virt.h>
 
 /*
@@ -66,6 +67,7 @@
  */
 .pushsection    ".hibernate_exit.text", "ax"
 SYM_CODE_START(swsusp_arch_suspend_exit)
+	UNWIND_HINT_EMPTY
 	/*
 	 * We execute from ttbr0, change ttbr1 to our copied linear map tables
 	 * with a break-before-make via the zero page
@@ -120,12 +122,14 @@ SYM_CODE_END(swsusp_arch_suspend_exit)
  * x24: The physical address of __hyp_stub_vectors
  */
 SYM_CODE_START_LOCAL(el1_sync)
+	UNWIND_HINT_EMPTY
 	msr	vbar_el2, x24
 	eret
 SYM_CODE_END(el1_sync)
 
 .macro invalid_vector	label
 SYM_CODE_START_LOCAL(\label)
+	UNWIND_HINT_EMPTY
 	b \label
 SYM_CODE_END(\label)
 .endm
