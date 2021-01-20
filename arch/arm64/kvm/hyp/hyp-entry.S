@@ -150,6 +150,7 @@ SYM_CODE_END(\label)
 
 .macro valid_vect target
 	.align 7
+        UNWIND_HINT_EMPTY
 661:
 	esb
 	stp	x0, x1, [sp, #-16]!
@@ -161,6 +162,7 @@ check_preamble_length 661b, 662b
 
 .macro invalid_vect target
 	.align 7
+        UNWIND_HINT_EMPTY
 661:
 	nop
 	stp	x0, x1, [sp, #-16]!
