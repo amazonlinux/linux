@@ -4,6 +4,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/assembler.h>
 #include <asm/smp.h>
+#include <asm/unwind_hints.h>
 
 	.text
 /*
@@ -100,6 +101,7 @@ SYM_FUNC_END(__cpu_suspend_enter)
 
 	.pushsection ".idmap.text", "awx"
 SYM_CODE_START(cpu_resume)
+	UNWIND_HINT_EMPTY
 	bl	init_kernel_el
 	bl	__cpu_setup
 	/* enable the MMU early - so we can access sleep_save_stash by va */
@@ -112,6 +114,7 @@ SYM_CODE_END(cpu_resume)
 	.popsection
 
 SYM_CODE_START(_cpu_resume)
+	UNWIND_HINT_EMPTY
 	mrs	x1, mpidr_el1
 	adr_l	x8, mpidr_hash		// x8 = struct mpidr_hash virt address
 
