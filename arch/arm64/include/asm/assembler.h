@@ -22,6 +22,7 @@
 #include <asm/pgtable-hwdef.h>
 #include <asm/ptrace.h>
 #include <asm/thread_info.h>
+#include <asm/unwind_hints.h>
 
 	.macro save_and_disable_daif, flags
 	mrs	\flags, daif
@@ -150,6 +151,7 @@ lr	.req	x30		// link register
  */
 	 .macro	ventry	label
 	.align	7
+	UNWIND_HINT_EMPTY
 	b	\label
 	.endm
 
