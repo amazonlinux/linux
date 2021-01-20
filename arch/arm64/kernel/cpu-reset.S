@@ -10,6 +10,7 @@
 #include <linux/linkage.h>
 #include <asm/assembler.h>
 #include <asm/sysreg.h>
+#include <asm/unwind_hints.h>
 #include <asm/virt.h>
 
 .text
@@ -30,6 +31,7 @@
  * flat identity mapping.
  */
 SYM_CODE_START(__cpu_soft_restart)
+	UNWIND_HINT_EMPTY
 	/* Clear sctlr_el1 flags. */
 	mrs	x12, sctlr_el1
 	mov_q	x13, SCTLR_ELx_FLAGS
