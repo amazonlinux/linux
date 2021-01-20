@@ -33,6 +33,7 @@
 #include <asm/smp.h>
 #include <asm/sysreg.h>
 #include <asm/thread_info.h>
+#include <asm/unwind_hints.h>
 #include <asm/virt.h>
 
 #include "efi-header.S"
@@ -63,6 +64,7 @@
 	 * DO NOT MODIFY. Image header expected by Linux boot-loaders.
 	 */
 SYM_DATA_LOCAL(efi_nop, efi_signature_nop)	// special NOP to identity as PE/COFF executable
+	UNWIND_HINT_EMPTY
 	b	primary_entry			// branch to kernel start, magic
 SYM_DATA_LOCAL(_zero_reserved, .quad	0)	// Image load offset from start of RAM, little-endian
 SYM_DATA_START_LOCAL(_arm64_common_header)
@@ -111,6 +113,7 @@ SYM_CODE_END(primary_entry)
  * Preserve the arguments passed by the bootloader in x0 .. x3
  */
 SYM_CODE_START_LOCAL(preserve_boot_args)
+	UNWIND_HINT_EMPTY
 	mov	x21, x0				// x21=FDT
 
 	adr_l	x0, boot_args			// record the contents of
@@ -262,6 +265,7 @@ SYM_CODE_END(preserve_boot_args)
  *     been enabled
  */
 SYM_CODE_START_LOCAL(__create_page_tables)
+	UNWIND_HINT_EMPTY
 	mov	x28, lr
 
 	/*
@@ -496,6 +500,7 @@ EXPORT_SYMBOL(kimage_vaddr)
  * booted in EL1 or EL2 respectively.
  */
 SYM_CODE_START(init_kernel_el)
+	UNWIND_HINT_EMPTY
 	mrs	x0, CurrentEL
 	cmp	x0, #CurrentEL_EL2
 	b.eq	init_el2
@@ -566,6 +571,7 @@ SYM_CODE_END(init_kernel_el)
  * in w0. See arch/arm64/include/asm/virt.h for more info.
  */
 SYM_CODE_START_LOCAL(set_cpu_boot_mode_flag)
+	UNWIND_HINT_EMPTY
 	adr_l	x1, __boot_cpu_mode
 	cmp	w0, #BOOT_CPU_MODE_EL2
 	b.ne	1f
@@ -609,6 +615,7 @@ SYM_DATA_END(__early_cpu_boot_status)
 	 * cores are held until we're ready for them to initialise.
 	 */
 SYM_CODE_START(secondary_holding_pen)
+	UNWIND_HINT_EMPTY
 	bl	init_kernel_el			// w0=cpu_boot_mode
 	bl	set_cpu_boot_mode_flag
 	mrs	x0, mpidr_el1
@@ -627,6 +634,7 @@ SYM_CODE_END(secondary_holding_pen)
 	 * be used where CPUs are brought online dynamically by the kernel.
 	 */
 SYM_CODE_START(secondary_entry)
+	UNWIND_HINT_EMPTY
 	bl	init_kernel_el			// w0=cpu_boot_mode
 	bl	set_cpu_boot_mode_flag
 	b	secondary_startup
@@ -646,6 +654,7 @@ SYM_CODE_START_LOCAL(secondary_startup)
 SYM_CODE_END(secondary_startup)
 
 SYM_CODE_START_LOCAL(__secondary_switched)
+	UNWIND_HINT_EMPTY
 	adr_l	x5, vectors
 	msr	vbar_el1, x5
 	isb
@@ -665,6 +674,7 @@ SYM_CODE_START_LOCAL(__secondary_switched)
 SYM_CODE_END(__secondary_switched)
 
 SYM_CODE_START_LOCAL(__secondary_too_slow)
+	UNWIND_HINT_EMPTY
 	wfe
 	wfi
 	b	__secondary_too_slow
@@ -701,6 +711,7 @@ SYM_CODE_END(__secondary_too_slow)
  * If it isn't, park the CPU
  */
 SYM_CODE_START(__enable_mmu)
+	UNWIND_HINT_EMPTY
 	mrs	x2, ID_AA64MMFR0_EL1
 	ubfx	x2, x2, #ID_AA64MMFR0_TGRAN_SHIFT, 4
 	cmp     x2, #ID_AA64MMFR0_TGRAN_SUPPORTED_MIN
@@ -722,6 +733,7 @@ SYM_CODE_START(__enable_mmu)
 SYM_CODE_END(__enable_mmu)
 
 SYM_CODE_START_LOCAL(__cpu_secondary_check52bitva)
+	UNWIND_HINT_EMPTY
 #ifdef CONFIG_ARM64_VA_BITS_52
 	ldr_l	x0, vabits_actual
 	cmp	x0, #52
@@ -753,6 +765,7 @@ SYM_CODE_END(__no_granule_support)
 
 #ifdef CONFIG_RELOCATABLE
 SYM_CODE_START_LOCAL(__relocate_kernel)
+	UNWIND_HINT_EMPTY
 	/*
 	 * Iterate over each entry in the relocation table, and apply the
 	 * relocations in place.
