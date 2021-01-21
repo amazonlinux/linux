@@ -322,8 +322,7 @@ SYM_FUNC_START(ftrace_graph_caller)
 	RET
 SYM_FUNC_END(ftrace_graph_caller)
 
-SYM_CODE_START(return_to_handler)
-	UNWIND_HINT_EMPTY
+SYM_FUNC_START(return_to_handler)
 	subq  $16, %rsp
 
 	/* Save the return values */
@@ -350,5 +349,5 @@ SYM_CODE_START(return_to_handler)
 	mov %rdi, (%rsp)
 	UNWIND_HINT_FUNC
 	RET
-SYM_CODE_END(return_to_handler)
+SYM_FUNC_END(return_to_handler)
 #endif
