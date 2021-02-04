@@ -759,7 +759,8 @@ static inline void netdev_rss_key_fill(void *buffer, size_t len)
 #define ENA_GENERIC_PM_OPS
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 5 ,0)
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(4, 5 ,0)) && \
+     !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3)))
 static inline int page_ref_count(struct page *page)
 {
 	return atomic_read(&page->_count);
@@ -771,8 +772,9 @@ static inline void page_ref_inc(struct page *page)
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)
-static inline struct page *dev_alloc_page()
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 18, 0)) && \
+     !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,2)))
+static inline struct page *dev_alloc_page(void)
 {
 	gfp_t gfp_mask = GFP_ATOMIC | __GFP_NOWARN;
 
