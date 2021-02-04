@@ -114,10 +114,11 @@ bool __init acpi_psci_present(void)
 }
 
 /* Whether HVC must be used instead of SMC as the PSCI conduit */
-bool __init acpi_psci_use_hvc(void)
+bool acpi_psci_use_hvc(void)
 {
 	return acpi_gbl_FADT.arm_boot_flags & ACPI_FADT_PSCI_USE_HVC;
 }
+EXPORT_SYMBOL_GPL(acpi_psci_use_hvc);
 
 /*
  * acpi_fadt_sanity_check() - Check FADT presence and carry out sanity
