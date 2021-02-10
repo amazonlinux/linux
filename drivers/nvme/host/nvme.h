@@ -146,6 +146,12 @@ enum nvme_quirks {
 	NVME_QUIRK_NO_NS_DESC_LIST		= (1 << 15),
 
 	/*
+	 * The controller does not properly handle DMA addresses over
+	 * 48 bits.
+	 */
+	NVME_QUIRK_DMA_ADDRESS_BITS_48		= (1 << 16),
+
+	/*
 	 * The controller requires the command_id value be be limited, so skip
 	 * encoding the generation sequence number.
 	 */
