@@ -11,7 +11,8 @@
 #include <linux/types.h>
 #include <asm/brk-imm.h>
 
-#include <asm/alternative.h>
+/* A64 instructions are always 32 bits. */
+#define AARCH64_INSN_SIZE	4
 
 /*
  * BRK instruction encoding
