@@ -27,6 +27,7 @@
 #include <linux/uaccess.h>
 #include <asm/irq.h>
 #include <asm/sections.h>
+#include <asm/patching.h>
 
 #include "decode-insn.h"
 
