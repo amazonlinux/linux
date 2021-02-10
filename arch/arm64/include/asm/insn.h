@@ -451,8 +451,6 @@ static inline bool aarch64_insn_is_barrier(u32 insn)
 	       aarch64_insn_is_pssbb(insn);
 }
 
-int aarch64_insn_read(void *addr, u32 *insnp);
-int aarch64_insn_write(void *addr, u32 insn);
 enum aarch64_insn_encoding_class aarch64_get_insn_class(u32 insn);
 bool aarch64_insn_uses_literal(u32 insn);
 bool aarch64_insn_is_branch(u32 insn);
@@ -588,9 +586,6 @@ u32 aarch64_insn_gen_dsb(enum aarch64_insn_mb_type type);
 
 s32 aarch64_get_branch_offset(u32 insn);
 u32 aarch64_set_branch_offset(u32 insn, s32 offset);
-
-int aarch64_insn_patch_text_nosync(void *addr, u32 insn);
-int aarch64_insn_patch_text(void *addrs[], u32 insns[], int cnt);
 
 s32 aarch64_insn_adrp_get_offset(u32 insn);
 u32 aarch64_insn_adrp_set_offset(u32 insn, s32 offset);
