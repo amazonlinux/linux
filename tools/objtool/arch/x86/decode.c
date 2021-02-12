@@ -83,14 +83,20 @@ unsigned long arch_jump_destination(struct instruction *insn)
  * 01 |  [r/m + d8]    |[S+d]|   [r/m + d8]  |
  * 10 |  [r/m + d32]   |[S+D]|   [r/m + d32] |
  * 11 |                   r/ m               |
- *
  */
+
+#define mod_is_mem()	(modrm_mod != 3)
+#define mod_is_reg()	(modrm_mod == 3)
+
 #define is_RIP()   ((modrm_rm & 7) == CFI_BP && modrm_mod == 0)
-#define have_SIB() ((modrm_rm & 7) == CFI_SP && modrm_mod != 3)
+#define have_SIB() ((modrm_rm & 7) == CFI_SP && mod_is_mem())
 
 #define rm_is(reg) (have_SIB() ? \
 		    sib_base == (reg) && sib_index == CFI_SP : \
 		    modrm_rm == (reg))
+
+#define rm_is_mem(reg)	(mod_is_mem() && !is_RIP() && rm_is(reg))
+#define rm_is_reg(reg)	(mod_is_reg() && modrm_rm == (reg))
 
 int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			    unsigned long offset, unsigned int maxlen,
@@ -155,7 +161,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 
 	case 0x1:
 	case 0x29:
-		if (rex_w && modrm_mod == 3 && modrm_rm == CFI_SP) {
+		if (rex_w && rm_is_reg(CFI_SP)) {
 
 			/* add/sub reg, %rsp */
 			ADD_OP(op) {
@@ -220,7 +226,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			break;
 
 		/* %rsp target only */
-		if (!(modrm_mod == 3 && modrm_rm == CFI_SP))
+		if (!rm_is_reg(CFI_SP))
 			break;
 
 		imm = insn.immediate.value;
@@ -273,7 +279,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 
 		if (modrm_reg == CFI_SP) {
 
-			if (modrm_mod == 3) {
+			if (mod_is_reg()) {
 				/* mov %rsp, reg */
 				ADD_OP(op) {
 					op->src.type = OP_SRC_REG;
@@ -309,7 +315,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			break;
 		}
 
-		if (modrm_mod == 3 && modrm_rm == CFI_SP) {
+		if (rm_is_reg(CFI_SP)) {
 
 			/* mov reg, %rsp */
 			ADD_OP(op) {
@@ -326,7 +332,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 		if (!rex_w)
 			break;
 
-		if ((modrm_mod == 1 || modrm_mod == 2) && modrm_rm == CFI_BP) {
+		if (rm_is_mem(CFI_BP)) {
 
 			/* mov reg, disp(%rbp) */
 			ADD_OP(op) {
@@ -339,7 +345,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			break;
 		}
 
-		if (modrm_mod != 3 && rm_is(CFI_SP)) {
+		if (rm_is_mem(CFI_SP)) {
 
 			/* mov reg, disp(%rsp) */
 			ADD_OP(op) {
@@ -358,7 +364,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 		if (!rex_w)
 			break;
 
-		if ((modrm_mod == 1 || modrm_mod == 2) && modrm_rm == CFI_BP) {
+		if (rm_is_mem(CFI_BP)) {
 
 			/* mov disp(%rbp), reg */
 			ADD_OP(op) {
@@ -371,7 +377,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 			break;
 		}
 
-		if (modrm_mod != 3 && rm_is(CFI_SP)) {
+		if (rm_is_mem(CFI_SP)) {
 
 			/* mov disp(%rsp), reg */
 			ADD_OP(op) {
@@ -387,7 +393,7 @@ int arch_decode_instruction(const struct elf *elf, const struct section *sec,
 		break;
 
 	case 0x8d:
-		if (modrm_mod == 3) {
+		if (mod_is_reg()) {
 			WARN("invalid LEA encoding at %s:0x%lx", sec->name, offset);
 			break;
 		}
