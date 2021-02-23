@@ -584,6 +584,16 @@ config HW_RANDOM_ROCKCHIP
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called rockchip-rng.
+config HW_RANDOM_GRAVITON
+	tristate "AWS Graviton Random Number Generator support"
+	depends on HW_RANDOM && ACPI && (ARM64 || COMPILE_TEST)
+	default HW_RANDOM
+	help
+	  This driver provides kernel-side support for the Random Number
+	  Generator SMC found on AWS Graviton systems.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called graviton-rng.
 
 	  If unsure, say Y.
 
