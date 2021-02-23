@@ -530,10 +530,7 @@
  */
 #define TEXT_TEXT							\
 		ALIGN_FUNCTION();					\
-		*(.text.hot .text.hot.*)				\
-		*(TEXT_MAIN .text.fixup)				\
-		*(.text.unlikely .text.unlikely.*)			\
-		*(.text.unknown .text.unknown.*)			\
+                *(.text.hot TEXT_MAIN .text.fixup .text.unlikely)       \
 		NOINSTR_TEXT						\
 		*(.text..refcount)					\
 		*(.ref.text)						\
