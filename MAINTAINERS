@@ -12967,6 +12967,14 @@ F:	drivers/reset/reset-hsdk.c
 F:	include/dt-bindings/reset/snps,hsdk-reset.h
 F:	Documentation/devicetree/bindings/reset/snps,hsdk-reset.txt
 
+SYSGENID
+M:	Adrian Catangiu <acatan@amazon.com>
+L:	linux-kernel@vger.kernel.org
+S:	Supported
+F:	Documentation/misc-devices/sysgenid.rst
+F:	drivers/misc/sysgenid.c
+F:	include/uapi/linux/sysgenid.h
+
 SYSTEM CONFIGURATION (SYSCON)
 M:	Lee Jones <lee.jones@linaro.org>
 M:	Arnd Bergmann <arnd@arndb.de>
