@@ -506,6 +506,21 @@ config PCI_ENDPOINT_TEST
            Enable this configuration option to enable the host side test driver
            for PCI Endpoint.
 
+config SYSGENID
+	tristate "System Generation ID driver"
+	help
+	  This is a System Generation ID driver which provides a system
+	  generation counter. The driver exposes FS ops on /dev/sysgenid
+	  through which it can provide information and notifications on system
+	  generation changes that happen because of VM or container snapshots
+	  or cloning.
+	  This enables applications and libraries that store or cache
+	  sensitive information, to know that they need to regenerate it
+	  after process memory has been exposed to potential copying.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called sysgenid.
+
 source "drivers/misc/c2port/Kconfig"
 source "drivers/misc/eeprom/Kconfig"
 source "drivers/misc/cb710/Kconfig"
