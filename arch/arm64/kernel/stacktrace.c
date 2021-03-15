@@ -252,7 +252,7 @@ static void notrace unwind(struct unwind_state *state, int *reliable,
 		if (!consume_entry(cookie, state->pc))
 			break;
 		ret = unwind_next(state, reliable);
-		if (ret < 0)
+		if ((ret < 0) || (reliable && !(*reliable)))
 			break;
 	}
 }
@@ -354,4 +354,43 @@ noinline noinstr void arch_stack_walk(stack_trace_consume_fn consume_entry,
 	}
 
 	unwind(&state, NULL, consume_entry, cookie);
+}
+
+/*
+ * Walk the stack like arch_stack_walk() but stop the walk as soon as
+ * some unreliability is detected in the stack.
+ */
+noinline noinstr int arch_stack_walk_reliable(
+				stack_trace_consume_fn consume_entry,
+				void *cookie, struct task_struct *task)
+{
+	struct stack_info stacks[] = {
+		stackinfo_get_task(task),
+		STACKINFO_CPU(irq),
+#if defined(CONFIG_VMAP_STACK)
+		STACKINFO_CPU(overflow),
+#endif
+#if defined(CONFIG_VMAP_STACK) && defined(CONFIG_ARM_SDE_INTERFACE)
+		STACKINFO_SDEI(normal),
+		STACKINFO_SDEI(critical),
+#endif
+#ifdef CONFIG_EFI
+		STACKINFO_EFI,
+#endif
+	};
+	struct unwind_state state = {
+		.stacks = stacks,
+		.nr_stacks = ARRAY_SIZE(stacks),
+	};
+	int reliable = 1;
+
+	if (task == current) {
+		unwind_init_from_caller(&state);
+	} else {
+		unwind_init_from_task(&state, task);
+	}
+
+	unwind(&state, &reliable, consume_entry, cookie);
+
+	return reliable ? 0 : -EINVAL;
 }
