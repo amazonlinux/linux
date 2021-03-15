@@ -358,4 +358,39 @@ noinline notrace void arch_stack_walk(stack_trace_consume_fn consume_entry,
 	walk_stackframe(task, &frame, consume_entry, cookie);
 }
 
+/*
+ * Walk the stack like arch_stack_walk() but stop the walk as soon as
+ * some unreliability is detected in the stack.
+ */
+int arch_stack_walk_reliable(stack_trace_consume_fn consume_entry,
+			      void *cookie, struct task_struct *task)
+{
+	struct stackframe frame;
+	int ret = 0;
+
+	if (task == current) {
+		start_backtrace(&frame,
+				(unsigned long)__builtin_frame_address(0),
+				(unsigned long)arch_stack_walk_reliable);
+	} else {
+		/*
+		 * The task must not be running anywhere for the duration of
+		 * arch_stack_walk_reliable(). The caller must guarantee
+		 * this.
+		 */
+		start_backtrace(&frame, thread_saved_fp(task),
+				thread_saved_pc(task));
+	}
+
+	while (!ret) {
+		if (!frame.reliable)
+			return -EINVAL;
+		if (!consume_entry(cookie, frame.pc))
+			return -EINVAL;
+		ret = unwind_frame(task, &frame);
+	}
+
+	return ret == -ENOENT ? 0 : -EINVAL;
+}
+
 #endif
