@@ -146,6 +146,15 @@ BPF_CALL_3(bpf_probe_read, void *, dst, u32, size, const void *, unsafe_ptr)
 {
 	int ret;
 
+#ifdef CONFIG_ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
+	if ((unsigned long)unsafe_ptr < TASK_SIZE) {
+		ret = probe_user_read(dst, unsafe_ptr, size);
+		if (unlikely(ret < 0))
+			goto out;
+		return ret;
+	}
+#endif
+
 	ret = security_locked_down(LOCKDOWN_BPF_READ);
 	if (ret < 0)
 		goto out;
@@ -619,6 +628,15 @@ BPF_CALL_3(bpf_probe_read_str, void *, dst, u32, size,
 	   const void *, unsafe_ptr)
 {
 	int ret;
+
+#ifdef CONFIG_ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
+	if ((unsigned long)unsafe_ptr < TASK_SIZE) {
+		ret = strncpy_from_unsafe_user(dst, (__force void __user *)unsafe_ptr, size);
+		if (unlikely(ret < 0))
+			goto out;
+		return ret;
+	}
+#endif
 
 	ret = security_locked_down(LOCKDOWN_BPF_READ);
 	if (ret < 0)
