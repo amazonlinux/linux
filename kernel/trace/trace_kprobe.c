@@ -1050,6 +1050,11 @@ fetch_store_strlen(unsigned long addr)
 	int ret, len = 0;
 	u8 c;
 
+#ifdef CONFIG_ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
+	if (addr < TASK_SIZE)
+		return fetch_store_strlen_user(addr);
+#endif
+
 	do {
 		ret = probe_kernel_read(&c, (u8 *)addr + len, 1);
 		len++;
@@ -1077,6 +1082,11 @@ fetch_store_string(unsigned long addr, void *dest, void *base)
 	int maxlen = get_loc_len(*(u32 *)dest);
 	void *__dest;
 	long ret;
+
+#ifdef CONFIG_ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
+	if (addr < TASK_SIZE)
+		return fetch_store_string_user(addr, dest, base);
+#endif
 
 	if (unlikely(!maxlen))
 		return -ENOMEM;
@@ -1121,6 +1131,11 @@ fetch_store_string_user(unsigned long addr, void *dest, void *base)
 static nokprobe_inline int
 probe_mem_read(void *dest, void *src, size_t size)
 {
+#ifdef CONFIG_ARCH_HAS_NON_OVERLAPPING_ADDRESS_SPACE
+	if ((unsigned long)src < TASK_SIZE)
+		return probe_mem_read_user(dest, src, size);
+#endif
+
 	return probe_kernel_read(dest, src, size);
 }
 
