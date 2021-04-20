@@ -298,7 +298,7 @@ void lsm_free_plain(struct lov_stripe_md *lsm);
 void dump_lsm(unsigned int level, const struct lov_stripe_md *lsm);
 
 /* lproc_lov.c */
-extern struct file_operations lov_proc_target_fops;
+extern const struct proc_ops lov_proc_target_fops;
 #ifdef CONFIG_PROC_FS
 extern struct lprocfs_vars lprocfs_lov_obd_vars[];
 #endif
