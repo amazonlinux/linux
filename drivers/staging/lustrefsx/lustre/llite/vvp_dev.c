@@ -646,10 +646,10 @@ static int vvp_dump_pgcache_seq_open(struct inode *inode, struct file *filp)
 	return result;
 }
 
-const struct file_operations vvp_dump_pgcache_file_ops = {
-        .owner   = THIS_MODULE,
-        .open    = vvp_dump_pgcache_seq_open,
-        .read    = seq_read,
-        .llseek	 = seq_lseek,
-        .release = seq_release,
+const struct proc_ops vvp_dump_pgcache_file_ops = {
+	PROC_OWNER(THIS_MODULE)
+        .proc_open    = vvp_dump_pgcache_seq_open,
+        .proc_read    = seq_read,
+        .proc_lseek   = seq_lseek,
+        .proc_release = seq_release,
 };
