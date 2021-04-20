@@ -144,4 +144,7 @@ static inline void *__container_of(const void *ptr, unsigned long shift)
 
 #endif /* __KERNEL__ */
 
+/* atomic-context safe vfree */
+void libcfs_vfree_atomic(const void *addr);
+
 #endif /* _LIBCFS_LIBCFS_H_ */
