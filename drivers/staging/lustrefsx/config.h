@@ -292,8 +292,11 @@
 /* filldir_t needs struct dir_context as argument */
 #define HAVE_FILLDIR_USE_CTX 1
 
+/* FMR pool API is available */
+#define HAVE_FMR_POOL_API 1
+
 /* fpu/api.h is present */
-/* #undef HAVE_FPU_API_HEADER */
+#define HAVE_FPU_API_HEADER 1
 
 /* struct file_system_type has mount field */
 #define HAVE_FSTYPE_MOUNT 1
@@ -466,8 +469,14 @@
 /* i_uid_read is present */
 #define HAVE_I_UID_READ 1
 
+/* jiffies_to_timespec64() is available */
+#define HAVE_JIFFIES_TO_TIMESPEC64 1
+
 /* kernel_locked is defined */
 /* #undef HAVE_KERNEL_LOCKED */
+
+/* kernel_setsockopt still in use */
+#define HAVE_KERNEL_SETSOCKOPT 1
 
 /* 'struct sock' accept function requires bool argument */
 #define HAVE_KERN_SOCK_ACCEPT_FLAG_ARG 1
@@ -618,6 +627,9 @@
 /* kernel has include/linux/migrate_mode.h */
 /* #undef HAVE_MIGRATE_MODE_H */
 
+/* mmap_lock API is available. */
+/* #undef HAVE_MMAP_LOCK */
+
 /* kernel module loading is possible */
 #define HAVE_MODULE_LOADING_SUPPORT 1
 
@@ -633,6 +645,9 @@
 /* 'kernel_write' aligns with read/write helpers */
 #define HAVE_NEW_KERNEL_WRITE 1
 
+/* NR_UNSTABLE_NFS is still in use. */
+#define HAVE_NR_UNSTABLE_NFS 1
+
 /* with oldsize */
 /* #undef HAVE_OLDSIZE_TRUNCATE_PAGECACHE */
 
@@ -643,7 +658,7 @@
 #define HAVE_PAGEVEC_INIT_ONE_PARAM 1
 
 /* have PCLMULQDQ instruction */
-/* #undef HAVE_PCLMULQDQ */
+#define HAVE_PCLMULQDQ 1
 
 /* percpu_counter_init uses GFP_* flag */
 #define HAVE_PERCPU_COUNTER_INIT_GFP_FLAG 1
@@ -659,6 +674,9 @@
 
 /* posix_acl_valid takes struct user_namespace */
 #define HAVE_POSIX_ACL_VALID_USER_NS 1
+
+/* struct proc_ops exists */
+/* #undef HAVE_PROC_OPS */
 
 /* proc_remove is defined */
 #define HAVE_PROC_REMOVE 1
@@ -680,6 +698,9 @@
 
 /* rdma_create_id wants 5 args */
 #define HAVE_RDMA_CREATE_ID_5ARG 1
+
+/* rdma_reject has 4 arguments */
+/* #undef HAVE_RDMA_REJECT_4ARGS */
 
 /* reinit_completion is exist */
 #define HAVE_REINIT_COMPLETION 1
@@ -715,10 +736,10 @@
 /* #undef HAVE_SECURITY_IINITSEC_QSTR */
 
 /* support for selinux */
-/* #undef HAVE_SELINUX */
+#define HAVE_SELINUX 1
 
 /* Define to 1 if you have the <selinux/selinux.h> header file. */
-/* #undef HAVE_SELINUX_SELINUX_H */
+#define HAVE_SELINUX_SELINUX_H 1
 
 /* support server */
 /* #undef HAVE_SERVER_SUPPORT */
@@ -747,12 +768,6 @@
 
 /* kernel has sk_sleep */
 #define HAVE_SK_SLEEP 1
-
-/* sock_alloc_file is exported */
-/* #undef HAVE_SOCK_ALLOC_FILE */
-
-/* sock_alloc_file takes 3 arguments */
-#define HAVE_SOCK_ALLOC_FILE_3ARGS 1
 
 /* sock_create_kern use net as first parameter */
 #define HAVE_SOCK_CREATE_KERN_USE_NET 1
@@ -844,6 +859,9 @@
 /* 'timespec64_to_ktime' is available */
 #define HAVE_TIMESPEC64_TO_KTIME 1
 
+/* have_time_t */
+#define HAVE_TIME_T 1
+
 /* topology_sibling_cpumask is available */
 #define HAVE_TOPOLOGY_SIBLING_CPUMASK 1
 
@@ -876,6 +894,9 @@
 
 /* kernel has vfs_unlink with 3 args */
 #define HAVE_VFS_UNLINK_3ARGS 1
+
+/* __vmalloc only takes 2 args. */
+/* #undef HAVE_VMALLOC_2ARGS */
 
 /* virtual_address has been replaced by address field */
 #define HAVE_VM_FAULT_ADDRESS 1
@@ -960,10 +981,10 @@
 #define MKE2FS "mke2fs"
 
 /* need pclmulqdq based crc32c */
-#define NEED_CRC32C_ACCEL 1
+/* #undef NEED_CRC32C_ACCEL */
 
 /* need pclmulqdq based crc32 */
-#define NEED_CRC32_ACCEL 1
+/* #undef NEED_CRC32_ACCEL */
 
 /* 'ktime_get_real_ns' is not available */
 /* #undef NEED_KTIME_GET_REAL_NS */
@@ -994,6 +1015,9 @@
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
+
+/* proc handler methods use __user */
+#define PROC_HANDLER_USE_USER_ATTR 1
 
 /* enable randomly alloc failure */
 #define RANDOM_FAIL_ALLOC 1
