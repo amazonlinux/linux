@@ -143,6 +143,25 @@ static inline struct timespec timespec64_to_timespec(const struct timespec64 ts6
 
 #endif /* HAVE_TIMESPEC64 */
 
+#ifndef HAVE_TIME_T
+typedef __kernel_old_time_t time_t;
+#endif
+
+#ifndef HAVE_JIFFIES_TO_TIMESPEC64
+static inline void
+jiffies_to_timespec64(const unsigned long jiffies, struct timespec64 *value)
+{
+	/*
+	 * Convert jiffies to nanoseconds and separate with
+	 * one divide.
+	 */
+	u32 rem;
+	value->tv_sec = div_u64_rem((u64)jiffies * TICK_NSEC,
+					NSEC_PER_SEC, &rem);
+	value->tv_nsec = rem;
+}
+#endif
+
 #ifndef HAVE_KTIME_ADD
 # define ktime_add(lhs, rhs) ({ (ktime_t){ .tv64 = (lhs).tv64 + (rhs).tv64 }; })
 #endif /* !HAVE_KTIME_ADD */
