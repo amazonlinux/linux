@@ -515,7 +515,7 @@ static ssize_t lprocfs_jobstats_seq_write(struct file *file,
 	if (stats->ojs_hash == NULL)
 		return -ENODEV;
 
-	if (copy_from_user(jobid, buf, len))
+	if (lprocfs_copy_from_user(file, jobid, buf, len))
 		return -EFAULT;
 	jobid[len] = 0;
 
@@ -564,13 +564,13 @@ static int lprocfs_jobstats_seq_release(struct inode *inode, struct file *file)
 	return lprocfs_seq_release(inode, file);
 }
 
-static const struct file_operations lprocfs_jobstats_seq_fops = {
-	.owner   = THIS_MODULE,
-	.open    = lprocfs_jobstats_seq_open,
-	.read    = seq_read,
-	.write   = lprocfs_jobstats_seq_write,
-	.llseek  = seq_lseek,
-	.release = lprocfs_jobstats_seq_release,
+static const struct proc_ops lprocfs_jobstats_seq_fops = {
+	PROC_OWNER(THIS_MODULE)
+	.proc_open	= lprocfs_jobstats_seq_open,
+	.proc_read	= seq_read,
+	.proc_write	= lprocfs_jobstats_seq_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= lprocfs_jobstats_seq_release,
 };
 
 int lprocfs_job_stats_init(struct obd_device *obd, int cntr_num,
@@ -656,7 +656,7 @@ lprocfs_job_interval_seq_write(struct file *file, const char __user *buffer,
 
 	stats = &obd->u.obt.obt_jobstats;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > UINT_MAX)
