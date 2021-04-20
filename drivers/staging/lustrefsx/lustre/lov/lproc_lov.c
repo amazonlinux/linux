@@ -62,7 +62,7 @@ static ssize_t lov_stripesize_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0)
@@ -97,7 +97,7 @@ static ssize_t lov_stripeoffset_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < -1)
@@ -131,7 +131,7 @@ static ssize_t lov_stripetype_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < INT_MIN || val > INT_MAX)
@@ -169,7 +169,7 @@ static ssize_t lov_stripecount_seq_write(struct file *file,
 
 	LASSERT(dev != NULL);
 	desc = &dev->u.lov.desc;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < -1)
@@ -322,11 +322,11 @@ struct lprocfs_vars lprocfs_lov_obd_vars[] = {
 	{ NULL }
 };
 
-struct file_operations lov_proc_target_fops = {
-        .owner   = THIS_MODULE,
-        .open    = lov_target_seq_open,
-        .read    = seq_read,
-        .llseek  = seq_lseek,
-        .release = lprocfs_seq_release,
+const struct proc_ops lov_proc_target_fops = {
+	PROC_OWNER(THIS_MODULE)
+	.proc_open	= lov_target_seq_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= lprocfs_seq_release,
 };
 #endif /* CONFIG_PROC_FS */
