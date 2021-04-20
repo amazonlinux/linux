@@ -328,6 +328,6 @@ struct lu_object *vvp_object_alloc(const struct lu_env *env,
 int vvp_global_init(void);
 void vvp_global_fini(void);
 
-extern const struct file_operations vvp_dump_pgcache_file_ops;
+extern const struct proc_ops vvp_dump_pgcache_file_ops;
 
 #endif /* VVP_INTERNAL_H */
