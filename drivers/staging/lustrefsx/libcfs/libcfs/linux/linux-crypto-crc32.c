@@ -63,10 +63,8 @@ static int crc32_setkey(struct crypto_shash *hash, const u8 *key,
 {
 	u32 *mctx = crypto_shash_ctx(hash);
 
-	if (keylen != sizeof(u32)) {
-		crypto_shash_set_flags(hash, CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (keylen != sizeof(u32))
 		return -EINVAL;
-	}
 	*mctx = le32_to_cpup((__le32 *)key);
 	return 0;
 }
@@ -130,9 +128,10 @@ static struct shash_alg alg = {
 		.cra_name		= "crc32",
 		.cra_driver_name	= "crc32-table",
 		.cra_priority		= 100,
+		.cra_flags		= CRYPTO_ALG_OPTIONAL_KEY,
 		.cra_blocksize		= CHKSUM_BLOCK_SIZE,
 		.cra_ctxsize		= sizeof(u32),
-		.cra_module		= THIS_MODULE,
+		.cra_module		= NULL,
 		.cra_init		= crc32_cra_init,
 	}
 };
