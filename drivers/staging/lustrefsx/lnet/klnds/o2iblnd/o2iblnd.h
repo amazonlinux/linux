@@ -71,7 +71,9 @@
 #include <rdma/rdma_cm.h>
 #include <rdma/ib_cm.h>
 #include <rdma/ib_verbs.h>
+#ifdef HAVE_FMR_POOL_API
 #include <rdma/ib_fmr_pool.h>
+#endif
 
 #define DEBUG_SUBSYSTEM S_LND
 
@@ -334,24 +336,30 @@ typedef struct
 	struct list_head	fpo_list;	/* chain on pool list */
 	struct kib_hca_dev     *fpo_hdev;	/* device for this pool */
 	kib_fmr_poolset_t      *fpo_owner;	/* owner of this pool */
+#ifdef HAVE_FMR_POOL_API
 	union {
 		struct {
 			struct ib_fmr_pool *fpo_fmr_pool; /* IB FMR pool */
 		} fmr;
+#endif
 		struct { /* For fast registration */
 			struct list_head  fpo_pool_list;
 			int		  fpo_pool_size;
 		} fast_reg;
+#ifdef HAVE_FMR_POOL_API
 	};
+	int			fpo_is_fmr;
+#endif
 	cfs_time_t		fpo_deadline;	/* deadline of this pool */
 	int			fpo_failed;	/* fmr pool is failed */
 	int			fpo_map_count;	/* # of mapped FMR */
-	int			fpo_is_fmr;
 } kib_fmr_pool_t;
 
 typedef struct {
 	kib_fmr_pool_t			*fmr_pool;	/* pool of FMR */
+#ifdef HAVE_FMR_POOL_API
 	struct ib_pool_fmr		*fmr_pfmr;	/* IB pool fmr */
+#endif /* HAVE_FMR_POOL_API */
 	struct kib_fast_reg_descriptor	*fmr_frd;
 	u32				 fmr_key;
 } kib_fmr_t;

@@ -309,7 +309,7 @@ ptlrpc_lprocfs_req_history_max_seq_write(struct file *file,
 	__s64 val;
 	int rc;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -356,7 +356,7 @@ ptlrpc_lprocfs_threads_min_seq_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct ptlrpc_service *svc = m->private;
 	__s64 val;
-	int rc = lprocfs_str_to_s64(buffer, count, &val);
+	int rc = lprocfs_str_to_s64(file, buffer, count, &val);
 
 	if (rc < 0)
 		return rc;
@@ -412,7 +412,7 @@ ptlrpc_lprocfs_threads_max_seq_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct ptlrpc_service *svc = m->private;
 	__s64 val;
-	int rc = lprocfs_str_to_s64(buffer, count, &val);
+	int rc = lprocfs_str_to_s64(file, buffer, count, &val);
 
 	if (rc < 0)
 		return rc;
@@ -692,7 +692,7 @@ ptlrpc_lprocfs_nrs_seq_write(struct file *file, const char __user *buffer,
 	 */
 	cmd_copy = cmd;
 
-	if (copy_from_user(cmd, buffer, count))
+	if (lprocfs_copy_from_user(file, cmd, buffer, count))
 		GOTO(out, rc = -EFAULT);
 
 	cmd[count] = '\0';
@@ -1084,7 +1084,7 @@ ptlrpc_lprocfs_hp_ratio_seq_write(struct file *file, const char __user *buffer,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -1129,12 +1129,12 @@ void ptlrpc_lprocfs_register_service(struct proc_dir_entry *entry,
 		  .data = svc },
 		{ NULL }
         };
-        static struct file_operations req_history_fops = {
-                .owner       = THIS_MODULE,
-                .open        = ptlrpc_lprocfs_svc_req_history_open,
-                .read        = seq_read,
-                .llseek      = seq_lseek,
-                .release     = lprocfs_seq_release,
+        static struct proc_ops req_history_fops = {
+		PROC_OWNER(THIS_MODULE)
+                .proc_open    = ptlrpc_lprocfs_svc_req_history_open,
+                .proc_read    = seq_read,
+                .proc_lseek   = seq_lseek,
+                .proc_release = lprocfs_seq_release,
         };
 
         int rc;
@@ -1279,7 +1279,7 @@ lprocfs_import_seq_write(struct file *file, const char __user *buffer,
 	if (kbuf == NULL)
 		return -ENOMEM;
 
-	if (copy_from_user(kbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kbuf, buffer, count))
 		GOTO(out, count = -EFAULT);
 
 	kbuf[count] = 0;
@@ -1345,7 +1345,7 @@ lprocfs_pinger_recov_seq_write(struct file *file, const char __user *buffer,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
