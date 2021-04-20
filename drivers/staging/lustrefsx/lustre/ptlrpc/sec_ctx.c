@@ -37,13 +37,8 @@
 /* Debugging check only needed during development */
 #ifdef OBD_CTXT_DEBUG
 # define ASSERT_CTXT_MAGIC(magic) LASSERT((magic) == OBD_RUN_CTXT_MAGIC)
-# define ASSERT_NOT_KERNEL_CTXT(msg) LASSERTF(!segment_eq(get_fs(), KERNEL_DS),\
-					      msg)
-# define ASSERT_KERNEL_CTXT(msg) LASSERTF(segment_eq(get_fs(), KERNEL_DS), msg)
 #else
 # define ASSERT_CTXT_MAGIC(magic) do {} while(0)
-# define ASSERT_NOT_KERNEL_CTXT(msg) do {} while(0)
-# define ASSERT_KERNEL_CTXT(msg) do {} while(0)
 #endif
 
 /* push / pop to root of obd store */
@@ -53,11 +48,9 @@ void push_ctxt(struct lvfs_run_ctxt *save, struct lvfs_run_ctxt *new_ctx)
 	if (new_ctx->dt != NULL)
 		return;
 
-	//ASSERT_NOT_KERNEL_CTXT("already in kernel context!\n");
 	ASSERT_CTXT_MAGIC(new_ctx->magic);
 	OBD_SET_CTXT_MAGIC(save);
 
-	save->fs = get_fs();
 	LASSERT(ll_d_count(current->fs->pwd.dentry));
 	LASSERT(ll_d_count(new_ctx->pwd));
 	save->pwd = dget(current->fs->pwd.dentry);
@@ -70,7 +63,6 @@ void push_ctxt(struct lvfs_run_ctxt *save, struct lvfs_run_ctxt *new_ctx)
 	LASSERT(new_ctx->pwdmnt);
 
 	current->fs->umask = 0; /* umask already applied on client */
-	set_fs(new_ctx->fs);
 	ll_set_fs_pwd(current->fs, new_ctx->pwdmnt, new_ctx->pwd);
 }
 EXPORT_SYMBOL(push_ctxt);
@@ -82,14 +74,12 @@ void pop_ctxt(struct lvfs_run_ctxt *saved, struct lvfs_run_ctxt *new_ctx)
 		return;
 
 	ASSERT_CTXT_MAGIC(saved->magic);
-	ASSERT_KERNEL_CTXT("popping non-kernel context!\n");
 
 	LASSERTF(current->fs->pwd.dentry == new_ctx->pwd, "%p != %p\n",
 		 current->fs->pwd.dentry, new_ctx->pwd);
 	LASSERTF(current->fs->pwd.mnt == new_ctx->pwdmnt, "%p != %p\n",
 		 current->fs->pwd.mnt, new_ctx->pwdmnt);
 
-	set_fs(saved->fs);
 	ll_set_fs_pwd(current->fs, saved->pwdmnt, saved->pwd);
 
 	dput(saved->pwd);
