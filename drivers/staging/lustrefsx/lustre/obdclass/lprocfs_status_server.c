@@ -79,7 +79,7 @@ lprocfs_evict_client_seq_write(struct file *file, const char __user *buffer,
 	 * bytes into kbuf, to ensure that the string is NUL-terminated.
 	 * UUID_MAX should include a trailing NUL already.
 	 */
-	if (copy_from_user(kbuf, buffer,
+	if (lprocfs_copy_from_user(file, kbuf, buffer,
 			   min_t(unsigned long, BUFLEN - 1, count))) {
 		count = -EFAULT;
 		goto out;
@@ -683,7 +683,7 @@ lprocfs_ir_factor_seq_write(struct file *file, const char __user *buffer,
 	__s64 val;
 
 	LASSERT(obd != NULL);
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -715,7 +715,7 @@ lprocfs_checksum_dump_seq_write(struct file *file, const char __user *buffer,
 	__s64 val;
 
 	LASSERT(obd != NULL);
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -745,7 +745,7 @@ lprocfs_recovery_time_soft_seq_write(struct file *file,
 	__s64 val;
 
 	LASSERT(obd != NULL);
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > INT_MAX)
@@ -777,7 +777,7 @@ lprocfs_recovery_time_hard_seq_write(struct file *file,
 	__s64 val;
 
 	LASSERT(obd != NULL);
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > INT_MAX)
