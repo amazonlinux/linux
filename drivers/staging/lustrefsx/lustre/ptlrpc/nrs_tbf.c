@@ -2965,7 +2965,7 @@ ptlrpc_lprocfs_nrs_tbf_rule_seq_write(struct file *file,
 	if (count > LPROCFS_WR_NRS_TBF_MAX_CMD - 1)
 		GOTO(out_free_kernbuff, rc = -EINVAL);
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		GOTO(out_free_kernbuff, rc = -EFAULT);
 
 	val = kernbuf;
