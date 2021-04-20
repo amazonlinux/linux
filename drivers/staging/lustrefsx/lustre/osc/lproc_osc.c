@@ -58,7 +58,7 @@ static ssize_t osc_active_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > 1)
@@ -96,7 +96,7 @@ static ssize_t osc_max_rpcs_in_flight_seq_write(struct file *file,
 	int adding, added, req_count;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 1 || val > OSC_MAX_RIF_MAX)
@@ -152,7 +152,8 @@ static ssize_t osc_max_dirty_mb_seq_write(struct file *file,
 	int rc;
 	__s64 pages_number;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &pages_number, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count,
+			&pages_number, 'M');
 	if (rc)
 		return rc;
 
@@ -203,13 +204,14 @@ osc_cached_mb_seq_write(struct file *file, const char __user *buffer,
 	if (count >= sizeof(kernbuf))
 		return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 	kernbuf[count] = 0;
 
 	buffer += lprocfs_find_named_value(kernbuf, "used_mb:", &count) -
 		  kernbuf;
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &pages_number, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count,
+			&pages_number, 'M');
 	if (rc)
 		return rc;
 
@@ -269,7 +271,7 @@ static ssize_t osc_cur_grant_bytes_seq_write(struct file *file,
 	if (obd == NULL)
 		return 0;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &val, '1');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count, &val, '1');
 	if (rc)
 		return rc;
 	if (val < 0)
@@ -340,7 +342,7 @@ static ssize_t osc_grant_shrink_interval_seq_write(struct file *file,
 	if (obd == NULL)
 		return 0;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -375,7 +377,7 @@ static ssize_t osc_checksum_seq_write(struct file *file,
 	if (obd == NULL)
 		return 0;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -420,7 +422,7 @@ static ssize_t osc_checksum_type_seq_write(struct file *file,
 
         if (count > sizeof(kernbuf) - 1)
                 return -EINVAL;
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
                 return -EFAULT;
         if (count > 0 && kernbuf[count - 1] == '\n')
                 kernbuf[count - 1] = '\0';
@@ -455,7 +457,7 @@ static ssize_t osc_resend_count_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -491,7 +493,7 @@ static ssize_t osc_checksum_dump_seq_write(struct file *file,
 	if (obd == NULL)
 		return 0;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -519,7 +521,7 @@ static ssize_t osc_contention_seconds_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > INT_MAX)
@@ -549,7 +551,7 @@ static ssize_t osc_lockless_truncate_seq_write(struct file *file,
 	int rc;
 	__s64 val;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0)
