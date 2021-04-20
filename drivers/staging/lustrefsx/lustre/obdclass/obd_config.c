@@ -1290,7 +1290,7 @@ int class_process_proc_param(char *prefix, struct lprocfs_vars *lvars,
 			     struct lustre_cfg *lcfg, void *data)
 {
 	struct lprocfs_vars *var;
-	struct file fakefile;
+	struct file fakefile = {};
 	struct seq_file fake_seqfile;
 	char *key, *sval;
 	int i, keylen, vallen;
@@ -1304,7 +1304,8 @@ int class_process_proc_param(char *prefix, struct lprocfs_vars *lvars,
 		RETURN(-EINVAL);
 	}
 
-	/* fake a seq file so that var->fops->write can work... */
+	/* fake a seq file so that var->fops->proc_write can work... */
+	lprocfs_file_set_kernel(&fakefile);
 	fakefile.private_data = &fake_seqfile;
 	fake_seqfile.private = data;
 	/* e.g. tunefs.lustre --param mdt.group_upcall=foo /r/tmp/lustre-mdt
@@ -1338,13 +1339,11 @@ int class_process_proc_param(char *prefix, struct lprocfs_vars *lvars,
 				matched++;
 				rc = -EROFS;
 
-				if (var->fops && var->fops->write) {
-					mm_segment_t oldfs;
-					oldfs = get_fs();
-					set_fs(KERNEL_DS);
-					rc = (var->fops->write)(&fakefile, sval,
-								vallen, NULL);
-					set_fs(oldfs);
+				if (var->fops && var->fops->proc_write) {
+					rc = (var->fops->proc_write)(&fakefile,
+								     sval,
+								     vallen,
+								     NULL);
 				}
 				break;
 			}

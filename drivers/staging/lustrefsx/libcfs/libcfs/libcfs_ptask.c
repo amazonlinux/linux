@@ -87,7 +87,6 @@ static void cfs_ptask_complete(struct padata_priv *padata)
 static void cfs_ptask_execute(struct padata_priv *padata)
 {
 	struct cfs_ptask *ptask = cfs_padata2ptask(padata);
-	mm_segment_t old_fs = get_fs();
 	bool bh_enabled = false;
 
 	if (!cfs_ptask_is_atomic(ptask)) {
@@ -96,8 +95,7 @@ static void cfs_ptask_execute(struct padata_priv *padata)
 	}
 
 	if (cfs_ptask_use_user_mm(ptask) && ptask->pt_mm != NULL) {
-		use_mm(ptask->pt_mm);
-		set_fs(ptask->pt_fs);
+		kthread_use_mm(ptask->pt_mm);
 	}
 
 	if (ptask->pt_cbfunc != NULL)
@@ -106,8 +104,7 @@ static void cfs_ptask_execute(struct padata_priv *padata)
 		ptask->pt_result = -ENOSYS;
 
 	if (cfs_ptask_use_user_mm(ptask) && ptask->pt_mm != NULL) {
-		set_fs(old_fs);
-		unuse_mm(ptask->pt_mm);
+		kthread_unuse_mm(ptask->pt_mm);
 		mmput(ptask->pt_mm);
 		ptask->pt_mm = NULL;
 	}
@@ -132,7 +129,6 @@ static int cfs_do_parallel(struct cfs_ptask_engine *engine,
 
 	if (cfs_ptask_use_user_mm(ptask)) {
 		ptask->pt_mm = get_task_mm(current);
-		ptask->pt_fs = get_fs();
 	}
 	ptask->pt_result = -EINPROGRESS;
 
@@ -230,7 +226,6 @@ int cfs_ptask_init(struct cfs_ptask *ptask, cfs_ptask_cb_t cbfunc, void *cbdata,
 	ptask->pt_flags  = flags;
 	ptask->pt_cbcpu  = cpu;
 	ptask->pt_mm     = NULL; /* will be set in cfs_do_parallel() */
-	ptask->pt_fs     = get_fs();
 	ptask->pt_cbfunc = cbfunc;
 	ptask->pt_cbdata = cbdata;
 	ptask->pt_result = -EAGAIN;
