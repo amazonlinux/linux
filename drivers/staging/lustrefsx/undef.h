@@ -290,6 +290,9 @@
 /* filldir_t needs struct dir_context as argument */
 #undef HAVE_FILLDIR_USE_CTX
 
+/* FMR pool API is available */
+#undef HAVE_FMR_POOL_API
+
 /* fpu/api.h is present */
 #undef HAVE_FPU_API_HEADER
 
@@ -464,8 +467,14 @@
 /* i_uid_read is present */
 #undef HAVE_I_UID_READ
 
+/* jiffies_to_timespec64() is available */
+#undef HAVE_JIFFIES_TO_TIMESPEC64
+
 /* kernel_locked is defined */
 #undef HAVE_KERNEL_LOCKED
+
+/* kernel_setsockopt still in use */
+#undef HAVE_KERNEL_SETSOCKOPT
 
 /* 'struct sock' accept function requires bool argument */
 #undef HAVE_KERN_SOCK_ACCEPT_FLAG_ARG
@@ -616,6 +625,9 @@
 /* kernel has include/linux/migrate_mode.h */
 #undef HAVE_MIGRATE_MODE_H
 
+/* mmap_lock API is available. */
+#undef HAVE_MMAP_LOCK
+
 /* kernel module loading is possible */
 #undef HAVE_MODULE_LOADING_SUPPORT
 
@@ -630,6 +642,9 @@
 
 /* 'kernel_write' aligns with read/write helpers */
 #undef HAVE_NEW_KERNEL_WRITE
+
+/* NR_UNSTABLE_NFS is still in use. */
+#undef HAVE_NR_UNSTABLE_NFS
 
 /* with oldsize */
 #undef HAVE_OLDSIZE_TRUNCATE_PAGECACHE
@@ -658,6 +673,9 @@
 /* posix_acl_valid takes struct user_namespace */
 #undef HAVE_POSIX_ACL_VALID_USER_NS
 
+/* struct proc_ops exists */
+#undef HAVE_PROC_OPS
+
 /* proc_remove is defined */
 #undef HAVE_PROC_REMOVE
 
@@ -678,6 +696,9 @@
 
 /* rdma_create_id wants 5 args */
 #undef HAVE_RDMA_CREATE_ID_5ARG
+
+/* rdma_reject has 4 arguments */
+#undef HAVE_RDMA_REJECT_4ARGS
 
 /* reinit_completion is exist */
 #undef HAVE_REINIT_COMPLETION
@@ -745,12 +766,6 @@
 
 /* kernel has sk_sleep */
 #undef HAVE_SK_SLEEP
-
-/* sock_alloc_file is exported */
-#undef HAVE_SOCK_ALLOC_FILE
-
-/* sock_alloc_file takes 3 arguments */
-#undef HAVE_SOCK_ALLOC_FILE_3ARGS
 
 /* sock_create_kern use net as first parameter */
 #undef HAVE_SOCK_CREATE_KERN_USE_NET
@@ -842,6 +857,9 @@
 /* 'timespec64_to_ktime' is available */
 #undef HAVE_TIMESPEC64_TO_KTIME
 
+/* have_time_t */
+#undef HAVE_TIME_T
+
 /* topology_sibling_cpumask is available */
 #undef HAVE_TOPOLOGY_SIBLING_CPUMASK
 
@@ -874,6 +892,9 @@
 
 /* kernel has vfs_unlink with 3 args */
 #undef HAVE_VFS_UNLINK_3ARGS
+
+/* __vmalloc only takes 2 args. */
+#undef HAVE_VMALLOC_2ARGS
 
 /* virtual_address has been replaced by address field */
 #undef HAVE_VM_FAULT_ADDRESS
@@ -992,6 +1013,9 @@
 
 /* name of parallel fsck program */
 #undef PFSCK
+
+/* proc handler methods use __user */
+#undef PROC_HANDLER_USE_USER_ATTR
 
 /* enable randomly alloc failure */
 #undef RANDOM_FAIL_ALLOC
