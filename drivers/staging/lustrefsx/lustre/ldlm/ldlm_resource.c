@@ -97,7 +97,7 @@ static ssize_t seq_watermark_write(struct file *file,
 	bool wm_low = (data == &ldlm_reclaim_threshold_mb) ? true : false;
 	int rc;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &value, 'M');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count, &value, 'M');
 	if (rc) {
 		CERROR("Failed to set %s, rc = %d.\n",
 		       wm_low ? "lock_reclaim_threshold_mb" : "lock_limit_mb",
