@@ -48,6 +48,43 @@ MODULE_PARM_DESC(lprocfs_no_percpu_stats, "Do not alloc percpu data for lprocfs 
 
 #define MAX_STRING_SIZE 128
 
+static const struct file_operations lprocfs_kernel_dummy = {};
+
+/*
+ * Awful hacks to mark procfs seq writes as going to kernel space. Used
+ * to be done with set_fs(KERNEL_DS), but that function is no more.
+ * This should only be called from class_process_proc_param(), which passes
+ * in a fake file structure. It should never, ever be used for anything else.
+ */
+void lprocfs_file_set_kernel(struct file *file)
+{
+	LASSERT(file->f_op == NULL);
+	file->f_op = &lprocfs_kernel_dummy;
+}
+EXPORT_SYMBOL(lprocfs_file_set_kernel);
+
+bool lprocfs_file_is_kernel(struct file *file)
+{
+	return (file->f_op == &lprocfs_kernel_dummy);
+}
+EXPORT_SYMBOL(lprocfs_file_is_kernel);
+
+unsigned long
+lprocfs_copy_from_user(struct file *file, void *to,
+		       const void __user *from, unsigned long n)
+{
+	unsigned long res;
+
+	if (lprocfs_file_is_kernel(file)) {
+		memcpy(to, from, n);
+		res = 0;
+	} else
+		res = copy_from_user(to, from, n);
+
+	return res;
+}
+EXPORT_SYMBOL(lprocfs_copy_from_user);
+
 int lprocfs_single_release(struct inode *inode, struct file *file)
 {
         return single_release(inode, file);
@@ -60,20 +97,29 @@ int lprocfs_seq_release(struct inode *inode, struct file *file)
 }
 EXPORT_SYMBOL(lprocfs_seq_release);
 
+static umode_t default_mode(const struct proc_ops *ops)
+{
+	umode_t mode = 0;
+
+	if (ops->proc_read)
+		mode = 0444;
+	if (ops->proc_write)
+		mode |= 0200;
+
+	return mode;
+}
+
 struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
-		   void *data, const struct file_operations *fops)
+		   void *data, const struct proc_ops *fops)
 {
 	struct proc_dir_entry *proc;
-	mode_t mode = 0;
+	umode_t mode;
 
 	if (root == NULL || name == NULL || fops == NULL)
                 return ERR_PTR(-EINVAL);
 
-	if (fops->read)
-		mode = 0444;
-	if (fops->write)
-		mode |= 0200;
+	mode = default_mode(fops);
 	proc = proc_create_data(name, mode, root, fops, data);
 	if (!proc) {
 		CERROR("LprocFS: No memory to create /proc entry %s\n",
@@ -112,9 +158,9 @@ struct proc_dir_entry *lprocfs_add_symlink(const char *name,
 }
 EXPORT_SYMBOL(lprocfs_add_symlink);
 
-static const struct file_operations lprocfs_generic_fops = { };
+static const struct file_operations ldebugfs_empty_ops = { };
 
-int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *list,
+int ldebugfs_add_vars(struct dentry *parent, struct ldebugfs_vars *list,
 		      void *data)
 {
 	if (IS_ERR_OR_NULL(parent) || IS_ERR_OR_NULL(list))
@@ -134,7 +180,7 @@ int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *list,
 		}
 		entry = debugfs_create_file(list->name, mode, parent,
 					    list->data ? : data,
-					    list->fops ? : &lprocfs_generic_fops);
+					    list->fops ? : &ldebugfs_empty_ops);
 		if (IS_ERR_OR_NULL(entry))
 			return entry ? PTR_ERR(entry) : -ENOMEM;
 		list++;
@@ -142,6 +188,8 @@ int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *list,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ldebugfs_add_vars);
+
+static const struct proc_ops lprocfs_empty_ops = { };
 
 /**
  * Add /proc entries.
@@ -163,18 +211,14 @@ lprocfs_add_vars(struct proc_dir_entry *root, struct lprocfs_vars *list,
 
 	while (list->name != NULL) {
 		struct proc_dir_entry *proc;
-		mode_t mode = 0;
+		umode_t mode = 0;
 
-		if (list->proc_mode != 0000) {
+		if (list->proc_mode)
 			mode = list->proc_mode;
-		} else if (list->fops) {
-			if (list->fops->read)
-				mode = 0444;
-			if (list->fops->write)
-				mode |= 0200;
-		}
+		else if (list->fops)
+			mode = default_mode(list->fops);
 		proc = proc_create_data(list->name, mode, root,
-					list->fops ?: &lprocfs_generic_fops,
+					list->fops ?: &lprocfs_empty_ops,
 					list->data ?: data);
 		if (proc == NULL)
 			return -ENOMEM;
@@ -301,7 +345,7 @@ void lprocfs_remove_proc_entry(const char *name, struct proc_dir_entry *parent)
 EXPORT_SYMBOL(lprocfs_remove_proc_entry);
 
 struct dentry *ldebugfs_register(const char *name, struct dentry *parent,
-				 struct lprocfs_vars *list, void *data)
+				 struct ldebugfs_vars *list, void *data)
 {
 	struct dentry *entry;
 
@@ -368,7 +412,7 @@ int lprocfs_wr_uint(struct file *file, const char __user *buffer,
 	if (count == 0)
 		return 0;
 
-	if (copy_from_user(dummy, buffer, count))
+	if (lprocfs_copy_from_user(file, dummy, buffer, count))
 		return -EFAULT;
 
 	dummy[count] = 0;
@@ -389,7 +433,7 @@ ssize_t lprocfs_uint_seq_write(struct file *file, const char __user *buffer,
 	int rc;
 	__s64 val = 0;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -422,7 +466,7 @@ lprocfs_atomic_seq_write(struct file *file, const char __user *buffer,
 	__s64 val = 0;
 	int rc;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
@@ -1497,13 +1541,22 @@ static int lprocfs_stats_seq_open(struct inode *inode, struct file *file)
 	return 0;
 }
 
-static const struct file_operations lprocfs_stats_seq_fops = {
-        .owner   = THIS_MODULE,
-        .open    = lprocfs_stats_seq_open,
-        .read    = seq_read,
-        .write   = lprocfs_stats_seq_write,
-        .llseek  = seq_lseek,
-        .release = lprocfs_seq_release,
+static const struct proc_ops lprocfs_stats_seq_fops = {
+	PROC_OWNER(THIS_MODULE)
+	.proc_open	= lprocfs_stats_seq_open,
+	.proc_read	= seq_read,
+	.proc_write	= lprocfs_stats_seq_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= lprocfs_seq_release,
+};
+
+static const struct file_operations ldebugfs_stats_seq_fops = {
+	.owner	 = THIS_MODULE,
+	.open	 = lprocfs_stats_seq_open,
+	.read	 = seq_read,
+	.write	 = lprocfs_stats_seq_write,
+	.llseek	 = seq_lseek,
+	.release = lprocfs_seq_release,
 };
 
 int ldebugfs_register_stats(struct dentry *parent, const char *name,
@@ -1514,7 +1567,7 @@ int ldebugfs_register_stats(struct dentry *parent, const char *name,
 	LASSERT(!IS_ERR_OR_NULL(parent));
 
 	entry = debugfs_create_file(name, 0644, parent, stats,
-				    &lprocfs_stats_seq_fops);
+				    &ldebugfs_stats_seq_fops);
 	if (IS_ERR_OR_NULL(entry))
 		return entry ? PTR_ERR(entry) : -ENOMEM;
 
@@ -2041,7 +2094,8 @@ static int str_to_u64_parse(char *buffer, unsigned long count,
  * of the signed integer.
  */
 static int str_to_s64_internal(const char __user *buffer, unsigned long count,
-			       __s64 *val, __u64 def_mult, bool allow_units)
+			       __s64 *val, __u64 def_mult, bool allow_units,
+			       bool kernel_space)
 {
 	char kernbuf[22];
 	__u64 tmp;
@@ -2053,8 +2107,12 @@ static int str_to_s64_internal(const char __user *buffer, unsigned long count,
 	if (count > (sizeof(kernbuf) - 1))
 		return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
-		return -EFAULT;
+	if (kernel_space) {
+		memcpy(kernbuf, buffer, count);
+	} else {
+		if (copy_from_user(kernbuf, buffer, count))
+			return -EFAULT;
+	}
 
 	kernbuf[count] = '\0';
 
@@ -2093,10 +2151,13 @@ static int str_to_s64_internal(const char __user *buffer, unsigned long count,
  * \retval		0 on success
  * \retval		negative number on error
  */
-int lprocfs_str_to_s64(const char __user *buffer, unsigned long count,
-		       __s64 *val)
+int lprocfs_str_to_s64(struct file *file, const char __user *buffer,
+		       unsigned long count, __s64 *val)
 {
-	return str_to_s64_internal(buffer, count, val, 1, false);
+	bool kernel_space;
+
+	kernel_space = lprocfs_file_is_kernel(file);
+	return str_to_s64_internal(buffer, count, val, 1, false, kernel_space);
 }
 EXPORT_SYMBOL(lprocfs_str_to_s64);
 
@@ -2117,11 +2178,12 @@ EXPORT_SYMBOL(lprocfs_str_to_s64);
  * \retval		0 on success
  * \retval		negative number on error
  */
-int lprocfs_str_with_units_to_s64(const char __user *buffer,
+int lprocfs_str_with_units_to_s64(struct file *file, const char __user *buffer,
 				  unsigned long count, __s64 *val, char defunit)
 {
 	__u64 mult = 1;
 	int rc;
+	bool kernel_space;
 
 	if (defunit != '1') {
 		rc = get_mult(defunit, &mult);
@@ -2129,7 +2191,10 @@ int lprocfs_str_with_units_to_s64(const char __user *buffer,
 			return rc;
 	}
 
-	return str_to_s64_internal(buffer, count, val, mult, true);
+	kernel_space = lprocfs_file_is_kernel(file);
+
+	return str_to_s64_internal(buffer, count, val, mult, true,
+			kernel_space);
 }
 EXPORT_SYMBOL(lprocfs_str_with_units_to_s64);
 
@@ -2199,14 +2264,14 @@ EXPORT_SYMBOL_GPL(ldebugfs_seq_create);
 int lprocfs_seq_create(struct proc_dir_entry *parent,
 		       const char *name,
 		       mode_t mode,
-		       const struct file_operations *seq_fops,
+		       const struct proc_ops *seq_fops,
 		       void *data)
 {
 	struct proc_dir_entry *entry;
 	ENTRY;
 
 	/* Disallow secretly (un)writable entries. */
-	LASSERT((seq_fops->write == NULL) == ((mode & 0222) == 0));
+	LASSERT(!seq_fops->proc_write == !(mode & 0222));
 
 	entry = proc_create_data(name, mode, parent, seq_fops, data);
 
@@ -2220,7 +2285,7 @@ EXPORT_SYMBOL(lprocfs_seq_create);
 int lprocfs_obd_seq_create(struct obd_device *dev,
 			   const char *name,
 			   mode_t mode,
-			   const struct file_operations *seq_fops,
+			   const struct proc_ops *seq_fops,
 			   void *data)
 {
         return (lprocfs_seq_create(dev->obd_proc_entry, name,
@@ -2316,7 +2381,7 @@ ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 	int chunk_mask, rc;
 	__s64 val;
 
-	rc = lprocfs_str_with_units_to_s64(buffer, count, &val, '1');
+	rc = lprocfs_str_with_units_to_s64(file, buffer, count, &val, '1');
 	if (rc)
 		return rc;
 	if (val < 0)
@@ -2346,8 +2411,9 @@ ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 }
 EXPORT_SYMBOL(lprocfs_obd_max_pages_per_rpc_seq_write);
 
-int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
-			   struct root_squash_info *squash, char *name)
+int lprocfs_wr_root_squash(struct file *file, const char __user *buffer,
+			   unsigned long count, struct root_squash_info *squash,
+			   char *name)
 {
 	int rc;
 	char kernbuf[64], *tmp, *errmsg;
@@ -2358,7 +2424,7 @@ int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
 		errmsg = "string too long";
 		GOTO(failed_noprint, rc = -EINVAL);
 	}
-	if (copy_from_user(kernbuf, buffer, count)) {
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count)) {
 		errmsg = "bad address";
 		GOTO(failed_noprint, rc = -EFAULT);
 	}
@@ -2408,7 +2474,8 @@ failed_noprint:
 EXPORT_SYMBOL(lprocfs_wr_root_squash);
 
 
-int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
+int lprocfs_wr_nosquash_nids(struct file *file, const char __user *buffer,
+			     unsigned long count,
 			     struct root_squash_info *squash, char *name)
 {
 	int rc;
@@ -2428,7 +2495,7 @@ int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
 		errmsg = "no memory";
 		GOTO(failed, rc = -ENOMEM);
 	}
-	if (copy_from_user(kernbuf, buffer, count)) {
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count)) {
 		errmsg = "bad address";
 		GOTO(failed, rc = -EFAULT);
 	}
