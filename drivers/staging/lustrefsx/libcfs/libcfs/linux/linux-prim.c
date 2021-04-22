@@ -97,6 +97,18 @@ time64_t ktime_get_seconds(void)
 EXPORT_SYMBOL(ktime_get_seconds);
 #endif /* HAVE_KTIME_GET_SECONDS */
 
+#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
+static char **cfs_lsm_names;
+
+bool selinux_is_enabled(void)
+{
+	if (cfs_lsm_names)
+		return !!strstr("selinux", *cfs_lsm_names);
+	return false;
+}
+EXPORT_SYMBOL(selinux_is_enabled);
+#endif
+
 int cfs_kernel_write(struct file *filp, const void *buf, size_t count,
 		     loff_t *pos)
 {
