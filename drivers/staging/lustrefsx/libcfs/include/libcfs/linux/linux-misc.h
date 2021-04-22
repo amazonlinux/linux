@@ -60,6 +60,10 @@
 #endif
 #endif /* HAVE_IOV_ITER_TYPE */
 
+#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
+bool selinux_is_enabled(void);
+#endif
+
 #ifndef HAVE_UIDGID_HEADER
 
 #ifndef _LINUX_UIDGID_H
