@@ -476,7 +476,7 @@ lstcon_rpc_trans_interpreter(lstcon_rpc_trans_t *trans,
         srpc_msg_t           *msg;
         lstcon_node_t        *nd;
         cfs_duration_t        dur;
-        struct timeval        tv;
+	struct timespec64 ts;
         int                   error;
 
 	LASSERT(head_up != NULL);
@@ -501,13 +501,13 @@ lstcon_rpc_trans_interpreter(lstcon_rpc_trans_t *trans,
 
                 nd = crpc->crp_node;
 
-                dur = (cfs_duration_t)cfs_time_sub(crpc->crp_stamp,
-                      (cfs_time_t)console_session.ses_id.ses_stamp);
-		jiffies_to_timeval(dur, &tv);
+		dur = (cfs_duration_t)cfs_time_sub(crpc->crp_stamp,
+		       (cfs_time_t)console_session.ses_id.ses_stamp);
+		jiffies_to_timespec64(dur, &ts);
 
 		if (copy_to_user(&ent->rpe_peer,
 				 &nd->nd_id, sizeof(struct lnet_process_id)) ||
-		    copy_to_user(&ent->rpe_stamp, &tv, sizeof(tv)) ||
+		    copy_to_user(&ent->rpe_stamp, &ts, sizeof(ts)) ||
 		    copy_to_user(&ent->rpe_state,
 				 &nd->nd_state, sizeof(nd->nd_state)) ||
 		    copy_to_user(&ent->rpe_rpc_errno, &error,
