@@ -58,7 +58,7 @@ static ssize_t mdc_active_seq_write(struct file *file,
 	__s64 val;
 
 	dev = ((struct seq_file *)file->private_data)->private;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 	if (val < 0 || val > 1)
@@ -95,7 +95,7 @@ static ssize_t mdc_max_rpcs_in_flight_seq_write(struct file *file,
 	int rc;
 
 	dev = ((struct seq_file *)file->private_data)->private;
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
@@ -130,7 +130,7 @@ static ssize_t mdc_max_mod_rpcs_in_flight_seq_write(struct file *file,
 	__s64 val;
 	int rc;
 
-	rc = lprocfs_str_to_s64(buffer, count, &val);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc)
 		return rc;
 
