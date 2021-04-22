@@ -419,7 +419,7 @@ static int nrs_delay_ctl(struct ptlrpc_nrs_policy *policy,
  * Helper for delay's seq_write functions.
  */
 static ssize_t
-lprocfs_nrs_delay_seq_write_common(const char __user *buffer,
+lprocfs_nrs_delay_seq_write_common(struct file *file, const char __user *buffer,
 				   unsigned int bufsize, size_t count,
 				   const char *var_name, unsigned int min_val,
 				   unsigned int max_val,
@@ -443,7 +443,7 @@ lprocfs_nrs_delay_seq_write_common(const char __user *buffer,
 	if (kernbuf == NULL)
 		return -ENOMEM;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		GOTO(free_kernbuf, rc = -EFAULT);
 
 	tmpsize = strlen("reg_") + strlen(var_name) + 1;
@@ -598,7 +598,7 @@ ptlrpc_lprocfs_nrs_delay_min_seq_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct ptlrpc_service *svc = m->private;
 
-	return lprocfs_nrs_delay_seq_write_common(buffer,
+	return lprocfs_nrs_delay_seq_write_common(file, buffer,
 						  LPROCFS_NRS_DELAY_MIN_SIZE,
 						  count,
 						  LPROCFS_NRS_DELAY_MIN_NAME,
@@ -681,7 +681,7 @@ ptlrpc_lprocfs_nrs_delay_max_seq_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct ptlrpc_service *svc = m->private;
 
-	return lprocfs_nrs_delay_seq_write_common(buffer,
+	return lprocfs_nrs_delay_seq_write_common(file, buffer,
 						  LPROCFS_NRS_DELAY_MAX_SIZE,
 						  count,
 						  LPROCFS_NRS_DELAY_MAX_NAME,
@@ -765,7 +765,7 @@ ptlrpc_lprocfs_nrs_delay_pct_seq_write(struct file *file,
 	struct seq_file *m = file->private_data;
 	struct ptlrpc_service *svc = m->private;
 
-	return lprocfs_nrs_delay_seq_write_common(buffer,
+	return lprocfs_nrs_delay_seq_write_common(file, buffer,
 						  LPROCFS_NRS_DELAY_PCT_SIZE,
 						  count,
 						  LPROCFS_NRS_DELAY_PCT_NAME,

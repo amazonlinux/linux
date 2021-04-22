@@ -580,7 +580,11 @@ kiblnd_fmr_map_tx(kib_net_t *net, kib_tx_t *tx, kib_rdma_desc_t *rd, __u32 nob)
 static void
 kiblnd_unmap_tx(kib_tx_t *tx)
 {
-	if (tx->fmr.fmr_pfmr || tx->fmr.fmr_frd)
+	if (
+#ifdef HAVE_FMR_POOL_API
+		tx->fmr.fmr_pfmr ||
+#endif
+		tx->fmr.fmr_frd)
 		kiblnd_fmr_pool_unmap(&tx->fmr, tx->tx_status);
 
 	if (tx->tx_nfrags != 0) {
@@ -2217,7 +2221,11 @@ kiblnd_reject(struct rdma_cm_id *cmid, kib_rej_t *rej)
 {
         int          rc;
 
+#ifdef HAVE_RDMA_REJECT_4ARGS
+	rc = rdma_reject(cmid, rej, sizeof(*rej), IB_CM_REJ_CONSUMER_DEFINED);
+#else
         rc = rdma_reject(cmid, rej, sizeof(*rej));
+#endif
 
         if (rc != 0)
                 CWARN("Error %d sending reject\n", rc);
