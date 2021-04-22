@@ -91,7 +91,7 @@ fld_proc_hash_seq_write(struct file *file, const char __user *buffer,
 	if (count > sizeof(fh_name))
 		return -ENAMETOOLONG;
 
-	if (copy_from_user(fh_name, buffer, count) != 0)
+	if (lprocfs_copy_from_user(file, fh_name, buffer, count) != 0)
 		return -EFAULT;
 
 	fld = ((struct seq_file *)file->private_data)->private;
