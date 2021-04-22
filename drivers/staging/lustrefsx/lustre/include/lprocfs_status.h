@@ -46,15 +46,27 @@
 #include <linux/seq_file.h>
 
 #include <libcfs/libcfs.h>
+#include <libcfs/linux/linux-fs.h>
 #include <lustre/lustre_idl.h>
 
+/*
+ * Liuux 5.6 introduces proc_ops with v5.5-8862-gd56c0d45f0e2
+ * Now that proc and debugfs use separate operation vector types
+ * separate containers are also needed.
+ */
 struct lprocfs_vars {
+	const char			*name;
+	const struct proc_ops		*fops;
+	void				*data;
+	/* /proc file mode. */
+	mode_t				 proc_mode;
+};
+
+struct ldebugfs_vars {
 	const char			*name;
 	const struct file_operations	*fops;
 	void				*data;
-	/**
-	 * /proc file mode.
-	 */
+	/* debugfs file mode. */
 	mode_t				 proc_mode;
 };
 
@@ -478,7 +490,7 @@ static inline int lprocfs_exp_cleanup(struct obd_export *exp)
 #endif
 extern struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
-		   void *data, const struct file_operations *fops);
+		   void *data, const struct proc_ops *ops);
 extern struct proc_dir_entry *
 lprocfs_add_symlink(const char *name, struct proc_dir_entry *parent,
                     const char *format, ...);
@@ -495,14 +507,14 @@ extern int lprocfs_register_stats(struct proc_dir_entry *root, const char *name,
                                   struct lprocfs_stats *stats);
 
 /* lprocfs_status.c */
-extern int ldebugfs_add_vars(struct dentry *parent, struct lprocfs_vars *var,
+extern int ldebugfs_add_vars(struct dentry *parent, struct ldebugfs_vars *var,
 			     void *data);
 extern int lprocfs_add_vars(struct proc_dir_entry *root,
 			    struct lprocfs_vars *var, void *data);
 
 extern struct dentry *ldebugfs_register(const char *name,
 					struct dentry *parent,
-					struct lprocfs_vars *list,
+					struct ldebugfs_vars *list,
 					void *data);
 extern struct proc_dir_entry *
 lprocfs_register(const char *name, struct proc_dir_entry *parent,
@@ -545,12 +557,10 @@ extern int ldebugfs_seq_create(struct dentry *parent, const char *name,
 			       const struct file_operations *seq_fops,
 			       void *data);
 extern int lprocfs_seq_create(struct proc_dir_entry *parent, const char *name,
-			      mode_t mode,
-			      const struct file_operations *seq_fops,
+			      mode_t mode, const struct proc_ops *seq_fops,
 			      void *data);
 extern int lprocfs_obd_seq_create(struct obd_device *dev, const char *name,
-				  mode_t mode,
-				  const struct file_operations *seq_fops,
+				  mode_t mode, const struct proc_ops *seq_fops,
 				  void *data);
 
 /* Generic callbacks */
@@ -609,9 +619,10 @@ extern int lprocfs_filesfree_seq_show(struct seq_file *m, void *data);
 extern int lprocfs_seq_read_frac_helper(struct seq_file *m, long val, int mult);
 extern int lprocfs_read_frac_helper(char *buffer, unsigned long count,
                                     long val, int mult);
-extern int lprocfs_str_to_s64(const char __user *buffer, unsigned long count,
-			      __s64 *val);
-extern int lprocfs_str_with_units_to_s64(const char __user *buffer,
+extern int lprocfs_str_to_s64(struct file *, const char __user *buffer,
+			      unsigned long count, __s64 *val);
+extern int lprocfs_str_with_units_to_s64(struct file *,
+					 const char __user *buffer,
 					 unsigned long count, __s64 *val,
 					 char defunit);
 
@@ -678,13 +689,13 @@ static int name##_single_open(struct inode *inode, struct file *file)	\
 	return single_open(file, name##_seq_show,			\
 			   inode->i_private ? : PDE_DATA(inode));	\
 }									\
-static const struct file_operations name##_fops = {			\
-	.owner	 = THIS_MODULE,						\
-	.open	 = name##_single_open,					\
-	.read	 = seq_read,						\
-	.write	 = custom_seq_write,					\
-	.llseek	 = seq_lseek,						\
-	.release = lprocfs_single_release,				\
+static const struct proc_ops name##_fops = {				\
+	PROC_OWNER(THIS_MODULE)						\
+	.proc_open		= name##_single_open,			\
+	.proc_read		= seq_read,				\
+	.proc_write		= custom_seq_write,			\
+	.proc_lseek		= seq_lseek,				\
+	.proc_release		= lprocfs_single_release,		\
 }
 
 #define LPROC_SEQ_FOPS_RO(name)		__LPROC_SEQ_FOPS(name, NULL)
@@ -724,10 +735,10 @@ static const struct file_operations name##_fops = {			\
 		return single_open(file, NULL,				\
 				   inode->i_private ? : PDE_DATA(inode));\
 	}								\
-	static const struct file_operations name##_##type##_fops = {	\
-		.open	 = name##_##type##_open,			\
-		.write	 = name##_##type##_write,			\
-		.release = lprocfs_single_release,			\
+	static const struct proc_ops name##_##type##_fops = {		\
+		.proc_open	= name##_##type##_open,			\
+		.proc_write	= name##_##type##_write,		\
+		.proc_release	= lprocfs_single_release,		\
 	};
 
 struct lustre_attr {
@@ -737,6 +748,19 @@ struct lustre_attr {
 	ssize_t (*store)(struct kobject *kobj, struct attribute *attr,
 			 const char *buf, size_t len);
 };
+
+/*
+ * Hacks to get around set_fs removal.
+ */
+void lprocfs_file_set_kernel(struct file *file);
+bool lprocfs_file_is_kernel(struct file *file);
+
+/*
+ * Version of copy_from_user() that uses the above hacks to determine
+ * whether it's dealing with user or kernel space.
+ */
+unsigned long lprocfs_copy_from_user(struct file *file, void *to,
+				     const void __user *from, unsigned long n);
 
 #define LUSTRE_ATTR(name, mode, show, store) \
 static struct lustre_attr lustre_attr_##name = __ATTR(name, mode, show, store)
@@ -784,9 +808,11 @@ ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 						size_t count, loff_t *off);
 
 struct root_squash_info;
-int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
+int lprocfs_wr_root_squash(struct file *file, const char __user *buffer,
+			   unsigned long count,
 			   struct root_squash_info *squash, char *name);
-int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
+int lprocfs_wr_nosquash_nids(struct file *file, const char __user *buffer,
+			     unsigned long count,
 			     struct root_squash_info *squash, char *name);
 
 #else /* !CONFIG_PROC_FS */
