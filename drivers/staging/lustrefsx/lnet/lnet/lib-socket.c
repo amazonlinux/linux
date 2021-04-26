@@ -40,26 +40,30 @@
 #include <linux/syscalls.h>
 #include <net/sock.h>
 
+#include <libcfs/linux/linux-net.h>
 #include <libcfs/libcfs.h>
+#include <libcfs/linux/linux-time.h>
 #include <lnet/lib-lnet.h>
 
-#include <linux/inetdevice.h>
+/*
+ * kernel 5.1: commit 7f1bc6e95d7840d4305595b3e4025cddda88cee5
+ * Y2038 64-bit time.
+ *  SO_TIMESTAMP, SO_TIMESTAMPNS and SO_TIMESTAMPING options, the
+ *  way they are currently defined, are not y2038 safe.
+ *  Subsequent patches in the series add new y2038 safe versions
+ *  of these options which provide 64 bit timestamps on all
+ *  architectures uniformly.
+ *  Hence, rename existing options with OLD tag suffixes.
+ *
+ * NOTE: When updating to timespec64 change change these to '_NEW'.
+ *
+ */
+#ifndef SO_SNDTIMEO
+#define SO_SNDTIMEO SO_SNDTIMEO_OLD
+#endif
 
-#ifndef HAVE_KERNEL_SETSOCKOPT
-int kernel_setsockopt(struct socket *sock, int level, int optname,
-			char *val, unsigned int optlen)
-{
-	sockptr_t optval = KERNEL_SOCKPTR(val);
-	int err;
-
-	if (level == SOL_SOCKET)
-		err = sock_setsockopt(sock, level, optname, optval, optlen);
-	else
-		err = sock->ops->setsockopt(sock, level, optname, optval,
-					    optlen);
-	return err;
-}
-EXPORT_SYMBOL(kernel_setsockopt);
+#ifndef SO_RCVTIMEO
+#define SO_RCVTIMEO SO_RCVTIMEO_OLD
 #endif
 
 static int
@@ -77,163 +81,10 @@ lnet_sock_create_kern(struct socket **sock, struct net *ns)
 }
 
 int
-lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask, struct net *ns)
-{
-	struct net_device *dev;
-	struct in_device *in_dev;
-	const struct in_ifaddr *ifa;
-	unsigned int flags;
-	char *colon, *ifname;
-	int ret;
-	size_t slen;
-
-	/*
-	 * Copy the interface name, since we may be about to modify it.
-	 */
-	slen = strlen(name) + 1;
-	ifname = kzalloc(slen, GFP_KERNEL);
-	if (ifname == NULL)
-		return -ENOMEM;
-
-	memcpy(ifname, name, slen);
-	colon = strchr(ifname, ':');
-	if (colon)
-		*colon = 0;
-
-	dev_load(ns, ifname);
-	ret = -ENODEV;
-
-	rtnl_lock();
-
-	dev = __dev_get_by_name(ns, ifname);
-
-	if (colon)
-		*colon = ':';
-
-	if (dev == NULL) {
-		CERROR("Can't find interface %s\n", name);
-		goto out;
-	}
-
-	flags = dev_get_flags(dev);
-	if ((flags & IFF_UP) == 0) {
-		CDEBUG(D_NET, "Interface %s down\n", name);
-		*up = 0;
-		*ip = *mask = 0;
-		ret = 0;
-		goto out;
-	}
-
-	/*
-	 * Only support IPv4, so just walk the list of IPv4 assigned
-	 * addresses to a device.
-	 */
-	in_dev = __in_dev_get_rtnl(dev);
-
-	in_dev_for_each_ifa_rtnl(ifa, in_dev) {
-		if (!strcmp(ifa->ifa_label, ifname))
-			break;
-	}
-
-	if (ifa != NULL) {
-		*up = 1;
-		*mask = ntohl(ifa->ifa_mask);
-		*ip = ntohl(ifa->ifa_local);
-		ret = 0;
-	} else {
-		CERROR("Can't get mask/ip for interface %s\n", name);
-	}
-
-out:
-	rtnl_unlock();
-	kfree(ifname);
-	return ret;
-}
-EXPORT_SYMBOL(lnet_ipif_query);
-
-void
-lnet_ipif_free_enumeration(char **names, int n)
-{
-	LIBCFS_FREE(names, PAGE_SIZE / IFNAMSIZ);
-	LIBCFS_FREE(names[0], PAGE_SIZE);
-}
-EXPORT_SYMBOL(lnet_ipif_free_enumeration);
-
-int
-lnet_ipif_enumerate(char ***namesp, struct net *ns)
-{
-	char **names;
-	char *space;
-	const struct in_ifaddr *ifa;
-	struct net_device *dev;
-	struct in_device *in_dev;
-	int maxifs, nifs, toobig;
-	size_t used, slen;
-
-	maxifs = PAGE_SIZE / IFNAMSIZ;
-	nifs = 0;
-	used = 0;
-	toobig = 0;
-
-	/*
-	 * For simplicity, just allocate the maximum number of names
-	 * that can be dealt with. The free function will ignore the
-	 * arg
-	 */
-	LIBCFS_ALLOC(names, maxifs * sizeof (*names));
-	if (names == NULL)
-		return -ENOMEM;
-
-	LIBCFS_ALLOC(space, PAGE_SIZE);
-	if (space == NULL) {
-		LIBCFS_FREE(names, maxifs * sizeof (*names));
-		return -ENOMEM;
-	}
-
-	/*
-	 * Only IPv4 is supported, so just loop all network
-	 * devices, and loop the IPv4 interfaces (addresses)
-	 * assigned to each device.
-	 */
-	rtnl_lock();
-	for_each_netdev(ns, dev) {
-		in_dev = __in_dev_get_rtnl(dev);
-		if (!in_dev)
-			continue;
-
-		in_dev_for_each_ifa_rtnl(ifa, in_dev) {
-			nifs++;
-			if (toobig)
-				continue;
-
-			if (nifs > maxifs) {
-				toobig = 1;
-				continue;
-			}
-
-			slen = strlen(ifa->ifa_label) + 1;
-			if (used + slen > PAGE_SIZE) {
-				toobig = 1;
-				continue;
-			}
-			memcpy(space + used, ifa->ifa_label, slen);
-			names[nifs - 1] = space + used;
-			used += slen;
-		}
-	}
-	rtnl_unlock();
-
-	*namesp = names;
-
-	return nifs;
-}
-EXPORT_SYMBOL(lnet_ipif_enumerate);
-
-int
 lnet_sock_write(struct socket *sock, void *buffer, int nob, int timeout)
 {
 	int rc;
-	long jiffies_left = cfs_time_seconds(timeout);
+	long jiffies_left = timeout * msecs_to_jiffies(MSEC_PER_SEC);
 	unsigned long then;
 
 	LASSERT(nob > 0);
@@ -252,6 +103,7 @@ lnet_sock_write(struct socket *sock, void *buffer, int nob, int timeout)
 		if (timeout != 0) {
 			struct sock *sk = sock->sk;
 
+			/* Set send timeout to remaining time */
 			lock_sock(sk);
 			sk->sk_sndtimeo = jiffies_left;
 			release_sock(sk);
@@ -286,7 +138,7 @@ int
 lnet_sock_read(struct socket *sock, void *buffer, int nob, int timeout)
 {
 	int rc;
-	long jiffies_left = cfs_time_seconds(timeout);
+	long jiffies_left = timeout * msecs_to_jiffies(MSEC_PER_SEC);
 	unsigned long then;
 
 	LASSERT(nob > 0);
@@ -334,9 +186,8 @@ lnet_sock_create(struct socket **sockp, int *fatal,
 		 __u32 local_ip, int local_port, struct net *ns)
 {
 	struct sockaddr_in  locaddr;
-	struct socket	   *sock;
-	int		    rc;
-	int		    option;
+	struct socket *sock;
+	int rc;
 
 	/* All errors are fatal except bind failure if the port is in use */
 	*fatal = 1;
@@ -348,13 +199,7 @@ lnet_sock_create(struct socket **sockp, int *fatal,
 		return rc;
 	}
 
-	option = 1;
-	rc = kernel_setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
-			       (char *)&option, sizeof(option));
-	if (rc != 0) {
-		CERROR("Can't set SO_REUSEADDR for socket: %d\n", rc);
-		goto failed;
-	}
+	sock->sk->sk_reuseport = 1;
 
 	if (local_ip != 0 || local_port != 0) {
 		memset(&locaddr, 0, sizeof(locaddr));
@@ -383,34 +228,21 @@ failed:
 	return rc;
 }
 
-int
+void
 lnet_sock_setbuf(struct socket *sock, int txbufsize, int rxbufsize)
 {
-	int		    option;
-	int		    rc;
+	struct sock *sk = sock->sk;
 
 	if (txbufsize != 0) {
-		option = txbufsize;
-		rc = kernel_setsockopt(sock, SOL_SOCKET, SO_SNDBUF,
-				       (char *)&option, sizeof(option));
-		if (rc != 0) {
-			CERROR("Can't set send buffer %d: %d\n",
-				option, rc);
-			return rc;
-		}
+		sk->sk_userlocks |= SOCK_SNDBUF_LOCK;
+		sk->sk_sndbuf = txbufsize;
+		sk->sk_write_space(sk);
 	}
 
 	if (rxbufsize != 0) {
-		option = rxbufsize;
-		rc = kernel_setsockopt(sock, SOL_SOCKET, SO_RCVBUF,
-				       (char *)&option, sizeof(option));
-		if (rc != 0) {
-			CERROR("Can't set receive buffer %d: %d\n",
-				option, rc);
-			return rc;
-		}
+		sk->sk_userlocks |= SOCK_RCVBUF_LOCK;
+		sk->sk_sndbuf = rxbufsize;
 	}
-	return 0;
 }
 EXPORT_SYMBOL(lnet_sock_setbuf);
 
@@ -445,16 +277,13 @@ lnet_sock_getaddr(struct socket *sock, bool remote, __u32 *ip, int *port)
 }
 EXPORT_SYMBOL(lnet_sock_getaddr);
 
-int
-lnet_sock_getbuf(struct socket *sock, int *txbufsize, int *rxbufsize)
+void lnet_sock_getbuf(struct socket *sock, int *txbufsize, int *rxbufsize)
 {
 	if (txbufsize != NULL)
 		*txbufsize = sock->sk->sk_sndbuf;
 
 	if (rxbufsize != NULL)
 		*rxbufsize = sock->sk->sk_rcvbuf;
-
-	return 0;
 }
 EXPORT_SYMBOL(lnet_sock_getbuf);
 
