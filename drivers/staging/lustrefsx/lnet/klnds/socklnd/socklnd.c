@@ -37,8 +37,8 @@
  * Author: Eric Barton <eric@bartonsoftware.com>
  */
 
-#include <linux/pci.h>
 #include "socklnd.h"
+#include <linux/inetdevice.h>
 
 static struct lnet_lnd the_ksocklnd;
 ksock_nal_data_t        ksocknal_data;
@@ -2621,63 +2621,6 @@ ksocknal_shutdown(struct lnet_ni *ni)
 }
 
 static int
-ksocknal_enumerate_interfaces(ksock_net_t *net, struct net *ns)
-{
-        char      **names;
-        int         i;
-        int         j;
-        int         rc;
-        int         n;
-
-	n = lnet_ipif_enumerate(&names, ns);
-        if (n <= 0) {
-                CERROR("Can't enumerate interfaces: %d\n", n);
-                return n;
-        }
-
-        for (i = j = 0; i < n; i++) {
-                int        up;
-                __u32      ip;
-                __u32      mask;
-
-                if (!strcmp(names[i], "lo")) /* skip the loopback IF */
-                        continue;
-
-		rc = lnet_ipif_query(names[i], &up, &ip, &mask, ns);
-                if (rc != 0) {
-                        CWARN("Can't get interface %s info: %d\n",
-                              names[i], rc);
-                        continue;
-                }
-
-                if (!up) {
-                        CWARN("Ignoring interface %s (down)\n",
-                              names[i]);
-                        continue;
-                }
-
-		if (j == LNET_NUM_INTERFACES) {
-			CWARN("Ignoring interface %s (too many interfaces)\n",
-			      names[i]);
-			continue;
-		}
-
-                net->ksnn_interfaces[j].ksni_ipaddr = ip;
-                net->ksnn_interfaces[j].ksni_netmask = mask;
-		strlcpy(net->ksnn_interfaces[j].ksni_name,
-			names[i], sizeof(net->ksnn_interfaces[j].ksni_name));
-                j++;
-        }
-
-	lnet_ipif_free_enumeration(names, n);
-
-        if (j == 0)
-                CERROR("Can't find any usable interfaces\n");
-
-        return j;
-}
-
-static int
 ksocknal_search_new_ipif(ksock_net_t *net)
 {
 	int	new_ipif = 0;
@@ -2796,10 +2739,10 @@ int
 ksocknal_startup(struct lnet_ni *ni)
 {
 	ksock_net_t  *net;
-	int           rc;
-	int           i;
-	struct net_device *net_dev;
-	int node_id;
+	ksock_interface_t *ksi = NULL;
+	struct lnet_inetdev *ifaces = NULL;
+	int i = 0;
+	int rc;
 
         LASSERT (ni->ni_net->net_lnd == &the_ksocklnd);
 
@@ -2829,52 +2772,69 @@ ksocknal_startup(struct lnet_ni *ni)
 	}
 
 
-	if (ni->ni_interfaces[0] == NULL) {
-		rc = ksocknal_enumerate_interfaces(net, ni->ni_net_ns);
-		if (rc <= 0)
-			goto fail_1;
+	rc = lnet_inet_enumerate(&ifaces, ni->ni_net_ns);
+	if (rc < 0)
+		goto fail_1;
 
+	if (!ni->ni_interfaces[0]) {
+		ksi = &net->ksnn_interfaces[0];
+
+		/* Use the first discovered interface */
 		net->ksnn_ninterfaces = 1;
+		ni->ni_dev_cpt = ifaces[0].li_cpt;
+		ksi->ksni_ipaddr = ifaces[0].li_ipaddr;
+		ksi->ksni_netmask = ifaces[0].li_netmask;
+		strlcpy(ksi->ksni_name, ifaces[0].li_name,
+			sizeof(ksi->ksni_name));
 	} else {
+		/* Before Multi-Rail ksocklnd would manage
+		 * multiple interfaces with its own tcp bonding.
+		 * If we encounter an old configuration using
+		 * this tcp bonding approach then we need to
+		 * handle more than one ni_interfaces.
+		 *
+		 * In Multi-Rail configuration only ONE ni_interface
+		 * should exist. Each IP alias should be mapped to
+		 * each 'struct net_ni'.
+		 */
 		for (i = 0; i < LNET_NUM_INTERFACES; i++) {
-			int up;
+			int j;
 
-			if (ni->ni_interfaces[i] == NULL)
+			if (!ni->ni_interfaces[i])
 				break;
 
-			rc = lnet_ipif_query(ni->ni_interfaces[i], &up,
-				&net->ksnn_interfaces[i].ksni_ipaddr,
-				&net->ksnn_interfaces[i].ksni_netmask,
-				ni->ni_net_ns);
-
-			if (rc != 0) {
-				CERROR("Can't get interface %s info: %d\n",
-				       ni->ni_interfaces[i], rc);
-				goto fail_1;
+			for (j = 0; j < LNET_NUM_INTERFACES;  j++) {
+				if (i != j && ni->ni_interfaces[j] &&
+				    strcmp(ni->ni_interfaces[i],
+					   ni->ni_interfaces[j]) == 0) {
+					rc = -EEXIST;
+					CERROR("ksocklnd: found duplicate %s at %d and %d, rc = %d\n",
+					       ni->ni_interfaces[i], i, j, rc);
+					goto fail_1;
+				}
 			}
 
-			if (!up) {
-				CERROR("Interface %s is down\n",
-				       ni->ni_interfaces[i]);
-				goto fail_1;
+			for (j = 0; j < rc; j++) {
+				if (strcmp(ifaces[j].li_name,
+					   ni->ni_interfaces[i]) != 0)
+					continue;
+
+				ksi = &net->ksnn_interfaces[j];
+				ni->ni_dev_cpt = ifaces[j].li_cpt;
+				ksi->ksni_ipaddr = ifaces[j].li_ipaddr;
+				ksi->ksni_netmask = ifaces[j].li_netmask;
+				strlcpy(ksi->ksni_name, ifaces[j].li_name,
+					sizeof(ksi->ksni_name));
+				net->ksnn_ninterfaces++;
+				break;
 			}
-
-			strlcpy(net->ksnn_interfaces[i].ksni_name,
-				ni->ni_interfaces[i],
-				sizeof(net->ksnn_interfaces[i].ksni_name));
-
 		}
-		net->ksnn_ninterfaces = i;
-	}
-
-	net_dev = dev_get_by_name(ni->ni_net_ns,
-				  net->ksnn_interfaces[0].ksni_name);
-	if (net_dev != NULL) {
-		node_id = dev_to_node(&net_dev->dev);
-		ni->ni_dev_cpt = cfs_cpt_of_node(lnet_cpt_table(), node_id);
-		dev_put(net_dev);
-	} else {
-		ni->ni_dev_cpt = CFS_CPT_ANY;
+		/* ni_interfaces don't map to all network interfaces */
+		if (!ksi || net->ksnn_ninterfaces != i) {
+			CERROR("ksocklnd: requested %d but only %d interfaces found\n",
+			       i, net->ksnn_ninterfaces);
+			goto fail_1;
+		}
 	}
 
 	/* call it before add it to ksocknal_data.ksnd_nets */
@@ -2882,8 +2842,8 @@ ksocknal_startup(struct lnet_ni *ni)
 	if (rc != 0)
 		goto fail_1;
 
-	ni->ni_nid = LNET_MKNID(LNET_NIDNET(ni->ni_nid),
-				net->ksnn_interfaces[0].ksni_ipaddr);
+	LASSERT(ksi);
+	ni->ni_nid = LNET_MKNID(LNET_NIDNET(ni->ni_nid), ksi->ksni_ipaddr);
 	list_add(&net->ksnn_list, &ksocknal_data.ksnd_nets);
 
         ksocknal_data.ksnd_nnets++;
