@@ -31,6 +31,8 @@
  */
 
 #define DEBUG_SUBSYSTEM S_LNET
+
+#include <linux/inetdevice.h>
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
 #include <lnet/lib-lnet.h>
@@ -1599,113 +1601,136 @@ lnet_match_networks (char **networksp, char *ip2nets, __u32 *ipaddrs, int nip)
 	*networksp = networks;
 	return count;
 }
+/*
+ * kernel 5.3: commit ef11db3310e272d3d8dbe8739e0770820dd20e52
+ * added in_dev_for_each_ifa_rtnl and in_dev_for_each_ifa_rcu
+ * and removed for_ifa and endfor_ifa.
+ * Use the _rntl variant as the current locking is rtnl.
+ */
+#ifdef in_dev_for_each_ifa_rtnl
+#define DECLARE_CONST_IN_IFADDR(ifa)		const struct in_ifaddr *ifa
+#define endfor_ifa(in_dev)
+#else
+#define DECLARE_CONST_IN_IFADDR(ifa)
+#define in_dev_for_each_ifa_rtnl(ifa, in_dev)	for_ifa((in_dev))
+#endif
 
-static void
-lnet_ipaddr_free_enumeration(__u32 *ipaddrs, int nip)
+int lnet_inet_enumerate(struct lnet_inetdev **dev_list, struct net *ns)
 {
-	LIBCFS_FREE(ipaddrs, nip * sizeof(*ipaddrs));
-}
+	struct lnet_inetdev *ifaces = NULL;
+	struct net_device *dev;
+	int nalloc = 0;
+	int nip = 0;
+	DECLARE_CONST_IN_IFADDR(ifa);
 
-static int
-lnet_ipaddr_enumerate(__u32 **ipaddrsp, struct net *ns)
-{
-	int	   up;
-	__u32	   netmask;
-	__u32	  *ipaddrs;
-	__u32	  *ipaddrs2;
-	int	   nip;
-	char	 **ifnames;
-	int	   nif = lnet_ipif_enumerate(&ifnames, ns);
-	int	   i;
-	int	   rc;
+	rtnl_lock();
+	for_each_netdev(ns, dev) {
+		int flags = dev_get_flags(dev);
+		struct in_device *in_dev;
+		int node_id;
+		int cpt;
 
-	if (nif <= 0)
-		return nif;
-
-	LIBCFS_ALLOC(ipaddrs, nif * sizeof(*ipaddrs));
-	if (ipaddrs == NULL) {
-		CERROR("Can't allocate ipaddrs[%d]\n", nif);
-		lnet_ipif_free_enumeration(ifnames, nif);
-		return -ENOMEM;
-	}
-
-	for (i = nip = 0; i < nif; i++) {
-		if (!strcmp(ifnames[i], "lo"))
+		if (flags & IFF_LOOPBACK) /* skip the loopback IF */
 			continue;
 
-		rc = lnet_ipif_query(ifnames[i], &up,
-				       &ipaddrs[nip], &netmask, ns);
-		if (rc != 0) {
-			CWARN("Can't query interface %s: %d\n",
-			      ifnames[i], rc);
+		if (!(flags & IFF_UP)) {
+			CWARN("lnet: Ignoring interface %s: it's down\n",
+			      dev->name);
 			continue;
 		}
 
-		if (!up) {
-			CWARN("Ignoring interface %s: it's down\n",
-			      ifnames[i]);
+		in_dev = __in_dev_get_rtnl(dev);
+		if (!in_dev) {
+			CWARN("lnet: Interface %s has no IPv4 status.\n",
+			      dev->name);
 			continue;
 		}
 
-		nip++;
-	}
+		node_id = dev_to_node(&dev->dev);
+		cpt = cfs_cpt_of_node(lnet_cpt_table(), node_id);
 
-	lnet_ipif_free_enumeration(ifnames, nif);
+		in_dev_for_each_ifa_rtnl(ifa, in_dev) {
+			if (nip >= nalloc) {
+				struct lnet_inetdev *tmp;
 
-	if (nip == nif) {
-		*ipaddrsp = ipaddrs;
-	} else {
-		if (nip > 0) {
-			LIBCFS_ALLOC(ipaddrs2, nip * sizeof(*ipaddrs2));
-			if (ipaddrs2 == NULL) {
-				CERROR("Can't allocate ipaddrs[%d]\n", nip);
-				nip = -ENOMEM;
-			} else {
-				memcpy(ipaddrs2, ipaddrs,
-					nip * sizeof(*ipaddrs));
-				*ipaddrsp = ipaddrs2;
-				rc = nip;
+				nalloc += LNET_NUM_INTERFACES;
+				tmp = krealloc(ifaces, nalloc * sizeof(*tmp),
+					       GFP_KERNEL);
+				if (!tmp) {
+					kfree(ifaces);
+					ifaces = NULL;
+					nip = -ENOMEM;
+					goto unlock_rtnl;
+				}
+				ifaces = tmp;
 			}
+
+			ifaces[nip].li_cpt = cpt;
+			ifaces[nip].li_flags = flags;
+			ifaces[nip].li_ipaddr = ntohl(ifa->ifa_local);
+			ifaces[nip].li_netmask = ntohl(ifa->ifa_mask);
+			strlcpy(ifaces[nip].li_name, ifa->ifa_label,
+				sizeof(ifaces[nip].li_name));
+			nip++;
 		}
-		lnet_ipaddr_free_enumeration(ipaddrs, nif);
+		endfor_ifa(in_dev);
 	}
+unlock_rtnl:
+	rtnl_unlock();
+
+	if (nip == 0) {
+		CERROR("lnet: Can't find any usable interfaces, rc = -ENOENT\n");
+		nip = -ENOENT;
+	}
+
+	*dev_list = ifaces;
 	return nip;
 }
+EXPORT_SYMBOL(lnet_inet_enumerate);
 
 int
 lnet_parse_ip2nets (char **networksp, char *ip2nets)
 {
+	struct lnet_inetdev *ifaces = NULL;
 	__u32	  *ipaddrs = NULL;
-	int	   nip;
+	int nip;
 	int	   rc;
+	int i;
 
-	nip = lnet_ipaddr_enumerate(&ipaddrs, current->nsproxy->net_ns);
-
+	nip = lnet_inet_enumerate(&ifaces, current->nsproxy->net_ns);
 	if (nip < 0) {
-		LCONSOLE_ERROR_MSG(0x117, "Error %d enumerating local IP "
-				   "interfaces for ip2nets to match\n", nip);
+		if (nip != -ENOENT) {
+			LCONSOLE_ERROR_MSG(0x117,
+					   "Error %d enumerating local IP interfaces for ip2nets to match\n",
+					   nip);
+		} else {
+			LCONSOLE_ERROR_MSG(0x118,
+					   "No local IP interfaces for ip2nets to match\n");
+		}
 		return nip;
 	}
 
-	if (nip == 0) {
-		LCONSOLE_ERROR_MSG(0x118, "No local IP interfaces "
-				   "for ip2nets to match\n");
-		return -ENOENT;
+	LIBCFS_ALLOC(ipaddrs, nip * sizeof(*ipaddrs));
+	if (!ipaddrs) {
+		rc = -ENOMEM;
+		CERROR("lnet: Can't allocate ipaddrs[%d], rc = %d\n",
+		       nip, rc);
+		goto out_free_addrs;
 	}
+
+	for (i = 0; i < nip; i++)
+		ipaddrs[i] = ifaces[i].li_ipaddr;
 
 	rc = lnet_match_networks(networksp, ip2nets, ipaddrs, nip);
-	lnet_ipaddr_free_enumeration(ipaddrs, nip);
-
 	if (rc < 0) {
 		LCONSOLE_ERROR_MSG(0x119, "Error %d parsing ip2nets\n", rc);
-		return rc;
-	}
-
-	if (rc == 0) {
+	} else if (rc == 0) {
 		LCONSOLE_ERROR_MSG(0x11a, "ip2nets does not match "
 				   "any local IP interfaces\n");
-		return -ENOENT;
+		rc = -ENOENT;
 	}
-
-	return 0;
+	LIBCFS_FREE(ipaddrs, nip * sizeof(*ipaddrs));
+out_free_addrs:
+	kfree(ifaces);
+	return rc > 0 ? 0 : rc;
 }
