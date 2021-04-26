@@ -143,29 +143,22 @@ static inline struct timespec timespec64_to_timespec(const struct timespec64 ts6
 
 #endif /* HAVE_TIMESPEC64 */
 
-#if __BITS_PER_LONG == 64
-#define time_t long
-#else
-#error "lustre is not supported on 32bit"
+#ifndef HAVE_TIME_T
+typedef __kernel_old_time_t time_t;
 #endif
 
-#ifndef HAVE_NS_TO_TIMESPEC64
-static inline struct timespec64 ns_to_timespec64(const s64 nsec)
+#ifndef HAVE_JIFFIES_TO_TIMESPEC64
+static inline void
+jiffies_to_timespec64(const unsigned long jiffies, struct timespec64 *value)
 {
-	struct timespec64 ts;
-	s32 rem;
-
-	if (!nsec)
-		return (struct timespec64) {0, 0};
-
-	ts.tv_sec = div_s64_rem(nsec, NSEC_PER_SEC, &rem);
-	if (unlikely(rem < 0)) {
-		ts.tv_sec--;
-		rem += NSEC_PER_SEC;
-	}
-	ts.tv_nsec = rem;
-
-	return ts;
+	/*
+	 * Convert jiffies to nanoseconds and separate with
+	 * one divide.
+	 */
+	u32 rem;
+	value->tv_sec = div_u64_rem((u64)jiffies * TICK_NSEC,
+					NSEC_PER_SEC, &rem);
+	value->tv_nsec = rem;
 }
 #endif
 
