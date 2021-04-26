@@ -42,7 +42,6 @@
 #include <libcfs/libcfs.h>
 #include <lnet/lnet.h>
 #include <lnet/lib-types.h>
-#include <lnet/lnetst.h>
 #include "rpc.h"
 #include "selftest.h"
 

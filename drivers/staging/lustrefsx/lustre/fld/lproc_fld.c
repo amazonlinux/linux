@@ -356,9 +356,10 @@ static int fldb_seq_release(struct inode *inode, struct file *file)
 }
 
 const struct file_operations fld_proc_seq_fops = {
-	.proc_open    = fldb_seq_open,
-	.proc_read    = seq_read,
-	.proc_release = fldb_seq_release,
+	.owner   = THIS_MODULE,
+	.open    = fldb_seq_open,
+	.read    = seq_read,
+	.release = fldb_seq_release,
 };
 
 struct lprocfs_vars fld_server_proc_list[] = {
