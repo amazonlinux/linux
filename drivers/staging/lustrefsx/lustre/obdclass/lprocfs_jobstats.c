@@ -565,11 +565,12 @@ static int lprocfs_jobstats_seq_release(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops lprocfs_jobstats_seq_fops = {
-	.proc_open    = lprocfs_jobstats_seq_open,
-	.proc_read    = seq_read,
-	.proc_write   = lprocfs_jobstats_seq_write,
-	.proc_lseek   = seq_lseek,
-	.proc_release = lprocfs_jobstats_seq_release,
+	PROC_OWNER(THIS_MODULE)
+	.proc_open	= lprocfs_jobstats_seq_open,
+	.proc_read	= seq_read,
+	.proc_write	= lprocfs_jobstats_seq_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= lprocfs_jobstats_seq_release,
 };
 
 int lprocfs_job_stats_init(struct obd_device *obd, int cntr_num,
