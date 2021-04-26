@@ -26,6 +26,11 @@
  * Copyright 2012 Xyratex Technology Limited
  */
 
+/* Added in v4.15-rc4 (commit a208fa8f3303) */
+#ifndef CRYPTO_ALG_OPTIONAL_KEY
+#define CRYPTO_ALG_OPTIONAL_KEY 0x00004000
+#endif
+
 /**
  * Linux crypto hash specific functions.
  */
