@@ -647,6 +647,7 @@ static int vvp_dump_pgcache_seq_open(struct inode *inode, struct file *filp)
 }
 
 const struct proc_ops vvp_dump_pgcache_file_ops = {
+	PROC_OWNER(THIS_MODULE)
         .proc_open    = vvp_dump_pgcache_seq_open,
         .proc_read    = seq_read,
         .proc_lseek   = seq_lseek,
