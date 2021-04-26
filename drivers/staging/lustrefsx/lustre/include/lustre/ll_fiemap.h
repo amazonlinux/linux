@@ -41,9 +41,7 @@
 #ifndef _LUSTRE_FIEMAP_H
 #define _LUSTRE_FIEMAP_H
 
-#ifndef __KERNEL__
 #include <stddef.h>
-#endif
 #include <linux/fiemap.h>
 
 /* XXX: We use fiemap_extent::fe_reserved[0] */
