@@ -37,9 +37,7 @@
 #ifndef __LNET_LIB_LNET_H__
 #define __LNET_LIB_LNET_H__
 
-#ifndef __KERNEL__
-# error This include is only for kernel use.
-#endif
+#include <linux/netdevice.h>
 
 #include <libcfs/linux/linux-misc.h>
 #include <libcfs/libcfs.h>
@@ -81,11 +79,6 @@ extern struct lnet the_lnet;			/* THE network */
 		kernel_getpeername(sock, addr, addrlen)
 #define lnet_kernel_getsockname(sock, addr, addrlen) \
 		kernel_getsockname(sock, addr, addrlen)
-#endif
-
-#ifndef HAVE_KERNEL_SETSOCKOPT
-int kernel_setsockopt(struct socket *sock, int level, int optname,
-                        char *optval, unsigned int optlen);
 #endif
 
 static inline int lnet_is_route_alive(struct lnet_route *route)
@@ -783,12 +776,17 @@ int lnet_acceptor_port(void);
 int lnet_acceptor_start(void);
 void lnet_acceptor_stop(void);
 
-int lnet_ipif_query(char *name, int *up, __u32 *ip, __u32 *mask,
-		    struct net *ns);
-int lnet_ipif_enumerate(char ***names, struct net *ns);
-void lnet_ipif_free_enumeration(char **names, int n);
-int lnet_sock_setbuf(struct socket *socket, int txbufsize, int rxbufsize);
-int lnet_sock_getbuf(struct socket *socket, int *txbufsize, int *rxbufsize);
+struct lnet_inetdev {
+	u32	li_cpt;
+	u32	li_flags;
+	u32	li_ipaddr;
+	u32	li_netmask;
+	char	li_name[IFNAMSIZ];
+};
+
+int lnet_inet_enumerate(struct lnet_inetdev **dev_list, struct net *ns);
+void lnet_sock_setbuf(struct socket *socket, int txbufsize, int rxbufsize);
+void lnet_sock_getbuf(struct socket *socket, int *txbufsize, int *rxbufsize);
 int lnet_sock_getaddr(struct socket *socket, bool remote, __u32 *ip, int *port);
 int lnet_sock_write(struct socket *sock, void *buffer, int nob, int timeout);
 int lnet_sock_read(struct socket *sock, void *buffer, int nob, int timeout);
