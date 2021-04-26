@@ -244,9 +244,14 @@ proc_lnet_routes(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
+#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else {
+#else
+		memcpy(buffer, tmpstr, len);
+		{
+#endif
 			off += 1;
 			*ppos = LNET_PROC_POS_MAKE(0, ver, 0, off);
 		}
@@ -381,9 +386,14 @@ proc_lnet_routers(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
+#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else {
+#else
+		memcpy(buffer, tmpstr, len);
+		{
+#endif
 			off += 1;
 			*ppos = LNET_PROC_POS_MAKE(0, ver, 0, off);
 		}
@@ -577,9 +587,13 @@ proc_lnet_peers(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
+#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else
+#else
+		memcpy(buffer, tmpstr, len);
+#endif
 			*ppos = LNET_PROC_POS_MAKE(cpt, ver, hash, hoff);
 	}
 
@@ -784,9 +798,14 @@ proc_lnet_nis(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
+
+#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else
+#else
+		memcpy(buffer, tmpstr, len);
+#endif
 			*ppos += 1;
 	}
 
