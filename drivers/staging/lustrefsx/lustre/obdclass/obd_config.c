@@ -1341,8 +1341,9 @@ int class_process_proc_param(char *prefix, struct lprocfs_vars *lvars,
 
 				if (var->fops && var->fops->proc_write) {
 					rc = (var->fops->proc_write)(&fakefile,
-								sval, vallen,
-								NULL);
+								     sval,
+								     vallen,
+								     NULL);
 				}
 				break;
 			}

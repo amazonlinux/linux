@@ -55,6 +55,8 @@
 #include <lnet/lib-lnet.h>
 #include <lnet/socklnd.h>
 
+#include <libcfs/linux/linux-net.h>
+
 #ifdef HAVE_TCP_SENDPAGE_USE_SOCKET
 # define cfs_tcp_sendpage(sk, page, offset, size, flags) \
 	tcp_sendpage((sk)->sk_socket, page, offset, size, flags)
