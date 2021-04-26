@@ -147,12 +147,13 @@ static int seq_watermark_open(struct inode *inode, struct file *file)
 	return single_open(file, seq_watermark_show, PDE_DATA(inode));
 }
 
-static const struct proc_ops ldlm_watermark_fops = {
-	.proc_open		= seq_watermark_open,
-	.proc_read		= seq_read,
-	.proc_write		= seq_watermark_write,
-	.proc_lseek		= seq_lseek,
-	.proc_release		= lprocfs_single_release,
+static const struct file_operations ldlm_watermark_fops = {
+	.owner		= THIS_MODULE,
+	.open		= seq_watermark_open,
+	.read		= seq_read,
+	.write		= seq_watermark_write,
+	.llseek		= seq_lseek,
+	.release	= lprocfs_single_release,
 };
 
 static int seq_granted_show(struct seq_file *m, void *data)
@@ -167,11 +168,12 @@ static int seq_granted_open(struct inode *inode, struct file *file)
 	return single_open(file, seq_granted_show, PDE_DATA(inode));
 }
 
-static const struct proc_ops ldlm_granted_fops = {
-	.proc_open	= seq_granted_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= seq_release,
+static const struct file_operations ldlm_granted_fops = {
+	.owner	= THIS_MODULE,
+	.open	= seq_granted_open,
+	.read	= seq_read,
+	.llseek	= seq_lseek,
+	.release = seq_release,
 };
 
 #endif /* HAVE_SERVER_SUPPORT */
