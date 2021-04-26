@@ -737,8 +737,12 @@ int cfs_trace_copyin_string(char *knl_buffer, int knl_buffer_nob,
         if (usr_buffer_nob > knl_buffer_nob)
                 return -EOVERFLOW;
 
+#ifdef PROC_HANDLER_USE_USER_ATTR
 	if (copy_from_user(knl_buffer, usr_buffer, usr_buffer_nob))
                 return -EFAULT;
+#else
+	memcpy(knl_buffer, usr_buffer, usr_buffer_nob);
+#endif
 
         nob = strnlen(knl_buffer, usr_buffer_nob);
         while (nob-- >= 0)                      /* strip trailing whitespace */
@@ -767,12 +771,20 @@ int cfs_trace_copyout_string(char __user *usr_buffer, int usr_buffer_nob,
         if (nob > usr_buffer_nob)
                 nob = usr_buffer_nob;
 
+#ifdef PROC_HANDLER_USE_USER_ATTR
 	if (copy_to_user(usr_buffer, knl_buffer, nob))
                 return -EFAULT;
+#else
+	memcpy(usr_buffer, knl_buffer, nob);
+#endif
 
         if (append != NULL && nob < usr_buffer_nob) {
+#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(usr_buffer + nob, append, 1))
                         return -EFAULT;
+#else
+		memcpy(usr_buffer + nob, append, 1);
+#endif
 
                 nob++;
         }
