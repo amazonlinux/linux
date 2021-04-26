@@ -97,20 +97,29 @@ int lprocfs_seq_release(struct inode *inode, struct file *file)
 }
 EXPORT_SYMBOL(lprocfs_seq_release);
 
+static umode_t default_mode(const struct proc_ops *ops)
+{
+	umode_t mode = 0;
+
+	if (ops->proc_read)
+		mode = 0444;
+	if (ops->proc_write)
+		mode |= 0200;
+
+	return mode;
+}
+
 struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
 		   void *data, const struct proc_ops *fops)
 {
 	struct proc_dir_entry *proc;
-	mode_t mode = 0;
+	umode_t mode;
 
 	if (root == NULL || name == NULL || fops == NULL)
                 return ERR_PTR(-EINVAL);
 
-	if (fops->proc_read)
-		mode = 0444;
-	if (fops->proc_write)
-		mode |= 0200;
+	mode = default_mode(fops);
 	proc = proc_create_data(name, mode, root, fops, data);
 	if (!proc) {
 		CERROR("LprocFS: No memory to create /proc entry %s\n",
@@ -202,16 +211,12 @@ lprocfs_add_vars(struct proc_dir_entry *root, struct lprocfs_vars *list,
 
 	while (list->name != NULL) {
 		struct proc_dir_entry *proc;
-		mode_t mode = 0;
+		umode_t mode = 0;
 
-		if (list->proc_mode != 0000) {
+		if (list->proc_mode)
 			mode = list->proc_mode;
-		} else if (list->fops) {
-			if (list->fops->proc_read)
-				mode = 0444;
-			if (list->fops->proc_write)
-				mode |= 0200;
-		}
+		else if (list->fops)
+			mode = default_mode(list->fops);
 		proc = proc_create_data(list->name, mode, root,
 					list->fops ?: &lprocfs_empty_ops,
 					list->data ?: data);
@@ -1537,20 +1542,21 @@ static int lprocfs_stats_seq_open(struct inode *inode, struct file *file)
 }
 
 static const struct proc_ops lprocfs_stats_seq_fops = {
-        .proc_open    = lprocfs_stats_seq_open,
-        .proc_read    = seq_read,
-        .proc_write   = lprocfs_stats_seq_write,
-        .proc_lseek   = seq_lseek,
-        .proc_release = lprocfs_seq_release,
+	PROC_OWNER(THIS_MODULE)
+	.proc_open	= lprocfs_stats_seq_open,
+	.proc_read	= seq_read,
+	.proc_write	= lprocfs_stats_seq_write,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= lprocfs_seq_release,
 };
 
 static const struct file_operations ldebugfs_stats_seq_fops = {
-        .owner   = THIS_MODULE,
-        .open    = lprocfs_stats_seq_open,
-        .read    = seq_read,
-        .write   = lprocfs_stats_seq_write,
-        .llseek  = seq_lseek,
-        .release = lprocfs_seq_release,
+	.owner	 = THIS_MODULE,
+	.open	 = lprocfs_stats_seq_open,
+	.read	 = seq_read,
+	.write	 = lprocfs_stats_seq_write,
+	.llseek	 = seq_lseek,
+	.release = lprocfs_seq_release,
 };
 
 int ldebugfs_register_stats(struct dentry *parent, const char *name,
@@ -2265,7 +2271,7 @@ int lprocfs_seq_create(struct proc_dir_entry *parent,
 	ENTRY;
 
 	/* Disallow secretly (un)writable entries. */
-	LASSERT((seq_fops->proc_write == NULL) == ((mode & 0222) == 0));
+	LASSERT(!seq_fops->proc_write == !(mode & 0222));
 
 	entry = proc_create_data(name, mode, parent, seq_fops, data);
 
