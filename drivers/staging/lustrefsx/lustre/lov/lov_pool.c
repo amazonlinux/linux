@@ -41,6 +41,7 @@
 #define DEBUG_SUBSYSTEM S_LOV
 
 #include <libcfs/libcfs.h>
+#include <libcfs/linux/linux-fs.h>
 
 #include <obd.h>
 #include "lov_internal.h"
@@ -287,10 +288,10 @@ static int pool_proc_open(struct inode *inode, struct file *file)
 }
 
 static struct proc_ops pool_proc_operations = {
-        .proc_open           = pool_proc_open,
-        .proc_read           = seq_read,
-        .proc_lseek          = seq_lseek,
-        .proc_release        = seq_release,
+	.proc_open	= pool_proc_open,
+	.proc_read	= seq_read,
+	.proc_lseek	= seq_lseek,
+	.proc_release	= seq_release,
 };
 #endif /* CONFIG_PROC_FS */
 
