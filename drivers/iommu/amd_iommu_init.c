@@ -1853,8 +1853,8 @@ static void print_iommu_info(void)
 			dev_name(&iommu->dev->dev), iommu->cap_ptr);
 
 		if (iommu->cap & (1 << IOMMU_CAP_EFR)) {
-			pr_info("AMD-Vi: Extended features (%#llx):\n",
-				iommu->features);
+			pr_info("Extended features (%#llx):", iommu->features);
+
 			for (i = 0; i < ARRAY_SIZE(feat_str); ++i) {
 				if (iommu_feature(iommu, (1ULL << i)))
 					pr_cont(" %s", feat_str[i]);
