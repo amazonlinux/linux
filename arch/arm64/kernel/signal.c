@@ -18,6 +18,7 @@
 #include <linux/sizes.h>
 #include <linux/string.h>
 #include <linux/tracehook.h>
+#include <linux/livepatch.h>
 #include <linux/ratelimit.h>
 #include <linux/syscalls.h>
 
@@ -938,6 +939,9 @@ void do_notify_resume(struct pt_regs *regs, unsigned long thread_flags)
 				send_sig_fault(SIGSEGV, SEGV_MTEAERR,
 					       (void __user *)NULL, current);
 			}
+
+			if (thread_flags & _TIF_PATCH_PENDING)
+				klp_update_patch_state(current);
 
 			if (thread_flags & (_TIF_SIGPENDING | _TIF_NOTIFY_SIGNAL))
 				do_signal(regs);
