@@ -195,6 +195,7 @@ config ARM64
 	select HAVE_IOREMAP_PROT
 	select HAVE_IRQ_TIME_ACCOUNTING
 	select HAVE_KVM
+	select HAVE_LIVEPATCH
 	select HAVE_NMI
 	select HAVE_PERF_EVENTS
 	select HAVE_PERF_REGS
@@ -2289,3 +2290,4 @@ source "drivers/acpi/Kconfig"
 
 source "arch/arm64/kvm/Kconfig"
 
+source "kernel/livepatch/Kconfig"
