@@ -52,6 +52,7 @@
 #include <asm/thermal.h>
 #include <asm/unwind.h>
 #include <asm/vsyscall.h>
+#include <asm/setup.h>
 #include <linux/vmalloc.h>
 
 /*
@@ -888,6 +889,9 @@ void __init setup_arch(char **cmdline_p)
 #else
 	printk(KERN_INFO "Command line: %s\n", boot_command_line);
 	boot_cpu_data.x86_phys_bits = MAX_PHYSMEM_BITS;
+#endif
+#ifdef CONFIG_RANDOMIZE_BASE
+	printk(KERN_INFO "KASLR %s\n", kaslr_enabled() ? "enabled" : "disabled");
 #endif
 
 	/*
