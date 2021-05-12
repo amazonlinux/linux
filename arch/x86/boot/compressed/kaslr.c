@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: GPL-2.0
 /*
  * kaslr.c
@@ -31,6 +32,9 @@
 #include <linux/ctype.h>
 #include <generated/utsversion.h>
 #include <generated/utsrelease.h>
+
+/* xen_cpuid_base/hypervisor_cpuid_base inlines */
+#include <asm/xen/hypervisor.h>
 
 #define _SETUP
 #include <asm/setup.h>	/* For COMMAND_LINE_SIZE */
@@ -833,6 +837,10 @@ void choose_random_location(unsigned long input,
 
 	if (cmdline_find_option_bool("nokaslr")) {
 		warn("KASLR disabled: 'nokaslr' on cmdline.");
+		return;
+	}
+	if (xen_cpuid_base() != 0) {
+		warn("KASLR disabled: Xen hypervisor detected.");
 		return;
 	}
 
