@@ -1,3 +1,4 @@
+
 // SPDX-License-Identifier: GPL-2.0
 /*
  * kaslr.c
@@ -31,6 +32,9 @@
 #include <linux/efi.h>
 #include <generated/utsrelease.h>
 #include <asm/efi.h>
+
+/* xen_cpuid_base/hypervisor_cpuid_base inlines */
+#include <asm/xen/hypervisor.h>
 
 /* Macros used by the included decompressor code below. */
 #define STATIC
@@ -837,6 +841,10 @@ void choose_random_location(unsigned long input,
 
 	if (cmdline_find_option_bool("nokaslr")) {
 		warn("KASLR disabled: 'nokaslr' on cmdline.");
+		return;
+	}
+	if (xen_cpuid_base() != 0) {
+		warn("KASLR disabled: Xen hypervisor detected.");
 		return;
 	}
 
