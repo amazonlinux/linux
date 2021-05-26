@@ -121,6 +121,12 @@ jiffies = jiffies_64;
 #define TRAMP_TEXT
 #endif
 
+#define SYM_CODE_FUNCTIONS                                     \
+       . = ALIGN(16);                                           \
+       __sym_code_functions_start = .;                         \
+       KEEP(*(sym_code_functions))                             \
+       __sym_code_functions_end = .;
+
 /*
  * The size of the PE/COFF section that covers the kernel image, which
  * runs from _stext to _edata, must be a round multiple of the PE/COFF
@@ -246,6 +252,7 @@ SECTIONS
 		CON_INITCALL
 		INIT_RAM_FS
 		*(.init.altinstructions .init.bss)	/* from the EFI stub */
+               SYM_CODE_FUNCTIONS
 	}
 	.exit.data : {
 		EXIT_DATA
