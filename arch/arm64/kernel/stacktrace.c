@@ -12,11 +12,115 @@
 #include <linux/sched/debug.h>
 #include <linux/sched/task_stack.h>
 #include <linux/stacktrace.h>
+#include <linux/slab.h>
 
 #include <asm/efi.h>
 #include <asm/irq.h>
 #include <asm/stack_pointer.h>
 #include <asm/stacktrace.h>
+
+struct code_range {
+	unsigned long	start;
+	unsigned long	end;
+};
+
+static struct code_range	*sym_code_functions;
+static int			num_sym_code_functions;
+
+int __init init_sym_code_functions(void)
+{
+	size_t size;
+
+	size = (unsigned long)__sym_code_functions_end -
+	       (unsigned long)__sym_code_functions_start;
+
+	sym_code_functions = kmalloc(size, GFP_KERNEL);
+	if (!sym_code_functions)
+		return -ENOMEM;
+
+	memcpy(sym_code_functions, __sym_code_functions_start, size);
+	/* Update num_sym_code_functions after copying sym_code_functions. */
+	smp_mb();
+	num_sym_code_functions = size / sizeof(struct code_range);
+
+	return 0;
+}
+early_initcall(init_sym_code_functions);
+
+/*
+ * Check the return PC against sym_code_functions[]. If there is a match, then
+ * the consider the stack frame unreliable. These functions contain low-level
+ * code where the frame pointer and/or the return address register cannot be
+ * relied upon. This addresses the following situations:
+ *
+ *	- Exception handlers and entry assembly
+ *	- Trampoline assembly (e.g., ftrace, kprobes)
+ *	- Hypervisor-related assembly
+ *	- Hibernation-related assembly
+ *	- CPU start-stop, suspend-resume assembly
+ *	- Kernel relocation assembly
+ *
+ * Some special cases covered by sym_code_functions[] deserve a mention here:
+ *
+ *	- All EL1 interrupt and exception stack traces will be considered
+ *	  unreliable. This is the correct behavior as interrupts and exceptions
+ *	  can happen on any instruction including ones in the frame pointer
+ *	  prolog and epilog. Unless stack metadata is available so the unwinder
+ *	  can unwind through these special cases, such stack traces will be
+ *	  considered unreliable.
+ *
+ *	- A task can get preempted at the end of an interrupt. Stack traces
+ *	  of preempted tasks will show the interrupt frame in the stack trace
+ *	  and will be considered unreliable.
+ *
+ *	- Breakpoints are exceptions. So, all stack traces in the break point
+ *	  handler (including probes) will be considered unreliable.
+ *
+ *	- All of the ftrace entry trampolines are considered unreliable. So,
+ *	  all stack traces taken from tracer functions will be considered
+ *	  unreliable.
+ *
+ *	- The Function Graph Tracer return trampoline (return_to_handler)
+ *	  and the Kretprobe return trampoline (kretprobe_trampoline) are
+ *	  also considered unreliable.
+ *
+ * Some of the special cases above can be unwound through using special logic
+ * in unwind_frame().
+ *
+ *	- return_to_handler() is handled by the unwinder by attempting to
+ *	  retrieve the original return address from the per-task return
+ *	  address stack.
+ *
+ *	- kretprobe_trampoline() can be handled in a similar fashion by
+ *	  attempting to retrieve the original return address from the per-task
+ *	  kretprobe instance list.
+ *
+ *	- I reckon optprobes can be handled in a similar fashion in the future?
+ *
+ *	- Stack traces taken from the FTrace tracer functions can be handled
+ *	  as well. ftrace_call is an inner label defined in the Ftrace entry
+ *	  trampoline. This is the location where the call to a tracer function
+ *	  is patched. So, if the return PC equals ftrace_call+4, it is
+ *	  reliable. At that point, proper stack frames have already been set
+ *	  up for the traced function and its caller.
+ */
+static bool unwinder_is_unreliable(unsigned long pc)
+{
+	const struct code_range *range;
+	int i;
+
+	/*
+	 * If sym_code_functions[] were sorted, a binary search could be
+	 * done to make this more performant.
+	 */
+	for (i = 0; i < num_sym_code_functions; i++) {
+		range = &sym_code_functions[i];
+		if (pc >= range->start && pc < range->end)
+			return true;
+	}
+
+	return false;
+}
 
 /*
  * Start an unwind from a pt_regs.
@@ -79,12 +183,7 @@ static __always_inline void unwind_init_from_task(struct unwind_state *state,
 static int notrace unwind_next(struct unwind_state *state, int *reliable)
 {
 	struct task_struct *tsk = state->task;
-	unsigned long fp = state->fp;
 	int err;
-
-	/* Final frame; nothing to unwind */
-	if (fp == (unsigned long)task_pt_regs(tsk)->stackframe)
-		return -ENOENT;
 
 	err = unwind_next_frame_record(state);
 	if (err) {
@@ -131,6 +230,13 @@ static int notrace unwind_next(struct unwind_state *state, int *reliable)
 	 *	- Procedure Linkage Table (PLT) entries and veneer functions
 	 */
 	if (reliable && !__kernel_text_address(state->pc))
+		*reliable = 0;
+
+	/* Final frame; nothing to unwind */
+	if (state->fp == (unsigned long)task_pt_regs(tsk)->stackframe)
+		return -ENOENT;
+
+	if (reliable && unwinder_is_unreliable(state->pc))
 		*reliable = 0;
 
 	return 0;
