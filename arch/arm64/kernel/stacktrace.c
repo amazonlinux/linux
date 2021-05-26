@@ -54,6 +54,7 @@ notrace void start_backtrace(struct stackframe *frame, unsigned long fp,
 	bitmap_zero(frame->stacks_done, __NR_STACK_TYPES);
 	frame->prev_fp = 0;
 	frame->prev_type = STACK_TYPE_UNKNOWN;
+	frame->reliable = true;
 }
 NOKPROBE_SYMBOL(start_backtrace);
 
@@ -69,6 +70,8 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 	unsigned long fp = frame->fp;
 	struct stack_info info;
 
+	frame->reliable = true;
+
 	if (!tsk)
 		tsk = current;
 
@@ -76,14 +79,20 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 	if (fp == (unsigned long)task_pt_regs(tsk)->stackframe)
 		return -ENOENT;
 
-	if (fp & 0x7)
+	if (fp & 0x7) {
+		frame->reliable = false;
 		return -EINVAL;
+	}
 
-	if (!on_accessible_stack(tsk, fp, 16, &info))
+	if (!on_accessible_stack(tsk, fp, 16, &info)) {
+		frame->reliable = false;
 		return -EINVAL;
+	}
 
-	if (test_bit(info.type, frame->stacks_done))
+	if (test_bit(info.type, frame->stacks_done)) {
+		frame->reliable = false;
 		return -EINVAL;
+	}
 
 	/*
 	 * As stacks grow downward, any valid record on the same stack must be
@@ -99,8 +108,10 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 	 * stack.
 	 */
 	if (info.type == frame->prev_type) {
-		if (fp <= frame->prev_fp)
+		if (fp <= frame->prev_fp) {
+			frame->reliable = false;
 			return -EINVAL;
+		}
 	} else {
 		set_bit(frame->prev_type, frame->stacks_done);
 	}
@@ -125,13 +136,31 @@ int notrace unwind_frame(struct task_struct *tsk, struct stackframe *frame)
 		 * So replace it to an original value.
 		 */
 		ret_stack = ftrace_graph_get_ret_stack(tsk, frame->graph++);
-		if (WARN_ON_ONCE(!ret_stack))
+		if (WARN_ON_ONCE(!ret_stack)) {
+			frame->reliable = false;
 			return -EINVAL;
+		}
 		frame->pc = ret_stack->ret;
 	}
 #endif /* CONFIG_FUNCTION_GRAPH_TRACER */
 
 	frame->pc = ptrauth_strip_insn_pac(frame->pc);
+
+	/*
+	 * Check the return PC for conditions that make unwinding unreliable.
+	 * In each case, mark the stack trace as such.
+	 */
+
+	/*
+	 * Make sure that the return address is a proper kernel text address.
+	 * A NULL or invalid return address could mean:
+	 *
+	 *	- generated code such as eBPF and optprobe trampolines
+	 *	- Foreign code (e.g. EFI runtime services)
+	 *	- Procedure Linkage Table (PLT) entries and veneer functions
+	 */
+	if (!__kernel_text_address(frame->pc))
+		frame->reliable = false;
 
 	return 0;
 }
