@@ -76,7 +76,7 @@ static __always_inline void unwind_init_from_task(struct unwind_state *state,
  * records (e.g. a cycle), determined based on the location and fp value of A
  * and the location (but not the fp value) of B.
  */
-static int notrace unwind_next(struct unwind_state *state)
+static int notrace unwind_next(struct unwind_state *state, int *reliable)
 {
 	struct task_struct *tsk = state->task;
 	unsigned long fp = state->fp;
@@ -87,8 +87,11 @@ static int notrace unwind_next(struct unwind_state *state)
 		return -ENOENT;
 
 	err = unwind_next_frame_record(state);
-	if (err)
+	if (err) {
+		if (reliable)
+			*reliable = 0;
 		return err;
+	}
 
 	state->pc = ptrauth_strip_insn_pac(state->pc);
 
@@ -114,11 +117,27 @@ static int notrace unwind_next(struct unwind_state *state)
 		state->pc = kretprobe_find_ret_addr(tsk, (void *)state->fp, &state->kr_cur);
 #endif
 
+	/*
+	 * Check the return PC for conditions that make unwinding unreliable.
+	 * In each case, mark the stack trace as such.
+	 */
+
+	/*
+	 * Make sure that the return address is a proper kernel text address.
+	 * A NULL or invalid return address could mean:
+	 *
+	 *	- generated code such as eBPF and optprobe trampolines
+	 *	- Foreign code (e.g. EFI runtime services)
+	 *	- Procedure Linkage Table (PLT) entries and veneer functions
+	 */
+	if (reliable && !__kernel_text_address(state->pc))
+		*reliable = 0;
+
 	return 0;
 }
 NOKPROBE_SYMBOL(unwind_next);
 
-static void notrace unwind(struct unwind_state *state,
+static void notrace unwind(struct unwind_state *state, int *reliable,
 			   stack_trace_consume_fn consume_entry, void *cookie)
 {
 	while (1) {
@@ -126,7 +145,7 @@ static void notrace unwind(struct unwind_state *state,
 
 		if (!consume_entry(cookie, state->pc))
 			break;
-		ret = unwind_next(state);
+		ret = unwind_next(state, reliable);
 		if (ret < 0)
 			break;
 	}
@@ -228,5 +247,5 @@ noinline noinstr void arch_stack_walk(stack_trace_consume_fn consume_entry,
 		unwind_init_from_task(&state, task);
 	}
 
-	unwind(&state, consume_entry, cookie);
+	unwind(&state, NULL, consume_entry, cookie);
 }
