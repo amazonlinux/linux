@@ -23,6 +23,7 @@
 /x86_64/vmx_dirty_log_test
 /x86_64/vmx_set_nested_state_test
 /x86_64/vmx_tsc_adjust_test
+/x86_64/vmx_nested_tsc_scaling_test
 /x86_64/xss_msr_test
 /clear_dirty_log_test
 /demand_paging_test
