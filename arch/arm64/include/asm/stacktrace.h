@@ -49,6 +49,13 @@ struct stack_info {
  *
  * @graph:       When FUNCTION_GRAPH_TRACER is selected, holds the index of a
  *               replacement lr value in the ftrace graph stack.
+ *
+ * @reliable:	Is this stack frame reliable? There are several checks that
+ *              need to be performed in unwind_frame() before a stack frame
+ *              is truly reliable. Until all the checks are present, this flag
+ *              is just a place holder. Once all the checks are implemented,
+ *              this comment will be updated and the flag can be used by the
+ *              caller of unwind_frame().
  */
 struct stackframe {
 	unsigned long fp;
@@ -59,6 +66,7 @@ struct stackframe {
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
 	int graph;
 #endif
+	bool reliable;
 };
 
 extern int unwind_frame(struct task_struct *tsk, struct stackframe *frame);
