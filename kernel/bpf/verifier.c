@@ -4632,6 +4632,7 @@ static int adjust_insn_aux_data(struct bpf_verifier_env *env, u32 prog_len,
 				u32 off, u32 cnt)
 {
 	struct bpf_insn_aux_data *new_data, *old_data = env->insn_aux_data;
+	bool old_seen = old_data[off].seen;
 	int i;
 
 	if (cnt == 1)
@@ -4643,7 +4644,8 @@ static int adjust_insn_aux_data(struct bpf_verifier_env *env, u32 prog_len,
 	memcpy(new_data + off + cnt - 1, old_data + off,
 	       sizeof(struct bpf_insn_aux_data) * (prog_len - off - cnt + 1));
 	for (i = off; i < off + cnt - 1; i++)
-		new_data[i].seen = true;
+		/* Expand insni[off]'s seen flag to the patched range. */
+		new_data[i].seen = old_seen;
 	env->insn_aux_data = new_data;
 	vfree(old_data);
 	return 0;
