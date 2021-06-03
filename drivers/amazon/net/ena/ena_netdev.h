@@ -25,7 +25,7 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	4
+#define DRV_MODULE_GEN_MINOR	5
 #define DRV_MODULE_GEN_SUBMINOR 0
 
 #define DRV_MODULE_NAME		"ena"
@@ -66,12 +66,6 @@
 
 #define ENA_TX_WAKEUP_THRESH		(MAX_SKB_FRAGS + 2)
 #define ENA_DEFAULT_RX_COPYBREAK	(256 - NET_IP_ALIGN)
-
-/* limit the buffer size to 600 bytes to handle MTU changes from very
- * small to very large, in which case the number of buffers per packet
- * could exceed ENA_PKT_MAX_BUFS
- */
-#define ENA_DEFAULT_MIN_RX_BUFF_ALLOC_SIZE 600
 
 #define ENA_MIN_MTU		128
 
@@ -156,14 +150,14 @@ struct ena_irq {
 };
 
 struct ena_napi {
-	struct napi_struct napi ____cacheline_aligned;
+	bool first_interrupt ____cacheline_aligned;
+	bool interrupts_masked;
+	struct napi_struct napi;
 	struct ena_ring *tx_ring;
 	struct ena_ring *rx_ring;
 #ifdef ENA_XDP_SUPPORT
 	struct ena_ring *xdp_ring;
 #endif /* ENA_XDP_SUPPORT */
-	bool first_interrupt;
-	bool interrupts_masked;
 	u32 qid;
 	struct dim dim;
 };
@@ -218,6 +212,7 @@ struct ena_rx_buffer {
 	struct sk_buff *skb;
 	struct page *page;
 	u32 page_offset;
+	bool is_lpc_page;
 	struct ena_com_buf ena_buf;
 } ____cacheline_aligned;
 
@@ -237,6 +232,7 @@ struct ena_stats_tx {
 	u64 llq_buffer_copy;
 	u64 missed_tx;
 	u64 unmask_interrupt;
+	u64 last_napi_jiffies;
 };
 
 struct ena_stats_rx {
@@ -250,7 +246,7 @@ struct ena_stats_rx {
 	u64 skb_alloc_fail;
 	u64 dma_mapping_err;
 	u64 bad_desc_num;
-#if ENA_BUSY_POLL_SUPPORT
+#ifdef ENA_BUSY_POLL_SUPPORT
 	u64 bp_yield;
 	u64 bp_missed;
 	u64 bp_cleaned;
@@ -319,6 +315,10 @@ struct ena_ring {
 	struct bpf_prog *xdp_bpf_prog;
 	struct xdp_rxq_info xdp_rxq;
 	spinlock_t xdp_tx_lock;	/* synchronize XDP TX/Redirect traffic */
+	/* Used for rx queues only to point to the xdp tx ring, to
+	 * which traffic should be redirected from this rx ring.
+	 */
+	struct ena_ring *xdp_ring;
 #endif
 
 	u16 next_to_use;
@@ -332,7 +332,6 @@ struct ena_ring {
 	/* The maximum header length the device can handle */
 	u8 tx_max_header_size;
 
-	bool first_interrupt;
 	bool disable_meta_caching;
 	u16 no_interrupt_event_cnt;
 
@@ -355,12 +354,12 @@ struct ena_ring {
 
 	u8 *push_buf_intermediate_buf;
 	int empty_rx_queue;
-#if ENA_BUSY_POLL_SUPPORT
+#ifdef ENA_BUSY_POLL_SUPPORT
 	atomic_t bp_state;
 #endif
 } ____cacheline_aligned;
 
-#if ENA_BUSY_POLL_SUPPORT
+#ifdef ENA_BUSY_POLL_SUPPORT
 enum ena_busy_poll_state_t {
 	ENA_BP_STATE_IDLE = 0,
 	ENA_BP_STATE_NAPI,
@@ -404,6 +403,9 @@ struct ena_adapter {
 
 	u32 num_io_queues;
 	u32 max_num_io_queues;
+
+	/* Local page cache size */
+	u32 lpc_size;
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(4, 8, 0)
 	struct msix_entry *msix_entries;
@@ -477,6 +479,8 @@ void ena_dump_stats_to_buf(struct ena_adapter *adapter, u8 *buf);
 
 int ena_update_hw_stats(struct ena_adapter *adapter);
 
+int ena_set_lpc_state(struct ena_adapter *adapter, bool enabled);
+
 int ena_update_queue_sizes(struct ena_adapter *adapter,
 			   u32 new_tx_size,
 			   u32 new_rx_size);
@@ -484,8 +488,7 @@ int ena_update_queue_sizes(struct ena_adapter *adapter,
 int ena_update_queue_count(struct ena_adapter *adapter, u32 new_channel_count);
 
 int ena_get_sset_count(struct net_device *netdev, int sset);
-
-#if ENA_BUSY_POLL_SUPPORT
+#ifdef ENA_BUSY_POLL_SUPPORT
 static inline void ena_bp_init_lock(struct ena_ring *rx_ring)
 {
 	/* reset state to idle */
@@ -553,40 +556,7 @@ static inline bool ena_bp_disable(struct ena_ring *rx_ring)
 
 	return rc == ENA_BP_STATE_IDLE;
 }
-#else
-static inline void ena_bp_init_lock(struct ena_ring *rx_ring)
-{
-}
-
-static inline bool ena_bp_lock_napi(struct ena_ring *rx_ring)
-{
-       return true;
-}
-
-static inline void ena_bp_unlock_napi(struct ena_ring *rx_ring)
-{
-}
-
-static inline bool ena_bp_lock_poll(struct ena_ring *rx_ring)
-{
-       return false;
-}
-
-static inline void ena_bp_unlock_poll(struct ena_ring *rx_ring)
-{
-}
-
-static inline bool ena_bp_busy_polling(struct ena_ring *rx_ring)
-{
-       return false;
-}
-
-static inline bool ena_bp_disable(struct ena_ring *rx_ring)
-{
-	return true;
-}
 #endif /* ENA_BUSY_POLL_SUPPORT */
-
 
 #ifdef ENA_XDP_SUPPORT
 enum ena_xdp_errors_t {
