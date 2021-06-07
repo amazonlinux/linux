@@ -2112,14 +2112,15 @@ static u32 adjust_tsc_khz(u32 khz, s32 ppm)
 	return v;
 }
 
+static void kvm_vcpu_write_tsc_multiplier(struct kvm_vcpu *vcpu, u64 l1_multiplier);
+
 static int set_tsc_khz(struct kvm_vcpu *vcpu, u32 user_tsc_khz, bool scale)
 {
 	u64 ratio;
 
 	/* Guest TSC same frequency as host TSC? */
 	if (!scale) {
-		vcpu->arch.l1_tsc_scaling_ratio = kvm_default_tsc_scaling_ratio;
-		vcpu->arch.tsc_scaling_ratio = kvm_default_tsc_scaling_ratio;
+		kvm_vcpu_write_tsc_multiplier(vcpu, kvm_default_tsc_scaling_ratio);
 		return 0;
 	}
 
@@ -2145,7 +2146,7 @@ static int set_tsc_khz(struct kvm_vcpu *vcpu, u32 user_tsc_khz, bool scale)
 		return -1;
 	}
 
-	vcpu->arch.l1_tsc_scaling_ratio = vcpu->arch.tsc_scaling_ratio = ratio;
+	kvm_vcpu_write_tsc_multiplier(vcpu, ratio);
 	return 0;
 }
 
@@ -2157,8 +2158,7 @@ static int kvm_set_tsc_khz(struct kvm_vcpu *vcpu, u32 user_tsc_khz)
 	/* tsc_khz can be zero if TSC calibration fails */
 	if (user_tsc_khz == 0) {
 		/* set tsc_scaling_ratio to a safe value */
-		vcpu->arch.l1_tsc_scaling_ratio = kvm_default_tsc_scaling_ratio;
-		vcpu->arch.tsc_scaling_ratio = kvm_default_tsc_scaling_ratio;
+		kvm_vcpu_write_tsc_multiplier(vcpu, kvm_default_tsc_scaling_ratio);
 		return -1;
 	}
 
@@ -2314,6 +2314,23 @@ static void kvm_vcpu_write_tsc_offset(struct kvm_vcpu *vcpu, u64 l1_offset)
 		vcpu->arch.tsc_offset = l1_offset;
 
 	kvm_x86_ops.write_tsc_offset(vcpu, vcpu->arch.tsc_offset);
+}
+
+static void kvm_vcpu_write_tsc_multiplier(struct kvm_vcpu *vcpu, u64 l1_multiplier)
+{
+	vcpu->arch.l1_tsc_scaling_ratio = l1_multiplier;
+
+	/* Userspace is changing the multiplier while L2 is active */
+	if (is_guest_mode(vcpu))
+		vcpu->arch.tsc_scaling_ratio = kvm_calc_nested_tsc_multiplier(
+			l1_multiplier,
+			kvm_x86_ops.get_l2_tsc_multiplier(vcpu));
+	else
+		vcpu->arch.tsc_scaling_ratio = l1_multiplier;
+
+	if (kvm_has_tsc_control)
+		kvm_x86_ops.write_tsc_multiplier(
+			vcpu, vcpu->arch.tsc_scaling_ratio);
 }
 
 static inline bool kvm_check_tsc_unstable(void)
@@ -10254,8 +10271,6 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	else
 		vcpu->arch.mp_state = KVM_MP_STATE_UNINITIALIZED;
 
-	kvm_set_tsc_khz(vcpu, max_tsc_khz);
-
 	r = kvm_mmu_create(vcpu);
 	if (r < 0)
 		return r;
@@ -10325,6 +10340,7 @@ int kvm_arch_vcpu_create(struct kvm_vcpu *vcpu)
 	vcpu->arch.msr_platform_info = MSR_PLATFORM_INFO_CPUID_FAULT;
 	kvm_vcpu_mtrr_init(vcpu);
 	vcpu_load(vcpu);
+	kvm_set_tsc_khz(vcpu, max_tsc_khz);
 	kvm_vcpu_reset(vcpu, false);
 	kvm_init_mmu(vcpu, false);
 	vcpu_put(vcpu);
