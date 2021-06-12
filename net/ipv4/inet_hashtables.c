@@ -679,7 +679,7 @@ static void __inet_unhash(struct sock *sk, struct inet_listen_hashbucket *ilb)
 		return;
 
 	if (rcu_access_pointer(sk->sk_reuseport_cb))
-		reuseport_detach_sock(sk);
+		reuseport_stop_listen_sock(sk);
 	if (ilb) {
 		struct inet_hashinfo *hashinfo = sk->sk_prot->h.hashinfo;
 
