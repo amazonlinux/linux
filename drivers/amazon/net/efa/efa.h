@@ -172,7 +172,9 @@ int efa_alloc_pd(struct ib_pd *ibpd,
 		 struct ib_ucontext *ibucontext,
 		 struct ib_udata *udata);
 #endif
-#ifdef HAVE_DEALLOC_PD_UDATA
+#ifdef HAVE_DEALLOC_PD_UDATA_RC
+int efa_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata);
+#elif defined(HAVE_DEALLOC_PD_UDATA)
 void efa_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata);
 #elif defined(HAVE_PD_CORE_ALLOCATION)
 void efa_dealloc_pd(struct ib_pd *ibpd);
@@ -190,7 +192,9 @@ int efa_destroy_qp(struct ib_qp *ibqp);
 struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 			    struct ib_qp_init_attr *init_attr,
 			    struct ib_udata *udata);
-#ifdef HAVE_IB_VOID_DESTROY_CQ
+#ifdef HAVE_IB_INT_DESTROY_CQ
+int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
+#elif defined(HAVE_IB_VOID_DESTROY_CQ)
 void efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
 #elif defined(HAVE_DESTROY_CQ_UDATA)
 int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
@@ -277,7 +281,9 @@ struct ib_ah *efa_kzalloc_ah(struct ib_pd *ibpd,
 			     struct ib_ah_attr *ah_attr);
 #endif
 #endif
-#ifdef HAVE_AH_CORE_ALLOCATION
+#ifdef HAVE_AH_CORE_ALLOCATION_DESTROY_RC
+int efa_destroy_ah(struct ib_ah *ibah, u32 flags);
+#elif defined(HAVE_AH_CORE_ALLOCATION)
 void efa_destroy_ah(struct ib_ah *ibah, u32 flags);
 #elif defined(HAVE_CREATE_DESTROY_AH_FLAGS)
 int efa_destroy_ah(struct ib_ah *ibah, u32 flags);
