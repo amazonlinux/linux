@@ -23,7 +23,7 @@ config AMAZON_ENA_ETHERNET
 
 config AMAZON_EFA_INFINIBAND
 	tristate "Elastic Fabric Adapter (EFA) support"
-	depends on INFINIBAND_USER_ACCESS && AMAZON_ENA_ETHERNET
+	depends on INFINIBAND_USER_ACCESS
 	---help---
 	  This driver support Elastic Fabric Adapter (EFA)
 
