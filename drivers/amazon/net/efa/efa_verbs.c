@@ -5,6 +5,7 @@
 
 #include "kcompat.h"
 #include <linux/vmalloc.h>
+#include <linux/log2.h>
 
 #include <rdma/ib_addr.h>
 #include <rdma/ib_umem.h>
@@ -553,7 +554,9 @@ err_free:
 }
 #endif
 
-#ifdef HAVE_DEALLOC_PD_UDATA
+#ifdef HAVE_DEALLOC_PD_UDATA_RC
+int efa_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
+#elif defined(HAVE_DEALLOC_PD_UDATA)
 void efa_dealloc_pd(struct ib_pd *ibpd, struct ib_udata *udata)
 #elif defined(HAVE_PD_CORE_ALLOCATION)
 void efa_dealloc_pd(struct ib_pd *ibpd)
@@ -569,6 +572,8 @@ int efa_dealloc_pd(struct ib_pd *ibpd)
 #ifndef HAVE_PD_CORE_ALLOCATION
 	kfree(pd);
 
+	return 0;
+#elif defined(HAVE_DEALLOC_PD_UDATA_RC)
 	return 0;
 #endif
 }
@@ -1166,6 +1171,11 @@ int efa_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 	}
 #endif
 
+#ifdef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
+	if (qp_attr_mask & ~IB_QP_ATTR_STANDARD_BITS)
+		return -EOPNOTSUPP;
+#endif
+
 	if (udata->inlen &&
 #ifdef HAVE_UVERBS_CMD_HDR_FIX
 	    !ib_is_udata_cleared(udata, 0, udata->inlen)) {
@@ -1194,8 +1204,8 @@ int efa_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 			1);
 		EFA_SET(&params.modify_mask,
 			EFA_ADMIN_MODIFY_QP_CMD_CUR_QP_STATE, 1);
-		params.cur_qp_state = qp_attr->cur_qp_state;
-		params.qp_state = qp_attr->qp_state;
+		params.cur_qp_state = cur_state;
+		params.qp_state = new_state;
 	}
 
 	if (qp_attr_mask & IB_QP_EN_SQD_ASYNC_NOTIFY) {
@@ -1236,8 +1246,12 @@ static int efa_destroy_cq_idx(struct efa_dev *dev, int cq_idx)
 	return efa_com_destroy_cq(&dev->edev, &params);
 }
 
-#ifdef HAVE_IB_VOID_DESTROY_CQ
+#if defined(HAVE_IB_VOID_DESTROY_CQ) || defined(HAVE_IB_INT_DESTROY_CQ)
+#ifdef HAVE_IB_INT_DESTROY_CQ
+int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
+#else
 void efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
+#endif
 {
 	struct efa_dev *dev = to_edev(ibcq->device);
 	struct efa_cq *cq = to_ecq(ibcq);
@@ -1252,6 +1266,9 @@ void efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 			DMA_FROM_DEVICE);
 #ifndef HAVE_CQ_CORE_ALLOCATION
 	kfree(cq);
+#endif
+#ifdef HAVE_IB_INT_DESTROY_CQ
+	return 0;
 #endif
 }
 #else
@@ -1303,7 +1320,7 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 int efa_create_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 #endif
 {
-#ifdef HAVE_CREATE_CQ_NO_UCONTEXT
+#ifdef HAVE_UDATA_TO_DRV_CONTEXT
 	struct efa_ucontext *ucontext = rdma_udata_to_drv_context(
 		udata, struct efa_ucontext, ibucontext);
 #else
@@ -1322,6 +1339,11 @@ int efa_create_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 	int err;
 
 	ibdev_dbg(ibdev, "create_cq entries %d\n", entries);
+
+#ifdef HAVE_CREATE_CQ_ATTR
+	if (attr->flags)
+		return -EOPNOTSUPP;
+#endif
 
 	if (entries < 1 || entries > dev->dev_attr.max_cq_depth) {
 		ibdev_dbg(ibdev,
@@ -1475,7 +1497,7 @@ struct ib_cq *efa_kzalloc_cq(struct ib_device *ibdev, int entries,
 		return ERR_PTR(-ENOMEM);
 	}
 
-#ifdef HAVE_CREATE_CQ_NO_UCONTEXT
+#ifdef HAVE_UDATA_TO_DRV_CONTEXT
 	cq->ucontext = rdma_udata_to_drv_context(udata, struct efa_ucontext,
 						 ibucontext);
 #else
@@ -1513,8 +1535,7 @@ static int umem_to_page_list(struct efa_dev *dev,
 	ibdev_dbg(&dev->ibdev, "hp_cnt[%u], pages_in_hp[%u]\n",
 		  hp_cnt, pages_in_hp);
 
-	rdma_for_each_block(umem->sg_head.sgl, &biter, umem->nmap,
-			    BIT(hp_shift))
+	rdma_umem_for_each_dma_block(umem, &biter, BIT(hp_shift))
 		page_list[hp_idx++] = rdma_block_iter_dma_address(&biter);
 
 	return 0;
@@ -1639,7 +1660,7 @@ static struct scatterlist *efa_vmalloc_buf_to_sg(u64 *buf, int page_cnt)
 	struct page *pg;
 	int i;
 
-	sglist = kcalloc(page_cnt, sizeof(*sglist), GFP_KERNEL);
+	sglist = kmalloc_array(page_cnt, sizeof(*sglist), GFP_KERNEL);
 	if (!sglist)
 		return NULL;
 	sg_init_table(sglist, page_cnt);
@@ -2226,9 +2247,13 @@ struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 #endif /* defined(HAVE_IB_UMEM_FIND_SINGLE_PG_SIZE) */
 #endif /* !defined(HAVE_EFA_GDR) */
 
-	params.page_shift = __ffs(pg_sz);
-	params.page_num = DIV_ROUND_UP(length + (start & (pg_sz - 1)),
+	params.page_shift = order_base_2(pg_sz);
+#ifdef HAVE_IB_UMEM_NUM_DMA_BLOCKS
+	params.page_num = ib_umem_num_dma_blocks(mr->umem, pg_sz);
+#else
+	params.page_num = DIV_ROUND_UP(length + (virt_addr & (pg_sz - 1)),
 				       pg_sz);
+#endif
 
 	ibdev_dbg(&dev->ibdev,
 		  "start %#llx length %#llx params.page_shift %u params.page_num %u\n",
@@ -2847,7 +2872,9 @@ err_free:
 }
 #endif
 
-#ifdef HAVE_AH_CORE_ALLOCATION
+#ifdef HAVE_AH_CORE_ALLOCATION_DESTROY_RC
+int efa_destroy_ah(struct ib_ah *ibah, u32 flags)
+#elif defined(HAVE_AH_CORE_ALLOCATION)
 void efa_destroy_ah(struct ib_ah *ibah, u32 flags)
 #elif defined(HAVE_CREATE_DESTROY_AH_FLAGS)
 int efa_destroy_ah(struct ib_ah *ibah, u32 flags)
@@ -2863,11 +2890,11 @@ int efa_destroy_ah(struct ib_ah *ibah)
 
 	ibdev_dbg(&dev->ibdev, "Destroy ah[%d]\n", ah->ah);
 
-#ifdef HAVE_CREATE_DESTROY_AH_FLAGS
+#if defined(HAVE_CREATE_DESTROY_AH_FLAGS)
 	if (!(flags & RDMA_DESTROY_AH_SLEEPABLE)) {
 		ibdev_dbg(&dev->ibdev,
 			  "Destroy address handle is not supported in atomic context\n");
-#ifdef HAVE_AH_CORE_ALLOCATION
+#if defined(HAVE_AH_CORE_ALLOCATION) && !defined(HAVE_AH_CORE_ALLOCATION_DESTROY_RC)
 		return;
 #else
 		return -EOPNOTSUPP;
@@ -2875,8 +2902,11 @@ int efa_destroy_ah(struct ib_ah *ibah)
 	}
 #endif
 
-#ifdef HAVE_AH_CORE_ALLOCATION
+#if defined(HAVE_AH_CORE_ALLOCATION) || defined(HAVE_AH_CORE_ALLOCATION_DESTROY_RC)
 	efa_ah_destroy(dev, ah);
+#ifdef HAVE_AH_CORE_ALLOCATION_DESTROY_RC
+	return 0;
+#endif
 #else
 	err = efa_ah_destroy(dev, ah);
 	if (err)
@@ -2884,10 +2914,8 @@ int efa_destroy_ah(struct ib_ah *ibah)
 #ifdef HAVE_CREATE_AH_NO_UDATA
 	efa_put_ah_id(dev, ah->id);
 #endif
-#ifndef HAVE_AH_CORE_ALLOCATION
 	kfree(ah);
 	return 0;
-#endif
 #endif
 }
 
