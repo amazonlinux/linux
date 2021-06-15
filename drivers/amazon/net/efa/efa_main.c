@@ -30,7 +30,7 @@ static const struct pci_device_id efa_pci_tbl[] = {
 };
 
 #define DRV_MODULE_VER_MAJOR           1
-#define DRV_MODULE_VER_MINOR           10
+#define DRV_MODULE_VER_MINOR           12
 #define DRV_MODULE_VER_SUBMINOR        1
 
 #ifndef DRV_MODULE_VERSION
@@ -314,6 +314,9 @@ static const struct ib_device_ops efa_dev_ops = {
 	.create_cq = efa_kzalloc_cq,
 #endif
 	.create_qp = efa_create_qp,
+#ifdef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
+	.create_user_ah = efa_create_ah,
+#endif
 	.dealloc_pd = efa_dealloc_pd,
 	.dealloc_ucontext = efa_dealloc_ucontext,
 	.dereg_mr = efa_dereg_mr,
@@ -408,7 +411,8 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	dev->ibdev.dma_device = &pdev->dev;
 #endif
 
-	dev->ibdev.uverbs_cmd_mask =
+#ifndef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
+	dev->ibdev.uverbs_cmd_mask |=
 		(1ull << IB_USER_VERBS_CMD_GET_CONTEXT) |
 		(1ull << IB_USER_VERBS_CMD_QUERY_DEVICE) |
 		(1ull << IB_USER_VERBS_CMD_QUERY_PORT) |
@@ -425,8 +429,9 @@ static int efa_ib_device_add(struct efa_dev *dev)
 		(1ull << IB_USER_VERBS_CMD_DESTROY_QP) |
 		(1ull << IB_USER_VERBS_CMD_CREATE_AH) |
 		(1ull << IB_USER_VERBS_CMD_DESTROY_AH);
+#endif
 
-#ifdef HAVE_IB_QUERY_DEVICE_UDATA
+#if defined(HAVE_IB_QUERY_DEVICE_UDATA) && !defined(HAVE_UVERBS_CMD_MASK_NOT_NEEDED)
 	dev->ibdev.uverbs_ex_cmd_mask =
 		(1ull << IB_USER_VERBS_EX_CMD_QUERY_DEVICE);
 #endif
@@ -477,7 +482,9 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	dev->ibdev.req_notify_cq = efa_req_notify_cq;
 #endif
 
-#ifdef HAVE_IB_REGISTER_DEVICE_TWO_PARAMS
+#ifdef HAVE_IB_REGISTER_DEVICE_DMA_DEVICE_PARAM
+	err = ib_register_device(&dev->ibdev, "efa_%d", &pdev->dev);
+#elif defined(HAVE_IB_REGISTER_DEVICE_TWO_PARAMS)
 	err = ib_register_device(&dev->ibdev, "efa_%d");
 #elif defined(HAVE_IB_REGISTER_DEVICE_NAME_PARAM)
 	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
@@ -594,20 +601,12 @@ static int efa_device_init(struct efa_com_dev *edev, struct pci_dev *pdev)
 		return err;
 	}
 
-	err = pci_set_dma_mask(pdev, DMA_BIT_MASK(dma_width));
+	err = dma_set_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(dma_width));
 	if (err) {
-		dev_err(&pdev->dev, "pci_set_dma_mask failed %d\n", err);
+		dev_err(&pdev->dev, "dma_set_mask_and_coherent failed %d\n", err);
 		return err;
 	}
-
-	err = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(dma_width));
-	if (err) {
-		dev_err(&pdev->dev,
-			"err_pci_set_consistent_dma_mask failed %d\n",
-			err);
-		return err;
-	}
-
+	dma_set_max_seg_size(&pdev->dev, UINT_MAX);
 	return 0;
 }
 
