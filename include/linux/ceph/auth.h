@@ -52,8 +52,7 @@ struct ceph_auth_client_ops {
 	 * another request.
 	 */
 	int (*build_request)(struct ceph_auth_client *ac, void *buf, void *end);
-	int (*handle_reply)(struct ceph_auth_client *ac, int result,
-			    void *buf, void *end);
+	int (*handle_reply)(struct ceph_auth_client *ac, void *buf, void *end);
 
 	/*
 	 * Create authorizer for connecting to a service, and verify
