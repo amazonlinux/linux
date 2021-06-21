@@ -560,18 +560,15 @@ static int ceph_x_build_request(struct ceph_auth_client *ac,
 	return 0;
 }
 
-static int ceph_x_handle_reply(struct ceph_auth_client *ac, int result,
-			       void *buf, void *end)
+static int ceph_x_handle_reply(struct ceph_auth_client *ac, void *buf, void *end)
 {
 	struct ceph_x_info *xi = ac->private;
 	struct ceph_x_reply_header *head = buf;
 	struct ceph_x_ticket_handler *th;
 	int len = end - buf;
+	int result;
 	int op;
 	int ret;
-
-	if (result)
-		return result;  /* XXX hmm? */
 
 	if (xi->starting) {
 		/* it's a hello */
