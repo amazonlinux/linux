@@ -30,4 +30,13 @@ config AMAZON_EFA_INFINIBAND
 	  To compile this driver as a module, choose M here.
 	  The module will be called efa
 
+config AMAZON_IGB_UIO
+	tristate "DPDK igb_uio driver"
+	---help---
+	  This is the direct PCI access driver for igb and
+	  other PCI network devices, for DPDK.
+
+	  To compile this driver as a module, choose M here.
+	  The module will be called igb_uio.
+
 endif # AMAZON_DRIVER_UPDATES
