@@ -169,7 +169,6 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 	struct acpi_pci_generic_root_info *ri;
 	struct pci_bus *bus, *child;
 	struct acpi_pci_root_ops *root_ops;
-	union acpi_object *obj;
 
 	ri = kzalloc_node(sizeof(*ri), GFP_KERNEL, node);
 	if (!ri)
@@ -195,23 +194,8 @@ struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root)
 	if (!bus)
 		return NULL;
 
-	/*
-	 * Invoke the PCI device specific method (_DSM) #5 'Ignore PCI Boot
-	 * Configuration', which tells us whether the firmware wants us to
-	 * preserve the configuration of the PCI resource tree for this root
-	 * bridge.
-	 */
-	obj = acpi_evaluate_dsm(ACPI_HANDLE(bus->bridge), &pci_acpi_dsm_guid, 1,
-	                        IGNORE_PCI_BOOT_CONFIG_DSM, NULL);
-	if (obj && obj->type == ACPI_TYPE_INTEGER && obj->integer.value == 0) {
-		/* preserve existing resource assignment */
-		pci_bus_claim_resources(bus);
-	} else {
-		/* reconfigure the resource tree from scratch */
-		pci_bus_size_bridges(bus);
-		pci_bus_assign_resources(bus);
-	}
-	ACPI_FREE(obj);
+	pci_bus_size_bridges(bus);
+	pci_bus_assign_resources(bus);
 
 	list_for_each_entry(child, &bus->children, node)
 		pcie_bus_configure_settings(child);
