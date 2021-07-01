@@ -129,6 +129,13 @@ extern int test__join_cgroup(const char *path);
 #define CHECK_ATTR(condition, tag, format...) \
 	_CHECK(condition, tag, tattr.duration, format)
 
+#define ASSERT_FALSE(actual, name) ({					\
+	static int duration = 0;					\
+	bool ___ok = !(actual);						\
+	CHECK(!___ok, (name), "unexpected %s: got TRUE\n", (name));	\
+	___ok;								\
+})
+
 #define ASSERT_EQ(actual, expected, name) ({				\
 	static int duration = 0;					\
 	typeof(actual) ___act = (actual);				\
@@ -136,6 +143,28 @@ extern int test__join_cgroup(const char *path);
 	bool ___ok = ___act == ___exp;					\
 	CHECK(!___ok, (name),						\
 	      "unexpected %s: actual %lld != expected %lld\n",		\
+	      (name), (long long)(___act), (long long)(___exp));	\
+	___ok;								\
+})
+
+#define ASSERT_NEQ(actual, expected, name) ({				\
+	static int duration = 0;					\
+	typeof(actual) ___act = (actual);				\
+	typeof(expected) ___exp = (expected);				\
+	bool ___ok = ___act != ___exp;					\
+	CHECK(!___ok, (name),						\
+	      "unexpected %s: actual %lld == expected %lld\n",		\
+	      (name), (long long)(___act), (long long)(___exp));	\
+	___ok;								\
+})
+
+#define ASSERT_GE(actual, expected, name) ({				\
+	static int duration = 0;					\
+	typeof(actual) ___act = (actual);				\
+	typeof(expected) ___exp = (expected);				\
+	bool ___ok = ___act >= ___exp;					\
+	CHECK(!___ok, (name),						\
+	      "unexpected %s: actual %lld < expected %lld\n",		\
 	      (name), (long long)(___act), (long long)(___exp));	\
 	___ok;								\
 })
