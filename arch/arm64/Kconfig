@@ -311,6 +311,15 @@ config ARCH_MEMORY_PROBE
 	  for more information. If you are unsure how to answer this
 	  question, answer N.
 
+config ARCH_MEMORY_REMOVE
+	bool "Enable /sys/devices/system/memory/remove interface"
+	depends on MEMORY_HOTREMOVE
+	help
+	   This option enables a sysfs /sys/devices/system/memory/remove
+	   interface for testing. See Documentation/memory-hotplug.txt
+	   for more information. If you are unsure how to answer this
+	   question, answer N.
+
 config SMP
 	def_bool y
 
