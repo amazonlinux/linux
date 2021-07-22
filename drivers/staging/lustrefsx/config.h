@@ -735,6 +735,9 @@
 /* security_inode_init_security takes a 'struct qstr' parameter */
 /* #undef HAVE_SECURITY_IINITSEC_QSTR */
 
+/* security_release_secctx has 1 arg. */
+/* #undef HAVE_SEC_RELEASE_SECCTX_1ARG */
+
 /* support for selinux */
 #define HAVE_SELINUX 1
 
@@ -847,6 +850,12 @@
 /* tcp_sendpage use socket as first parameter */
 /* #undef HAVE_TCP_SENDPAGE_USE_SOCKET */
 
+/* 'tcp_sock_set_keepidle()' exists */
+/* #undef HAVE_TCP_SOCK_SET_KEEPIDLE */
+
+/* 'tcp_sock_set_nodelay()' exists */
+/* #undef HAVE_TCP_SOCK_SET_NODELAY */
+
 /* timer_setup has replaced setup_timer */
 #define HAVE_TIMER_SETUP 1
 
@@ -900,6 +909,9 @@
 
 /* virtual_address has been replaced by address field */
 #define HAVE_VM_FAULT_ADDRESS 1
+
+/* if VM_FAULT_RETRY is defined */
+#define HAVE_VM_FAULT_RETRY 1
 
 /* if vm_fault_t type exists */
 /* #undef HAVE_VM_FAULT_T */
