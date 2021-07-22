@@ -354,7 +354,14 @@ static void vvp_io_fini(const struct lu_env *env, const struct cl_io_slice *ios)
 				end = start + io->u.ci_rw.rw_range.cir_count;
 			}
 		} else if (cl_io_is_trunc(io)) {
-			end = io->u.ci_setattr.sa_attr.lvb_size;
+			/* for writes, e_end is endpos, the location of the file
+			 * pointer after the write is completed, so it is not accessed.
+			 * For truncate, 'end' is the size, and *is* acccessed.
+			 * In other words, writes are [start, end), but truncate is
+			 * [start, size], where both are included.  So add 1 to the
+			 * size when creating the write intent to account for this.
+			 */
+			end = io->u.ci_setattr.sa_attr.lvb_size + 1;
 		} else { /* mkwrite */
 			pgoff_t index = io->u.ci_fault.ft_index;
 
