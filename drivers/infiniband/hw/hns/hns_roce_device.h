@@ -1257,9 +1257,8 @@ int hns_roce_modify_srq(struct ib_srq *ibsrq, struct ib_srq_attr *srq_attr,
 			struct ib_udata *udata);
 int hns_roce_destroy_srq(struct ib_srq *ibsrq, struct ib_udata *udata);
 
-struct ib_qp *hns_roce_create_qp(struct ib_pd *ib_pd,
-				 struct ib_qp_init_attr *init_attr,
-				 struct ib_udata *udata);
+int hns_roce_create_qp(struct ib_qp *ib_qp, struct ib_qp_init_attr *init_attr,
+		       struct ib_udata *udata);
 int hns_roce_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *attr,
 		       int attr_mask, struct ib_udata *udata);
 void init_flush_work(struct hns_roce_dev *hr_dev, struct hns_roce_qp *hr_qp);
