@@ -2433,7 +2433,6 @@ static int create_dct(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	}
 
 	qp->state = IB_QPS_RESET;
-	rdma_restrack_no_track(&qp->ibqp.res);
 	return 0;
 }
 
@@ -2767,6 +2766,7 @@ static int create_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	switch (qp->type) {
 	case MLX5_IB_QPT_DCT:
 		err = create_dct(dev, pd, qp, params);
+		rdma_restrack_no_track(&qp->ibqp.res);
 		break;
 	case IB_QPT_XRC_TGT:
 		err = create_xrc_tgt_qp(dev, qp, params);
@@ -2774,6 +2774,10 @@ static int create_qp(struct mlx5_ib_dev *dev, struct ib_pd *pd,
 	case IB_QPT_GSI:
 		err = mlx5_ib_create_gsi(pd, qp, params->attr);
 		break;
+	case MLX5_IB_QPT_HW_GSI:
+	case MLX5_IB_QPT_REG_UMR:
+		rdma_restrack_no_track(&qp->ibqp.res);
+		fallthrough;
 	default:
 		if (params->udata)
 			err = create_user_qp(dev, pd, qp, params);
