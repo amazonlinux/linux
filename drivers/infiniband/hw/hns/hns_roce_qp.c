@@ -919,8 +919,6 @@ static int set_qp_param(struct hns_roce_dev *hr_dev, struct hns_roce_qp *hr_qp,
 	struct ib_device *ibdev = &hr_dev->ib_dev;
 	int ret;
 
-	hr_qp->ibqp.qp_type = init_attr->qp_type;
-
 	if (init_attr->cap.max_inline_data > hr_dev->caps.max_sq_inline)
 		init_attr->cap.max_inline_data = hr_dev->caps.max_sq_inline;
 
@@ -1090,17 +1088,15 @@ void hns_roce_qp_destroy(struct hns_roce_dev *hr_dev, struct hns_roce_qp *hr_qp,
 	free_qp_buf(hr_dev, hr_qp);
 	free_kernel_wrid(hr_qp);
 	free_qp_db(hr_dev, hr_qp, udata);
-
-	kfree(hr_qp);
 }
 
-struct ib_qp *hns_roce_create_qp(struct ib_pd *pd,
-				 struct ib_qp_init_attr *init_attr,
-				 struct ib_udata *udata)
-{
+int hns_roce_create_qp(struct ib_qp *qp, struct ib_qp_init_attr *init_attr,
+		       struct ib_udata *udata)
+
 	struct hns_roce_dev *hr_dev = to_hr_dev(pd->device);
 	struct ib_device *ibdev = &hr_dev->ib_dev;
-	struct hns_roce_qp *hr_qp;
+	struct hns_roce_qp *hr_qp = to_hr_qp(qp);
+	struct ib_pd *pd = qp->pd;
 	int ret;
 
 	switch (init_attr->qp_type) {
@@ -1110,12 +1106,8 @@ struct ib_qp *hns_roce_create_qp(struct ib_pd *pd,
 	default:
 		ibdev_err(ibdev, "not support QP type %d\n",
 			  init_attr->qp_type);
-		return ERR_PTR(-EOPNOTSUPP);
+		return -EOPNOTSUPP;
 	}
-
-	hr_qp = kzalloc(sizeof(*hr_qp), GFP_KERNEL);
-	if (!hr_qp)
-		return ERR_PTR(-ENOMEM);
 
 	if (init_attr->qp_type == IB_QPT_GSI) {
 		hr_qp->port = init_attr->port_num - 1;
@@ -1127,10 +1119,8 @@ struct ib_qp *hns_roce_create_qp(struct ib_pd *pd,
 		ibdev_err(ibdev, "Create QP type 0x%x failed(%d)\n",
 			  init_attr->qp_type, ret);
 		ibdev_err(ibdev, "Create GSI QP failed!\n");
-		kfree(hr_qp);
-		return ERR_PTR(ret);
 	}
-	return &hr_qp->ibqp;
+	return ret;
 }
 
 int to_hr_qp_type(int qp_type)
