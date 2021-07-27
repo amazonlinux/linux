@@ -181,6 +181,10 @@ int cl_file_inode_init(struct inode *inode, struct lustre_md *md)
 		}
 	} else {
 		result = cl_conf_set(env, lli->lli_clob, &conf);
+		if (result == -EBUSY) {
+			/* ignore the error since I/O will handle it later */
+			result = 0;
+		}
 	}
 
 	if (result != 0)
