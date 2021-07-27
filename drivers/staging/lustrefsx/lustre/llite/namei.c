@@ -36,7 +36,6 @@
 #include <linux/quotaops.h>
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
-#include <linux/security.h>
 #include <linux/user_namespace.h>
 #ifdef HAVE_UIDGID_HEADER
 # include <linux/uidgid.h>
@@ -785,7 +784,7 @@ static int ll_atomic_open(struct inode *dir, struct dentry *dentry,
 		if (it_disposition(it, DISP_OPEN_CREATE)) {
 			/* Dentry instantiated in ll_create_it. */
 			rc = ll_create_it(dir, dentry, it, secctx, secctxlen);
-			security_release_secctx(secctx, secctxlen);
+			ll_security_release_secctx(secctx, secctxlen);
 			if (rc) {
 				/* We dget in ll_splice_alias. */
 				if (de != NULL)
