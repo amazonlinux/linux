@@ -46,7 +46,6 @@
 #ifdef HAVE_UIDGID_HEADER
 # include <linux/uidgid.h>
 #endif
-#include <linux/security.h>
 
 #include <uapi/linux/lustre_ioctl.h>
 #ifdef HAVE_UAPI_LINUX_MOUNT_H
@@ -2530,8 +2529,8 @@ struct md_op_data *ll_prep_md_op_data(struct md_op_data *op_data,
 
 void ll_finish_md_op_data(struct md_op_data *op_data)
 {
-	security_release_secctx(op_data->op_file_secctx,
-				op_data->op_file_secctx_size);
+	ll_security_release_secctx(op_data->op_file_secctx,
+				   op_data->op_file_secctx_size);
         OBD_FREE_PTR(op_data);
 }
 
