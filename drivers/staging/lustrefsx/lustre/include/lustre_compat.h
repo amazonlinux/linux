@@ -39,6 +39,7 @@
 #include <linux/bio.h>
 #include <linux/xattr.h>
 #include <linux/slab.h>
+#include <linux/security.h>
 
 #include <libcfs/libcfs.h>
 #include <lustre_patchless_compat.h>
@@ -709,5 +710,17 @@ static inline struct timespec current_time(struct inode *inode)
 				   usersize, ctor)			 \
 	kmem_cache_create(name, size, align, flags, ctor)
 #endif
+
+static inline void ll_security_release_secctx(char *secdata, u32 seclen)
+{
+#ifdef HAVE_SEC_RELEASE_SECCTX_1ARG
+	struct lsmcontext context = { };
+
+	lsmcontext_init(&context, secdata, seclen, 0);
+	return security_release_secctx(&context);
+#else
+	return security_release_secctx(secdata, seclen);
+#endif
+}
 
 #endif /* _LUSTRE_COMPAT_H */
