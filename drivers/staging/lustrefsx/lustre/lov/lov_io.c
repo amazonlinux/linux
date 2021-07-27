@@ -569,7 +569,9 @@ static int lov_io_setattr_iter_init(const struct lu_env *env,
 	ENTRY;
 
 	if (cl_io_is_trunc(io) && lio->lis_pos > 0) {
-		index = lov_lsm_entry(lsm, lio->lis_pos - 1);
+		index = lov_lsm_entry(lsm, lio->lis_pos);
+		CDEBUG(D_VFSTRACE, "component[%d] flags %#x pos %llu\n",
+			index, lsm->lsm_entries[index]->lsme_flags, lio->lis_pos);
 		if (index > 0 && !lsm_entry_inited(lsm, index)) {
 			io->ci_need_write_intent = 1;
 			RETURN(io->ci_result = -ENODATA);
