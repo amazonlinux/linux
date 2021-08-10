@@ -10,6 +10,11 @@
 
 #include <uapi/linux/random.h>
 
+struct random_extrng {
+	ssize_t (*extrng_read)(void __user *buf, size_t buflen);
+	struct module *owner;
+};
+
 struct notifier_block;
 
 void add_device_randomness(const void *buf, size_t len);
@@ -139,6 +144,8 @@ void __init random_init_early(const char *command_line);
 void __init random_init(void);
 bool rng_is_initialized(void);
 int wait_for_random_bytes(void);
+void random_register_extrng(const struct random_extrng *rng);
+void random_unregister_extrng(void);
 
 /* Calls wait_for_random_bytes() and then calls get_random_bytes(buf, nbytes).
  * Returns the result of the call to wait_for_random_bytes. */
