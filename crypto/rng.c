@@ -12,13 +12,17 @@
 #include <linux/atomic.h>
 #include <linux/cryptouser.h>
 #include <linux/err.h>
+#include <linux/fips.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/random.h>
 #include <linux/seq_file.h>
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/workqueue.h>
 #include <net/netlink.h>
 
 #include "internal.h"
@@ -225,6 +229,94 @@ void crypto_unregister_rngs(struct rng_alg *algs, int count)
 		crypto_unregister_rng(algs + i);
 }
 EXPORT_SYMBOL_GPL(crypto_unregister_rngs);
+
+static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen)
+{
+	u8 tmp[256];
+	ssize_t ret;
+
+	if (!buflen)
+		return 0;
+
+	ret = crypto_get_default_rng();
+	if (ret)
+		return ret;
+
+	for (;;) {
+		int err;
+		int i;
+
+		i = min_t(int, buflen, sizeof(tmp));
+		err = crypto_rng_get_bytes(crypto_default_rng, tmp, i);
+		if (err) {
+			ret = err;
+			break;
+		}
+
+		if (copy_to_user(buf, tmp, i)) {
+			ret = -EFAULT;
+			break;
+		}
+
+		buflen -= i;
+		buf += i;
+		ret += i;
+
+		if (!buflen)
+			break;
+
+		if (need_resched()) {
+			if (signal_pending(current))
+				break;
+			schedule();
+		}
+	}
+
+	crypto_put_default_rng();
+	memzero_explicit(tmp, sizeof(tmp));
+
+	return ret;
+}
+
+static const struct random_extrng crypto_devrandom_rng = {
+	.extrng_read = crypto_devrandom_read,
+	.owner = THIS_MODULE,
+};
+
+static struct work_struct crypto_rng_register_work;
+
+static void crypto_rng_register_work_func(struct work_struct *work)
+{
+	/* Wait until default rng becomes avaiable, then
+		Overwrite the extrng.
+	*/
+	int ret = crypto_get_default_rng(); 
+	if (ret){
+		printk(KERN_ERR "crypto_rng: Failed to get default RNG (error %d)\n", ret);
+		return;
+	}
+	printk(KERN_INFO "Overwrite extrng\n");
+	random_register_extrng(&crypto_devrandom_rng);
+}
+
+static int __init crypto_rng_init(void)
+{
+	if (fips_enabled) {
+		INIT_WORK(&crypto_rng_register_work, crypto_rng_register_work_func);
+		schedule_work(&crypto_rng_register_work);
+ 	}
+		
+	return 0;
+}
+
+static void __exit crypto_rng_exit(void)
+{
+	cancel_work_sync(&crypto_rng_register_work);
+	random_unregister_extrng();
+}
+
+late_initcall(crypto_rng_init);
+module_exit(crypto_rng_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Random Number Generator");
