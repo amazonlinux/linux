@@ -862,4 +862,6 @@ config MAPPING_DIRTY_HELPERS
 config KMAP_LOCAL
 	bool
 
+source "mm/damon/Kconfig"
+
 endmenu
