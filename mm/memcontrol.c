@@ -2629,6 +2629,7 @@ static int try_charge_memcg(struct mem_cgroup *memcg, gfp_t gfp_mask,
 {
 	unsigned int batch = max(MEMCG_CHARGE_BATCH, nr_pages);
 	int nr_retries = MAX_RECLAIM_RETRIES;
+	int timeout = 1;
 	struct mem_cgroup *mem_over_limit;
 	struct page_counter *counter;
 	unsigned long nr_reclaimed;
@@ -2710,7 +2711,25 @@ retry:
 	 */
 	if (mem_cgroup_wait_acct_move(mem_over_limit))
 		goto retry;
+	/*
+	 * Legacy memcg relies on dirty data throttling during the reclaim
+	 * but this cannot be done for GFP_NOFS requests so we might trigger
+	 * the oom way too early. Throttle here if we have way too many
+	 * dirty/writeback pages.
+	 */
+	if ((nr_retries < MAX_RECLAIM_RETRIES/2) &&
+	    !cgroup_subsys_on_dfl(memory_cgrp_subsys) &&
+	    !(gfp_mask & __GFP_FS)) {
+		unsigned long dirty = memcg_page_state(memcg, NR_FILE_DIRTY);
+		unsigned long writeback = memcg_page_state(memcg, NR_WRITEBACK);
 
+		if (4*(dirty + writeback) >
+		    3*page_counter_read(&memcg->memory)) {
+			schedule_timeout_interruptible(timeout);
+			if (timeout < 32)
+				timeout *= 2;
+		}
+	}
 	if (nr_retries--)
 		goto retry;
 
@@ -2730,6 +2749,7 @@ retry:
 			   get_order(nr_pages * PAGE_SIZE))) {
 		passed_oom = true;
 		nr_retries = MAX_RECLAIM_RETRIES;
+		timeout = 1;
 		goto retry;
 	}
 nomem:
