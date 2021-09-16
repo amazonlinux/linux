@@ -26,6 +26,19 @@ config ARCH_HAS_DMA_MAP_DIRECT
 config NEED_SG_DMA_FLAGS
 	bool
 
+config DMA_PAGE_TOUCHING
+	bool "Support touching pages when allocated for DMA"
+	help
+	  Builds in support for touching pages mapped for DMA to ensure they
+	  are resident in memory. This is useful when running in a memory
+	  overcommit environment with lazy allocation and free page reporting.
+	  
+	  The feature can be enabled via the page_touching.dma_page_touching_enable
+	  kernel command line parameter, or is automatically enabled on EC2
+	  Caspian instances.
+	  
+	  If unsure, say N.
+
 config NEED_SG_DMA_LENGTH
 	bool
 

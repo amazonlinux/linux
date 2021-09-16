@@ -286,6 +286,7 @@ void *dma_direct_alloc(struct device *dev, size_t size,
 	}
 
 	memset(ret, 0, size);
+	dma_direct_touch_pages(dev, ret, size);
 
 	if (set_uncached) {
 		arch_dma_prep_coherent(page, size);

@@ -688,6 +688,9 @@ struct device {
 #ifdef CONFIG_IOMMU_DMA
 	bool			dma_iommu:1;
 #endif
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	bool			dma_touch_pages:1;
+#endif
 };
 
 /**

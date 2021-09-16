@@ -18,6 +18,25 @@ int dma_direct_mmap(struct device *dev, struct vm_area_struct *vma,
 		void *cpu_addr, dma_addr_t dma_addr, size_t size,
 		unsigned long attrs);
 bool dma_direct_need_sync(struct device *dev, dma_addr_t dma_addr);
+
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+static inline void dma_direct_touch_pages(struct device *dev, void *vaddr,
+					   size_t size)
+{
+	size_t offset;
+
+	if (!dev->dma_touch_pages)
+		return;
+
+	for (offset = 0; offset < size; offset += PAGE_SIZE)
+		__raw_readb((char *)vaddr + offset);
+}
+#else
+static inline void dma_direct_touch_pages(struct device *dev, void *vaddr,
+					   size_t size)
+{
+}
+#endif
 int dma_direct_map_sg(struct device *dev, struct scatterlist *sgl, int nents,
 		enum dma_data_direction dir, unsigned long attrs);
 bool dma_direct_all_ram_mapped(struct device *dev);
@@ -107,6 +126,8 @@ static inline dma_addr_t dma_direct_map_phys(struct device *dev,
 			goto err_overflow;
 		}
 	}
+
+	dma_direct_touch_pages(dev, phys_to_virt(phys), size);
 
 	if (!dev_is_dma_coherent(dev) &&
 	    !(attrs & (DMA_ATTR_SKIP_CPU_SYNC | DMA_ATTR_MMIO)))
