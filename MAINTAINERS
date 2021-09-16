@@ -15568,6 +15568,13 @@ F:	Documentation/mm/page_table_check.rst
 F:	include/linux/page_table_check.h
 F:	mm/page_table_check.c
 
+PAGE TOUCHING DMA
+M:	James Gowans <jgowans@amazon.com>
+L:	ec2-memo@amazon.com
+S:	Supported
+F:	include/linux/dma-page-touching.h
+F:	kernel/dma/page_touching.c
+
 PANASONIC LAPTOP ACPI EXTRAS DRIVER
 M:	Kenneth Chan <kenneth.t.chan@gmail.com>
 L:	platform-driver-x86@vger.kernel.org
