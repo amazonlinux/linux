@@ -8,6 +8,7 @@
 #include <linux/cache.h>
 #include <linux/dma-map-ops.h>
 #include <linux/iommu.h>
+#include <linux/dma-page-touching.h>
 #include <xen/xen.h>
 
 #include <asm/cacheflush.h>
@@ -77,4 +78,9 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 		iommu_setup_dma_ops(dev, dma_base, dma_base + size - 1);
 
 	xen_setup_dma_ops(dev);
+
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	if (!dev->dma_ops)
+		setup_dma_page_touching_ops(dev);
+#endif
 }
