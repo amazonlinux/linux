@@ -13191,6 +13191,13 @@ F:	include/net/page_pool.h
 F:	include/trace/events/page_pool.h
 F:	net/core/page_pool.c
 
+PAGE TOUCHING DMA
+M:	James Gowans <jgowans@amazon.com>
+L:	ec2-memo@amazon.com
+S:	Supported
+F:	include/linux/dma-page-touching.h
+F:	kernel/dma/page_touching.c
+
 PANASONIC LAPTOP ACPI EXTRAS DRIVER
 M:	Harald Welte <laforge@gnumonks.org>
 L:	platform-driver-x86@vger.kernel.org
