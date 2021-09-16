@@ -8,6 +8,7 @@
 #include <linux/cache.h>
 #include <linux/dma-map-ops.h>
 #include <linux/dma-iommu.h>
+#include <linux/dma-page-touching.h>
 #include <xen/xen.h>
 #include <xen/swiotlb-xen.h>
 
@@ -55,5 +56,10 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 #ifdef CONFIG_XEN
 	if (xen_initial_domain())
 		dev->dma_ops = &xen_swiotlb_dma_ops;
+#endif
+
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	if (!dev->dma_ops)
+		setup_dma_page_touching_ops(dev);
 #endif
 }
