@@ -24,6 +24,16 @@ config DMA_OPS_BYPASS
 config ARCH_HAS_DMA_MAP_DIRECT
 	bool
 
+config DMA_PAGE_TOUCHING
+	bool "Support touching pages when allocated for DMA"
+	help
+	  Builds in support for binding page touching DMA ops to devices which
+	  don't have an IOMMU. Memory mapped for DMA by those devices will be
+	  access by the CPU via the page touching dma_map_ops to ensure that
+	  the memory is resident when running on a memory overcommit host.
+	  The capacility must still be set up at boot time via the
+	  page_touching.dma_page_touching_enable kernel command line param.
+
 config NEED_SG_DMA_LENGTH
 	bool
 
