@@ -9,7 +9,7 @@ TEST_PROGS := mptcp_connect.sh mptcp_connect_mmap.sh mptcp_connect_sendfile.sh \
 	      mptcp_connect_checksum.sh pm_netlink.sh mptcp_join.sh diag.sh \
 	      simult_flows.sh mptcp_sockopt.sh
 
-TEST_GEN_FILES = mptcp_connect pm_nl_ctl
+TEST_GEN_FILES = mptcp_connect pm_nl_ctl mptcp_sockopt
 
 TEST_FILES := mptcp_lib.sh settings
 
