@@ -196,4 +196,7 @@ enum mptcp_event_attr {
 #define MPTCP_RST_EBADPERF	5
 #define MPTCP_RST_EMIDDLEBOX	6
 
+/* MPTCP socket options */
+#define MPTCP_INFO 1
+
 #endif /* _UAPI_MPTCP_H */
