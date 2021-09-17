@@ -768,9 +768,13 @@ static int mptcp_put_int_option(struct mptcp_sock *msk, char __user *optval,
 void mptcp_diag_fill_info(struct mptcp_sock *msk, struct mptcp_info *info)
 {
 	struct sock *sk = &msk->sk.icsk_inet.sk;
-	bool slow = lock_sock_fast(sk);
 	u32 flags = 0;
+	bool slow;
 	u8 val;
+
+	memset(info, 0, sizeof(*info));
+
+	slow = lock_sock_fast(sk);
 
 	info->mptcpi_subflows = READ_ONCE(msk->pm.subflows);
 	info->mptcpi_add_addr_signal = READ_ONCE(msk->pm.add_addr_signaled);
@@ -796,6 +800,27 @@ void mptcp_diag_fill_info(struct mptcp_sock *msk, struct mptcp_info *info)
 	unlock_sock_fast(sk, slow);
 }
 EXPORT_SYMBOL_GPL(mptcp_diag_fill_info);
+
+static int mptcp_getsockopt_info(struct mptcp_sock *msk, char __user *optval, int __user *optlen)
+{
+	struct mptcp_info m_info;
+	int len;
+
+	if (get_user(len, optlen))
+		return -EFAULT;
+
+	len = min_t(unsigned int, len, sizeof(struct mptcp_info));
+
+	mptcp_diag_fill_info(msk, &m_info);
+
+	if (put_user(len, optlen))
+		return -EFAULT;
+
+	if (copy_to_user(optval, &m_info, len))
+		return -EFAULT;
+
+	return 0;
+}
 
 static int mptcp_getsockopt_sol_tcp(struct mptcp_sock *msk, int optname,
 				    char __user *optval, int __user *optlen)
@@ -839,6 +864,17 @@ static int mptcp_getsockopt_v6(struct mptcp_sock *msk, int optname,
 	return -EOPNOTSUPP;
 }
 
+static int mptcp_getsockopt_sol_mptcp(struct mptcp_sock *msk, int optname,
+				      char __user *optval, int __user *optlen)
+{
+	switch (optname) {
+	case MPTCP_INFO:
+		return mptcp_getsockopt_info(msk, optval, optlen);
+	}
+
+	return -EOPNOTSUPP;
+}
+
 int mptcp_getsockopt(struct sock *sk, int level, int optname,
 		     char __user *optval, int __user *option)
 {
@@ -863,6 +899,8 @@ int mptcp_getsockopt(struct sock *sk, int level, int optname,
 		return mptcp_getsockopt_v6(msk, optname, optval, option);
 	if (level == SOL_TCP)
 		return mptcp_getsockopt_sol_tcp(msk, optname, optval, option);
+	if (level == SOL_MPTCP)
+		return mptcp_getsockopt_sol_mptcp(msk, optname, optval, option);
 	return -EOPNOTSUPP;
 }
 
