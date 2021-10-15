@@ -166,7 +166,7 @@ static u32 __vgic_v3_read_ap0rn(int n)
 		val = read_gicreg(ICH_AP0R3_EL2);
 		break;
 	default:
-		unreachable();
+		BUG();
 	}
 
 	return val;
@@ -190,7 +190,7 @@ static u32 __vgic_v3_read_ap1rn(int n)
 		val = read_gicreg(ICH_AP1R3_EL2);
 		break;
 	default:
-		unreachable();
+		BUG();
 	}
 
 	return val;
