@@ -157,6 +157,21 @@ alternative_cb_end
 #endif
 	.endm
 
+	.macro mitigate_spectre_v2_bhb, tmp
+alternative_cb spectre_v2_bhb_mitigation_enable
+	b .L__asm_mitigate_spectre_v2_bhb_skip\@
+	mov     \tmp, #32
+alternative_cb_end
+1:
+	b 2f
+2:
+	subs \tmp, \tmp, #1
+	b.ne 1b
+	dsb	nsh
+	isb
+.L__asm_mitigate_spectre_v2_bhb_skip\@:
+	.endm
+
 	.macro	kernel_entry, el, regsize = 64
 	.if	\regsize == 32
 	mov	w0, w0				// zero upper 32 bits of x0
@@ -178,6 +193,7 @@ alternative_cb_end
 	stp	x28, x29, [sp, #16 * 14]
 
 	.if	\el == 0
+	mitigate_spectre_v2_bhb x21
 	mrs	x21, sp_el0
 	ldr_this_cpu	tsk, __entry_task, x20	// Ensure MDSCR_EL1.SS is clear,
 	ldr	x19, [tsk, #TSK_TI_FLAGS]	// since we can unmask debug
