@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
- * Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef _EFA_H_
@@ -8,10 +8,6 @@
 
 #include "kcompat.h"
 #include <linux/bitops.h>
-#ifdef HAVE_CUSTOM_COMMANDS
-#include <linux/cdev.h>
-#include <linux/fs.h>
-#endif
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/version.h>
@@ -33,8 +29,7 @@
 struct efa_irq {
 	irq_handler_t handler;
 	void *data;
-	int cpu;
-	u32 vector;
+	u32 irqn;
 	cpumask_t affinity_hint_mask;
 	char name[EFA_IRQNAME_SIZE];
 };
@@ -64,22 +59,8 @@ struct efa_dev {
 	u64 db_bar_addr;
 	u64 db_bar_len;
 
-#ifndef HAVE_PCI_IRQ_VECTOR
-	struct msix_entry admin_msix_entry;
-#else
 	int admin_msix_vector_idx;
-#endif
 	struct efa_irq admin_irq;
-
-#ifndef HAVE_CREATE_AH_UDATA
-	struct list_head efa_ah_list;
-	/* Protects efa_ah_list */
-	struct mutex ah_list_lock;
-#endif
-#ifdef HAVE_CUSTOM_COMMANDS
-	struct device *everbs_dev;
-	struct cdev cdev;
-#endif
 
 	struct efa_stats stats;
 };
@@ -147,23 +128,17 @@ struct efa_ah {
 	u8 id[EFA_GID_SIZE];
 };
 
-#ifdef HAVE_IB_QUERY_DEVICE_UDATA
 int efa_query_device(struct ib_device *ibdev,
 		     struct ib_device_attr *props,
 		     struct ib_udata *udata);
-#else
-#warning deprecated api
-int efa_query_device(struct ib_device *ibdev,
-		     struct ib_device_attr *props);
-#endif
-int efa_query_port(struct ib_device *ibdev, u8 port,
+int efa_query_port(struct ib_device *ibdev, port_t port,
 		   struct ib_port_attr *props);
 int efa_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 		 int qp_attr_mask,
 		 struct ib_qp_init_attr *qp_init_attr);
-int efa_query_gid(struct ib_device *ibdev, u8 port, int index,
+int efa_query_gid(struct ib_device *ibdev, port_t port, int index,
 		  union ib_gid *gid);
-int efa_query_pkey(struct ib_device *ibdev, u8 port, u16 index,
+int efa_query_pkey(struct ib_device *ibdev, port_t port, u16 index,
 		   u16 *pkey);
 #ifdef HAVE_ALLOC_PD_NO_UCONTEXT
 int efa_alloc_pd(struct ib_pd *ibpd, struct ib_udata *udata);
@@ -201,13 +176,8 @@ int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
 #else
 int efa_destroy_cq(struct ib_cq *ibcq);
 #endif
-#ifdef HAVE_CREATE_CQ_ATTR
 int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		  struct ib_udata *udata);
-#else
-#warning deprecated api
-int efa_create_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata);
-#endif
 #ifndef HAVE_CQ_CORE_ALLOCATION
 #ifdef HAVE_CREATE_CQ_NO_UCONTEXT
 struct ib_cq *efa_kzalloc_cq(struct ib_device *ibdev,
@@ -216,11 +186,6 @@ struct ib_cq *efa_kzalloc_cq(struct ib_device *ibdev,
 #elif defined(HAVE_CREATE_CQ_ATTR)
 struct ib_cq *efa_kzalloc_cq(struct ib_device *ibdev,
 			     const struct ib_cq_init_attr *attr,
-			     struct ib_ucontext *ibucontext,
-			     struct ib_udata *udata);
-#else
-struct ib_cq *efa_kzalloc_cq(struct ib_device *ibdev, int entries,
-			     int vector,
 			     struct ib_ucontext *ibucontext,
 			     struct ib_udata *udata);
 #endif
@@ -233,10 +198,8 @@ int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata);
 #else
 int efa_dereg_mr(struct ib_mr *ibmr);
 #endif
-#ifdef HAVE_GET_PORT_IMMUTABLE
-int efa_get_port_immutable(struct ib_device *ibdev, u8 port_num,
+int efa_get_port_immutable(struct ib_device *ibdev, port_t port_num,
 			   struct ib_port_immutable *immutable);
-#endif
 int efa_alloc_ucontext(struct ib_ucontext *ibucontext, struct ib_udata *udata);
 #ifdef HAVE_UCONTEXT_CORE_ALLOCATION
 void efa_dealloc_ucontext(struct ib_ucontext *ibucontext);
@@ -254,11 +217,7 @@ int efa_create_ah(struct ib_ah *ibah,
 #ifdef HAVE_CREATE_AH_INIT_ATTR
 		  struct rdma_ah_init_attr *init_attr,
 #else
-#ifdef HAVE_CREATE_AH_RDMA_ATTR
 		  struct rdma_ah_attr *ah_attr,
-#else
-		  struct ib_ah_attr *ah_attr,
-#endif
 		  u32 flags,
 #endif
 		  struct ib_udata *udata);
@@ -272,13 +231,6 @@ struct ib_ah *efa_kzalloc_ah(struct ib_pd *ibpd,
 struct ib_ah *efa_kzalloc_ah(struct ib_pd *ibpd,
 			     struct rdma_ah_attr *ah_attr,
 			     struct ib_udata *udata);
-#elif defined(HAVE_CREATE_AH_UDATA)
-struct ib_ah *efa_kzalloc_ah(struct ib_pd *ibpd,
-			     struct ib_ah_attr *ah_attr,
-			     struct ib_udata *udata);
-#else
-struct ib_ah *efa_kzalloc_ah(struct ib_pd *ibpd,
-			     struct ib_ah_attr *ah_attr);
 #endif
 #endif
 #ifdef HAVE_AH_CORE_ALLOCATION_DESTROY_RC
@@ -318,26 +270,14 @@ struct ib_mr *efa_get_dma_mr(struct ib_pd *ibpd, int acc);
 int efa_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 		  int qp_attr_mask, struct ib_udata *udata);
 enum rdma_link_layer efa_port_link_layer(struct ib_device *ibdev,
-					 u8 port_num);
-#ifdef HAVE_HW_STATS
-struct rdma_hw_stats *efa_alloc_hw_stats(struct ib_device *ibdev, u8 port_num);
+					 port_t port_num);
+#ifdef HAVE_SPLIT_STATS_ALLOC
+struct rdma_hw_stats *efa_alloc_hw_port_stats(struct ib_device *ibdev, port_t port_num);
+struct rdma_hw_stats *efa_alloc_hw_device_stats(struct ib_device *ibdev);
+#else
+struct rdma_hw_stats *efa_alloc_hw_stats(struct ib_device *ibdev, port_t port_num);
+#endif
 int efa_get_hw_stats(struct ib_device *ibdev, struct rdma_hw_stats *stats,
-		     u8 port_num, int index);
-#endif
-
-#ifdef HAVE_CUSTOM_COMMANDS
-#ifndef HAVE_CREATE_AH_UDATA
-ssize_t efa_everbs_cmd_get_ah(struct efa_dev *dev,
-			      const char __user *buf,
-			      int in_len,
-			      int out_len);
-#endif
-#ifndef HAVE_IB_QUERY_DEVICE_UDATA
-ssize_t efa_everbs_cmd_get_ex_dev_attrs(struct efa_dev *dev,
-					const char __user *buf,
-					int in_len,
-					int out_len);
-#endif
-#endif
+		     port_t port_num, int index);
 
 #endif /* _EFA_H_ */
