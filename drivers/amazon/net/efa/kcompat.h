@@ -6,15 +6,9 @@
 #ifndef _KCOMPAT_H_
 #define _KCOMPAT_H_
 
+#include <linux/types.h>
+
 #include "config.h"
-
-#if defined(HAVE_CREATE_AH_NO_UDATA) || !defined(HAVE_IB_QUERY_DEVICE_UDATA)
-#define HAVE_CUSTOM_COMMANDS
-#endif
-
-#ifndef ALIGN_DOWN
-#define ALIGN_DOWN(x, a)	__ALIGN_KERNEL((x) - ((a) - 1), (a))
-#endif
 
 #ifndef HAVE_IB_IS_UDATA_CLEARED
 #include <linux/string.h>
@@ -184,6 +178,12 @@ static inline void __rdma_umem_block_iter_start(struct ib_block_iter *biter,
 #define rdma_umem_for_each_dma_block(umem, biter, pgsz)                        \
 	for (__rdma_umem_block_iter_start(biter, umem, pgsz);                  \
 	     __rdma_block_iter_next(biter);)
+#endif
+
+#ifdef HAVE_U32_PORT
+typedef u32 port_t;
+#else
+typedef u8 port_t;
 #endif
 
 #endif /* _KCOMPAT_H_ */
