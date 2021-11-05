@@ -5,6 +5,7 @@
 
 #include <linux/extable.h>
 #include <linux/uaccess.h>
+#include <linux/filter.h>
 
 int fixup_exception(struct pt_regs *regs)
 {
@@ -14,7 +15,7 @@ int fixup_exception(struct pt_regs *regs)
 	if (!fixup)
 		return 0;
 
-	if (in_bpf_jit(regs))
+	if (is_bpf_text_address(regs->pc))
 		return arm64_bpf_fixup_exception(fixup, regs);
 
 	regs->pc = (unsigned long)&fixup->fixup + fixup->fixup;
