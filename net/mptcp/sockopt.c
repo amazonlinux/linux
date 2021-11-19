@@ -388,6 +388,8 @@ static int mptcp_setsockopt_v6(struct mptcp_sock *msk, int optname,
 
 	switch (optname) {
 	case IPV6_V6ONLY:
+	case IPV6_TRANSPARENT:
+	case IPV6_FREEBIND:
 		lock_sock(sk);
 		ssock = __mptcp_nmpc_socket(msk);
 		if (!ssock) {
@@ -396,8 +398,24 @@ static int mptcp_setsockopt_v6(struct mptcp_sock *msk, int optname,
 		}
 
 		ret = tcp_setsockopt(ssock->sk, SOL_IPV6, optname, optval, optlen);
-		if (ret == 0)
+		if (ret != 0) {
+			release_sock(sk);
+			return ret;
+		}
+
+		sockopt_seq_inc(msk);
+
+		switch (optname) {
+		case IPV6_V6ONLY:
 			sk->sk_ipv6only = ssock->sk->sk_ipv6only;
+			break;
+		case IPV6_TRANSPARENT:
+			inet_sk(sk)->transparent = inet_sk(ssock->sk)->transparent;
+			break;
+		case IPV6_FREEBIND:
+			inet_sk(sk)->freebind = inet_sk(ssock->sk)->freebind;
+			break;
+		}
 
 		release_sock(sk);
 		break;
@@ -649,6 +667,46 @@ static int mptcp_setsockopt_set_val(struct mptcp_sock *msk, int max,
 	return err;
 }
 
+static int mptcp_setsockopt_sol_ip_set_transparent(struct mptcp_sock *msk, int optname,
+						   sockptr_t optval, unsigned int optlen)
+{
+	struct sock *sk = (struct sock *)msk;
+	struct inet_sock *issk;
+	struct socket *ssock;
+	int err;
+
+	err = ip_setsockopt(sk, SOL_IP, optname, optval, optlen);
+	if (err != 0)
+		return err;
+
+	lock_sock(sk);
+
+	ssock = __mptcp_nmpc_socket(msk);
+	if (!ssock) {
+		release_sock(sk);
+		return -EINVAL;
+	}
+
+	issk = inet_sk(ssock->sk);
+
+	switch (optname) {
+	case IP_FREEBIND:
+		issk->freebind = inet_sk(sk)->freebind;
+		break;
+	case IP_TRANSPARENT:
+		issk->transparent = inet_sk(sk)->transparent;
+		break;
+	default:
+		release_sock(sk);
+		WARN_ON_ONCE(1);
+		return -EOPNOTSUPP;
+	}
+
+	sockopt_seq_inc(msk);
+	release_sock(sk);
+	return 0;
+}
+
 static int mptcp_setsockopt_v4_set_tos(struct mptcp_sock *msk, int optname,
 				       sockptr_t optval, unsigned int optlen)
 {
@@ -678,6 +736,9 @@ static int mptcp_setsockopt_v4(struct mptcp_sock *msk, int optname,
 			       sockptr_t optval, unsigned int optlen)
 {
 	switch (optname) {
+	case IP_FREEBIND:
+	case IP_TRANSPARENT:
+		return mptcp_setsockopt_sol_ip_set_transparent(msk, optname, optval, optlen);
 	case IP_TOS:
 		return mptcp_setsockopt_v4_set_tos(msk, optname, optval, optlen);
 	}
@@ -1193,6 +1254,9 @@ static void sync_socket_options(struct mptcp_sock *msk, struct sock *ssk)
 	tcp_sock_set_keepidle_locked(ssk, msk->keepalive_idle);
 	__tcp_sock_set_keepintvl(ssk, msk->keepalive_intvl);
 	__tcp_sock_set_keepcnt(ssk, msk->keepalive_cnt);
+
+	inet_sk(ssk)->transparent = inet_sk(sk)->transparent;
+	inet_sk(ssk)->freebind = inet_sk(sk)->freebind;
 }
 
 static void __mptcp_sockopt_sync(struct mptcp_sock *msk, struct sock *ssk)
