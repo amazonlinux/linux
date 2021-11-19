@@ -66,6 +66,8 @@ source "drivers/staging/gdm724x/Kconfig"
 
 source "drivers/staging/fwserial/Kconfig"
 
+source "drivers/staging/lustrefsx/Kconfig"
+
 source "drivers/staging/netlogic/Kconfig"
 
 source "drivers/staging/gs_fpgaboot/Kconfig"
