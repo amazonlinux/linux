@@ -52,7 +52,7 @@ static struct efa_nvmem *ticket_to_nvmem(u64 ticket)
 	return NULL;
 }
 
-int nvmem_get_fp(struct efa_nvmem *nvmem)
+static int nvmem_get_fp(struct efa_nvmem *nvmem)
 {
 	nvmem->ops.get_pages = symbol_get(nvidia_p2p_get_pages);
 	if (!nvmem->ops.get_pages)
@@ -82,7 +82,7 @@ err_out:
 	return -EINVAL;
 }
 
-void nvmem_put_fp(void)
+static void nvmem_put_fp(void)
 {
 	symbol_put(nvidia_p2p_dma_unmap_pages);
 	symbol_put(nvidia_p2p_dma_map_pages);
@@ -127,6 +127,8 @@ int nvmem_put(u64 ticket, bool in_cb)
 	}
 
 	if (in_cb) {
+		nvmem->pgtbl = NULL;
+		nvmem->dma_mapping = NULL;
 		mutex_unlock(&nvmem_list_lock);
 		return 0;
 	}
@@ -198,6 +200,7 @@ struct efa_nvmem *nvmem_get(struct efa_dev *dev, struct efa_mr *mr, u64 start,
 {
 	struct efa_nvmem *nvmem;
 	u64 virt_start;
+	u64 virt_end;
 	u64 pinsz;
 	int err;
 
@@ -208,8 +211,10 @@ struct efa_nvmem *nvmem_get(struct efa_dev *dev, struct efa_mr *mr, u64 start,
 	nvmem->ticket = atomic64_fetch_inc(&next_nvmem_ticket);
 	mr->nvmem_ticket = nvmem->ticket;
 	nvmem->dev = dev;
+
 	virt_start = ALIGN_DOWN(start, GPU_PAGE_SIZE);
-	pinsz = start + length - virt_start;
+	virt_end = ALIGN(start + length, GPU_PAGE_SIZE);
+	pinsz = virt_end - virt_start;
 	nvmem->virt_start = virt_start;
 
 	err = nvmem_get_fp(nvmem);
@@ -240,7 +245,7 @@ struct efa_nvmem *nvmem_get(struct efa_dev *dev, struct efa_mr *mr, u64 start,
 err_unmap:
 	nvmem->ops.dma_unmap_pages(dev->pdev, nvmem->pgtbl, nvmem->dma_mapping);
 err_put:
-	nvmem->ops.put_pages(0, 0, start, nvmem->pgtbl);
+	nvmem->ops.put_pages(0, 0, virt_start, nvmem->pgtbl);
 err_put_fp:
 	nvmem_put_fp();
 err_free:
@@ -258,4 +263,15 @@ int nvmem_to_page_list(struct efa_dev *dev, struct efa_nvmem *nvmem,
 		page_list[i] = dma_mapping->dma_addresses[i];
 
 	return 0;
+}
+
+bool nvmem_is_supported(void)
+{
+	struct efa_nvmem dummynv = {};
+
+	if (nvmem_get_fp(&dummynv))
+		return false;
+	nvmem_put_fp();
+
+	return true;
 }
