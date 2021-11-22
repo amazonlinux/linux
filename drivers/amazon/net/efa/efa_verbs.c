@@ -70,13 +70,23 @@ struct efa_user_mmap_entry {
 	op(EFA_RDMA_READ_RESP_BYTES, "rdma_read_resp_bytes") \
 
 #define EFA_STATS_ENUM(ename, name) ename,
-#define EFA_STATS_STR(ename, name) [ename] = name,
+#ifdef HAVE_STAT_DESC_STRUCT
+#define EFA_STATS_STR(ename, nam) \
+	[ename].name = nam,
+#else
+#define EFA_STATS_STR(ename, nam) \
+	[ename] = nam,
+#endif
 
 enum efa_hw_device_stats {
 	EFA_DEFINE_DEVICE_STATS(EFA_STATS_ENUM)
 };
 
-static const char *const efa_device_stats_names[] = {
+#ifdef HAVE_STAT_DESC_STRUCT
+static const struct rdma_stat_desc efa_device_stats_descs[] = {
+#else
+static const char *const efa_device_stats_descs[] = {
+#endif
 	EFA_DEFINE_DEVICE_STATS(EFA_STATS_STR)
 };
 
@@ -84,7 +94,11 @@ enum efa_hw_port_stats {
 	EFA_DEFINE_PORT_STATS(EFA_STATS_ENUM)
 };
 
-static const char *const efa_port_stats_names[] = {
+#ifdef HAVE_STAT_DESC_STRUCT
+static const struct rdma_stat_desc efa_port_stats_descs[] = {
+#else
+static const char *const efa_port_stats_descs[] = {
+#endif
 	EFA_DEFINE_PORT_STATS(EFA_STATS_STR)
 };
 
@@ -330,6 +344,9 @@ int efa_query_device(struct ib_device *ibdev,
 
 		if (EFA_DEV_CAP(dev, RNR_RETRY))
 			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_RNR_RETRY;
+
+		if (dev->neqs)
+			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_CQ_NOTIFICATIONS;
 
 		err = ib_copy_to_udata(udata, &resp,
 				       min(sizeof(resp), udata->outlen));
@@ -601,7 +618,9 @@ int efa_destroy_qp(struct ib_qp *ibqp)
 				qp->rq_size, DMA_TO_DEVICE);
 	}
 
+#ifndef HAVE_QP_CORE_ALLOCATION
 	kfree(qp);
+#endif
 	return 0;
 }
 
@@ -802,17 +821,16 @@ static int efa_qp_validate_attr(struct efa_dev *dev,
 	return 0;
 }
 
-struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
-			    struct ib_qp_init_attr *init_attr,
-			    struct ib_udata *udata)
+int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
+		  struct ib_udata *udata)
 {
 	struct efa_com_create_qp_params create_qp_params = {};
 	struct efa_com_create_qp_result create_qp_resp;
-	struct efa_dev *dev = to_edev(ibpd->device);
+	struct efa_dev *dev = to_edev(ibqp->device);
 	struct efa_ibv_create_qp_resp resp = {};
 	struct efa_ibv_create_qp cmd = {};
+	struct efa_qp *qp = to_eqp(ibqp);
 	struct efa_ucontext *ucontext;
-	struct efa_qp *qp;
 	int err;
 
 #ifndef HAVE_NO_KVERBS_DRIVERS
@@ -827,8 +845,8 @@ struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 	ucontext = rdma_udata_to_drv_context(udata, struct efa_ucontext,
 					     ibucontext);
 #else
-	ucontext = ibpd->uobject ? to_eucontext(ibpd->uobject->context) :
-				   NULL;
+	ucontext = ibqp->pd->uobject ? to_eucontext(ibqp->pd->uobject->context) :
+				       NULL;
 #endif
 
 	err = efa_qp_validate_cap(dev, init_attr);
@@ -870,14 +888,8 @@ struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 		goto err_out;
 	}
 
-	qp = kzalloc(sizeof(*qp), GFP_KERNEL);
-	if (!qp) {
-		err = -ENOMEM;
-		goto err_out;
-	}
-
 	create_qp_params.uarn = ucontext->uarn;
-	create_qp_params.pd = to_epd(ibpd)->pdn;
+	create_qp_params.pd = to_epd(ibqp->pd)->pdn;
 
 	if (init_attr->qp_type == IB_QPT_UD) {
 		create_qp_params.qp_type = EFA_ADMIN_QP_TYPE_UD;
@@ -888,7 +900,7 @@ struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 			  "Unsupported qp type %d driver qp type %d\n",
 			  init_attr->qp_type, cmd.driver_qp_type);
 		err = -EOPNOTSUPP;
-		goto err_free_qp;
+		goto err_out;
 	}
 
 	ibdev_dbg(&dev->ibdev, "Create QP: qp type %d driver qp type %#x\n",
@@ -906,7 +918,7 @@ struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 						    qp->rq_size, DMA_TO_DEVICE);
 		if (!qp->rq_cpu_addr) {
 			err = -ENOMEM;
-			goto err_free_qp;
+			goto err_out;
 		}
 
 		ibdev_dbg(&dev->ibdev,
@@ -933,7 +945,6 @@ struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 
 	qp->qp_handle = create_qp_resp.qp_handle;
 	qp->ibqp.qp_num = create_qp_resp.qp_num;
-	qp->ibqp.qp_type = init_attr->qp_type;
 	qp->max_send_wr = init_attr->cap.max_send_wr;
 	qp->max_recv_wr = init_attr->cap.max_recv_wr;
 	qp->max_send_sge = init_attr->cap.max_send_sge;
@@ -953,7 +964,7 @@ struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
 
 	ibdev_dbg(&dev->ibdev, "Created qp[%d]\n", qp->ibqp.qp_num);
 
-	return &qp->ibqp;
+	return 0;
 
 err_remove_mmap_entries:
 	efa_qp_user_mmap_entries_remove(qp);
@@ -963,12 +974,42 @@ err_free_mapped:
 	if (qp->rq_size)
 		efa_free_mapped(dev, qp->rq_cpu_addr, qp->rq_dma_addr,
 				qp->rq_size, DMA_TO_DEVICE);
+err_out:
+	atomic64_inc(&dev->stats.create_qp_err);
+	return err;
+}
+
+#ifndef HAVE_QP_CORE_ALLOCATION
+struct ib_qp *efa_kzalloc_qp(struct ib_pd *ibpd,
+			     struct ib_qp_init_attr *init_attr,
+			     struct ib_udata *udata)
+{
+	struct efa_dev *dev = to_edev(ibpd->device);
+	struct efa_qp *qp;
+	int err;
+
+	qp = kzalloc(sizeof(*qp), GFP_KERNEL);
+	if (!qp) {
+		atomic64_inc(&dev->stats.create_qp_err);
+		err = -ENOMEM;
+		goto err_out;
+	}
+
+	qp->ibqp.device = ibpd->device;
+	qp->ibqp.pd = ibpd;
+	qp->ibqp.qp_type = init_attr->qp_type;
+	err = efa_create_qp(&qp->ibqp, init_attr, udata);
+	if (err)
+		goto err_free_qp;
+
+	return &qp->ibqp;
+
 err_free_qp:
 	kfree(qp);
 err_out:
-	atomic64_inc(&dev->stats.create_qp_err);
 	return ERR_PTR(err);
 }
+#endif
 
 static const struct {
 	int			valid;
@@ -1216,6 +1257,12 @@ static int efa_destroy_cq_idx(struct efa_dev *dev, int cq_idx)
 	return efa_com_destroy_cq(&dev->edev, &params);
 }
 
+static void efa_cq_user_mmap_entries_remove(struct efa_cq *cq)
+{
+	rdma_user_mmap_entry_remove(cq->db_mmap_entry);
+	rdma_user_mmap_entry_remove(cq->mmap_entry);
+}
+
 #if defined(HAVE_IB_VOID_DESTROY_CQ) || defined(HAVE_IB_INT_DESTROY_CQ)
 #ifdef HAVE_IB_INT_DESTROY_CQ
 int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
@@ -1230,8 +1277,16 @@ void efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 		  "Destroy cq[%d] virt[0x%p] freed: size[%lu], dma[%pad]\n",
 		  cq->cq_idx, cq->cpu_addr, cq->size, &cq->dma_addr);
 
-	rdma_user_mmap_entry_remove(cq->mmap_entry);
+	efa_cq_user_mmap_entries_remove(cq);
 	efa_destroy_cq_idx(dev, cq->cq_idx);
+	if (cq->eq) {
+#ifdef HAVE_XARRAY
+		xa_erase(&dev->cqs_xa, cq->cq_idx);
+#else
+		dev->cqs_arr[cq->cq_idx] = NULL;
+#endif
+		synchronize_irq(cq->eq->irq.irqn);
+	}
 	efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size,
 			DMA_FROM_DEVICE);
 #ifndef HAVE_CQ_CORE_ALLOCATION
@@ -1256,11 +1311,19 @@ int efa_destroy_cq(struct ib_cq *ibcq)
 		  "Destroy cq[%d] virt[0x%p] freed: size[%lu], dma[%pad]\n",
 		  cq->cq_idx, cq->cpu_addr, cq->size, &cq->dma_addr);
 
-	rdma_user_mmap_entry_remove(cq->mmap_entry);
+	efa_cq_user_mmap_entries_remove(cq);
 	err = efa_destroy_cq_idx(dev, cq->cq_idx);
 	if (err)
 		return err;
 
+	if (cq->eq) {
+#ifdef HAVE_XARRAY
+		xa_erase(&dev->cqs_xa, cq->cq_idx);
+#else
+		dev->cqs_arr[cq->cq_idx] = NULL;
+#endif
+		synchronize_irq(cq->eq->irq.irqn);
+	}
 	efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size,
 			DMA_FROM_DEVICE);
 
@@ -1269,8 +1332,14 @@ int efa_destroy_cq(struct ib_cq *ibcq)
 }
 #endif
 
+static struct efa_eq *efa_vec2eq(struct efa_dev *dev, int vec)
+{
+	return &dev->eqs[vec];
+}
+
 static int cq_mmap_entries_setup(struct efa_dev *dev, struct efa_cq *cq,
-				 struct efa_ibv_create_cq_resp *resp)
+				 struct efa_ibv_create_cq_resp *resp,
+				 bool db_valid)
 {
 	resp->q_mmap_size = cq->size;
 	cq->mmap_entry = efa_user_mmap_entry_insert(&cq->ucontext->ibucontext,
@@ -1279,6 +1348,21 @@ static int cq_mmap_entries_setup(struct efa_dev *dev, struct efa_cq *cq,
 						    &resp->q_mmap_key);
 	if (!cq->mmap_entry)
 		return -ENOMEM;
+
+	if (db_valid) {
+		cq->db_mmap_entry =
+			efa_user_mmap_entry_insert(&cq->ucontext->ibucontext,
+						   dev->db_bar_addr + resp->db_off,
+						   PAGE_SIZE, EFA_MMAP_IO_NC,
+						   &resp->db_mmap_key);
+		if (!cq->db_mmap_entry) {
+			rdma_user_mmap_entry_remove(cq->mmap_entry);
+			return -ENOMEM;
+		}
+
+		resp->db_off &= ~PAGE_MASK;
+		resp->comp_mask |= EFA_CREATE_CQ_RESP_DB_OFF;
+	}
 
 	return 0;
 }
@@ -1292,8 +1376,8 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 #else
 	struct efa_ucontext *ucontext = to_ecq(ibcq)->ucontext;
 #endif
+	struct efa_com_create_cq_params params = {};
 	struct efa_ibv_create_cq_resp resp = {};
-	struct efa_com_create_cq_params params;
 	struct efa_com_create_cq_result result;
 	struct ib_device *ibdev = ibcq->device;
 	struct efa_dev *dev = to_edev(ibdev);
@@ -1346,7 +1430,7 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		goto err_out;
 	}
 
-	if (cmd.comp_mask || !is_reserved_cleared(cmd.reserved_50)) {
+	if (cmd.comp_mask || !is_reserved_cleared(cmd.reserved_58)) {
 		ibdev_dbg(ibdev,
 			  "Incompatible ABI params, unknown fields in udata\n");
 		err = -EINVAL;
@@ -1382,20 +1466,40 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	params.dma_addr = cq->dma_addr;
 	params.entry_size_in_bytes = cmd.cq_entry_size;
 	params.num_sub_cqs = cmd.num_sub_cqs;
+	if (cmd.flags & EFA_CREATE_CQ_WITH_COMPLETION_CHANNEL) {
+		cq->eq = efa_vec2eq(dev, attr->comp_vector);
+		params.eqn = cq->eq->eeq.eqn;
+		params.interrupt_mode_enabled = true;
+	}
+
 	err = efa_com_create_cq(&dev->edev, &params, &result);
 	if (err)
 		goto err_free_mapped;
 
+	resp.db_off = result.db_off;
 	resp.cq_idx = result.cq_idx;
 	cq->cq_idx = result.cq_idx;
 	cq->ibcq.cqe = result.actual_depth;
 	WARN_ON_ONCE(entries != result.actual_depth);
 
-	err = cq_mmap_entries_setup(dev, cq, &resp);
+	err = cq_mmap_entries_setup(dev, cq, &resp, result.db_valid);
 	if (err) {
 		ibdev_dbg(ibdev, "Could not setup cq[%u] mmap entries\n",
 			  cq->cq_idx);
 		goto err_destroy_cq;
+	}
+
+	if (cq->eq) {
+#ifdef HAVE_XARRAY
+		err = xa_err(xa_store(&dev->cqs_xa, cq->cq_idx, cq, GFP_KERNEL));
+#else
+		dev->cqs_arr[cq->cq_idx] = cq;
+#endif
+		if (err) {
+			ibdev_dbg(ibdev, "Failed to store cq[%u] in xarray\n",
+				  cq->cq_idx);
+			goto err_remove_mmap;
+		}
 	}
 
 	if (udata->outlen) {
@@ -1404,7 +1508,7 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		if (err) {
 			ibdev_dbg(ibdev,
 				  "Failed to copy udata for create_cq\n");
-			goto err_remove_mmap;
+			goto err_xa_erase;
 		}
 	}
 
@@ -1413,8 +1517,15 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 
 	return 0;
 
+err_xa_erase:
+	if (cq->eq)
+#ifdef HAVE_XARRAY
+		xa_erase(&dev->cqs_xa, cq->cq_idx);
+#else
+		dev->cqs_arr[cq->cq_idx] = NULL;
+#endif
 err_remove_mmap:
-	rdma_user_mmap_entry_remove(cq->mmap_entry);
+	efa_cq_user_mmap_entries_remove(cq);
 err_destroy_cq:
 	efa_destroy_cq_idx(dev, cq->cq_idx);
 err_free_mapped:
@@ -2666,27 +2777,27 @@ int efa_destroy_ah(struct ib_ah *ibah)
 struct rdma_hw_stats *efa_alloc_hw_port_stats(struct ib_device *ibdev,
 					      port_t port_num)
 {
-	return rdma_alloc_hw_stats_struct(efa_port_stats_names,
-					  ARRAY_SIZE(efa_port_stats_names),
+	return rdma_alloc_hw_stats_struct(efa_port_stats_descs,
+					  ARRAY_SIZE(efa_port_stats_descs),
 					  RDMA_HW_STATS_DEFAULT_LIFESPAN);
 }
 
 struct rdma_hw_stats *efa_alloc_hw_device_stats(struct ib_device *ibdev)
 {
-	return rdma_alloc_hw_stats_struct(efa_device_stats_names,
-					  ARRAY_SIZE(efa_device_stats_names),
+	return rdma_alloc_hw_stats_struct(efa_device_stats_descs,
+					  ARRAY_SIZE(efa_device_stats_descs),
 					  RDMA_HW_STATS_DEFAULT_LIFESPAN);
 }
 #else
 struct rdma_hw_stats *efa_alloc_hw_stats(struct ib_device *ibdev, port_t port_num)
 {
 	if (port_num)
-		return rdma_alloc_hw_stats_struct(efa_port_stats_names,
-						  ARRAY_SIZE(efa_port_stats_names),
+		return rdma_alloc_hw_stats_struct(efa_port_stats_descs,
+						  ARRAY_SIZE(efa_port_stats_descs),
 						  RDMA_HW_STATS_DEFAULT_LIFESPAN);
 	else
-		return rdma_alloc_hw_stats_struct(efa_device_stats_names,
-						  ARRAY_SIZE(efa_device_stats_names),
+		return rdma_alloc_hw_stats_struct(efa_device_stats_descs,
+						  ARRAY_SIZE(efa_device_stats_descs),
 						  RDMA_HW_STATS_DEFAULT_LIFESPAN);
 }
 #endif
@@ -2712,7 +2823,7 @@ static int efa_fill_device_stats(struct efa_dev *dev,
 	stats->value[EFA_CREATE_AH_ERR] = atomic64_read(&s->create_ah_err);
 	stats->value[EFA_MMAP_ERR] = atomic64_read(&s->mmap_err);
 
-	return ARRAY_SIZE(efa_device_stats_names);
+	return ARRAY_SIZE(efa_device_stats_descs);
 }
 
 static int efa_fill_port_stats(struct efa_dev *dev, struct rdma_hw_stats *stats,
@@ -2761,7 +2872,7 @@ static int efa_fill_port_stats(struct efa_dev *dev, struct rdma_hw_stats *stats,
 	stats->value[EFA_RDMA_READ_WR_ERR] = rrs->read_wr_err;
 	stats->value[EFA_RDMA_READ_RESP_BYTES] = rrs->read_resp_bytes;
 
-	return ARRAY_SIZE(efa_port_stats_names);
+	return ARRAY_SIZE(efa_port_stats_descs);
 }
 
 int efa_get_hw_stats(struct ib_device *ibdev, struct rdma_hw_stats *stats,
