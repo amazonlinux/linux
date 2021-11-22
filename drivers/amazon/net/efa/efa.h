@@ -22,14 +22,14 @@
 
 #define EFA_IRQNAME_SIZE        40
 
-/* 1 for AENQ + ADMIN */
-#define EFA_NUM_MSIX_VEC                  1
 #define EFA_MGMNT_MSIX_VEC_IDX            0
+#define EFA_COMP_EQS_VEC_BASE             1
 
 struct efa_irq {
 	irq_handler_t handler;
 	void *data;
 	u32 irqn;
+	u32 vector;
 	cpumask_t affinity_hint_mask;
 	char name[EFA_IRQNAME_SIZE];
 };
@@ -63,6 +63,19 @@ struct efa_dev {
 	struct efa_irq admin_irq;
 
 	struct efa_stats stats;
+
+	/* Array of completion EQs */
+	struct efa_eq *eqs;
+	unsigned int neqs;
+
+#ifdef HAVE_XARRAY
+	/* Only stores CQs with interrupts enabled */
+	struct xarray cqs_xa;
+#else
+	/* If xarray isn't available keep an array of all possible CQs */
+	struct efa_cq *cqs_arr[BIT(sizeof_field(struct efa_admin_create_cq_resp,
+						cq_idx) * 8)];
+#endif
 };
 
 struct efa_ucontext {
@@ -96,8 +109,11 @@ struct efa_cq {
 	dma_addr_t dma_addr;
 	void *cpu_addr;
 	struct rdma_user_mmap_entry *mmap_entry;
+	struct rdma_user_mmap_entry *db_mmap_entry;
 	size_t size;
 	u16 cq_idx;
+	/* NULL when no interrupts requested */
+	struct efa_eq *eq;
 };
 
 struct efa_qp {
@@ -126,6 +142,11 @@ struct efa_ah {
 	u16 ah;
 	/* dest_addr */
 	u8 id[EFA_GID_SIZE];
+};
+
+struct efa_eq {
+	struct efa_com_eq eeq;
+	struct efa_irq irq;
 };
 
 int efa_query_device(struct ib_device *ibdev,
@@ -164,9 +185,14 @@ int efa_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata);
 #else
 int efa_destroy_qp(struct ib_qp *ibqp);
 #endif
-struct ib_qp *efa_create_qp(struct ib_pd *ibpd,
-			    struct ib_qp_init_attr *init_attr,
-			    struct ib_udata *udata);
+#ifdef HAVE_QP_CORE_ALLOCATION
+int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
+		  struct ib_udata *udata);
+#else
+struct ib_qp *efa_kzalloc_qp(struct ib_pd *ibpd,
+			     struct ib_qp_init_attr *init_attr,
+			     struct ib_udata *udata);
+#endif
 #ifdef HAVE_IB_INT_DESTROY_CQ
 int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
 #elif defined(HAVE_IB_VOID_DESTROY_CQ)
