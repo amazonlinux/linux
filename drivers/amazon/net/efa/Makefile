@@ -4,7 +4,7 @@
 
 obj-$(CONFIG_AMAZON_EFA_INFINIBAND) += efa.o
 
-efa-y := efa_com.o efa_com_cmd.o efa_main.o efa_verbs.o
+efa-y := efa_com.o efa_com_cmd.o efa_main.o efa_verbs.o efa_gdr.o
 
 efa-$(CONFIG_SYSFS) += efa_sysfs.o
 
