@@ -249,7 +249,9 @@ struct mptcp_sock {
 	bool		rcv_fastclose;
 	bool		use_64bit_ack; /* Set when we received a 64-bit DSN */
 	bool		csum_enabled;
-	u8		recvmsg_inq:1;
+	u8		recvmsg_inq:1,
+			cork:1,
+			nodelay:1;
 	spinlock_t	join_list_lock;
 	int		keepalive_cnt;
 	int		keepalive_idle;
