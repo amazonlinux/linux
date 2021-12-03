@@ -1168,6 +1168,19 @@ static int mptcp_getsockopt_sol_tcp(struct mptcp_sock *msk, int optname,
 	return -EOPNOTSUPP;
 }
 
+static int mptcp_getsockopt_v4(struct mptcp_sock *msk, int optname,
+                               char __user *optval, int __user *optlen)
+{
+        struct sock *sk = (void *)msk;
+
+        switch (optname) {
+        case IP_TOS:
+                return mptcp_put_int_option(msk, optval, optlen, inet_sk(sk)->tos);
+        }
+
+        return -EOPNOTSUPP;
+}
+
 static int mptcp_getsockopt_v6(struct mptcp_sock *msk, int optname,
 			       char __user *optval, int __user *optlen)
 {
@@ -1217,6 +1230,8 @@ int mptcp_getsockopt(struct sock *sk, int level, int optname,
 	if (ssk)
 		return tcp_getsockopt(ssk, level, optname, optval, option);
 
+	if (level == SOL_IP)
+		return mptcp_getsockopt_v4(msk, optname, optval, option);
 	if (level == SOL_IPV6)
 		return mptcp_getsockopt_v6(msk, optname, optval, option);
 	if (level == SOL_TCP)
