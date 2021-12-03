@@ -554,6 +554,7 @@ static bool mptcp_supported_sockopt(int level, int optname)
 		case TCP_TIMESTAMP:
 		case TCP_NOTSENT_LOWAT:
 		case TCP_TX_DELAY:
+		case TCP_INQ:
 			return true;
 		}
 
@@ -565,7 +566,6 @@ static bool mptcp_supported_sockopt(int level, int optname)
 		/* TCP_FASTOPEN_KEY, TCP_FASTOPEN TCP_FASTOPEN_CONNECT, TCP_FASTOPEN_NO_COOKIE,
 		 * are not supported fastopen is currently unsupported
 		 */
-		/* TCP_INQ is currently unsupported, needs some recvmsg work */
 	}
 	return false;
 }
@@ -749,7 +749,21 @@ static int mptcp_setsockopt_v4(struct mptcp_sock *msk, int optname,
 static int mptcp_setsockopt_sol_tcp(struct mptcp_sock *msk, int optname,
 				    sockptr_t optval, unsigned int optlen)
 {
+	struct sock *sk = (void *)msk;
+	int ret, val;
+
 	switch (optname) {
+	case TCP_INQ:
+		ret = mptcp_get_int_option(msk, optval, optlen, &val);
+		if (ret)
+			return ret;
+		if (val < 0 || val > 1)
+			return -EINVAL;
+
+		lock_sock(sk);
+		msk->recvmsg_inq = !!val;
+		release_sock(sk);
+		return 0;
 	case TCP_ULP:
 		return -EOPNOTSUPP;
 	case TCP_CONGESTION:
@@ -1148,6 +1162,8 @@ static int mptcp_getsockopt_sol_tcp(struct mptcp_sock *msk, int optname,
 		return mptcp_put_int_option(msk, optval, optlen,
 					    msk->keepalive_cnt ? :
 					    READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_keepalive_probes));
+	case TCP_INQ:
+		return mptcp_put_int_option(msk, optval, optlen, msk->recvmsg_inq);
 	}
 	return -EOPNOTSUPP;
 }
