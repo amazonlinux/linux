@@ -493,9 +493,10 @@ static DEVICE_ATTR_RW(auto_online_blocks);
 static ssize_t probe_store(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
-	u64 phys_addr;
+	u64 phys_addr, size;
 	int nid, ret;
 	unsigned long pages_per_block = PAGES_PER_SECTION * sections_per_block;
+	mhp_t mhp_flags;
 
 	ret = kstrtoull(buf, 0, &phys_addr);
 	if (ret)
@@ -508,10 +509,12 @@ static ssize_t probe_store(struct device *dev, struct device_attribute *attr,
 	if (ret)
 		return ret;
 
+	size = MIN_MEMORY_BLOCK_SIZE * sections_per_block;
+	mhp_flags = mhp_supports_memmap_on_memory(size) ?
+	    MHP_MEMMAP_ON_MEMORY : MHP_NONE;
+
 	nid = memory_add_physaddr_to_nid(phys_addr);
-	ret = __add_memory(nid, phys_addr,
-			   MIN_MEMORY_BLOCK_SIZE * sections_per_block,
-			   MHP_NONE);
+	ret = __add_memory(nid, phys_addr, size, mhp_flags);
 
 	if (ret)
 		goto out;
