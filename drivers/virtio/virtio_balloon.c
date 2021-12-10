@@ -18,6 +18,7 @@
 #include <linux/wait.h>
 #include <linux/mm.h>
 #include <linux/page_reporting.h>
+#include <linux/memory.h>
 
 /*
  * Balloon device works in 4K page units.  So each page is pointed to by
@@ -38,6 +39,13 @@
 #define VIRTIO_BALLOON_HINT_BLOCK_BYTES \
 	(1 << (VIRTIO_BALLOON_HINT_BLOCK_ORDER + PAGE_SHIFT))
 #define VIRTIO_BALLOON_HINT_BLOCK_PAGES (1 << VIRTIO_BALLOON_HINT_BLOCK_ORDER)
+
+static bool report_offline = false;
+module_param(report_offline, bool, 0444);
+MODULE_PARM_DESC(report_offline,
+                 "Report offlined pages to the hypervisor");
+
+static DEFINE_MUTEX(vb_page_report_lock);
 
 enum virtio_balloon_vq {
 	VIRTIO_BALLOON_VQ_INFLATE,
@@ -166,6 +174,15 @@ static int virtballoon_free_page_report(struct page_reporting_dev_info *pr_dev_i
 	struct virtqueue *vq = vb->reporting_vq;
 	unsigned int unused, err;
 
+	/*
+	 * virtqueue callers must make sure that only one thread is
+	 * using a queue. With offline page reporting enabled, multiple
+	 * threads might be calling this function at the same time.
+	 *
+	 * So, make sure they don't get in each other's way.
+	 */
+	mutex_lock(&vb_page_report_lock);
+
 	/* We should always be able to add these buffers to an empty queue. */
 	err = virtqueue_add_inbuf(vq, sg, nents, vb, GFP_NOWAIT | __GFP_NOWARN);
 
@@ -174,15 +191,53 @@ static int virtballoon_free_page_report(struct page_reporting_dev_info *pr_dev_i
 	 * are able to trigger an error we will simply display a warning
 	 * and exit without actually processing the pages.
 	 */
-	if (WARN_ON_ONCE(err))
+	if (WARN_ON_ONCE(err)) {
+		mutex_unlock(&vb_page_report_lock);
 		return err;
+	}
 
 	virtqueue_kick(vq);
 
 	/* When host has read buffer, this completes via balloon_ack */
 	wait_event(vb->acked, virtqueue_get_buf(vq, &unused));
 
+	mutex_unlock(&vb_page_report_lock);
+
 	return 0;
+}
+
+/*
+ * Callback for memory offline. Takes the offlined range and passes it
+ * to the normal free page reporting entry point.
+ *
+ * Assumptions that are currently all true:
+ *
+ * 1) We're in a safe context to sleep.
+ * 2) The offlined range is <= a memory section (128M on x86, 1G on arm64),
+ *    and so the length will fit in a 32bit field.
+ */
+static int virtioballoon_free_page_report_offline(
+			struct page_reporting_dev_info *pr_dev_info,
+			unsigned long start_pfn, unsigned int nr_pages)
+{
+	struct scatterlist sgl;
+	unsigned int len = nr_pages << PAGE_SHIFT;
+	int err;
+
+	/*
+	 * Set the page to NULL to signal a "pre-mapped" address,
+	 * e.g. the virtio ring code will not touch the page
+	 * structure and will just use the dma_address passed in.
+	 */
+	sg_init_table(&sgl, 1);
+	sg_set_page(&sgl, NULL, len, 0);
+	sgl.dma_address = PFN_PHYS(start_pfn);
+
+	err = virtballoon_free_page_report(pr_dev_info, &sgl, 1);
+	if (err)
+		pr_err("virtio_balloon: offline reporting failed (%d)\n", err);
+
+	return err;
 }
 
 static void set_page_pfns(struct virtio_balloon *vb,
@@ -953,6 +1008,8 @@ static int virtballoon_probe(struct virtio_device *vdev)
 	}
 
 	vb->pr_dev_info.report = virtballoon_free_page_report;
+	if (report_offline)
+		vb->pr_dev_info.report_offline = virtioballoon_free_page_report_offline;
 	if (virtio_has_feature(vb->vdev, VIRTIO_BALLOON_F_REPORTING)) {
 		unsigned int capacity;
 
