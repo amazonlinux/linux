@@ -158,6 +158,20 @@ const char *arch_nop_insn(int len)
 	return (const char*)&nop;
 }
 
+const char *arch_ret_insn(int len)
+{
+	static u32 ret = 0;
+
+	if (len != AARCH64_INSN_SIZE)
+		WARN("invalid RET size: %d\n", len);
+
+	if (!ret)
+		ret = aarch64_insn_gen_branch_reg(AARCH64_INSN_REG_LR,
+		    AARCH64_INSN_BRANCH_RETURN);
+	return (const char*)&ret;
+}
+
+
 static int is_arm64(const struct elf *elf)
 {
 	switch (elf->ehdr.e_machine) {
