@@ -7,8 +7,10 @@
 
 #include <linux/ftrace.h>
 
-static inline void klp_arch_set_pc(struct pt_regs *regs, unsigned long ip)
+static inline void klp_arch_set_pc(struct ftrace_regs *fregs, unsigned long ip)
 {
+	struct pt_regs *regs = ftrace_get_regs(fregs);
+
 	regs->pc = ip;
 }
 
