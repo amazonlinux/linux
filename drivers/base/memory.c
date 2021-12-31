@@ -526,7 +526,7 @@ static ssize_t remove_store(struct device *dev, struct device_attribute *attr,
 			    const char *buf, size_t count)
 {
 	u64 phys_addr;
-	int nid, ret;
+	int ret;
 	unsigned long pages_per_block = PAGES_PER_SECTION * sections_per_block;
 
 	ret = kstrtoull(buf, 0, &phys_addr);
@@ -536,8 +536,7 @@ static ssize_t remove_store(struct device *dev, struct device_attribute *attr,
 	if (phys_addr & ((pages_per_block << PAGE_SHIFT) - 1))
 		return -EINVAL;
 
-	nid = memory_add_physaddr_to_nid(phys_addr);
-	ret = offline_and_remove_memory(nid, phys_addr, MIN_MEMORY_BLOCK_SIZE * sections_per_block);
+	ret = offline_and_remove_memory(phys_addr, MIN_MEMORY_BLOCK_SIZE * sections_per_block);
 
 	if (ret)
 		return ret;
