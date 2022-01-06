@@ -399,7 +399,8 @@ static int vring_map_one_sg(const struct vring_virtqueue *vq, struct scatterlist
 		 * depending on the direction.
 		 */
 		kmsan_handle_dma(sg_phys(sg), sg->length, direction);
-		*addr = (dma_addr_t)sg_phys(sg);
+		*addr = sg_page(sg) == NULL ? sg_dma_address(sg) :
+		    (dma_addr_t)sg_phys(sg);
 		return 0;
 	}
 
