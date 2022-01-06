@@ -317,6 +317,19 @@ err_out:
 static DEFINE_MUTEX(page_reporting_mutex);
 DEFINE_STATIC_KEY_FALSE(page_reporting_enabled);
 
+void page_report_offline(unsigned long start_pfn, unsigned int nr_pages)
+{
+	struct page_reporting_dev_info *prdev;
+
+	mutex_lock(&page_reporting_mutex);
+
+	prdev = rcu_access_pointer(pr_dev_info);
+	if (prdev && prdev->report_offline)
+		prdev->report_offline(prdev, start_pfn, nr_pages);
+
+	mutex_unlock(&page_reporting_mutex);
+}
+
 int page_reporting_register(struct page_reporting_dev_info *prdev)
 {
 	int err = 0;
