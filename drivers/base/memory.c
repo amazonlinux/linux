@@ -19,6 +19,7 @@
 #include <linux/memory.h>
 #include <linux/memory_hotplug.h>
 #include <linux/mm.h>
+#include <linux/page_reporting.h>
 #include <linux/stat.h>
 #include <linux/slab.h>
 #include <linux/xarray.h>
@@ -238,6 +239,10 @@ static int memory_block_offline(struct memory_block *mem)
 
 	if (nr_vmemmap_pages)
 		mhp_deinit_memmap_on_memory(start_pfn, nr_vmemmap_pages);
+
+#ifdef CONFIG_PAGE_REPORTING
+	page_report_offline(start_pfn, nr_pages);
+#endif
 
 	return ret;
 }
