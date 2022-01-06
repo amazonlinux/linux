@@ -19,6 +19,7 @@
 #include <linux/memory.h>
 #include <linux/memory_hotplug.h>
 #include <linux/mm.h>
+#include <linux/page_reporting.h>
 #include <linux/stat.h>
 #include <linux/slab.h>
 #include <linux/xarray.h>
@@ -296,6 +297,11 @@ static int memory_block_offline(struct memory_block *mem)
 	arg.start_pfn = start_pfn + nr_vmemmap_pages;
 	arg.nr_pages = nr_pages - nr_vmemmap_pages;
 	memory_notify(MEM_FINISH_OFFLINE, &arg);
+
+#ifdef CONFIG_PAGE_REPORTING
+	page_report_offline(start_pfn, nr_pages);
+#endif
+
 out:
 	mem_hotplug_done();
 	return ret;
