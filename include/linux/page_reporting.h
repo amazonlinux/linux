@@ -12,6 +12,8 @@ struct page_reporting_dev_info {
 	/* function that alters pages to make them "reported" */
 	int (*report)(struct page_reporting_dev_info *prdev,
 		      struct scatterlist *sg, unsigned int nents);
+	int (*report_offline)(struct page_reporting_dev_info *prdev,
+			      unsigned long start_pfn, unsigned int nr_pages);
 
 	/* work struct for processing reports */
 	struct delayed_work work;
@@ -22,6 +24,8 @@ struct page_reporting_dev_info {
 	/* Minimal order of page reporting */
 	unsigned int order;
 };
+
+void page_report_offline(unsigned long start_pfn, unsigned int nr_pages);
 
 /* Tear-down and bring-up for page reporting devices */
 void page_reporting_unregister(struct page_reporting_dev_info *prdev);
