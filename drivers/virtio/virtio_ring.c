@@ -360,7 +360,8 @@ static dma_addr_t vring_map_one_sg(const struct vring_virtqueue *vq,
 		 * depending on the direction.
 		 */
 		kmsan_handle_dma(sg_page(sg), sg->offset, sg->length, direction);
-		return (dma_addr_t)sg_phys(sg);
+		return sg_page(sg) == NULL ? sg_dma_address(sg) :
+		    (dma_addr_t)sg_phys(sg);
 	}
 
 	/*
