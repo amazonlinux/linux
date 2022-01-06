@@ -10,6 +10,7 @@
 #include <sched.h>
 #include <stdio.h>
 #include <errno.h>
+#include <signal.h>
 
 #include "../kselftest.h"
 #include "cgroup_util.h"
