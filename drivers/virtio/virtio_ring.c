@@ -332,7 +332,8 @@ static dma_addr_t vring_map_one_sg(const struct vring_virtqueue *vq,
 				   enum dma_data_direction direction)
 {
 	if (!vq->use_dma_api)
-		return (dma_addr_t)sg_phys(sg);
+		return sg_page(sg) == NULL ? sg_dma_address(sg) :
+		    (dma_addr_t)sg_phys(sg);
 
 	/*
 	 * We can't use dma_map_sg, because we don't use scatterlists in
