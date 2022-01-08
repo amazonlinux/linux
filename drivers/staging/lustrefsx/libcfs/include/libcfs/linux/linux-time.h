@@ -259,7 +259,7 @@ static inline cfs_time_t cfs_time_current(void)
 
 static inline time_t cfs_time_current_sec(void)
 {
-	return get_seconds();
+	return ktime_get_real_seconds();
 }
 
 static inline cfs_duration_t cfs_time_seconds(int seconds)
