@@ -5217,7 +5217,7 @@ int btf_check_func_arg_match(struct bpf_verifier_env *env, int subprog,
 						i, btf_kind_str[BTF_INFO_KIND(t->info)]);
 					goto out;
 				}
-				if (check_ctx_reg(env, &reg[i + 1], i + 1))
+				if (check_ptr_off_reg(env, &reg[i + 1], i + 1))
 					goto out;
 				continue;
 			}
