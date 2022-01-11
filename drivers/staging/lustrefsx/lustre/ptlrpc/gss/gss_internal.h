@@ -79,7 +79,7 @@ unsigned long gss_round_ctx_expiry(unsigned long expiry,
         if (sec_flags & PTLRPC_SEC_FL_REVERSE)
                 return expiry;
 
-        if (get_seconds() + __TIMEOUT_DELTA <= expiry)
+        if (ktime_get_real_seconds() + __TIMEOUT_DELTA <= expiry)
                 return expiry - __TIMEOUT_DELTA;
 
         return expiry;
