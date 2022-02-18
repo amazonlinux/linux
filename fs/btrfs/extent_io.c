@@ -2374,7 +2374,6 @@ static int bio_readpage_error(struct bio *failed_bio, u64 phy_offset,
 	struct extent_io_tree *failure_tree = &BTRFS_I(inode)->io_failure_tree;
 	struct bio *bio;
 	int read_mode = 0;
-	blk_status_t status;
 	int ret;
 
 	BUG_ON(bio_op(failed_bio) == REQ_OP_WRITE);
@@ -2402,16 +2401,14 @@ static int bio_readpage_error(struct bio *failed_bio, u64 phy_offset,
 	btrfs_debug(btrfs_sb(inode->i_sb),
 		"Repair Read Error: submitting new read[%#x] to this_mirror=%d, in_validation=%d",
 		read_mode, failrec->this_mirror, failrec->in_validation);
-
-	status = tree->ops->submit_bio_hook(tree->private_data, bio, failrec->this_mirror,
-					 failrec->bio_flags, 0);
-	if (status) {
-		free_io_failure(failure_tree, tree, failrec);
-		bio_put(bio);
-		ret = blk_status_to_errno(status);
-	}
-
-	return ret;
+	/*
+	* At this point we have a bio, so any errors from submit_bio_hook()
+	* will be handled by the endio on the repair_bio, so we can't return an
+	* error here.
+	*/
+	tree->ops->submit_bio_hook(tree->private_data, bio, failrec->this_mirror,
+				failrec->bio_flags, 0);
+	return BLK_STS_OK;
 }
 
 /* lots and lots of room for performance fixes in the end_bio funcs */
