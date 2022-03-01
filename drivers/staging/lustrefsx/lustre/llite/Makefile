@@ -7,7 +7,7 @@ lustre-y	+= rw26.o super25.o statahead.o xattr_security.o
 lustre-y	+= glimpse.o
 lustre-y	+= lcommon_cl.o
 lustre-y	+= lcommon_misc.o
-lustre-y	+= vvp_dev.o vvp_page.o vvp_lock.o vvp_io.o vvp_object.o
+lustre-y	+= vvp_dev.o vvp_page.o vvp_io.o vvp_object.o
 lustre-y	+= range_lock.o
 
 include $(srctree)/drivers/staging/lustrefsx/Makefile.rules

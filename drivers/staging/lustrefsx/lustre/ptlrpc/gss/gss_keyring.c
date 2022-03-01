@@ -51,7 +51,7 @@
 #include <obd.h>
 #include <obd_class.h>
 #include <obd_support.h>
-#include <lustre/lustre_idl.h>
+#include <uapi/linux/lustre/lustre_idl.h>
 #include <lustre_sec.h>
 #include <lustre_net.h>
 #include <lustre_import.h>
@@ -59,6 +59,10 @@
 #include "gss_err.h"
 #include "gss_internal.h"
 #include "gss_api.h"
+
+#ifdef HAVE_GET_REQUEST_KEY_AUTH
+#include <keys/request_key_auth-type.h>
+#endif
 
 static struct ptlrpc_sec_policy gss_policy_keyring;
 static struct ptlrpc_ctx_ops gss_keyring_ctxops;
@@ -82,45 +86,6 @@ static int sec_install_rctx_kr(struct ptlrpc_sec *sec,
  * internal helpers                     *
  ****************************************/
 
-#define DUMP_PROCESS_KEYRINGS(tsk)					\
-{									\
-	CWARN("DUMP PK: %s[%u,%u/%u](<-%s[%u,%u/%u]): "			\
-	      "a %d, t %d, p %d, s %d, u %d, us %d, df %d\n",		\
-	      tsk->comm, tsk->pid, tsk->uid, tsk->fsuid,		\
-	      tsk->parent->comm, tsk->parent->pid,			\
-	      tsk->parent->uid, tsk->parent->fsuid,			\
-	      tsk->request_key_auth ?					\
-	      tsk->request_key_auth->serial : 0,			\
-	      key_cred(tsk)->thread_keyring ?				\
-	      key_cred(tsk)->thread_keyring->serial : 0,		\
-	      key_tgcred(tsk)->process_keyring ?			\
-	      key_tgcred(tsk)->process_keyring->serial : 0,		\
-	      key_tgcred(tsk)->session_keyring ?			\
-	      key_tgcred(tsk)->session_keyring->serial : 0,		\
-	      key_cred(tsk)->user->uid_keyring ?			\
-	      key_cred(tsk)->user->uid_keyring->serial : 0,		\
-	      key_cred(tsk)->user->session_keyring ?			\
-	      key_cred(tsk)->user->session_keyring->serial : 0,		\
-	      key_cred(tsk)->jit_keyring				\
-	     );								\
-}
-
-#define DUMP_KEY(key)                                                   \
-{                                                                       \
-        CWARN("DUMP KEY: %p(%d) ref %d u%u/g%u desc %s\n",              \
-              key, key->serial, atomic_read(&key->usage),               \
-              key->uid, key->gid,                                       \
-              key->description ? key->description : "n/a"               \
-             );                                                         \
-}
-
-#define key_cred(tsk)   ((tsk)->cred)
-#ifdef HAVE_CRED_TGCRED
-#define key_tgcred(tsk) ((tsk)->cred->tgcred)
-#else
-#define key_tgcred(tsk) key_cred(tsk)
-#endif
-
 static inline void keyring_upcall_lock(struct gss_sec_keyring *gsec_kr)
 {
 #ifdef HAVE_KEYRING_UPCALL_SERIALIZED
@@ -140,10 +105,12 @@ static inline void key_revoke_locked(struct key *key)
         set_bit(KEY_FLAG_REVOKED, &key->flags);
 }
 
-static void ctx_upcall_timeout_kr(unsigned long data)
+static void ctx_upcall_timeout_kr(cfs_timer_cb_arg_t data)
 {
-        struct ptlrpc_cli_ctx *ctx = (struct ptlrpc_cli_ctx *) data;
-        struct key            *key = ctx2gctx_keyring(ctx)->gck_key;
+	struct gss_cli_ctx_keyring *gctx_kr = cfs_from_timer(gctx_kr,
+							     data, gck_timer);
+	struct ptlrpc_cli_ctx *ctx = &(gctx_kr->gck_base.gc_base);
+	struct key *key	= gctx_kr->gck_key;
 
         CWARN("ctx %p, key %p\n", ctx, key);
 
@@ -153,22 +120,18 @@ static void ctx_upcall_timeout_kr(unsigned long data)
         key_revoke_locked(key);
 }
 
-static void ctx_start_timer_kr(struct ptlrpc_cli_ctx *ctx, long timeout)
+static void ctx_start_timer_kr(struct ptlrpc_cli_ctx *ctx, time64_t timeout)
 {
 	struct gss_cli_ctx_keyring *gctx_kr = ctx2gctx_keyring(ctx);
-	struct timer_list          *timer = gctx_kr->gck_timer;
+	struct timer_list *timer = &gctx_kr->gck_timer;
 
 	LASSERT(timer);
 
-	CDEBUG(D_SEC, "ctx %p: start timer %lds\n", ctx, timeout);
-	timeout = msecs_to_jiffies(timeout * MSEC_PER_SEC) +
-		  cfs_time_current();
+	CDEBUG(D_SEC, "ctx %p: start timer %llds\n", ctx, timeout);
 
-	init_timer(timer);
-	timer->expires = timeout;
-	timer->data = (unsigned long ) ctx;
-	timer->function = ctx_upcall_timeout_kr;
-
+	cfs_timer_setup(timer, ctx_upcall_timeout_kr,
+			(unsigned long)gctx_kr, 0);
+	timer->expires = cfs_time_seconds(timeout) + jiffies;
 	add_timer(timer);
 }
 
@@ -179,47 +142,34 @@ static
 void ctx_clear_timer_kr(struct ptlrpc_cli_ctx *ctx)
 {
         struct gss_cli_ctx_keyring *gctx_kr = ctx2gctx_keyring(ctx);
-        struct timer_list          *timer = gctx_kr->gck_timer;
-
-        if (timer == NULL)
-                return;
+	struct timer_list          *timer = &gctx_kr->gck_timer;
 
         CDEBUG(D_SEC, "ctx %p, key %p\n", ctx, gctx_kr->gck_key);
 
-        gctx_kr->gck_timer = NULL;
-
         del_singleshot_timer_sync(timer);
-
-        OBD_FREE_PTR(timer);
 }
 
 static
 struct ptlrpc_cli_ctx *ctx_create_kr(struct ptlrpc_sec *sec,
                                      struct vfs_cred *vcred)
 {
-        struct ptlrpc_cli_ctx      *ctx;
-        struct gss_cli_ctx_keyring *gctx_kr;
+	struct ptlrpc_cli_ctx      *ctx;
+	struct gss_cli_ctx_keyring *gctx_kr;
 
-        OBD_ALLOC_PTR(gctx_kr);
-        if (gctx_kr == NULL)
-                return NULL;
+	OBD_ALLOC_PTR(gctx_kr);
+	if (gctx_kr == NULL)
+		return NULL;
 
-        OBD_ALLOC_PTR(gctx_kr->gck_timer);
-        if (gctx_kr->gck_timer == NULL) {
-                OBD_FREE_PTR(gctx_kr);
-                return NULL;
-        }
-        init_timer(gctx_kr->gck_timer);
+	cfs_timer_setup(&gctx_kr->gck_timer, NULL, 0, 0);
 
-        ctx = &gctx_kr->gck_base.gc_base;
+	ctx = &gctx_kr->gck_base.gc_base;
 
-        if (gss_cli_ctx_init_common(sec, ctx, &gss_keyring_ctxops, vcred)) {
-                OBD_FREE_PTR(gctx_kr->gck_timer);
-                OBD_FREE_PTR(gctx_kr);
-                return NULL;
-        }
+	if (gss_cli_ctx_init_common(sec, ctx, &gss_keyring_ctxops, vcred)) {
+		OBD_FREE_PTR(gctx_kr);
+		return NULL;
+	}
 
-	ctx->cc_expire = cfs_time_current_sec() + KEYRING_UPCALL_TIMEOUT;
+	ctx->cc_expire = ktime_get_real_seconds() + KEYRING_UPCALL_TIMEOUT;
 	clear_bit(PTLRPC_CTX_NEW_BIT, &ctx->cc_flags);
 	atomic_inc(&ctx->cc_refcount); /* for the caller */
 
@@ -241,7 +191,6 @@ static void ctx_destroy_kr(struct ptlrpc_cli_ctx *ctx)
         LASSERT(gctx_kr->gck_key == NULL);
 
 	ctx_clear_timer_kr(ctx);
-	LASSERT(gctx_kr->gck_timer == NULL);
 
 	if (gss_cli_ctx_fini_common(sec, ctx))
 		return;
@@ -388,7 +337,7 @@ static int key_set_payload(struct key *key, unsigned int index,
 static void bind_key_ctx(struct key *key, struct ptlrpc_cli_ctx *ctx)
 {
 	LASSERT(atomic_read(&ctx->cc_refcount) > 0);
-        LASSERT(atomic_read(&key->usage) > 0);
+	LASSERT(ll_read_key_usage(key) > 0);
 	LASSERT(ctx2gctx_keyring(ctx)->gck_key == NULL);
 	LASSERT(!key_get_payload(key, 0));
 
@@ -561,17 +510,17 @@ void rvs_sec_install_root_ctx_kr(struct ptlrpc_sec *sec,
                                  struct ptlrpc_cli_ctx *new_ctx,
                                  struct key *key)
 {
-	struct gss_sec_keyring	*gsec_kr = sec2gsec_keyring(sec);
-	struct hlist_node	__maybe_unused *hnode;
-	struct ptlrpc_cli_ctx	*ctx;
-	cfs_time_t		now;
-	ENTRY;
+	struct gss_sec_keyring *gsec_kr = sec2gsec_keyring(sec);
+	struct hlist_node __maybe_unused *hnode;
+	struct ptlrpc_cli_ctx *ctx;
+	time64_t now;
 
-        LASSERT(sec_is_reverse(sec));
+	ENTRY;
+	LASSERT(sec_is_reverse(sec));
 
 	spin_lock(&sec->ps_lock);
 
-        now = cfs_time_current_sec();
+	now = ktime_get_real_seconds();
 
         /* set all existing ctxs short expiry */
         cfs_hlist_for_each_entry(ctx, hnode, &gsec_kr->gsk_clist, cc_cache) {
@@ -667,38 +616,103 @@ static inline int user_is_root(struct ptlrpc_sec *sec, struct vfs_cred *vcred)
 }
 
 /*
+ * kernel 5.3: commit 0f44e4d976f96c6439da0d6717238efa4b91196e
+ * keys: Move the user and user-session keyrings to the user_namespace
+ *
+ * When lookup_user_key is available use the kernel API rather than directly
+ * accessing the uid_keyring and session_keyring via the current process
+ * credentials.
+ */
+#ifdef HAVE_LOOKUP_USER_KEY
+
+/* from Linux security/keys/internal.h: */
+#ifndef KEY_LOOKUP_FOR_UNLINK
+#define KEY_LOOKUP_FOR_UNLINK		0x04
+#endif
+
+static struct key *_user_key(key_serial_t id)
+{
+	key_ref_t ref;
+
+	might_sleep();
+	ref = lookup_user_key(id, KEY_LOOKUP_FOR_UNLINK, 0);
+	if (IS_ERR(ref))
+		return NULL;
+	return key_ref_to_ptr(ref);
+}
+
+static inline struct key *get_user_session_keyring(const struct cred *cred)
+{
+	return _user_key(KEY_SPEC_USER_SESSION_KEYRING);
+}
+
+static inline struct key *get_user_keyring(const struct cred *cred)
+{
+	return _user_key(KEY_SPEC_USER_KEYRING);
+}
+#else
+static inline struct key *get_user_session_keyring(const struct cred *cred)
+{
+	return key_get(cred->user->session_keyring);
+}
+
+static inline struct key *get_user_keyring(const struct cred *cred)
+{
+	return key_get(cred->user->uid_keyring);
+}
+#endif
+
+/*
  * unlink request key from it's ring, which is linked during request_key().
  * sadly, we have to 'guess' which keyring it's linked to.
  *
- * FIXME this code is fragile, depend on how request_key_link() is implemented.
+ * FIXME this code is fragile, it depends on how request_key() is implemented.
  */
 static void request_key_unlink(struct key *key)
 {
-	struct task_struct *tsk = current;
-	struct key *ring;
+	const struct cred *cred = current_cred();
+	struct key *ring = NULL;
 
-	switch (key_cred(tsk)->jit_keyring) {
+	switch (cred->jit_keyring) {
 	case KEY_REQKEY_DEFL_DEFAULT:
+	case KEY_REQKEY_DEFL_REQUESTOR_KEYRING:
+#ifdef HAVE_GET_REQUEST_KEY_AUTH
+		if (cred->request_key_auth) {
+			struct request_key_auth *rka;
+			struct key *authkey = cred->request_key_auth;
+
+			down_read(&authkey->sem);
+			rka = get_request_key_auth(authkey);
+			if (!test_bit(KEY_FLAG_REVOKED, &authkey->flags))
+				ring = key_get(rka->dest_keyring);
+			up_read(&authkey->sem);
+			if (ring)
+				break;
+		}
+#endif
+		/* fall through */
 	case KEY_REQKEY_DEFL_THREAD_KEYRING:
-		ring = key_get(key_cred(tsk)->thread_keyring);
+		ring = key_get(cred->thread_keyring);
 		if (ring)
 			break;
+		/* fallthrough */
 	case KEY_REQKEY_DEFL_PROCESS_KEYRING:
-		ring = key_get(key_tgcred(tsk)->process_keyring);
+		ring = key_get(cred->process_keyring);
 		if (ring)
 			break;
+		/* fallthrough */
 	case KEY_REQKEY_DEFL_SESSION_KEYRING:
 		rcu_read_lock();
-		ring = key_get(rcu_dereference(key_tgcred(tsk)
-					       ->session_keyring));
+		ring = key_get(rcu_dereference(cred->session_keyring));
 		rcu_read_unlock();
 		if (ring)
 			break;
+		/* fallthrough */
 	case KEY_REQKEY_DEFL_USER_SESSION_KEYRING:
-		ring = key_get(key_cred(tsk)->user->session_keyring);
+		ring = get_user_session_keyring(cred);
 		break;
 	case KEY_REQKEY_DEFL_USER_KEYRING:
-		ring = key_get(key_cred(tsk)->user->uid_keyring);
+		ring = get_user_keyring(cred);
 		break;
 	case KEY_REQKEY_DEFL_GROUP_KEYRING:
 	default:
@@ -863,7 +877,7 @@ struct ptlrpc_cli_ctx * gss_sec_lookup_ctx_kr(struct ptlrpc_sec *sec,
 	if (likely(ctx)) {
 		LASSERT(atomic_read(&ctx->cc_refcount) >= 1);
 		LASSERT(ctx2gctx_keyring(ctx)->gck_key == key);
-		LASSERT(atomic_read(&key->usage) >= 2);
+		LASSERT(ll_read_key_usage(key) >= 2);
 
 		/* simply take a ref and return. it's upper layer's
 		 * responsibility to detect & replace dead ctx. */
@@ -1067,13 +1081,13 @@ void gss_sec_gc_ctx_kr(struct ptlrpc_sec *sec)
 static
 int gss_sec_display_kr(struct ptlrpc_sec *sec, struct seq_file *seq)
 {
-	struct gss_sec_keyring	*gsec_kr = sec2gsec_keyring(sec);
-	struct hlist_node	__maybe_unused *pos, *next;
-	struct ptlrpc_cli_ctx	*ctx;
-	struct gss_cli_ctx	*gctx;
-	time_t			 now = cfs_time_current_sec();
-	ENTRY;
+	struct gss_sec_keyring *gsec_kr = sec2gsec_keyring(sec);
+	struct hlist_node __maybe_unused *pos, *next;
+	struct ptlrpc_cli_ctx *ctx;
+	struct gss_cli_ctx *gctx;
+	time64_t now = ktime_get_real_seconds();
 
+	ENTRY;
 	spin_lock(&sec->ps_lock);
         cfs_hlist_for_each_entry_safe(ctx, pos, next,
 				      &gsec_kr->gsk_clist, cc_cache) {
@@ -1093,9 +1107,8 @@ int gss_sec_display_kr(struct ptlrpc_sec *sec, struct seq_file *seq)
                         snprintf(mech, sizeof(mech), "N/A");
                 mech[sizeof(mech) - 1] = '\0';
 
-		seq_printf(seq, "%p: uid %u, ref %d, expire %lu(%+ld), fl %s, "
-			   "seq %d, win %u, key %08x(ref %d), "
-			   "hdl %#llx:%#llx, mech: %s\n",
+		seq_printf(seq,
+			   "%p: uid %u, ref %d, expire %lld(%+lld), fl %s, seq %d, win %u, key %08x(ref %d), hdl %#llx:%#llx, mech: %s\n",
 			   ctx, ctx->cc_vcred.vc_uid,
 			   atomic_read(&ctx->cc_refcount),
 			   ctx->cc_expire,
@@ -1104,7 +1117,7 @@ int gss_sec_display_kr(struct ptlrpc_sec *sec, struct seq_file *seq)
 			   atomic_read(&gctx->gc_seq),
 			   gctx->gc_win,
 			   key ? key->serial : 0,
-			   key ? atomic_read(&key->usage) : 0,
+			   key ? ll_read_key_usage(key) : 0,
 			   gss_handle_to_u64(&gctx->gc_handle),
 			   gss_handle_to_u64(&gctx->gc_svc_handle),
 			   mech);
@@ -1121,8 +1134,16 @@ int gss_sec_display_kr(struct ptlrpc_sec *sec, struct seq_file *seq)
 static
 int gss_cli_ctx_refresh_kr(struct ptlrpc_cli_ctx *ctx)
 {
-        /* upcall is already on the way */
-        return 0;
+	/* upcall is already on the way */
+	struct gss_cli_ctx *gctx = ctx ? ctx2gctx(ctx) : NULL;
+
+	/* record latest sequence number in buddy svcctx */
+	if (gctx && !rawobj_empty(&gctx->gc_svc_handle) &&
+	    sec_is_reverse(gctx->gc_base.cc_sec)) {
+		return gss_svc_upcall_update_sequence(&gctx->gc_svc_handle,
+					     (__u32)atomic_read(&gctx->gc_seq));
+	}
+	return 0;
 }
 
 static
@@ -1325,15 +1346,15 @@ int gss_kt_instantiate(struct key *key, const void *data, size_t datalen)
          * the session keyring is created upon upcall, and don't change all
          * the way until upcall finished, so rcu lock is not needed here.
          */
-	LASSERT(key_tgcred(current)->session_keyring);
+	LASSERT(current_cred()->session_keyring);
 
 	lockdep_off();
-	rc = key_link(key_tgcred(current)->session_keyring, key);
+	rc = key_link(current_cred()->session_keyring, key);
 	lockdep_on();
 	if (unlikely(rc)) {
 		CERROR("failed to link key %08x to keyring %08x: %d\n",
 		       key->serial,
-		       key_tgcred(current)->session_keyring->serial, rc);
+		       current_cred()->session_keyring->serial, rc);
 		RETURN(rc);
 	}
 
