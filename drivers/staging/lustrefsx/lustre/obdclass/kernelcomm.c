@@ -23,7 +23,7 @@
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2015, Intel Corporation.
+ * Copyright (c) 2015, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -35,7 +35,8 @@
  */
 
 #define DEBUG_SUBSYSTEM S_CLASS
-#define D_KUC D_OTHER
+
+#include <linux/file.h>
 
 #include <obd_support.h>
 #include <lustre_kernelcomm.h>
@@ -73,7 +74,7 @@ int libcfs_kkuc_msg_put(struct file *filp, void *payload)
 	if (rc < 0)
 		CWARN("message send failed (%d)\n", rc);
 	else
-		CDEBUG(D_KUC, "Sent message rc=%d, fp=%p\n", rc, filp);
+		CDEBUG(D_HSM, "Sent message rc=%d, fp=%p\n", rc, filp);
 
 	return rc;
 }
@@ -142,7 +143,7 @@ int libcfs_kkuc_group_add(struct file *filp, const struct obd_uuid *uuid,
 	list_add(&reg->kr_chain, &kkuc_groups[group]);
 	up_write(&kg_sem);
 
-	CDEBUG(D_KUC, "Added uid=%d fp=%p to group %d\n", uid, filp, group);
+	CDEBUG(D_HSM, "Added uid=%d fp=%p to group %d\n", uid, filp, group);
 
 	return 0;
 }
@@ -174,7 +175,7 @@ int libcfs_kkuc_group_rem(const struct obd_uuid *uuid, int uid, int group)
 		if (obd_uuid_equals(uuid, &reg->kr_uuid) &&
 		    (uid == 0 || uid == reg->kr_uid)) {
 			list_del(&reg->kr_chain);
-			CDEBUG(D_KUC, "Removed uid=%d fp=%p from group %d\n",
+			CDEBUG(D_HSM, "Removed uid=%d fp=%p from group %d\n",
 				reg->kr_uid, reg->kr_fp, group);
 			if (reg->kr_fp != NULL)
 				fput(reg->kr_fp);
