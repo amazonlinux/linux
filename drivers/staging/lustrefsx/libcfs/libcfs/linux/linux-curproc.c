@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2015, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -37,8 +37,12 @@
  */
 
 #include <linux/sched.h>
+#ifdef HAVE_SCHED_HEADERS
+#include <linux/sched/signal.h>
+#include <linux/sched/mm.h>
+#endif
 #include <linux/fs_struct.h>
-
+#include <linux/pagemap.h>
 #include <linux/compat.h>
 #include <linux/thread_info.h>
 
@@ -149,9 +153,7 @@ static int cfs_access_process_vm(struct task_struct *tsk,
 		int bytes, rc, offset;
 		void *maddr;
 
-#if defined(HAVE_GET_USER_PAGES_GUP_FLAGS_7ARGS)
-		rc = get_user_pages(tsk, mm, addr, 1, write ? FOLL_WRITE : 0, &page, &vma);
-#elif defined(HAVE_GET_USER_PAGES_GUP_FLAGS)
+#if defined(HAVE_GET_USER_PAGES_GUP_FLAGS)
 		rc = get_user_pages(addr, 1, write ? FOLL_WRITE : 0, &page, &vma);
 #elif defined(HAVE_GET_USER_PAGES_6ARG)
 		rc = get_user_pages(addr, 1, write, 1, &page, &vma);
@@ -254,15 +256,22 @@ int cfs_get_environ(const char *key, char *value, int *val_len)
 
 			entry = env_start;
 			entry_len = env_end - env_start;
+			CDEBUG(D_INFO, "key: %s, entry: %s\n", key, entry);
 
 			/* Key length + length of '=' */
 			if (entry_len > key_len + 1 &&
+			    entry[key_len] == '='  &&
 			    !memcmp(entry, key, key_len)) {
 				entry += key_len + 1;
 				entry_len -= key_len + 1;
-				/* The 'value' buffer passed in is too small.*/
-				if (entry_len >= *val_len)
+
+				/* The 'value' buffer passed in is too small.
+				 * Copy what fits, but return -EOVERFLOW. */
+				if (entry_len >= *val_len) {
+					memcpy(value, entry, *val_len);
+					value[*val_len - 1] = 0;
 					GOTO(out, rc = -EOVERFLOW);
+				}
 
 				memcpy(value, entry, entry_len);
 				*val_len = entry_len;
