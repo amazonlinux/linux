@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2014, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -39,6 +39,10 @@
 #include <linux/kthread.h>
 #include <libcfs/libcfs.h>
 #include "tracefile.h"
+
+#ifndef WITH_WATCHDOG
+#define WITH_WATCHDOG
+#endif
 
 struct lc_watchdog {
 	spinlock_t		lcw_lock;	/* check or change lcw_list */
@@ -331,6 +335,7 @@ static void lcw_dispatch_stop(void)
 	wake_up(&lcw_event_waitq);
 
 	wait_for_completion(&lcw_stop_completion);
+	clear_bit(LCW_FLAG_STOP, &lcw_flags);
 
 	CDEBUG(D_INFO, "watchdog dispatcher has shut down.\n");
 
