@@ -23,7 +23,7 @@
 /*
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2012, 2013, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,61 +38,6 @@
 
 #ifndef __LIBCFS_LINUX_CPU_H__
 #define __LIBCFS_LINUX_CPU_H__
-
-#ifndef __LIBCFS_LIBCFS_H__
-#error Do not #include this file directly. #include <libcfs/libcfs.h> instead
-#endif
-
-#ifndef __KERNEL__
-#error This include is only for kernel use.
-#endif
-
-#include <linux/cpu.h>
-#include <linux/cpuset.h>
-#include <linux/topology.h>
-#include <linux/version.h>
-
-#ifdef CONFIG_SMP
-
-#define HAVE_LIBCFS_CPT
-
-/** virtual processing unit */
-struct cfs_cpu_partition {
-	/* CPUs mask for this partition */
-	cpumask_t			*cpt_cpumask;
-	/* nodes mask for this partition */
-	nodemask_t			*cpt_nodemask;
-	/* NUMA distance between CPTs */
-	unsigned			*cpt_distance;
-	/* spread rotor for NUMA allocator */
-	int				 cpt_spread_rotor;
-	/* NUMA node if cpt_nodemask is empty */
-	int				 cpt_node;
-};
-
-/** descriptor for CPU partitions */
-struct cfs_cpt_table {
-	/* spread rotor for NUMA allocator */
-	int				ctb_spread_rotor;
-	/* maximum NUMA distance between all nodes in table */
-	unsigned			ctb_distance;
-	/* # of CPU partitions */
-	int				 ctb_nparts;
-	/* partitions tables */
-	struct cfs_cpu_partition	*ctb_parts;
-	/* shadow HW CPU to CPU partition ID */
-	int				*ctb_cpu2cpt;
-	/* all cpus in this partition table */
-	cpumask_t			*ctb_cpumask;
-	/* shadow HW node to CPU partition ID */
-	int				*ctb_node2cpt;
-	/* all nodes in this partition table */
-	nodemask_t			*ctb_nodemask;
-};
-
-void cfs_cpu_core_siblings(int cpu, cpumask_t *mask);
-
-#endif /* CONFIG_SMP */
 
 #ifndef HAVE_TOPOLOGY_SIBLING_CPUMASK
 # define topology_sibling_cpumask(cpu)	topology_thread_cpumask(cpu)
