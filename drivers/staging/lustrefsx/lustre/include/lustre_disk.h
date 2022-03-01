@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -48,8 +48,8 @@
 #include <linux/backing-dev.h>
 #include <linux/list.h>
 #include <libcfs/libcfs.h>
-#include <uapi/linux/lustre_disk.h>
-#include <lustre/lustre_idl.h>
+#include <uapi/linux/lustre/lustre_disk.h>
+#include <uapi/linux/lustre/lustre_idl.h>
 
 #define IS_MDT(data)		((data)->lsi_flags & LDD_F_SV_TYPE_MDT)
 #define IS_OST(data)		((data)->lsi_flags & LDD_F_SV_TYPE_OST)
@@ -111,6 +111,7 @@ struct lustre_mount_data {
 
 /****************** superblock additional info *********************/
 struct ll_sb_info;
+struct kobject;
 
 struct lustre_sb_info {
 	int                       lsi_flags;
@@ -119,6 +120,7 @@ struct lustre_sb_info {
 	struct ll_sb_info        *lsi_llsbi;   /* add'l client sbi info */
 	struct dt_device	 *lsi_dt_dev;  /* dt device to access disk fs*/
 	atomic_t		  lsi_mounts;  /* references to the srv_mnt */
+	struct kobject		 *lsi_kobj;
 	char			  lsi_svname[MTI_NAME_MAXLEN];
 	/* lsi_osd_obdname format = 'lsi->ls_svname'-osd */
 	char			  lsi_osd_obdname[MTI_NAME_MAXLEN + 4];
@@ -129,8 +131,9 @@ struct lustre_sb_info {
 	char			  lsi_fstype[16];
 	struct backing_dev_info   lsi_bdi;     /* each client mountpoint needs
 						  own backing_dev_info */
+	/* protect lsi_lwp_list */
+	struct mutex		  lsi_lwp_mutex;
 	struct list_head	  lsi_lwp_list;
-	spinlock_t		  lsi_lwp_lock;
 	unsigned long		  lsi_lwp_started:1;
 };
 
