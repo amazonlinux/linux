@@ -52,61 +52,58 @@ struct cfs_wi_sched **lst_sched_test;
 static void
 lnet_selftest_exit(void)
 {
-	int	i;
+	int i;
 
-        switch (lst_init_step) {
-                case LST_INIT_CONSOLE:
-                        lstcon_console_fini();
-		/* Fall through */
-                case LST_INIT_FW:
-                        sfw_shutdown();
-		/* Fall through */
-                case LST_INIT_RPC:
-                        srpc_shutdown();
-		/* Fall through */
-		case LST_INIT_WI_TEST:
-			for (i = 0;
-			     i < cfs_cpt_number(lnet_cpt_table()); i++) {
-				if (lst_sched_test[i] == NULL)
-					continue;
-				cfs_wi_sched_destroy(lst_sched_test[i]);
-			}
-			LIBCFS_FREE(lst_sched_test,
-				    sizeof(lst_sched_test[0]) *
-				    cfs_cpt_number(lnet_cpt_table()));
-			lst_sched_test = NULL;
-		/* Fall through */
-
-		case LST_INIT_WI_SERIAL:
-			cfs_wi_sched_destroy(lst_sched_serial);
-			lst_sched_serial = NULL;
-		/* Fall through */
-                case LST_INIT_NONE:
-                        break;
-		/* Fall through */
-                default:
-                        LBUG();
-        }
-        return;
+	switch (lst_init_step) {
+	case LST_INIT_CONSOLE:
+		lstcon_console_fini();
+		/* fallthrough */
+	case LST_INIT_FW:
+		sfw_shutdown();
+		/* fallthrough */
+	case LST_INIT_RPC:
+		srpc_shutdown();
+		/* fallthrough */
+	case LST_INIT_WI_TEST:
+		for (i = 0;
+		     i < cfs_cpt_number(lnet_cpt_table()); i++) {
+			if (lst_sched_test[i] == NULL)
+				continue;
+			cfs_wi_sched_destroy(lst_sched_test[i]);
+		}
+		LIBCFS_FREE(lst_sched_test,
+			    sizeof(lst_sched_test[0]) *
+			    cfs_cpt_number(lnet_cpt_table()));
+		lst_sched_test = NULL;
+		/* fallthrough */
+	case LST_INIT_WI_SERIAL:
+		cfs_wi_sched_destroy(lst_sched_serial);
+		lst_sched_serial = NULL;
+		/* fallthrough */
+	case LST_INIT_NONE:
+		break;
+	default:
+		LBUG();
+	}
 }
 
 void
 lnet_selftest_structure_assertion(void)
 {
-        CLASSERT(sizeof(srpc_msg_t) == 160);
-        CLASSERT(sizeof(srpc_test_reqst_t) == 70);
-        CLASSERT(offsetof(srpc_msg_t, msg_body.tes_reqst.tsr_concur) == 72);
-        CLASSERT(offsetof(srpc_msg_t, msg_body.tes_reqst.tsr_ndest) == 78);
-        CLASSERT(sizeof(srpc_stat_reply_t) == 136);
-        CLASSERT(sizeof(srpc_stat_reqst_t) == 28);
+	CLASSERT(sizeof(struct srpc_msg) == 160);
+	CLASSERT(sizeof(struct srpc_test_reqst) == 70);
+	CLASSERT(offsetof(struct srpc_msg, msg_body.tes_reqst.tsr_concur) == 72);
+	CLASSERT(offsetof(struct srpc_msg, msg_body.tes_reqst.tsr_ndest) == 78);
+	CLASSERT(sizeof(struct srpc_stat_reply) == 136);
+	CLASSERT(sizeof(struct srpc_stat_reqst) == 28);
 }
 
 static int __init
 lnet_selftest_init(void)
 {
-	int	nscheds;
-	int	rc;
-	int	i;
+	int nscheds;
+	int rc;
+	int i;
 
 	rc = cfs_wi_sched_create("lst_s", lnet_cpt_table(), CFS_CPT_ANY,
 				 1, &lst_sched_serial);
@@ -130,31 +127,31 @@ lnet_selftest_init(void)
 		rc = cfs_wi_sched_create("lst_t", lnet_cpt_table(), i,
 					 nthrs, &lst_sched_test[i]);
 		if (rc != 0) {
-			CERROR("Failed to create CPU partition affinity WI "
-			       "scheduler %d for LST\n", i);
+			CERROR("Failed to create CPU partition affinity WI scheduler %d for LST\n",
+			       i);
 			goto error;
 		}
 	}
 
-        rc = srpc_startup();
-        if (rc != 0) {
-                CERROR("LST can't startup rpc\n");
-                goto error;
-        }
-        lst_init_step = LST_INIT_RPC;
+	rc = srpc_startup();
+	if (rc != 0) {
+		CERROR("LST can't startup rpc\n");
+		goto error;
+	}
+	lst_init_step = LST_INIT_RPC;
 
-        rc = sfw_startup();
-        if (rc != 0) {
-                CERROR("LST can't startup framework\n");
-                goto error;
-        }
-        lst_init_step = LST_INIT_FW;
+	rc = sfw_startup();
+	if (rc != 0) {
+		CERROR("LST can't startup framework\n");
+		goto error;
+	}
+	lst_init_step = LST_INIT_FW;
 
-        rc = lstcon_console_init();
-        if (rc != 0) {
-                CERROR("LST can't startup console\n");
-                goto error;
-        }
+	rc = lstcon_console_init();
+	if (rc != 0) {
+		CERROR("LST can't startup console\n");
+		goto error;
+	}
 	lst_init_step = LST_INIT_CONSOLE;
 	return 0;
 error:
