@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  *
  * Author: Eric Mei <ericm@clusterfs.com>
  */
@@ -59,7 +59,6 @@
 #include <obd_class.h>
 #include <obd_support.h>
 #include <obd_cksum.h>
-#include <lustre/lustre_idl.h>
 #include <lustre_net.h>
 #include <lustre_import.h>
 #include <lustre_sec.h>
@@ -309,11 +308,11 @@ int cli_ctx_expire(struct ptlrpc_cli_ctx *ctx)
 		if (!ctx->cc_early_expire)
 			clear_bit(PTLRPC_CTX_UPTODATE_BIT, &ctx->cc_flags);
 
-		CWARN("ctx %p(%u->%s) get expired: %lu(%+lds)\n",
+		CWARN("ctx %p(%u->%s) get expired: %lld(%+llds)\n",
 		      ctx, ctx->cc_vcred.vc_uid, sec2target_str(ctx->cc_sec),
 		      ctx->cc_expire,
 		      ctx->cc_expire == 0 ? 0 :
-		      cfs_time_sub(ctx->cc_expire, cfs_time_current_sec()));
+		      ctx->cc_expire - ktime_get_real_seconds());
 
 		sptlrpc_cli_ctx_wakeup(ctx);
 		return 1;
@@ -336,7 +335,7 @@ int cli_ctx_check_death(struct ptlrpc_cli_ctx *ctx)
                 return 0;
 
         /* check real expiration */
-        if (cfs_time_after(ctx->cc_expire, cfs_time_current_sec()))
+	if (ctx->cc_expire > ktime_get_real_seconds())
                 return 0;
 
         cli_ctx_expire(ctx);
@@ -345,8 +344,8 @@ int cli_ctx_check_death(struct ptlrpc_cli_ctx *ctx)
 
 void gss_cli_ctx_uptodate(struct gss_cli_ctx *gctx)
 {
-        struct ptlrpc_cli_ctx  *ctx = &gctx->gc_base;
-        unsigned long           ctx_expiry;
+	struct ptlrpc_cli_ctx *ctx = &gctx->gc_base;
+	time64_t ctx_expiry;
 
         if (lgss_inquire_context(gctx->gc_mechctx, &ctx_expiry)) {
                 CERROR("ctx %p(%u): unable to inquire, expire it now\n",
@@ -365,17 +364,17 @@ void gss_cli_ctx_uptodate(struct gss_cli_ctx *gctx)
 
 	if (sec_is_reverse(ctx->cc_sec)) {
 		CWARN("server installed reverse ctx %p idx %#llx, "
-		      "expiry %lu(%+lds)\n", ctx,
+		      "expiry %lld(%+llds)\n", ctx,
 		      gss_handle_to_u64(&gctx->gc_handle),
 		      ctx->cc_expire,
-		      cfs_time_sub(ctx->cc_expire, cfs_time_current_sec()));
+		      ctx->cc_expire - ktime_get_real_seconds());
         } else {
 		CWARN("client refreshed ctx %p idx %#llx (%u->%s), "
-		      "expiry %lu(%+lds)\n", ctx,
+		      "expiry %lld(%+llds)\n", ctx,
 		      gss_handle_to_u64(&gctx->gc_handle),
 		      ctx->cc_vcred.vc_uid, sec2target_str(ctx->cc_sec),
 		      ctx->cc_expire,
-		      cfs_time_sub(ctx->cc_expire, cfs_time_current_sec()));
+		      ctx->cc_expire - ktime_get_real_seconds());
 
 		/* install reverse svc ctx for root context */
 		if (ctx->cc_vcred.vc_uid == 0)
@@ -1103,6 +1102,9 @@ int gss_sec_create_common(struct gss_sec *gsec,
 	sec->ps_import = class_import_get(imp);
 	spin_lock_init(&sec->ps_lock);
 	INIT_LIST_HEAD(&sec->ps_gc_list);
+	sec->ps_sepol_mtime = ktime_set(0, 0);
+	sec->ps_sepol_checknext = ktime_set(0, 0);
+	sec->ps_sepol[0] = '\0';
 
         if (!svcctx) {
                 sec->ps_gc_interval = GSS_GC_INTERVAL;
@@ -2055,16 +2057,17 @@ int gss_svc_handle_init(struct ptlrpc_request *req,
         if (rc != SECSVC_OK)
                 RETURN(rc);
 
-        if (grctx->src_ctx->gsc_usr_mds || grctx->src_ctx->gsc_usr_oss ||
-            grctx->src_ctx->gsc_usr_root)
-                CWARN("create svc ctx %p: user from %s authenticated as %s\n",
-                      grctx->src_ctx, libcfs_nid2str(req->rq_peer.nid),
-                      grctx->src_ctx->gsc_usr_mds ? "mds" :
-                        (grctx->src_ctx->gsc_usr_oss ? "oss" : "root"));
-        else
-                CWARN("create svc ctx %p: accept user %u from %s\n",
-                      grctx->src_ctx, grctx->src_ctx->gsc_uid,
-                      libcfs_nid2str(req->rq_peer.nid));
+	if (grctx->src_ctx->gsc_usr_mds || grctx->src_ctx->gsc_usr_oss ||
+	    grctx->src_ctx->gsc_usr_root)
+		CWARN("create svc ctx %p: user from %s authenticated as %s\n",
+		      grctx->src_ctx, libcfs_nid2str(req->rq_peer.nid),
+		      grctx->src_ctx->gsc_usr_root ? "root" :
+		      (grctx->src_ctx->gsc_usr_mds ? "mds" :
+		       (grctx->src_ctx->gsc_usr_oss ? "oss" : "null")));
+	else
+		CWARN("create svc ctx %p: accept user %u from %s\n",
+		      grctx->src_ctx, grctx->src_ctx->gsc_uid,
+		      libcfs_nid2str(req->rq_peer.nid));
 
         if (gw->gw_flags & LUSTRE_GSS_PACK_USER) {
                 if (reqbuf->lm_bufcount < 4) {
