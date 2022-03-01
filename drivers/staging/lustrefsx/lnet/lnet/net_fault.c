@@ -21,7 +21,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2014, 2016, Intel Corporation.
+ * Copyright (c) 2014, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -37,7 +37,7 @@
 #define DEBUG_SUBSYSTEM S_LNET
 
 #include <lnet/lib-lnet.h>
-#include <lnet/lnetctl.h>
+#include <uapi/linux/lnet/lnetctl.h>
 
 #define LNET_MSG_MASK		(LNET_PUT_BIT | LNET_ACK_BIT | \
 				 LNET_GET_BIT | LNET_REPLY_BIT)
@@ -57,9 +57,9 @@ struct lnet_drop_rule {
 	/**
 	 * seconds to drop the next message, it's exclusive with dr_drop_at
 	 */
-	cfs_time_t		dr_drop_time;
+	time64_t		dr_drop_time;
 	/** baseline to caculate dr_drop_time */
-	cfs_time_t		dr_time_base;
+	time64_t		dr_time_base;
 	/** statistic of dropped messages */
 	struct lnet_fault_stat	dr_stat;
 };
@@ -170,9 +170,9 @@ lnet_drop_rule_add(struct lnet_fault_attr *attr)
 
 	rule->dr_attr = *attr;
 	if (attr->u.drop.da_interval != 0) {
-		rule->dr_time_base = cfs_time_shift(attr->u.drop.da_interval);
-		rule->dr_drop_time = cfs_time_shift(cfs_rand() %
-						    attr->u.drop.da_interval);
+		rule->dr_time_base = ktime_get_seconds() + attr->u.drop.da_interval;
+		rule->dr_drop_time = ktime_get_seconds() +
+				     cfs_rand() % attr->u.drop.da_interval;
 	} else {
 		rule->dr_drop_at = cfs_rand() % attr->u.drop.da_rate;
 	}
@@ -283,10 +283,9 @@ lnet_drop_rule_reset(void)
 		if (attr->u.drop.da_rate != 0) {
 			rule->dr_drop_at = cfs_rand() % attr->u.drop.da_rate;
 		} else {
-			rule->dr_drop_time = cfs_time_shift(cfs_rand() %
-						attr->u.drop.da_interval);
-			rule->dr_time_base = cfs_time_shift(attr->u.drop.
-								  da_interval);
+			rule->dr_drop_time = ktime_get_seconds() +
+					     cfs_rand() % attr->u.drop.da_interval;
+			rule->dr_time_base = ktime_get_seconds() + attr->u.drop.da_interval;
 		}
 		spin_unlock(&rule->dr_lock);
 	}
@@ -295,13 +294,58 @@ lnet_drop_rule_reset(void)
 	EXIT;
 }
 
+static void
+lnet_fault_match_health(enum lnet_msg_hstatus *hstatus, __u32 mask)
+{
+	unsigned int random;
+	int choice;
+	int delta;
+	int best_delta;
+	int i;
+
+	/* assign a random failure */
+	random = cfs_rand();
+	choice = random % (LNET_MSG_STATUS_END - LNET_MSG_STATUS_OK);
+	if (choice == 0)
+		choice++;
+
+	if (mask == HSTATUS_RANDOM) {
+		*hstatus = choice;
+		return;
+	}
+
+	if (mask & (1 << choice)) {
+		*hstatus = choice;
+		return;
+	}
+
+	/* round to the closest ON bit */
+	i = HSTATUS_END;
+	best_delta = HSTATUS_END;
+	while (i > 0) {
+		if (mask & (1 << i)) {
+			delta = choice - i;
+			if (delta < 0)
+				delta *= -1;
+			if (delta < best_delta) {
+				best_delta = delta;
+				choice = i;
+			}
+		}
+		i--;
+	}
+
+	*hstatus = choice;
+}
+
 /**
  * check source/destination NID, portal, message type and drop rate,
  * decide whether should drop this message or not
  */
 static bool
 drop_rule_match(struct lnet_drop_rule *rule, lnet_nid_t src,
-		lnet_nid_t dst, unsigned int type, unsigned int portal)
+		lnet_nid_t dst, unsigned int type, unsigned int portal,
+		enum lnet_msg_hstatus *hstatus)
 {
 	struct lnet_fault_attr	*attr = &rule->dr_attr;
 	bool			 drop;
@@ -309,24 +353,36 @@ drop_rule_match(struct lnet_drop_rule *rule, lnet_nid_t src,
 	if (!lnet_fault_attr_match(attr, src, dst, type, portal))
 		return false;
 
+	/*
+	 * if we're trying to match a health status error but it hasn't
+	 * been set in the rule, then don't match
+	 */
+	if ((hstatus && !attr->u.drop.da_health_error_mask) ||
+	    (!hstatus && attr->u.drop.da_health_error_mask))
+		return false;
+
 	/* match this rule, check drop rate now */
 	spin_lock(&rule->dr_lock);
-	if (rule->dr_drop_time != 0) { /* time based drop */
-		cfs_time_t now = cfs_time_current();
+	if (attr->u.drop.da_random) {
+		int value = cfs_rand() % attr->u.drop.da_interval;
+		if (value >= (attr->u.drop.da_interval / 2))
+			drop = true;
+		else
+			drop = false;
+	} else if (rule->dr_drop_time != 0) { /* time based drop */
+		time64_t now = ktime_get_seconds();
 
 		rule->dr_stat.fs_count++;
-		drop = cfs_time_aftereq(now, rule->dr_drop_time);
+		drop = now >= rule->dr_drop_time;
 		if (drop) {
-			if (cfs_time_after(now, rule->dr_time_base))
+			if (now > rule->dr_time_base)
 				rule->dr_time_base = now;
 
 			rule->dr_drop_time = rule->dr_time_base +
-					     cfs_time_seconds(cfs_rand() %
-						attr->u.drop.da_interval);
-			rule->dr_time_base += cfs_time_seconds(attr->u.drop.
-							       da_interval);
+					     cfs_rand() % attr->u.drop.da_interval;
+			rule->dr_time_base += attr->u.drop.da_interval;
 
-			CDEBUG(D_NET, "Drop Rule %s->%s: next drop : %ld\n",
+			CDEBUG(D_NET, "Drop Rule %s->%s: next drop : %lld\n",
 			       libcfs_nid2str(attr->fa_src),
 			       libcfs_nid2str(attr->fa_dst),
 			       rule->dr_drop_time);
@@ -347,6 +403,9 @@ drop_rule_match(struct lnet_drop_rule *rule, lnet_nid_t src,
 	}
 
 	if (drop) { /* drop this message, update counters */
+		if (hstatus)
+			lnet_fault_match_health(hstatus,
+				attr->u.drop.da_health_error_mask);
 		lnet_fault_stat_inc(&rule->dr_stat, type);
 		rule->dr_stat.u.drop.ds_dropped++;
 	}
@@ -359,15 +418,15 @@ drop_rule_match(struct lnet_drop_rule *rule, lnet_nid_t src,
  * Check if message from \a src to \a dst can match any existed drop rule
  */
 bool
-lnet_drop_rule_match(struct lnet_hdr *hdr)
+lnet_drop_rule_match(struct lnet_hdr *hdr, enum lnet_msg_hstatus *hstatus)
 {
-	struct lnet_drop_rule	*rule;
-	lnet_nid_t		 src = le64_to_cpu(hdr->src_nid);
-	lnet_nid_t		 dst = le64_to_cpu(hdr->dest_nid);
-	unsigned int		 typ = le32_to_cpu(hdr->type);
-	unsigned int		 ptl = -1;
-	bool			 drop = false;
-	int			 cpt;
+	lnet_nid_t src = le64_to_cpu(hdr->src_nid);
+	lnet_nid_t dst = le64_to_cpu(hdr->dest_nid);
+	unsigned int typ = le32_to_cpu(hdr->type);
+	struct lnet_drop_rule *rule;
+	unsigned int ptl = -1;
+	bool drop = false;
+	int cpt;
 
 	/* NB: if Portal is specified, then only PUT and GET will be
 	 * filtered by drop rule */
@@ -378,12 +437,13 @@ lnet_drop_rule_match(struct lnet_hdr *hdr)
 
 	cpt = lnet_net_lock_current();
 	list_for_each_entry(rule, &the_lnet.ln_drop_rules, dr_link) {
-		drop = drop_rule_match(rule, src, dst, typ, ptl);
+		drop = drop_rule_match(rule, src, dst, typ, ptl,
+				       hstatus);
 		if (drop)
 			break;
 	}
-
 	lnet_net_unlock(cpt);
+
 	return drop;
 }
 
@@ -412,9 +472,9 @@ struct lnet_delay_rule {
 	/**
 	 * seconds to delay the next message, it's exclusive with dl_delay_at
 	 */
-	cfs_time_t		dl_delay_time;
+	time64_t		dl_delay_time;
 	/** baseline to caculate dl_delay_time */
-	cfs_time_t		dl_time_base;
+	time64_t		dl_time_base;
 	/** jiffies to send the next delayed message */
 	unsigned long		dl_msg_send;
 	/** delayed message list */
@@ -444,13 +504,6 @@ struct delay_daemon_data {
 
 static struct delay_daemon_data	delay_dd;
 
-static cfs_time_t
-round_timeout(cfs_time_t timeout)
-{
-	return cfs_time_seconds((unsigned int)
-			cfs_duration_sec(cfs_time_sub(timeout, 0)) + 1);
-}
-
 static void
 delay_rule_decref(struct lnet_delay_rule *rule)
 {
@@ -472,8 +525,9 @@ delay_rule_match(struct lnet_delay_rule *rule, lnet_nid_t src,
 		lnet_nid_t dst, unsigned int type, unsigned int portal,
 		struct lnet_msg *msg)
 {
-	struct lnet_fault_attr	*attr = &rule->dl_attr;
-	bool			 delay;
+	struct lnet_fault_attr *attr = &rule->dl_attr;
+	bool delay;
+	time64_t now = ktime_get_seconds();
 
 	if (!lnet_fault_attr_match(attr, src, dst, type, portal))
 		return false;
@@ -481,21 +535,17 @@ delay_rule_match(struct lnet_delay_rule *rule, lnet_nid_t src,
 	/* match this rule, check delay rate now */
 	spin_lock(&rule->dl_lock);
 	if (rule->dl_delay_time != 0) { /* time based delay */
-		cfs_time_t now = cfs_time_current();
-
 		rule->dl_stat.fs_count++;
-		delay = cfs_time_aftereq(now, rule->dl_delay_time);
+		delay = now >= rule->dl_delay_time;
 		if (delay) {
-			if (cfs_time_after(now, rule->dl_time_base))
+			if (now > rule->dl_time_base)
 				rule->dl_time_base = now;
 
 			rule->dl_delay_time = rule->dl_time_base +
-					     cfs_time_seconds(cfs_rand() %
-						attr->u.delay.la_interval);
-			rule->dl_time_base += cfs_time_seconds(attr->u.delay.
-							       la_interval);
+					      cfs_rand() % attr->u.delay.la_interval;
+			rule->dl_time_base += attr->u.delay.la_interval;
 
-			CDEBUG(D_NET, "Delay Rule %s->%s: next delay : %ld\n",
+			CDEBUG(D_NET, "Delay Rule %s->%s: next delay : %lld\n",
 			       libcfs_nid2str(attr->fa_src),
 			       libcfs_nid2str(attr->fa_dst),
 			       rule->dl_delay_time);
@@ -526,11 +576,11 @@ delay_rule_match(struct lnet_delay_rule *rule, lnet_nid_t src,
 	rule->dl_stat.u.delay.ls_delayed++;
 
 	list_add_tail(&msg->msg_list, &rule->dl_msg_list);
-	msg->msg_delay_send = round_timeout(
-			cfs_time_shift(attr->u.delay.la_latency));
+	msg->msg_delay_send = now + attr->u.delay.la_latency;
 	if (rule->dl_msg_send == -1) {
 		rule->dl_msg_send = msg->msg_delay_send;
-		mod_timer(&rule->dl_timer, rule->dl_msg_send);
+		mod_timer(&rule->dl_timer,
+			  jiffies + cfs_time_seconds(attr->u.delay.la_latency));
 	}
 
 	spin_unlock(&rule->dl_lock);
@@ -574,7 +624,7 @@ delayed_msg_check(struct lnet_delay_rule *rule, bool all,
 {
 	struct lnet_msg *msg;
 	struct lnet_msg *tmp;
-	unsigned long	 now = cfs_time_current();
+	time64_t now = ktime_get_seconds();
 
 	if (!all && rule->dl_msg_send > now)
 		return;
@@ -598,7 +648,9 @@ delayed_msg_check(struct lnet_delay_rule *rule, bool all,
 		msg = list_entry(rule->dl_msg_list.next,
 				 struct lnet_msg, msg_list);
 		rule->dl_msg_send = msg->msg_delay_send;
-		mod_timer(&rule->dl_timer, rule->dl_msg_send);
+		mod_timer(&rule->dl_timer,
+			  jiffies +
+			  cfs_time_seconds(msg->msg_delay_send - now));
 	}
 	spin_unlock(&rule->dl_lock);
 }
@@ -614,6 +666,20 @@ delayed_msg_process(struct list_head *msg_list, bool drop)
 		int		rc;
 
 		msg = list_entry(msg_list->next, struct lnet_msg, msg_list);
+
+		if (msg->msg_sending) {
+			/* Delayed send */
+			list_del_init(&msg->msg_list);
+			ni = msg->msg_txni;
+			CDEBUG(D_NET, "TRACE: msg %p %s -> %s : %s\n", msg,
+			       libcfs_nid2str(ni->ni_nid),
+			       libcfs_nid2str(msg->msg_txpeer->lpni_nid),
+			       lnet_msgtyp2str(msg->msg_type));
+			lnet_ni_send(ni, msg);
+			continue;
+		}
+
+		/* Delayed receive */
 		LASSERT(msg->msg_rxpeer != NULL);
 		LASSERT(msg->msg_rxni != NULL);
 
@@ -638,7 +704,7 @@ delayed_msg_process(struct list_head *msg_list, bool drop)
 			case LNET_CREDIT_OK:
 				lnet_ni_recv(ni, msg->msg_private, msg, 0,
 					     0, msg->msg_len, msg->msg_len);
-				/* Fall through */
+				/* fallthrough */
 			case LNET_CREDIT_WAIT:
 				continue;
 			default: /* failures */
@@ -646,7 +712,8 @@ delayed_msg_process(struct list_head *msg_list, bool drop)
 			}
 		}
 
-		lnet_drop_message(ni, cpt, msg->msg_private, msg->msg_len);
+		lnet_drop_message(ni, cpt, msg->msg_private, msg->msg_len,
+				  msg->msg_type);
 		lnet_finalize(msg, rc);
 	}
 }
@@ -782,9 +849,10 @@ lnet_delay_rule_add(struct lnet_fault_attr *attr)
 
 	rule->dl_attr = *attr;
 	if (attr->u.delay.la_interval != 0) {
-		rule->dl_time_base = cfs_time_shift(attr->u.delay.la_interval);
-		rule->dl_delay_time = cfs_time_shift(cfs_rand() %
-						     attr->u.delay.la_interval);
+		rule->dl_time_base = ktime_get_seconds() +
+				     attr->u.delay.la_interval;
+		rule->dl_delay_time = ktime_get_seconds() +
+				      cfs_rand() % attr->u.delay.la_interval;
 	} else {
 		rule->dl_delay_at = cfs_rand() % attr->u.delay.la_rate;
 	}
@@ -935,10 +1003,10 @@ lnet_delay_rule_reset(void)
 		if (attr->u.delay.la_rate != 0) {
 			rule->dl_delay_at = cfs_rand() % attr->u.delay.la_rate;
 		} else {
-			rule->dl_delay_time = cfs_time_shift(cfs_rand() %
-						attr->u.delay.la_interval);
-			rule->dl_time_base = cfs_time_shift(attr->u.delay.
-								  la_interval);
+			rule->dl_delay_time = ktime_get_seconds() +
+					      cfs_rand() % attr->u.delay.la_interval;
+			rule->dl_time_base = ktime_get_seconds() +
+					     attr->u.delay.la_interval;
 		}
 		spin_unlock(&rule->dl_lock);
 	}
