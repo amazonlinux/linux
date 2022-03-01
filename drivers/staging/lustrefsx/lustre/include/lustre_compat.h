@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2014, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -33,15 +33,19 @@
 #ifndef _LUSTRE_COMPAT_H
 #define _LUSTRE_COMPAT_H
 
+#include <linux/aio.h>
+#include <linux/fs.h>
 #include <linux/fs_struct.h>
 #include <linux/namei.h>
 #include <linux/pagemap.h>
 #include <linux/bio.h>
 #include <linux/xattr.h>
+#include <linux/workqueue.h>
+#include <linux/blkdev.h>
 #include <linux/slab.h>
 #include <linux/security.h>
 
-#include <libcfs/libcfs.h>
+#include <libcfs/linux/linux-fs.h>
 #include <lustre_patchless_compat.h>
 #include <obd_support.h>
 
@@ -79,22 +83,6 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
 	if (old_pwd.dentry)
 		path_put(&old_pwd);
 }
-
-/*
- * set ATTR_BLOCKS to a high value to avoid any risk of collision with other
- * ATTR_* attributes (see bug 13828)
- */
-#define ATTR_BLOCKS    (1 << 27)
-
-/*
- * In more recent kernels, this flag was removed because nobody was using it.
- * But Lustre does. So define it if needed. It is safe to do so, since it's
- * not been replaced with a different flag with the same value, and Lustre
- * only uses it internally.
- */
-#ifndef ATTR_ATTR_FLAG
-#define ATTR_ATTR_FLAG (1 << 10)
-#endif
 
 #define current_ngroups current_cred()->group_info->ngroups
 #define current_groups current_cred()->group_info->small_block
@@ -156,8 +144,12 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
 #define simple_setattr(dentry, ops) inode_setattr((dentry)->d_inode, ops)
 #endif
 
-#ifndef SLAB_DESTROY_BY_RCU
-#define SLAB_DESTROY_BY_RCU 0
+#ifndef HAVE_INIT_LIST_HEAD_RCU
+static inline void INIT_LIST_HEAD_RCU(struct list_head *list)
+{
+	WRITE_ONCE(list->next, list);
+	WRITE_ONCE(list->prev, list);
+}
 #endif
 
 #ifndef HAVE_DQUOT_SUSPEND
@@ -188,6 +180,12 @@ static inline void ll_set_fs_pwd(struct fs_struct *fs, struct vfsmount *mnt,
 #define bio_end_sector(bio)		(bio->bi_sector + bio_sectors(bio))
 #endif
 #define bvl_to_page(bvl)		(bvl->bv_page)
+#endif
+
+#ifdef HAVE_BVEC_ITER
+#define bio_start_sector(bio) (bio->bi_iter.bi_sector)
+#else
+#define bio_start_sector(bio) (bio->bi_sector)
 #endif
 
 #ifndef HAVE_BLK_QUEUE_MAX_SEGMENTS
@@ -406,6 +404,16 @@ static inline void truncate_inode_pages_final(struct address_space *map)
 }
 #endif
 
+#ifndef HAVE_PTR_ERR_OR_ZERO
+static inline int __must_check PTR_ERR_OR_ZERO(__force const void *ptr)
+{
+	if (IS_ERR(ptr))
+		return PTR_ERR(ptr);
+	else
+		return 0;
+}
+#endif
+
 #ifndef SIZE_MAX
 #define SIZE_MAX	(~(size_t)0)
 #endif
@@ -436,9 +444,11 @@ static inline void truncate_inode_pages_final(struct address_space *map)
 #endif
 
 #ifdef HAVE_PID_NS_FOR_CHILDREN
-# define ll_task_pid_ns(task)	((task)->nsproxy->pid_ns_for_children)
+# define ll_task_pid_ns(task) \
+	 ((task)->nsproxy ? ((task)->nsproxy->pid_ns_for_children) : NULL)
 #else
-# define ll_task_pid_ns(task)	((task)->nsproxy->pid_ns)
+# define ll_task_pid_ns(task) \
+	 ((task)->nsproxy ? ((task)->nsproxy->pid_ns) : NULL)
 #endif
 
 #ifdef HAVE_FULL_NAME_HASH_3ARGS
@@ -472,37 +482,30 @@ int ll_removexattr(struct dentry *dentry, const char *name);
 #ifndef HAVE_VFS_SETXATTR
 const struct xattr_handler *get_xattr_type(const char *name);
 
-#ifdef HAVE_XATTR_HANDLER_FLAGS
 static inline int
 __vfs_setxattr(struct dentry *dentry, struct inode *inode, const char *name,
 	       const void *value, size_t size, int flags)
 {
+# ifdef HAVE_XATTR_HANDLER_FLAGS
 	const struct xattr_handler *handler;
 	int rc;
 
 	handler = get_xattr_type(name);
 	if (!handler)
-		return -ENXIO;
+		return -EOPNOTSUPP;
 
-#if defined(HAVE_XATTR_HANDLER_INODE_PARAM)
-	rc = handler->set(handler, dentry, inode, name, value, size,
-			  XATTR_CREATE);
-#elif defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
-	rc = handler->set(handler, dentry, name, value, size, XATTR_CREATE);
-#else
-	rc = handler->set(dentry, name, value, size, XATTR_CREATE,
-			  handler->flags);
-#endif /* !HAVE_XATTR_HANDLER_INODE_PARAM */
+#  if defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+	rc = handler->set(handler, dentry, inode, name, value, size, flags);
+#  elif defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
+	rc = handler->set(handler, dentry, name, value, size, flags);
+#  else
+	rc = handler->set(dentry, name, value, size, flags, handler->flags);
+#  endif /* !HAVE_XATTR_HANDLER_INODE_PARAM */
 	return rc;
-}
-#else /* !HAVE_XATTR_HANDLER_FLAGS */
-static inline int
-__vfs_setxattr(struct dentry *dentry, struct inode *inode, const char *name,
-	       const void *value, size_t size, int flags)
-{
+# else /* !HAVE_XATTR_HANDLER_FLAGS */
 	return ll_setxattr(dentry, name, value, size, flags);
+# endif /* HAVE_XATTR_HANDLER_FLAGS */
 }
-#endif /* HAVE_XATTR_HANDLER_FLAGS */
 #endif /* HAVE_VFS_SETXATTR */
 
 #ifdef HAVE_IOP_SET_ACL
@@ -689,8 +692,120 @@ static inline struct timespec current_time(struct inode *inode)
 }
 #endif
 
+#ifndef time_after32
+/**
+ * time_after32 - compare two 32-bit relative times
+ * @a: the time which may be after @b
+ * @b: the time which may be before @a
+ *
+ * time_after32(a, b) returns true if the time @a is after time @b.
+ * time_before32(b, a) returns true if the time @b is before time @a.
+ *
+ * Similar to time_after(), compare two 32-bit timestamps for relative
+ * times.  This is useful for comparing 32-bit seconds values that can't
+ * be converted to 64-bit values (e.g. due to disk format or wire protocol
+ * issues) when it is known that the times are less than 68 years apart.
+ */
+#define time_after32(a, b)     ((s32)((u32)(b) - (u32)(a)) < 0)
+#define time_before32(b, a)    time_after32(a, b)
+
+#endif
+
 #ifndef __GFP_COLD
 #define __GFP_COLD 0
+#endif
+
+#ifndef alloc_workqueue
+#define alloc_workqueue(name, flags, max_active) create_workqueue(name)
+#endif
+
+#ifndef READ_ONCE
+#define READ_ONCE ACCESS_ONCE
+#endif
+
+#if IS_ENABLED(CONFIG_BLK_DEV_INTEGRITY)
+static inline unsigned short blk_integrity_interval(struct blk_integrity *bi)
+{
+#ifdef HAVE_INTERVAL_EXP_BLK_INTEGRITY
+	return bi->interval_exp ? 1 << bi->interval_exp : 0;
+#elif defined(HAVE_INTERVAL_BLK_INTEGRITY)
+	return bi->interval;
+#else
+	return bi->sector_size;
+#endif /* !HAVE_INTERVAL_EXP_BLK_INTEGRITY */
+}
+
+static inline const char *blk_integrity_name(struct blk_integrity *bi)
+{
+#ifdef HAVE_INTERVAL_EXP_BLK_INTEGRITY
+	return bi->profile->name;
+#else
+	return bi->name;
+#endif
+}
+
+static inline unsigned int bip_size(struct bio_integrity_payload *bip)
+{
+#ifdef HAVE_BIP_ITER_BIO_INTEGRITY_PAYLOAD
+	return bip->bip_iter.bi_size;
+#else
+	return bip->bip_size;
+#endif
+}
+#else /* !CONFIG_BLK_DEV_INTEGRITY */
+static inline unsigned short blk_integrity_interval(struct blk_integrity *bi)
+{
+	return 0;
+}
+static inline const char *blk_integrity_name(struct blk_integrity *bi)
+{
+	/* gcc8 dislikes when strcmp() is called against NULL */
+	return "";
+}
+#endif /* !CONFIG_BLK_DEV_INTEGRITY */
+
+#ifndef INTEGRITY_FLAG_READ
+#define INTEGRITY_FLAG_READ BLK_INTEGRITY_VERIFY
+#endif
+
+#ifndef INTEGRITY_FLAG_WRITE
+#define INTEGRITY_FLAG_WRITE BLK_INTEGRITY_GENERATE
+#endif
+
+static inline bool bdev_integrity_enabled(struct block_device *bdev, int rw)
+{
+#if IS_ENABLED(CONFIG_BLK_DEV_INTEGRITY)
+	struct blk_integrity *bi = bdev_get_integrity(bdev);
+
+	if (bi == NULL)
+		return false;
+
+#ifdef HAVE_INTERVAL_EXP_BLK_INTEGRITY
+	if (rw == 0 && bi->profile->verify_fn != NULL &&
+	    (bi->flags & INTEGRITY_FLAG_READ))
+		return true;
+
+	if (rw == 1 && bi->profile->generate_fn != NULL &&
+	    (bi->flags & INTEGRITY_FLAG_WRITE))
+		return true;
+#else
+	if (rw == 0 && bi->verify_fn != NULL &&
+	    (bi->flags & INTEGRITY_FLAG_READ))
+		return true;
+
+	if (rw == 1 && bi->generate_fn != NULL &&
+	    (bi->flags & INTEGRITY_FLAG_WRITE))
+		return true;
+#endif /* !HAVE_INTERVAL_EXP_BLK_INTEGRITY */
+#endif /* !CONFIG_BLK_DEV_INTEGRITY */
+
+	return false;
+}
+
+#ifdef HAVE_PAGEVEC_INIT_ONE_PARAM
+#define ll_pagevec_init(pvec, n) pagevec_init(pvec)
+#else
+#define ll_pagevec_init(pvec, n) pagevec_init(pvec, n)
 #endif
 
 #ifdef HAVE_I_PAGES
@@ -701,14 +816,14 @@ static inline struct timespec current_time(struct inode *inode)
 #define xa_unlock_irq(lockp) spin_unlock_irq(lockp)
 #endif
 
-#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
-#define selinux_is_enabled() 1
-#endif
-
 #ifndef KMEM_CACHE_USERCOPY
 #define kmem_cache_create_usercopy(name, size, align, flags, useroffset, \
 				   usersize, ctor)			 \
 	kmem_cache_create(name, size, align, flags, ctor)
+#endif
+
+#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
+#define selinux_is_enabled() 1
 #endif
 
 static inline void ll_security_release_secctx(char *secdata, u32 seclen)
