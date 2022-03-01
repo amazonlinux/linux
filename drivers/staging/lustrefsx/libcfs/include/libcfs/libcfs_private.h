@@ -42,6 +42,9 @@
 # define DEBUG_SUBSYSTEM S_UNDEFINED
 #endif
 
+#include <linux/slab.h>
+#include <linux/vmalloc.h>
+
 #ifdef LIBCFS_DEBUG
 
 /*
@@ -213,8 +216,14 @@ do {									    \
 #define LIBCFS_CPT_ALLOC(ptr, cptab, cpt, size)				    \
 	LIBCFS_CPT_ALLOC_GFP(ptr, cptab, cpt, size, GFP_NOFS)
 
+#ifdef LLIST_HEAD
 void init_libcfs_vfree_atomic(void);
 void exit_libcfs_vfree_atomic(void);
+#define HAVE_LIBCFS_VFREE_ATOMIC
+#else
+#define init_libcfs_vfree_atomic() do {} while(0)
+#define exit_libcfs_vfree_atomic() do {} while(0)
+#endif
 
 #define LIBCFS_FREE(ptr, size)						\
 do {									\
@@ -228,7 +237,7 @@ do {									\
 	CDEBUG(D_MALLOC, "kfreed '" #ptr "': %d at %p (tot %d).\n",     \
 	       s, (ptr), libcfs_kmem_read());				\
 	if (unlikely(s > LIBCFS_VMALLOC_SIZE))                          \
-		libcfs_vfree_atomic(ptr);						\
+		libcfs_vfree_atomic(ptr);				\
 	else								\
 		kfree(ptr);						\
 } while (0)
