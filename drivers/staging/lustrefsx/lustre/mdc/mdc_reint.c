@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -201,6 +201,16 @@ rebuild:
 	req_capsule_set_size(&req->rq_pill, &RMF_FILE_SECCTX, RCL_CLIENT,
 			     op_data->op_file_secctx_size);
 
+	/* get SELinux policy info if any */
+	rc = sptlrpc_get_sepol(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+	req_capsule_set_size(&req->rq_pill, &RMF_SELINUX_POL, RCL_CLIENT,
+			     strlen(req->rq_sepol) ?
+			     strlen(req->rq_sepol) + 1 : 0);
+
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
 		ptlrpc_request_free(req);
@@ -275,9 +285,10 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
 						MDS_INODELOCK_UPDATE);
 	if ((op_data->op_flags & MF_MDC_CANCEL_FID3) &&
 	    (fid_is_sane(&op_data->op_fid3)))
+		/* don't cancel DoM lock which may cause data flush */
 		count += mdc_resource_get_unused(exp, &op_data->op_fid3,
 						 &cancels, LCK_EX,
-						 MDS_INODELOCK_FULL);
+						 MDS_INODELOCK_ELC);
         req = ptlrpc_request_alloc(class_exp2cliimp(exp),
                                    &RQF_MDS_REINT_UNLINK);
         if (req == NULL) {
@@ -287,6 +298,16 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
 
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
+
+	/* get SELinux policy info if any */
+	rc = sptlrpc_get_sepol(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+	req_capsule_set_size(&req->rq_pill, &RMF_SELINUX_POL, RCL_CLIENT,
+			     strlen(req->rq_sepol) ?
+			     strlen(req->rq_sepol) + 1 : 0);
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
@@ -336,6 +357,16 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
         req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT,
                              op_data->op_namelen + 1);
 
+	/* get SELinux policy info if any */
+	rc = sptlrpc_get_sepol(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+	req_capsule_set_size(&req->rq_pill, &RMF_SELINUX_POL, RCL_CLIENT,
+			     strlen(req->rq_sepol) ?
+			     strlen(req->rq_sepol) + 1 : 0);
+
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
 		ptlrpc_request_free(req);
@@ -358,31 +389,32 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
 		struct ptlrpc_request **request)
 {
 	struct list_head cancels = LIST_HEAD_INIT(cancels);
-        struct obd_device *obd = exp->exp_obd;
-        struct ptlrpc_request *req;
-        int count = 0, rc;
-        ENTRY;
+	struct obd_device *obd = exp->exp_obd;
+	struct ptlrpc_request *req;
+	int count = 0, rc;
 
-        if ((op_data->op_flags & MF_MDC_CANCEL_FID1) &&
-            (fid_is_sane(&op_data->op_fid1)))
-                count = mdc_resource_get_unused(exp, &op_data->op_fid1,
-                                                &cancels, LCK_EX,
-                                                MDS_INODELOCK_UPDATE);
-        if ((op_data->op_flags & MF_MDC_CANCEL_FID2) &&
-            (fid_is_sane(&op_data->op_fid2)))
-                count += mdc_resource_get_unused(exp, &op_data->op_fid2,
-                                                 &cancels, LCK_EX,
-                                                 MDS_INODELOCK_UPDATE);
-        if ((op_data->op_flags & MF_MDC_CANCEL_FID3) &&
-            (fid_is_sane(&op_data->op_fid3)))
-                count += mdc_resource_get_unused(exp, &op_data->op_fid3,
-                                                 &cancels, LCK_EX,
-                                                 MDS_INODELOCK_LOOKUP);
-        if ((op_data->op_flags & MF_MDC_CANCEL_FID4) &&
-             (fid_is_sane(&op_data->op_fid4)))
-                count += mdc_resource_get_unused(exp, &op_data->op_fid4,
-                                                 &cancels, LCK_EX,
-                                                 MDS_INODELOCK_FULL);
+	ENTRY;
+
+	if ((op_data->op_flags & MF_MDC_CANCEL_FID1) &&
+	    (fid_is_sane(&op_data->op_fid1)))
+		count = mdc_resource_get_unused(exp, &op_data->op_fid1,
+						&cancels, LCK_EX,
+						MDS_INODELOCK_UPDATE);
+	if ((op_data->op_flags & MF_MDC_CANCEL_FID2) &&
+	    (fid_is_sane(&op_data->op_fid2)))
+		count += mdc_resource_get_unused(exp, &op_data->op_fid2,
+						 &cancels, LCK_EX,
+						 MDS_INODELOCK_UPDATE);
+	if ((op_data->op_flags & MF_MDC_CANCEL_FID3) &&
+	    (fid_is_sane(&op_data->op_fid3)))
+		count += mdc_resource_get_unused(exp, &op_data->op_fid3,
+						 &cancels, LCK_EX,
+						 MDS_INODELOCK_LOOKUP);
+	if ((op_data->op_flags & MF_MDC_CANCEL_FID4) &&
+	    (fid_is_sane(&op_data->op_fid4)))
+		count += mdc_resource_get_unused(exp, &op_data->op_fid4,
+						 &cancels, LCK_EX,
+						 MDS_INODELOCK_ELC);
 
 	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
 			   op_data->op_cli_flags & CLI_MIGRATE ?
@@ -392,8 +424,21 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
 		RETURN(-ENOMEM);
 	}
 
-        req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT, oldlen + 1);
-        req_capsule_set_size(&req->rq_pill, &RMF_SYMTGT, RCL_CLIENT, newlen+1);
+	req_capsule_set_size(&req->rq_pill, &RMF_NAME, RCL_CLIENT, oldlen + 1);
+	req_capsule_set_size(&req->rq_pill, &RMF_SYMTGT, RCL_CLIENT, newlen+1);
+	if (op_data->op_cli_flags & CLI_MIGRATE)
+		req_capsule_set_size(&req->rq_pill, &RMF_EADATA, RCL_CLIENT,
+				     op_data->op_data_size);
+
+	/* get SELinux policy info if any */
+	rc = sptlrpc_get_sepol(req);
+	if (rc < 0) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+	req_capsule_set_size(&req->rq_pill, &RMF_SELINUX_POL, RCL_CLIENT,
+			     strlen(req->rq_sepol) ?
+			     strlen(req->rq_sepol) + 1 : 0);
 
 	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
 	if (rc) {
@@ -401,34 +446,76 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
 		RETURN(rc);
 	}
 
-	if (op_data->op_cli_flags & CLI_MIGRATE && op_data->op_data != NULL) {
-		struct md_open_data *mod = op_data->op_data;
+	if (exp_connect_cancelset(exp) && req)
+		ldlm_cli_cancel_list(&cancels, count, req, 0);
 
-		LASSERTF(mod->mod_open_req != NULL &&
-			 mod->mod_open_req->rq_type != LI_POISON,
-			 "POISONED open %p!\n", mod->mod_open_req);
-
-		DEBUG_REQ(D_HA, mod->mod_open_req, "matched open");
-		/* We no longer want to preserve this open for replay even
-		 * though the open was committed. b=3632, b=3633 */
-		spin_lock(&mod->mod_open_req->rq_lock);
-		mod->mod_open_req->rq_replay = 0;
-		spin_unlock(&mod->mod_open_req->rq_lock);
-	}
-
-        if (exp_connect_cancelset(exp) && req)
-                ldlm_cli_cancel_list(&cancels, count, req, 0);
-
-        mdc_rename_pack(req, op_data, old, oldlen, new, newlen);
+	if (op_data->op_cli_flags & CLI_MIGRATE)
+		mdc_migrate_pack(req, op_data, old, oldlen);
+	else
+		mdc_rename_pack(req, op_data, old, oldlen, new, newlen);
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obd->u.cli.cl_default_mds_easize);
 	ptlrpc_request_set_replen(req);
 
 	rc = mdc_reint(req, LUSTRE_IMP_FULL);
-        *request = req;
-        if (rc == -ERESTARTSYS)
-                rc = 0;
+	*request = req;
+	if (rc == -ERESTARTSYS)
+		rc = 0;
 
-        RETURN(rc);
+	RETURN(rc);
+}
+
+int mdc_file_resync(struct obd_export *exp, struct md_op_data *op_data)
+{
+	struct list_head cancels = LIST_HEAD_INIT(cancels);
+	struct ptlrpc_request *req;
+	struct ldlm_lock *lock;
+	struct mdt_rec_resync *rec;
+	int count = 0, rc;
+	ENTRY;
+
+	if (op_data->op_flags & MF_MDC_CANCEL_FID1 &&
+	    fid_is_sane(&op_data->op_fid1))
+		count = mdc_resource_get_unused(exp, &op_data->op_fid1,
+						&cancels, LCK_EX,
+						MDS_INODELOCK_LAYOUT);
+
+	req = ptlrpc_request_alloc(class_exp2cliimp(exp),
+				   &RQF_MDS_REINT_RESYNC);
+	if (req == NULL) {
+		ldlm_lock_list_put(&cancels, l_bl_ast, count);
+		RETURN(-ENOMEM);
+	}
+
+	rc = mdc_prep_elc_req(exp, req, MDS_REINT, &cancels, count);
+	if (rc) {
+		ptlrpc_request_free(req);
+		RETURN(rc);
+	}
+
+	CLASSERT(sizeof(*rec) == sizeof(struct mdt_rec_reint));
+	rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
+	rec->rs_opcode	= REINT_RESYNC;
+	rec->rs_fsuid	= op_data->op_fsuid;
+	rec->rs_fsgid	= op_data->op_fsgid;
+	rec->rs_cap	= op_data->op_cap;
+	rec->rs_fid	= op_data->op_fid1;
+	rec->rs_bias	= op_data->op_bias;
+	rec->rs_mirror_id = op_data->op_mirror_id;
+
+	lock = ldlm_handle2lock(&op_data->op_lease_handle);
+	if (lock != NULL) {
+		rec->rs_lease_handle = lock->l_remote_handle;
+		LDLM_LOCK_PUT(lock);
+	}
+
+	ptlrpc_request_set_replen(req);
+
+	rc = mdc_reint(req, LUSTRE_IMP_FULL);
+	if (rc == -ERESTARTSYS)
+		rc = 0;
+
+	ptlrpc_req_finished(req);
+	RETURN(rc);
 }
