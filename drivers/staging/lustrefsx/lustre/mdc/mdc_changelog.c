@@ -23,6 +23,8 @@
  * Copyright (c) 2017, Commissariat a l'Energie Atomique et aux Energies
  *                     Alternatives.
  *
+ * Copyright (c) 2017, Intel Corporation.
+ *
  * Author: Henri Doreau <henri.doreau@cea.fr>
  */
 
@@ -31,9 +33,11 @@
 #include <linux/init.h>
 #include <linux/kthread.h>
 #include <linux/poll.h>
-#include <linux/miscdevice.h>
+#include <linux/device.h>
+#include <linux/cdev.h>
 
 #include <lustre_log.h>
+#include <uapi/linux/lustre/lustre_ioctl.h>
 
 #include "mdc_internal.h"
 
@@ -55,38 +59,44 @@ static LIST_HEAD(chlg_registered_devices);
 
 struct chlg_registered_dev {
 	/* Device name of the form "changelog-{MDTNAME}" */
-	char			ced_name[32];
-	/* Misc device descriptor */
-	struct miscdevice	ced_misc;
+	char			 ced_name[32];
+	/* changelog char device */
+	struct cdev		 ced_cdev;
+	struct device		*ced_device;
 	/* OBDs referencing this device (multiple mount point) */
-	struct list_head	ced_obds;
+	struct list_head	 ced_obds;
 	/* Reference counter for proper deregistration */
-	struct kref		ced_refs;
+	struct kref		 ced_refs;
 	/* Link within the global chlg_registered_devices */
-	struct list_head	ced_link;
+	struct list_head	 ced_link;
 };
 
 struct chlg_reader_state {
 	/* Shortcut to the corresponding OBD device */
-	struct obd_device	*crs_obd;
+	struct obd_device	   *crs_obd;
+	/* the corresponding chlg_registered_dev */
+	struct chlg_registered_dev *crs_ced;
 	/* Producer thread (if any) */
-	struct task_struct	*crs_prod_task;
+	struct task_struct	   *crs_prod_task;
 	/* An error occurred that prevents from reading further */
-	bool			 crs_err;
+	int			    crs_err;
 	/* EOF, no more records available */
-	bool			 crs_eof;
+	bool			    crs_eof;
 	/* Desired start position */
-	__u64			 crs_start_offset;
+	__u64			    crs_start_offset;
 	/* Wait queue for the catalog processing thread */
-	wait_queue_head_t	 crs_waitq_prod;
+	wait_queue_head_t	    crs_waitq_prod;
 	/* Wait queue for the record copy threads */
-	wait_queue_head_t	 crs_waitq_cons;
+	wait_queue_head_t	    crs_waitq_cons;
 	/* Mutex protecting crs_rec_count and crs_rec_queue */
-	struct mutex		 crs_lock;
+	struct mutex		    crs_lock;
 	/* Number of item in the list */
-	__u64			 crs_rec_count;
+	__u64			    crs_rec_count;
 	/* List of prefetched enqueued_record::enq_linkage_items */
-	struct list_head	 crs_rec_queue;
+	struct list_head	    crs_rec_queue;
+	unsigned int		    crs_last_catidx;
+	unsigned int		    crs_last_idx;
+	bool			    crs_poll;
 };
 
 struct chlg_rec_entry {
@@ -102,6 +112,81 @@ enum {
 	/* Number of records to prefetch locally. */
 	CDEV_CHLG_MAX_PREFETCH = 1024,
 };
+
+static DEFINE_IDR(chlg_minor_idr);
+static DEFINE_SPINLOCK(chlg_minor_lock);
+
+static int chlg_minor_alloc(int *pminor)
+{
+	void *minor_allocated = (void *)-1;
+	int minor;
+
+	idr_preload(GFP_KERNEL);
+	spin_lock(&chlg_minor_lock);
+	minor = idr_alloc(&chlg_minor_idr, minor_allocated, 0,
+			  MDC_CHANGELOG_DEV_COUNT, GFP_NOWAIT);
+	spin_unlock(&chlg_minor_lock);
+	idr_preload_end();
+
+	if (minor < 0)
+		return minor;
+
+	*pminor = minor;
+	return 0;
+}
+
+static void chlg_minor_free(int minor)
+{
+	spin_lock(&chlg_minor_lock);
+	idr_remove(&chlg_minor_idr, minor);
+	spin_unlock(&chlg_minor_lock);
+}
+
+static void chlg_device_release(struct device *dev)
+{
+	struct chlg_registered_dev *entry = dev_get_drvdata(dev);
+
+	chlg_minor_free(MINOR(entry->ced_cdev.dev));
+	OBD_FREE_PTR(entry);
+}
+
+/**
+ * Deregister a changelog character device whose refcount has reached zero.
+ */
+static void chlg_dev_clear(struct kref *kref)
+{
+	struct chlg_registered_dev *entry;
+	
+	ENTRY;
+	entry = container_of(kref, struct chlg_registered_dev,
+			     ced_refs);
+
+	list_del(&entry->ced_link);
+	cdev_del(&entry->ced_cdev);
+	device_destroy(mdc_changelog_class, entry->ced_cdev.dev);
+	EXIT;
+}
+
+static inline struct obd_device* chlg_obd_get(struct chlg_registered_dev *dev)
+{
+	struct obd_device *obd;
+
+	mutex_lock(&chlg_registered_dev_lock);
+	if (list_empty(&dev->ced_obds))
+		return NULL;
+
+	obd = list_first_entry(&dev->ced_obds, struct obd_device,
+			       u.cli.cl_chg_dev_linkage);
+	class_incref(obd, "changelog", dev);
+	mutex_unlock(&chlg_registered_dev_lock);
+	return obd;
+}
+
+static inline void chlg_obd_put(struct chlg_registered_dev *dev,
+			 struct obd_device *obd)
+{
+	class_decref(obd, "changelog", dev);
+}
 
 /**
  * ChangeLog catalog processing callback invoked on each record.
@@ -122,7 +207,6 @@ static int chlg_read_cat_process_cb(const struct lu_env *env,
 	struct llog_changelog_rec *rec;
 	struct chlg_reader_state *crs = data;
 	struct chlg_rec_entry *enq;
-	struct l_wait_info lwi = { 0 };
 	size_t len;
 	int rc;
 	ENTRY;
@@ -131,6 +215,9 @@ static int chlg_read_cat_process_cb(const struct lu_env *env,
 	LASSERT(hdr != NULL);
 
 	rec = container_of(hdr, struct llog_changelog_rec, cr_hdr);
+
+	crs->crs_last_catidx = llh->lgh_hdr->llh_cat_idx;
+	crs->crs_last_idx = hdr->lrh_index;
 
 	if (rec->cr_hdr.lrh_type != CHANGELOG_REC) {
 		rc = -EINVAL;
@@ -152,9 +239,9 @@ static int chlg_read_cat_process_cb(const struct lu_env *env,
 	       PFID(&rec->cr.cr_tfid), PFID(&rec->cr.cr_pfid),
 	       rec->cr.cr_namelen, changelog_rec_name(&rec->cr));
 
-	l_wait_event(crs->crs_waitq_prod,
-		     (crs->crs_rec_count < CDEV_CHLG_MAX_PREFETCH ||
-		      kthread_should_stop()), &lwi);
+	wait_event_interruptible(crs->crs_waitq_prod,
+				 crs->crs_rec_count < CDEV_CHLG_MAX_PREFETCH ||
+				 kthread_should_stop());
 
 	if (kthread_should_stop())
 		RETURN(LLOG_PROC_BREAK);
@@ -197,12 +284,22 @@ static void enq_record_delete(struct chlg_rec_entry *rec)
 static int chlg_load(void *args)
 {
 	struct chlg_reader_state *crs = args;
-	struct obd_device *obd = crs->crs_obd;
+	struct chlg_registered_dev *ced = crs->crs_ced;
+	struct obd_device *obd = NULL;
 	struct llog_ctxt *ctx = NULL;
 	struct llog_handle *llh = NULL;
-	struct l_wait_info lwi = { 0 };
 	int rc;
 	ENTRY;
+
+	crs->crs_last_catidx = -1;
+	crs->crs_last_idx = 0;
+
+again:
+	obd = chlg_obd_get(ced);
+	if (obd == NULL)
+		RETURN(-ENODEV);
+
+	crs->crs_obd = obd;
 
 	ctx = llog_get_context(obd, LLOG_CHANGELOG_REPL_CTXT);
 	if (ctx == NULL)
@@ -216,24 +313,41 @@ static int chlg_load(void *args)
 		GOTO(err_out, rc);
 	}
 
-	rc = llog_init_handle(NULL, llh, LLOG_F_IS_CAT|LLOG_F_EXT_JOBID, NULL);
+
+	rc = llog_init_handle(NULL, llh,
+			      LLOG_F_IS_CAT |
+			      LLOG_F_EXT_JOBID |
+			      LLOG_F_EXT_EXTRA_FLAGS |
+			      LLOG_F_EXT_X_UIDGID |
+			      LLOG_F_EXT_X_NID |
+			      LLOG_F_EXT_X_OMODE |
+			      LLOG_F_EXT_X_XATTR,
+			      NULL);
 	if (rc) {
 		CERROR("%s: fail to init llog handle: rc = %d\n",
 		       obd->obd_name, rc);
 		GOTO(err_out, rc);
 	}
 
-	rc = llog_cat_process(NULL, llh, chlg_read_cat_process_cb, crs, 0, 0);
+	rc = llog_cat_process(NULL, llh, chlg_read_cat_process_cb, crs,
+				crs->crs_last_catidx, crs->crs_last_idx);
 	if (rc < 0) {
 		CERROR("%s: fail to process llog: rc = %d\n", obd->obd_name, rc);
 		GOTO(err_out, rc);
+	}
+	if (!kthread_should_stop() && crs->crs_poll) {
+		llog_cat_close(NULL, llh);
+		llog_ctxt_put(ctx);
+		class_decref(obd, "changelog", crs);
+		schedule_timeout_interruptible(HZ);
+		goto again;
 	}
 
 	crs->crs_eof = true;
 
 err_out:
 	if (rc < 0)
-		crs->crs_err = true;
+		crs->crs_err = rc;
 
 	wake_up_all(&crs->crs_waitq_cons);
 
@@ -243,7 +357,9 @@ err_out:
 	if (ctx != NULL)
 		llog_ctxt_put(ctx);
 
-	l_wait_event(crs->crs_waitq_prod, kthread_should_stop(), &lwi);
+	crs->crs_obd = NULL;
+	chlg_obd_put(ced, obd);
+	wait_event_interruptible(crs->crs_waitq_prod, kthread_should_stop());
 
 	RETURN(rc);
 }
@@ -266,17 +382,22 @@ static ssize_t chlg_read(struct file *file, char __user *buff, size_t count,
 	struct chlg_reader_state *crs = file->private_data;
 	struct chlg_rec_entry *rec;
 	struct chlg_rec_entry *tmp;
-	struct l_wait_info lwi = { 0 };
-	ssize_t  written_total = 0;
+	size_t written_total = 0;
+	ssize_t rc;
 	LIST_HEAD(consumed);
 	ENTRY;
 
-	if (file->f_flags & O_NONBLOCK && crs->crs_rec_count == 0)
-		RETURN(-EAGAIN);
+	if (file->f_flags & O_NONBLOCK && crs->crs_rec_count == 0) {
+		if (crs->crs_err < 0)
+			RETURN(crs->crs_err);
+		else if (crs->crs_eof)
+			RETURN(0);
+		else
+			RETURN(-EAGAIN);
+	}
 
-	l_wait_event(crs->crs_waitq_cons,
-		     crs->crs_rec_count > 0 || crs->crs_eof || crs->crs_err,
-		     &lwi);
+	rc = wait_event_interruptible(crs->crs_waitq_cons,
+			crs->crs_rec_count > 0 || crs->crs_eof || crs->crs_err);
 
 	mutex_lock(&crs->crs_lock);
 	list_for_each_entry_safe(rec, tmp, &crs->crs_rec_queue, enq_linkage) {
@@ -284,8 +405,7 @@ static ssize_t chlg_read(struct file *file, char __user *buff, size_t count,
 			break;
 
 		if (copy_to_user(buff, rec->enq_record, rec->enq_length)) {
-			if (written_total == 0)
-				written_total = -EFAULT;
+			rc = -EFAULT;
 			break;
 		}
 
@@ -299,15 +419,19 @@ static ssize_t chlg_read(struct file *file, char __user *buff, size_t count,
 	}
 	mutex_unlock(&crs->crs_lock);
 
-	if (written_total > 0)
+	if (written_total > 0) {
+		rc = written_total;
 		wake_up_all(&crs->crs_waitq_prod);
+	} else if (rc == 0) {
+		rc = crs->crs_err;
+	}
 
 	list_for_each_entry_safe(rec, tmp, &consumed, enq_linkage)
 		enq_record_delete(rec);
 
 	*ppos = crs->crs_start_offset;
 
-	RETURN(written_total);
+	RETURN(rc);
 }
 
 /**
@@ -392,15 +516,23 @@ static loff_t chlg_llseek(struct file *file, loff_t off, int whence)
  */
 static int chlg_clear(struct chlg_reader_state *crs, __u32 reader, __u64 record)
 {
-	struct obd_device *obd = crs->crs_obd;
+	struct obd_device *obd = NULL;
 	struct changelog_setinfo cs  = {
 		.cs_recno = record,
 		.cs_id    = reader
 	};
+	int rc;
 
-	return obd_set_info_async(NULL, obd->obd_self_export,
-				  strlen(KEY_CHANGELOG_CLEAR),
-				  KEY_CHANGELOG_CLEAR, sizeof(cs), &cs, NULL);
+	obd = chlg_obd_get(crs->crs_ced);
+	if (obd == NULL)
+		return -ENODEV;
+
+	rc = obd_set_info_async(NULL, obd->obd_self_export,
+				strlen(KEY_CHANGELOG_CLEAR),
+				KEY_CHANGELOG_CLEAR, sizeof(cs), &cs, NULL);
+
+	chlg_obd_put(crs->crs_ced, obd);
+	return rc;
 }
 
 /** Maximum changelog control command size */
@@ -450,31 +582,6 @@ out_kbuf:
 }
 
 /**
- * Find the OBD device associated to a changelog character device.
- * @param[in]  cdev  character device instance descriptor
- * @return corresponding OBD device or NULL if none was found.
- */
-static struct obd_device *chlg_obd_get(dev_t cdev)
-{
-	int minor = MINOR(cdev);
-	struct obd_device *obd = NULL;
-	struct chlg_registered_dev *curr;
-
-	mutex_lock(&chlg_registered_dev_lock);
-	list_for_each_entry(curr, &chlg_registered_devices, ced_link) {
-		if (curr->ced_misc.minor == minor) {
-			/* take the first available OBD device attached */
-			obd = list_first_entry(&curr->ced_obds,
-					       struct obd_device,
-					       u.cli.cl_chg_dev_linkage);
-			break;
-		}
-	}
-	mutex_unlock(&chlg_registered_dev_lock);
-	return obd;
-}
-
-/**
  * Open handler, initialize internal CRS state and spawn prefetch thread if
  * needed.
  * @param[in]  inode  Inode struct for the open character device.
@@ -484,19 +591,19 @@ static struct obd_device *chlg_obd_get(dev_t cdev)
 static int chlg_open(struct inode *inode, struct file *file)
 {
 	struct chlg_reader_state *crs;
-	struct obd_device *obd = chlg_obd_get(inode->i_rdev);
+	struct chlg_registered_dev *dev;
 	struct task_struct *task;
 	int rc;
 	ENTRY;
 
-	if (!obd)
-		RETURN(-ENODEV);
+	dev = container_of(inode->i_cdev, struct chlg_registered_dev, ced_cdev);
 
 	OBD_ALLOC_PTR(crs);
 	if (!crs)
 		RETURN(-ENOMEM);
 
-	crs->crs_obd = obd;
+	kref_get(&dev->ced_refs);
+	crs->crs_ced = dev;
 	crs->crs_err = false;
 	crs->crs_eof = false;
 
@@ -510,7 +617,7 @@ static int chlg_open(struct inode *inode, struct file *file)
 		if (IS_ERR(task)) {
 			rc = PTR_ERR(task);
 			CERROR("%s: cannot start changelog thread: rc = %d\n",
-			       obd->obd_name, rc);
+			       dev->ced_name, rc);
 			GOTO(err_crs, rc);
 		}
 		crs->crs_prod_task = task;
@@ -520,6 +627,7 @@ static int chlg_open(struct inode *inode, struct file *file)
 	RETURN(0);
 
 err_crs:
+	kref_put(&dev->ced_refs, chlg_dev_clear);
 	OBD_FREE_PTR(crs);
 	return rc;
 }
@@ -536,15 +644,18 @@ static int chlg_release(struct inode *inode, struct file *file)
 	struct chlg_reader_state *crs = file->private_data;
 	struct chlg_rec_entry *rec;
 	struct chlg_rec_entry *tmp;
+	int rc = 0;
 
 	if (crs->crs_prod_task)
-		kthread_stop(crs->crs_prod_task);
+		rc = kthread_stop(crs->crs_prod_task);
 
 	list_for_each_entry_safe(rec, tmp, &crs->crs_rec_queue, enq_linkage)
 		enq_record_delete(rec);
 
+	kref_put(&crs->crs_ced->ced_refs, chlg_dev_clear);
 	OBD_FREE_PTR(crs);
-	return 0;
+
+	return rc;
 }
 
 /**
@@ -572,6 +683,23 @@ static unsigned int chlg_poll(struct file *file, poll_table *wait)
 	return mask;
 }
 
+static long chlg_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	int rc;
+
+	struct chlg_reader_state *crs = file->private_data;
+	switch (cmd) {
+	case OBD_IOC_CHLG_POLL:
+		crs->crs_poll = !!arg;
+		rc = 0;
+		break;
+	default:
+		rc = -EINVAL;
+		break;
+	}
+	return rc;
+}
+
 static const struct file_operations chlg_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= chlg_llseek,
@@ -580,17 +708,18 @@ static const struct file_operations chlg_fops = {
 	.open		= chlg_open,
 	.release	= chlg_release,
 	.poll		= chlg_poll,
+	.unlocked_ioctl	= chlg_ioctl,
 };
 
 /**
  * This uses obd_name of the form: "testfs-MDT0000-mdc-ffff88006501600"
  * and returns a name of the form: "changelog-testfs-MDT0000".
  */
-static void get_chlg_name(char *name, size_t name_len, struct obd_device *obd)
+static void get_target_name(char *name, size_t name_len, struct obd_device *obd)
 {
 	int i;
 
-	snprintf(name, name_len, "changelog-%s", obd->obd_name);
+	snprintf(name, name_len, "%s", obd->obd_name);
 
 	/* Find the 2nd '-' from the end and truncate on it */
 	for (i = 0; i < 2; i++) {
@@ -652,18 +781,16 @@ int mdc_changelog_cdev_init(struct obd_device *obd)
 {
 	struct chlg_registered_dev *exist;
 	struct chlg_registered_dev *entry;
-	int rc;
+	struct device *device;
+	dev_t dev;
+	int minor, rc;
 	ENTRY;
 
 	OBD_ALLOC_PTR(entry);
 	if (entry == NULL)
 		RETURN(-ENOMEM);
 
-	get_chlg_name(entry->ced_name, sizeof(entry->ced_name), obd);
-
-	entry->ced_misc.minor = MISC_DYNAMIC_MINOR;
-	entry->ced_misc.name  = entry->ced_name;
-	entry->ced_misc.fops  = &chlg_fops;
+	get_target_name(entry->ced_name, sizeof(entry->ced_name), obd);
 
 	kref_init(&entry->ced_refs);
 	INIT_LIST_HEAD(&entry->ced_obds);
@@ -677,38 +804,47 @@ int mdc_changelog_cdev_init(struct obd_device *obd)
 		GOTO(out_unlock, rc = 0);
 	}
 
-	/* Register new character device */
-	rc = misc_register(&entry->ced_misc);
-	if (rc != 0)
-		GOTO(out_unlock, rc);
-
 	list_add_tail(&obd->u.cli.cl_chg_dev_linkage, &entry->ced_obds);
 	list_add_tail(&entry->ced_link, &chlg_registered_devices);
 
+	/* Register new character device */
+	cdev_init(&entry->ced_cdev, &chlg_fops);
+	entry->ced_cdev.owner = THIS_MODULE;
+
+	rc = chlg_minor_alloc(&minor);
+	if (rc)
+		GOTO(out_unlock, rc);
+
+	dev = MKDEV(MAJOR(mdc_changelog_dev), minor);
+	rc = cdev_add(&entry->ced_cdev, dev, 1);
+	if (rc)
+		GOTO(out_minor, rc);
+
+	device = device_create(mdc_changelog_class, NULL, dev, entry, "%s-%s",
+			       MDC_CHANGELOG_DEV_NAME, entry->ced_name);
+	if (IS_ERR(device))
+		GOTO(out_cdev, rc = PTR_ERR(device));
+
+	device->release = chlg_device_release;
+	entry->ced_device = device;
+
 	entry = NULL;	/* prevent it from being freed below */
+	GOTO(out_unlock, rc = 0);
+
+out_cdev:
+	cdev_del(&entry->ced_cdev);
+
+out_minor:
+	chlg_minor_free(minor);
+
+	list_del_init(&obd->u.cli.cl_chg_dev_linkage);
+	list_del(&entry->ced_link);
 
 out_unlock:
 	mutex_unlock(&chlg_registered_dev_lock);
 	if (entry)
 		OBD_FREE_PTR(entry);
 	RETURN(rc);
-}
-
-/**
- * Deregister a changelog character device whose refcount has reached zero.
- */
-static void chlg_dev_clear(struct kref *kref)
-{
-	struct chlg_registered_dev *entry = container_of(kref,
-						      struct chlg_registered_dev,
-						      ced_refs);
-	ENTRY;
-
-	LASSERT(mutex_is_locked(&chlg_registered_dev_lock));
-	list_del(&entry->ced_link);
-	misc_deregister(&entry->ced_misc);
-	OBD_FREE_PTR(entry);
-	EXIT;
 }
 
 /**
