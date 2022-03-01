@@ -2223,7 +2223,15 @@ again:
 	}
 
 out_unlock:
+	bio_set_flag(bio, BIO_THROTTLED);
+
+#ifdef CONFIG_BLK_DEV_THROTTLING_LOW
+	if (throttled || !td->track_bio_latency)
+		bio->bi_issue_stat.stat |= SKIP_LATENCY;
+#endif
 	spin_unlock_irq(q->queue_lock);
+	goto ret;
+
 out:
 	bio_set_flag(bio, BIO_THROTTLED);
 
@@ -2231,6 +2239,7 @@ out:
 	if (throttled || !td->track_bio_latency)
 		bio->bi_issue_stat.stat |= SKIP_LATENCY;
 #endif
+ret:
 	return throttled;
 }
 
