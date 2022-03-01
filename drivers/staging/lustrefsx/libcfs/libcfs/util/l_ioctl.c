@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2001, 2002 Cluster File Systems, Inc.
  *
- * Copyright (c) 2014, Intel Corporation.
+ * Copyright (c) 2014, 2017, Intel Corporation.
  *
  *   This file is part of Lustre, https://wiki.whamcloud.com/
  *
@@ -35,7 +35,7 @@
 #include <linux/types.h>
 
 #include <libcfs/util/ioctl.h>
-#include <lnet/lnetctl.h>
+#include <linux/lnet/lnetctl.h>
 
 struct ioc_dev {
 	const char *dev_name;
