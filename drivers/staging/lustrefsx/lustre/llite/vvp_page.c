@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -54,16 +54,22 @@
  *
  */
 
-static void vvp_page_fini_common(struct vvp_page *vpg)
+static void vvp_page_fini_common(struct vvp_page *vpg, struct pagevec *pvec)
 {
 	struct page *vmpage = vpg->vpg_page;
 
 	LASSERT(vmpage != NULL);
-	put_page(vmpage);
+	if (pvec) {
+		if (!pagevec_add(pvec, vmpage))
+			pagevec_release(pvec);
+	} else {
+		put_page(vmpage);
+	}
 }
 
 static void vvp_page_fini(const struct lu_env *env,
-			  struct cl_page_slice *slice)
+			  struct cl_page_slice *slice,
+			  struct pagevec *pvec)
 {
 	struct vvp_page *vpg     = cl2vvp_page(slice);
 	struct page     *vmpage  = vpg->vpg_page;
@@ -73,7 +79,7 @@ static void vvp_page_fini(const struct lu_env *env,
 	 * VPG_FREEING state.
 	 */
 	LASSERT((struct cl_page *)vmpage->private != slice->cpl_page);
-	vvp_page_fini_common(vpg);
+	vvp_page_fini_common(vpg, pvec);
 }
 
 static int vvp_page_own(const struct lu_env *env,
@@ -144,7 +150,7 @@ static void vvp_page_discard(const struct lu_env *env,
 	LASSERT(vmpage != NULL);
 	LASSERT(PageLocked(vmpage));
 
-	if (vpg->vpg_defer_uptodate && !vpg->vpg_ra_used)
+	if (vpg->vpg_defer_uptodate && !vpg->vpg_ra_used && vmpage->mapping)
 		ll_ra_stats_inc(vmpage->mapping->host, RA_STAT_DISCARDED);
 
 	ll_invalidate_page(vmpage);
@@ -154,14 +160,12 @@ static void vvp_page_delete(const struct lu_env *env,
 			    const struct cl_page_slice *slice)
 {
 	struct page      *vmpage = cl2vm_page(slice);
-	struct inode     *inode  = vmpage->mapping->host;
-	struct cl_object *obj    = slice->cpl_obj;
 	struct cl_page   *page   = slice->cpl_page;
 	int refc;
 
 	LASSERT(PageLocked(vmpage));
 	LASSERT((struct cl_page *)vmpage->private == page);
-	LASSERT(inode == vvp_object_inode(obj));
+
 
 	/* Drop the reference count held in vvp_page_init */
 	refc = atomic_dec_return(&page->cp_ref);
@@ -242,8 +246,8 @@ static void vvp_vmpage_error(struct inode *inode, struct page *vmpage, int ioret
 		else
 			set_bit(AS_EIO, &inode->i_mapping->flags);
 
-		if ((ioret == -ESHUTDOWN || ioret == -EINTR) &&
-		     obj->vob_discard_page_warned == 0) {
+		if ((ioret == -ESHUTDOWN || ioret == -EINTR ||
+		     ioret == -EIO) && obj->vob_discard_page_warned == 0) {
 			obj->vob_discard_page_warned = 1;
 			ll_dirty_page_discard_warn(vmpage, ioret);
 		}
@@ -269,8 +273,14 @@ static void vvp_page_completion_read(const struct lu_env *env,
 	if (ioret == 0)  {
 		if (!vpg->vpg_defer_uptodate)
 			cl_page_export(env, page, 1);
-	} else {
+	} else if (vpg->vpg_defer_uptodate) {
 		vpg->vpg_defer_uptodate = 0;
+		if (ioret == -EWOULDBLOCK) {
+			/* mirror read failed, it needs to destroy the page
+			 * because subpage would be from wrong osc when trying
+			 * to read from a new mirror */
+			ll_invalidate_page(vmpage);
+		}
 	}
 
 	if (page->cp_sync_io == NULL)
@@ -484,13 +494,14 @@ vvp_transient_page_completion(const struct lu_env *env,
 }
 
 static void vvp_transient_page_fini(const struct lu_env *env,
-				    struct cl_page_slice *slice)
+				    struct cl_page_slice *slice,
+				    struct pagevec *pvec)
 {
 	struct vvp_page *vpg = cl2vvp_page(slice);
 	struct cl_page *clp = slice->cpl_page;
 	struct vvp_object *clobj = cl2vvp(clp->cp_obj);
 
-	vvp_page_fini_common(vpg);
+	vvp_page_fini_common(vpg, pvec);
 	atomic_dec(&clobj->vob_transient_pages);
 }
 
