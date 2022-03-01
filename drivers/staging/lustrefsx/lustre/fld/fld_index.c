@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2014, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -84,10 +84,10 @@ int fld_declare_index_create(const struct lu_env *env,
 			     const struct lu_seq_range *new_range,
 			     struct thandle *th)
 {
-	struct lu_seq_range	*tmp;
-	struct lu_seq_range	*range;
-	struct fld_thread_info	*info;
-	int			rc = 0;
+	struct lu_seq_range *tmp;
+	struct lu_seq_range *range;
+	struct fld_thread_info *info;
+	int rc = 0;
 
 	ENTRY;
 
@@ -109,8 +109,10 @@ int fld_declare_index_create(const struct lu_env *env,
 		GOTO(out, rc);
 	}
 
-	/* Check for merge case, since the fld entry can only be increamental,
-	 * so we will only check whether it can be merged from the left. */
+	/*
+	 * Check for merge case, since the fld entry can only be increamental,
+	 * so we will only check whether it can be merged from the left.
+	 */
 	if (new_range->lsr_start == range->lsr_end && range->lsr_end != 0 &&
 	    lu_seq_range_compare_loc(new_range, range) == 0) {
 		range_cpu_to_be(tmp, range);
@@ -156,12 +158,13 @@ out:
 int fld_index_create(const struct lu_env *env, struct lu_server_fld *fld,
 		     const struct lu_seq_range *new_range, struct thandle *th)
 {
-	struct lu_seq_range	*range;
-	struct lu_seq_range	*tmp;
-	struct fld_thread_info	*info;
-	int			rc = 0;
-	int			deleted = 0;
-	struct fld_cache_entry	*flde;
+	struct lu_seq_range *range;
+	struct lu_seq_range *tmp;
+	struct fld_thread_info *info;
+	int rc = 0;
+	int deleted = 0;
+	struct fld_cache_entry *flde;
+
 	ENTRY;
 
 	info = lu_context_key_get(&env->le_ctx, &fld_thread_key);
@@ -193,7 +196,7 @@ int fld_index_create(const struct lu_env *env, struct lu_server_fld *fld,
 
 	range_cpu_to_be(tmp, tmp);
 	rc = dt_insert(env, fld->lsf_obj, (struct dt_rec *)tmp,
-		       (struct dt_key *)&tmp->lsr_start, th, 1);
+		       (struct dt_key *)&tmp->lsr_start, th);
 	if (rc != 0) {
 		CERROR("%s: insert range "DRANGE" failed: rc = %d\n",
 		       fld->lsf_name, PRANGE(new_range), rc);
@@ -229,11 +232,11 @@ out:
 int fld_index_lookup(const struct lu_env *env, struct lu_server_fld *fld,
 		     u64 seq, struct lu_seq_range *range)
 {
-        struct lu_seq_range     *fld_rec;
-        struct fld_thread_info  *info;
-        int rc;
+	struct lu_seq_range *fld_rec;
+	struct fld_thread_info *info;
+	int rc;
 
-        ENTRY;
+	ENTRY;
 
 	info = lu_context_key_get(&env->le_ctx, &fld_thread_key);
 	fld_rec = &info->fti_rec;
@@ -245,12 +248,12 @@ int fld_index_lookup(const struct lu_env *env, struct lu_server_fld *fld,
 			rc = 0;
 		else
 			rc = -ENOENT;
-        }
+	}
 
 	CDEBUG(D_INFO, "%s: lookup seq = %#llx range : "DRANGE" rc = %d\n",
-               fld->lsf_name, seq, PRANGE(range), rc);
+	       fld->lsf_name, seq, PRANGE(range), rc);
 
-        RETURN(rc);
+	RETURN(rc);
 }
 
 /**
@@ -273,6 +276,7 @@ int fld_insert_entry(const struct lu_env *env,
 	struct thandle *th;
 	struct dt_device *dt = lu2dt_dev(fld->lsf_obj->do_lu.lo_dev);
 	int rc;
+
 	ENTRY;
 
 	LASSERT(mutex_is_locked(&fld->lsf_lock));
@@ -325,16 +329,18 @@ static int fld_insert_special_entries(const struct lu_env *env,
 int fld_index_init(const struct lu_env *env, struct lu_server_fld *fld,
 		   struct dt_device *dt, int type)
 {
-	struct dt_object	*dt_obj = NULL;
-	struct lu_fid		fid;
-	struct lu_attr		*attr = NULL;
-	struct lu_seq_range	*range = NULL;
-	struct fld_thread_info	*info;
-	struct dt_object_format	dof;
-	struct dt_it		*it;
-	const struct dt_it_ops	*iops;
-	int			rc;
-	__u32			index;
+	struct dt_object *dt_obj = NULL;
+	struct lu_fid fid;
+	struct lu_attr *attr = NULL;
+	struct lu_seq_range *range = NULL;
+	struct fld_thread_info *info;
+	struct dt_object_format dof;
+	struct dt_it *it;
+	const struct dt_it_ops *iops;
+	int rc;
+	u32 index;
+	int range_count = 0;
+
 	ENTRY;
 
 	info = lu_context_key_get(&env->le_ctx, &fld_thread_key);
@@ -342,7 +348,7 @@ int fld_index_init(const struct lu_env *env, struct lu_server_fld *fld,
 
 	lu_local_obj_fid(&fid, FLD_INDEX_OID);
 	OBD_ALLOC_PTR(attr);
-	if (attr == NULL)
+	if (!attr)
 		RETURN(-ENOMEM);
 
 	memset(attr, 0, sizeof(*attr));
@@ -388,25 +394,40 @@ int fld_index_init(const struct lu_env *env, struct lu_server_fld *fld,
 		GOTO(out, rc = PTR_ERR(it));
 
 	rc = iops->load(env, it, 0);
+	if (rc > 0)
+		rc = 0;
+	else if (rc == 0)
+		rc = iops->next(env, it);
+
 	if (rc < 0)
 		GOTO(out_it_fini, rc);
 
-	if (rc > 0) {
-		/* Load FLD entry into server cache */
-		do {
-			rc = iops->rec(env, it, (struct dt_rec *)range, 0);
-			if (rc != 0)
-				GOTO(out_it_put, rc);
-			LASSERT(range != NULL);
-			range_be_to_cpu(range, range);
+	while (rc == 0) {
+		rc = iops->rec(env, it, (struct dt_rec *)range, 0);
+		if (rc != 0)
+			GOTO(out_it_put, rc);
+
+		range_be_to_cpu(range, range);
+
+		/*
+		 * Newly created ldiskfs IAM indexes may include a
+		 * zeroed-out key and record. Ignore it here.
+		 */
+		if (range->lsr_start < range->lsr_end) {
 			rc = fld_cache_insert(fld->lsf_cache, range);
 			if (rc != 0)
 				GOTO(out_it_put, rc);
-			rc = iops->next(env, it);
-		} while (rc == 0);
-	} else {
-		fld->lsf_new = 1;
+
+			range_count++;
+		}
+
+		rc = iops->next(env, it);
+		if (rc < 0)
+			GOTO(out_it_fini, rc);
 	}
+
+	if (range_count == 0)
+		fld->lsf_new = 1;
 
 	rc = fld_name_to_index(fld->lsf_name, &index);
 	if (rc < 0)
@@ -415,8 +436,10 @@ int fld_index_init(const struct lu_env *env, struct lu_server_fld *fld,
 		rc = 0;
 
 	if (index == 0 && type == LU_SEQ_RANGE_MDT) {
-		/* Note: fld_insert_entry will detect whether these
-		 * special entries already exist inside FLDB */
+		/*
+		 * Note: fld_insert_entry will detect whether these
+		 * special entries already exist inside FLDB
+		 */
 		mutex_lock(&fld->lsf_lock);
 		rc = fld_insert_special_entries(env, fld);
 		mutex_unlock(&fld->lsf_lock);
@@ -431,11 +454,11 @@ out_it_put:
 out_it_fini:
 	iops->fini(env, it);
 out:
-	if (attr != NULL)
+	if (attr)
 		OBD_FREE_PTR(attr);
 
 	if (rc < 0) {
-		if (dt_obj != NULL)
+		if (dt_obj)
 			dt_object_put(env, dt_obj);
 		fld->lsf_obj = NULL;
 	}
@@ -445,7 +468,7 @@ out:
 void fld_index_fini(const struct lu_env *env, struct lu_server_fld *fld)
 {
 	ENTRY;
-	if (fld->lsf_obj != NULL) {
+	if (fld->lsf_obj) {
 		if (!IS_ERR(fld->lsf_obj))
 			dt_object_put(env, fld->lsf_obj);
 		fld->lsf_obj = NULL;
@@ -457,12 +480,12 @@ int fld_server_read(const struct lu_env *env, struct lu_server_fld *fld,
 		    struct lu_seq_range *range, void *data, int data_len)
 {
 	struct lu_seq_range_array *lsra = data;
-	struct fld_thread_info	  *info;
-	struct dt_object	  *dt_obj = fld->lsf_obj;
-	struct lu_seq_range	  *entry;
-	struct dt_it		  *it;
-	const struct dt_it_ops	  *iops;
-	int			  rc;
+	struct fld_thread_info *info;
+	struct dt_object *dt_obj = fld->lsf_obj;
+	struct lu_seq_range *entry;
+	struct dt_it *it;
+	const struct dt_it_ops *iops;
+	int rc;
 
 	ENTRY;
 
