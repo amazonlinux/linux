@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2016, Intel Corporation.
+ * Copyright (c) 2017, Intel Corporation.
  *
  * Copyright 2015 Cray Inc, all rights reserved.
  * Author: Ben Evans.
@@ -48,10 +48,11 @@
 #ifndef _LUSTRE_SWAB_H_
 #define _LUSTRE_SWAB_H_
 
-#include <lustre/lustre_idl.h>
+#include <uapi/linux/lustre/lustre_idl.h>
 
 void lustre_swab_orphan_ent(struct lu_orphan_ent *ent);
 void lustre_swab_orphan_ent_v2(struct lu_orphan_ent_v2 *ent);
+void lustre_swab_orphan_ent_v3(struct lu_orphan_ent_v3 *ent);
 void lustre_swab_ptlrpc_body(struct ptlrpc_body *pb);
 void lustre_swab_connect(struct obd_connect_data *ocd);
 void lustre_swab_hsm_user_state(struct hsm_user_state *hus);
@@ -92,11 +93,13 @@ void lustre_swab_obdo(struct obdo *o);
 void lustre_swab_ost_body(struct ost_body *b);
 void lustre_swab_ost_last_id(__u64 *id);
 void lustre_swab_fiemap(struct fiemap *fiemap);
+void lustre_swab_fiemap_info_key(struct ll_fiemap_info_key *fiemap_info);
 void lustre_swab_lov_user_md_v1(struct lov_user_md_v1 *lum);
 void lustre_swab_lov_user_md_v3(struct lov_user_md_v3 *lum);
 void lustre_swab_lov_comp_md_v1(struct lov_comp_md_v1 *lum);
 void lustre_swab_lov_user_md_objects(struct lov_user_ost_data *lod,
 				     int stripe_count);
+void lustre_swab_lov_user_md(struct lov_user_md *lum, size_t size);
 void lustre_swab_lov_mds_md(struct lov_mds_md *lmm);
 void lustre_swab_idx_info(struct idx_info *ii);
 void lustre_swab_lip_header(struct lu_idxpage *lip);
@@ -118,6 +121,7 @@ void lustre_swab_object_update_result(struct object_update_result *our);
 void lustre_swab_object_update_reply(struct object_update_reply *our);
 void lustre_swab_swap_layouts(struct mdc_swap_layouts *msl);
 void lustre_swab_close_data(struct close_data *data);
+void lustre_swab_close_data_resync_done(struct close_data_resync_done *resync);
 void lustre_swab_lmv_user_md(struct lmv_user_md *lum);
 void lustre_swab_ladvise(struct lu_ladvise *ladvise);
 void lustre_swab_ladvise_hdr(struct ladvise_hdr *ladvise_hdr);
