@@ -23,7 +23,7 @@
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2013, 2015, Intel Corporation.
+ * Copyright (c) 2013, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,7 +38,7 @@
 #define __LUSTRE_KERNELCOMM_H__
 
 /* For declarations shared with userspace */
-#include <uapi_kernelcomm.h>
+#include <uapi/linux/lustre/lustre_kernelcomm.h>
 
 /* prototype for callback function on kuc groups */
 typedef int (*libcfs_kkuc_cb_t)(void *data, void *cb_arg);
