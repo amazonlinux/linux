@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -81,7 +81,6 @@
 
 struct lovsub_device;
 struct lovsub_object;
-struct lovsub_lock;
 
 enum lov_device_flags {
         LOV_DEV_INITIALIZED = 1 << 0
@@ -90,6 +89,12 @@ enum lov_device_flags {
 /*
  * Upper half.
  */
+
+/* Data-on-MDT array item in lov_device::ld_md_tgts[] */
+struct lovdom_device {
+	struct cl_device	*ldm_mdc;
+	int			 ldm_idx;
+};
 
 struct lov_device {
         /*
@@ -101,6 +106,13 @@ struct lov_device {
         __u32                     ld_target_nr;
         struct lovsub_device    **ld_target;
         __u32                     ld_flags;
+
+	/* Data-on-MDT devices */
+	__u32			  ld_md_tgts_nr;
+	struct lovdom_device	 *ld_md_tgts;
+	struct obd_device	 *ld_lmv;
+	/* LU site for subdevices */
+	struct lu_site		  ld_site;
 };
 
 /**
@@ -129,15 +141,48 @@ static inline char *llt2str(enum lov_layout_type llt)
 	return "";
 }
 
+/**
+ * Return lov_layout_entry_type associated with a given composite layout
+ * entry.
+ */
+static inline __u32 lov_entry_type(struct lov_stripe_md_entry *lsme)
+{
+	if ((lov_pattern(lsme->lsme_pattern) == LOV_PATTERN_RAID0) ||
+	    (lov_pattern(lsme->lsme_pattern) == LOV_PATTERN_MDT))
+		return lov_pattern(lsme->lsme_pattern);
+	return 0;
+}
+
+struct lov_layout_entry;
+struct lov_object;
+struct lov_lock_sub;
+
+struct lov_comp_layout_entry_ops {
+	int (*lco_init)(const struct lu_env *env, struct lov_device *dev,
+			struct lov_object *lov, unsigned int index,
+			const struct cl_object_conf *conf,
+			struct lov_layout_entry *lle);
+	void (*lco_fini)(const struct lu_env *env,
+			 struct lov_layout_entry *lle);
+	int  (*lco_getattr)(const struct lu_env *env, struct lov_object *obj,
+			    unsigned int index, struct lov_layout_entry *lle,
+			    struct cl_attr **attr);
+};
+
 struct lov_layout_raid0 {
 	unsigned               lo_nr;
+	/**
+	 * record the stripe no before the truncate size, used for setting OST
+	 * object size for truncate. LU-14128.
+	 */
+	int                    lo_trunc_stripeno;
 	/**
 	 * When this is true, lov_object::lo_attr contains
 	 * valid up to date attributes for a top-level
 	 * object. This field is reset to 0 when attributes of
 	 * any sub-object change.
 	 */
-	int		       lo_attr_valid;
+	bool		       lo_attr_valid;
 	/**
 	 * Array of sub-objects. Allocated when top-object is
 	 * created (lov_init_raid0()).
@@ -165,6 +210,38 @@ struct lov_layout_raid0 {
 	struct cl_attr         lo_attr;
 };
 
+struct lov_layout_dom {
+	/* keep this always at first place so DOM layout entry
+	 * can be addressed also as RAID0 after initialization.
+	 */
+	struct lov_layout_raid0 lo_dom_r0;
+	struct lovsub_object *lo_dom;
+	struct lov_oinfo *lo_loi;
+};
+
+struct lov_layout_entry {
+	__u32				lle_type;
+	unsigned int			lle_valid:1;
+	struct lu_extent		*lle_extent;
+	struct lov_stripe_md_entry	*lle_lsme;
+	struct lov_comp_layout_entry_ops *lle_comp_ops;
+	union {
+		struct lov_layout_raid0	lle_raid0;
+		struct lov_layout_dom	lle_dom;
+	};
+};
+
+struct lov_mirror_entry {
+	unsigned short	lre_mirror_id;
+	unsigned short	lre_preferred:1,
+			lre_stale:1,	/* set if any components is stale */
+			lre_valid:1;	/* set if at least one of components
+					 * in this mirror is valid */
+	unsigned short	lre_start;	/* index to lo_entries, start index of
+					 * this mirror */
+	unsigned short	lre_end;	/* end index of this mirror */
+};
+
 /**
  * lov-specific file state.
  *
@@ -180,7 +257,7 @@ struct lov_layout_raid0 {
  * function corresponding to the current layout type.
  */
 struct lov_object {
-	struct cl_object       lo_cl;
+	struct cl_object	lo_cl;
 	/**
 	 * Serializes object operations with transitions between layout types.
 	 *
@@ -220,13 +297,37 @@ struct lov_object {
 		} released;
 		struct lov_layout_composite {
 			/**
-			 * Current valid entry count of lo_entries.
+			 * flags of lov_comp_md_v1::lcm_flags. Mainly used
+			 * by FLR.
 			 */
-			unsigned int lo_entry_count;
-			struct lov_layout_entry {
-				struct lu_extent lle_extent;
-				struct lov_layout_raid0 lle_raid0;
-			} *lo_entries;
+			uint32_t        lo_flags;
+			/**
+			 * For FLR: index of preferred mirror to read.
+			 * Preferred mirror is initialized by the preferred
+			 * bit of lsme. It can be changed when the preferred
+			 * is inaccessible.
+			 * In order to make lov_lsm_entry() return the same
+			 * mirror in the same IO context, it's only possible
+			 * to change the preferred mirror when the
+			 * lo_active_ios reaches zero.
+			 */
+			int             lo_preferred_mirror;
+			/**
+			 * For FLR: the lock to protect access to
+			 * lo_preferred_mirror.
+			 */
+			spinlock_t      lo_write_lock;
+			/**
+			 * For FLR: Number of (valid) mirrors.
+			 */
+			unsigned        lo_mirror_count;
+			struct lov_mirror_entry *lo_mirrors;
+			/**
+			 * Current entry count of lo_entries, include
+			 * invalid entries.
+			 */
+			unsigned int    lo_entry_count;
+			struct lov_layout_entry *lo_entries;
 		} composite;
 	} u;
 	/**
@@ -236,11 +337,80 @@ struct lov_object {
 	struct task_struct            *lo_owner;
 };
 
-#define lov_foreach_layout_entry(lov, entry)			\
-	for (entry = &lov->u.composite.lo_entries[0];		\
-	     entry < &lov->u.composite.lo_entries		\
-			[lov->u.composite.lo_entry_count];	\
-	     entry++)
+static inline struct lov_layout_raid0 *lov_r0(struct lov_object *lov, int i)
+{
+	LASSERT(lov->lo_type == LLT_COMP);
+	LASSERTF(i < lov->u.composite.lo_entry_count,
+		 "entry %d entry_count %d", i, lov->u.composite.lo_entry_count);
+
+	return &lov->u.composite.lo_entries[i].lle_raid0;
+}
+
+static inline struct lov_stripe_md_entry *lov_lse(struct lov_object *lov, int i)
+{
+	LASSERT(lov->lo_lsm != NULL);
+	LASSERT(i < lov->lo_lsm->lsm_entry_count);
+
+	return lov->lo_lsm->lsm_entries[i];
+}
+
+static inline unsigned lov_flr_state(const struct lov_object *lov)
+{
+	if (lov->lo_type != LLT_COMP)
+		return LCM_FL_NONE;
+
+	return lov->u.composite.lo_flags & LCM_FL_FLR_MASK;
+}
+
+static inline bool lov_is_flr(const struct lov_object *lov)
+{
+	return lov_flr_state(lov) != LCM_FL_NONE;
+}
+
+static inline struct lov_layout_entry *lov_entry(struct lov_object *lov, int i)
+{
+	LASSERT(lov->lo_type == LLT_COMP);
+	LASSERTF(i < lov->u.composite.lo_entry_count,
+		 "entry %d entry_count %d", i, lov->u.composite.lo_entry_count);
+
+	return &lov->u.composite.lo_entries[i];
+}
+
+#define lov_for_layout_entry(lov, entry, start, end)			\
+	for (entry = lov_entry(lov, start);				\
+	     entry <= lov_entry(lov, end); entry++)
+
+#define lov_foreach_layout_entry(lov, entry)				\
+	lov_for_layout_entry(lov, entry, 0,				\
+			     (lov)->u.composite.lo_entry_count - 1)
+
+#define lov_foreach_mirror_layout_entry(lov, entry, lre)		\
+	lov_for_layout_entry(lov, entry, (lre)->lre_start, (lre)->lre_end)
+
+static inline struct lov_mirror_entry *
+lov_mirror_entry(struct lov_object *lov, int i)
+{
+	LASSERT(i < lov->u.composite.lo_mirror_count);
+	return &lov->u.composite.lo_mirrors[i];
+}
+
+#define lov_foreach_mirror_entry(lov, lre)				\
+	for (lre = lov_mirror_entry(lov, 0);				\
+	     lre <= lov_mirror_entry(lov,				\
+				lov->u.composite.lo_mirror_count - 1);	\
+	     lre++)
+
+static inline unsigned
+lov_layout_entry_index(struct lov_object *lov, struct lov_layout_entry *entry)
+{
+	struct lov_layout_entry *first = &lov->u.composite.lo_entries[0];
+	unsigned index = (unsigned)(entry - first);
+
+	LASSERT(entry >= first);
+	LASSERT(index < lov->u.composite.lo_entry_count);
+
+	return index;
+}
 
 /**
  * State lov_lock keeps for each sub-lock.
@@ -270,6 +440,8 @@ struct lov_page {
 	struct cl_page_slice	lps_cl;
 	/** layout_entry + stripe index, composed using lov_comp_index() */
 	unsigned int		lps_index;
+	/* the layout gen when this page was created */
+	__u32			lps_layout_gen;
 };
 
 /*
@@ -289,24 +461,12 @@ struct lovsub_object {
 };
 
 /**
- * Lock state at lovsub layer.
- */
-struct lovsub_lock {
-        struct cl_lock_slice  lss_cl;
-};
-
-/**
  * Describe the environment settings for sublocks.
  */
 struct lov_sublock_env {
         const struct lu_env *lse_env;
         struct cl_io        *lse_io;
 };
-
-struct lovsub_page {
-        struct cl_page_slice lsb_cl;
-};
-
 
 struct lov_thread_info {
 	struct cl_object_conf   lti_stripe_conf;
@@ -356,6 +516,26 @@ struct lov_io_sub {
 struct lov_io {
         /** super-class */
         struct cl_io_slice lis_cl;
+
+	/**
+	 * FLR: index to lo_mirrors. Valid only if lov_is_flr() returns true.
+	 *
+	 * The mirror index of this io. Preserved over cl_io_init()
+	 * if io->ci_ndelay_tried is greater than zero.
+	 */
+	int			lis_mirror_index;
+	/**
+	 * FLR: the layout gen when lis_mirror_index was cached. The
+	 * mirror index makes sense only when the layout gen doesn't
+	 * change.
+	 */
+	int			lis_mirror_layout_gen;
+
+	/**
+	 * fields below this will be initialized in lov_io_init().
+	 */
+	unsigned		lis_preserved;
+
         /**
          * Pointer to the object slice. This is a duplicate of
          * lov_io::lis_cl::cis_object.
@@ -398,6 +578,7 @@ struct lov_io {
 	 * All sub-io's created in this lov_io.
 	 */
 	struct list_head	lis_subios;
+
 };
 
 struct lov_session {
@@ -416,7 +597,6 @@ extern struct kmem_cache *lov_object_kmem;
 extern struct kmem_cache *lov_thread_kmem;
 extern struct kmem_cache *lov_session_kmem;
 
-extern struct kmem_cache *lovsub_lock_kmem;
 extern struct kmem_cache *lovsub_object_kmem;
 
 int   lov_object_init     (const struct lu_env *env, struct lu_object *obj,
@@ -427,8 +607,6 @@ int   lov_lock_init       (const struct lu_env *env, struct cl_object *obj,
                            struct cl_lock *lock, const struct cl_io *io);
 int   lov_io_init         (const struct lu_env *env, struct cl_object *obj,
                            struct cl_io *io);
-int   lovsub_lock_init    (const struct lu_env *env, struct cl_object *obj,
-                           struct cl_lock *lock, const struct cl_io *io);
 
 int   lov_lock_init_composite(const struct lu_env *env, struct cl_object *obj,
                            struct cl_lock *lock, const struct cl_io *io);
@@ -446,8 +624,6 @@ struct lov_io_sub *lov_sub_get(const struct lu_env *env, struct lov_io *lio,
 
 int   lov_page_init       (const struct lu_env *env, struct cl_object *ob,
 			   struct cl_page *page, pgoff_t index);
-int   lovsub_page_init    (const struct lu_env *env, struct cl_object *ob,
-			   struct cl_page *page, pgoff_t index);
 int   lov_page_init_empty (const struct lu_env *env, struct cl_object *obj,
 			   struct cl_page *page, pgoff_t index);
 int   lov_page_init_composite(const struct lu_env *env, struct cl_object *obj,
@@ -461,10 +637,26 @@ struct lu_object *lovsub_object_alloc(const struct lu_env *env,
 
 struct lov_stripe_md *lov_lsm_addref(struct lov_object *lov);
 int lov_page_stripe(const struct cl_page *page);
+bool lov_page_is_empty(const struct cl_page *page);
 int lov_lsm_entry(const struct lov_stripe_md *lsm, __u64 offset);
+int lov_io_layout_at(struct lov_io *lio, __u64 offset);
 
 #define lov_foreach_target(lov, var)                    \
         for (var = 0; var < lov_targets_nr(lov); ++var)
+
+static inline struct lu_extent *lov_io_extent(struct lov_io *io, int i)
+{
+	return &lov_lse(io->lis_object, i)->lsme_extent;
+}
+
+/**
+ * For layout entries within @ext.
+ */
+#define lov_foreach_io_layout(ind, lio, ext)				\
+	for (ind = lov_io_layout_at(lio, (ext)->e_start);		\
+	     ind >= 0 &&						\
+	     lu_extent_is_overlapped(lov_io_extent(lio, ind), ext);	\
+	     ind = lov_io_layout_at(lio, lov_io_extent(lio, ind)->e_end))
 
 /*****************************************************************************
  *
@@ -575,22 +767,6 @@ static inline struct lovsub_object *lu2lovsub(const struct lu_object *obj)
         return container_of0(obj, struct lovsub_object, lso_cl.co_lu);
 }
 
-static inline struct lovsub_lock *
-cl2lovsub_lock(const struct cl_lock_slice *slice)
-{
-        LINVRNT(lovsub_is_object(&slice->cls_obj->co_lu));
-        return container_of(slice, struct lovsub_lock, lss_cl);
-}
-
-static inline struct lovsub_lock *cl2sub_lock(const struct cl_lock *lock)
-{
-        const struct cl_lock_slice *slice;
-
-        slice = cl_lock_at(lock, &lovsub_device_type);
-        LASSERT(slice != NULL);
-        return cl2lovsub_lock(slice);
-}
-
 static inline struct lov_lock *cl2lov_lock(const struct cl_lock_slice *slice)
 {
         LINVRNT(lov_is_object(&slice->cls_obj->co_lu));
@@ -601,13 +777,6 @@ static inline struct lov_page *cl2lov_page(const struct cl_page_slice *slice)
 {
         LINVRNT(lov_is_object(&slice->cpl_obj->co_lu));
         return container_of0(slice, struct lov_page, lps_cl);
-}
-
-static inline struct lovsub_page *
-cl2lovsub_page(const struct cl_page_slice *slice)
-{
-        LINVRNT(lovsub_is_object(&slice->cpl_obj->co_lu));
-        return container_of0(slice, struct lovsub_page, lsb_cl);
 }
 
 static inline struct lov_io *cl2lov_io(const struct lu_env *env,
@@ -632,23 +801,6 @@ static inline struct lov_thread_info *lov_env_info(const struct lu_env *env)
         info = lu_context_key_get(&env->le_ctx, &lov_key);
         LASSERT(info != NULL);
         return info;
-}
-
-static inline struct lov_layout_raid0 *lov_r0(struct lov_object *lov, int i)
-{
-	LASSERT(lov->lo_type == LLT_COMP);
-	LASSERTF(i < lov->u.composite.lo_entry_count,
-		 "entry %d entry_count %d", i, lov->u.composite.lo_entry_count);
-
-	return &lov->u.composite.lo_entries[i].lle_raid0;
-}
-
-static inline struct lov_stripe_md_entry *lov_lse(struct lov_object *lov, int i)
-{
-	LASSERT(lov->lo_lsm != NULL);
-	LASSERT(i < lov->lo_lsm->lsm_entry_count);
-
-	return lov->lo_lsm->lsm_entries[i];
 }
 
 /* lov_pack.c */
