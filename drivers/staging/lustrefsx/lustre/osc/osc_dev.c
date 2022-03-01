@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2015, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,19 +38,24 @@
 
 /* class_name2obd() */
 #include <obd_class.h>
+#include <lustre_osc.h>
 
-#include "osc_cl_internal.h"
+#include "osc_internal.h"
 
-/** \addtogroup osc 
- * @{ 
+/** \addtogroup osc
+ * @{
  */
 
 struct kmem_cache *osc_lock_kmem;
+EXPORT_SYMBOL(osc_lock_kmem);
 struct kmem_cache *osc_object_kmem;
+EXPORT_SYMBOL(osc_object_kmem);
+
 struct kmem_cache *osc_thread_kmem;
 struct kmem_cache *osc_session_kmem;
 struct kmem_cache *osc_extent_kmem;
 struct kmem_cache *osc_quota_kmem;
+struct kmem_cache *osc_obdo_kmem;
 
 struct lu_kmem_descr osc_caches[] = {
         {
@@ -84,20 +89,14 @@ struct lu_kmem_descr osc_caches[] = {
 		.ckd_size  = sizeof(struct osc_quota_info)
 	},
 	{
-                .ckd_cache = NULL
-        }
+		.ckd_cache = &osc_obdo_kmem,
+		.ckd_name  = "osc_obdo_kmem",
+		.ckd_size  = sizeof(struct obdo)
+	},
+	{
+		.ckd_cache = NULL
+	}
 };
-
-/*****************************************************************************
- *
- * Type conversions.
- *
- */
-
-static struct lu_device *osc2lu_dev(struct osc_device *osc)
-{
-        return &osc->od_cl.cd_lu_dev;
-}
 
 /*****************************************************************************
  *
@@ -130,6 +129,7 @@ struct lu_context_key osc_key = {
         .lct_init = osc_key_init,
         .lct_fini = osc_key_fini
 };
+EXPORT_SYMBOL(osc_key);
 
 static void *osc_session_init(const struct lu_context *ctx,
 			      struct lu_context_key *key)
@@ -154,6 +154,7 @@ struct lu_context_key osc_session_key = {
         .lct_init = osc_session_init,
         .lct_fini = osc_session_fini
 };
+EXPORT_SYMBOL(osc_session_key);
 
 /* type constructor/destructor: osc_type_{init,fini,start,stop}(). */
 LU_TYPE_INIT_FINI(osc, &osc_key, &osc_session_key);
@@ -171,27 +172,30 @@ static const struct lu_device_operations osc_lu_ops = {
         .ldo_recovery_complete = NULL
 };
 
-static int osc_device_init(const struct lu_env *env, struct lu_device *d,
-                           const char *name, struct lu_device *next)
+int osc_device_init(const struct lu_env *env, struct lu_device *d,
+		    const char *name, struct lu_device *next)
 {
         RETURN(0);
 }
+EXPORT_SYMBOL(osc_device_init);
 
-static struct lu_device *osc_device_fini(const struct lu_env *env,
-                                         struct lu_device *d)
+struct lu_device *osc_device_fini(const struct lu_env *env,
+				  struct lu_device *d)
 {
 	return NULL;
 }
+EXPORT_SYMBOL(osc_device_fini);
 
-static struct lu_device *osc_device_free(const struct lu_env *env,
-                                         struct lu_device *d)
+struct lu_device *osc_device_free(const struct lu_env *env,
+				  struct lu_device *d)
 {
-        struct osc_device *od = lu2osc_dev(d);
+	struct osc_device *od = lu2osc_dev(d);
 
-        cl_device_fini(lu2cl_dev(d));
-        OBD_FREE_PTR(od);
-        return NULL;
+	cl_device_fini(lu2cl_dev(d));
+	OBD_FREE_PTR(od);
+	return NULL;
 }
+EXPORT_SYMBOL(osc_device_free);
 
 static struct lu_device *osc_device_alloc(const struct lu_env *env,
                                           struct lu_device_type *t,
