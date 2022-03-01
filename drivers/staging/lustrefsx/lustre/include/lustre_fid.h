@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2015, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -149,9 +149,9 @@
  */
 
 #include <libcfs/libcfs.h>
-#include <uapi/linux/lustre_fid.h>
-#include <lustre/lustre_idl.h>
-#include <uapi/linux/lustre_ostid.h>
+#include <uapi/linux/lustre/lustre_fid.h>
+#include <uapi/linux/lustre/lustre_idl.h>
+#include <uapi/linux/lustre/lustre_ostid.h>
 
 struct lu_env;
 struct lu_site;
@@ -196,13 +196,6 @@ enum {
 	LUSTRE_SEQ_SUPER_WIDTH = ((1ULL << 30ULL) * LUSTRE_SEQ_META_WIDTH)
 };
 
-enum {
-        /** 2^6 FIDs for OI containers */
-        OSD_OI_FID_OID_BITS     = 6,
-        /** reserve enough FIDs in case we want more in the future */
-        OSD_OI_FID_OID_BITS_MAX = 10,
-};
-
 /** special OID for local objects */
 enum local_oid {
 	/** \see fld_mod_init */
@@ -225,6 +218,7 @@ enum local_oid {
 	OSD_LPF_OID		= 19UL,
 	REPLY_DATA_OID		= 21UL,
 	ACCT_PROJECT_OID	= 22UL,
+	INDEX_BACKUP_OID	= 4116UL,
 	OFD_LAST_GROUP_OID	= 4117UL,
 	LLOG_CATALOGS_OID	= 4118UL,
 	MGS_CONFIGS_OID		= 4119UL,
@@ -350,10 +344,13 @@ static inline void filter_fid_cpu_to_le(struct filter_fid *dst,
 {
 	fid_cpu_to_le(&dst->ff_parent, &src->ff_parent);
 
-	if (size < sizeof(struct filter_fid))
+	if (size < sizeof(struct filter_fid)) {
 		memset(&dst->ff_layout, 0, sizeof(dst->ff_layout));
-	else
+	} else {
 		ost_layout_cpu_to_le(&dst->ff_layout, &src->ff_layout);
+		dst->ff_layout_version = cpu_to_le32(src->ff_layout_version);
+		dst->ff_range = cpu_to_le32(src->ff_range);
+	}
 
 	/* XXX: Add more if filter_fid is enlarged in the future. */
 }
@@ -363,10 +360,13 @@ static inline void filter_fid_le_to_cpu(struct filter_fid *dst,
 {
 	fid_le_to_cpu(&dst->ff_parent, &src->ff_parent);
 
-	if (size < sizeof(struct filter_fid))
+	if (size < sizeof(struct filter_fid)) {
 		memset(&dst->ff_layout, 0, sizeof(dst->ff_layout));
-	else
+	} else {
 		ost_layout_le_to_cpu(&dst->ff_layout, &src->ff_layout);
+		dst->ff_layout_version = le32_to_cpu(src->ff_layout_version);
+		dst->ff_range = le32_to_cpu(src->ff_range);
+	}
 
 	/* XXX: Add more if filter_fid is enlarged in the future. */
 }
@@ -416,8 +416,8 @@ struct lu_client_seq {
          */
         struct lu_seq_range         lcs_space;
 
-        /* Seq related proc */
-	struct proc_dir_entry   *lcs_proc_dir;
+	/* Seq related debugfs */
+	struct dentry		*lcs_debugfs_entry;
 
         /* This holds last allocated fid in last obtained seq */
         struct lu_fid           lcs_fid;
@@ -427,7 +427,7 @@ struct lu_client_seq {
 
         /*
          * Service uuid, passed from MDT + seq name to form unique seq name to
-         * use it with procfs.
+	 * use it with debugfs.
          */
         char                    lcs_name[80];
 
@@ -463,8 +463,8 @@ struct lu_server_seq {
         /* /seq file object device */
         struct dt_object       *lss_obj;
 
-        /* Seq related proc */
-	struct proc_dir_entry	*lss_proc_dir;
+	/* Seq related debugfs */
+	struct dentry		*lss_debugfs_entry;
 
         /* LUSTRE_SEQ_SERVER or LUSTRE_SEQ_CONTROLLER */
         enum lu_mgr_type       lss_type;
@@ -477,7 +477,7 @@ struct lu_server_seq {
 
         /*
          * Service uuid, passed from MDT + seq name to form unique seq name to
-         * use it with procfs.
+	 * use it with debugfs.
          */
         char                    lss_name[80];
 
