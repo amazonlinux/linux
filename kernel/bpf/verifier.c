@@ -4927,24 +4927,33 @@ static int check_helper_mem_access(struct bpf_verifier_env *env, int regno,
 int check_mem_reg(struct bpf_verifier_env *env, struct bpf_reg_state *reg,
 		   u32 regno, u32 mem_size)
 {
+	bool may_be_null = type_may_be_null(reg->type);
+	struct bpf_reg_state saved_reg;
+	struct bpf_call_arg_meta meta;
+	int err;
+
 	if (register_is_null(reg))
 		return 0;
 
-	if (type_may_be_null(reg->type)) {
-		/* Assuming that the register contains a value check if the memory
-		 * access is safe. Temporarily save and restore the register's state as
-		 * the conversion shouldn't be visible to a caller.
-		 */
-		const struct bpf_reg_state saved_reg = *reg;
-		int rv;
-
+	memset(&meta, 0, sizeof(meta));
+	/* Assuming that the register contains a value check if the memory
+	 * access is safe. Temporarily save and restore the register's state as
+	 * the conversion shouldn't be visible to a caller.
+	 */
+	if (may_be_null) {
+		saved_reg = *reg;
 		mark_ptr_not_null_reg(reg);
-		rv = check_helper_mem_access(env, regno, mem_size, true, NULL);
-		*reg = saved_reg;
-		return rv;
 	}
 
-	return check_helper_mem_access(env, regno, mem_size, true, NULL);
+	err = check_helper_mem_access(env, regno, mem_size, true, &meta);
+	/* Check access for BPF_WRITE */
+	meta.raw_mode = true;
+	err = err ?: check_helper_mem_access(env, regno, mem_size, true, &meta);
+
+	if (may_be_null)
+		*reg = saved_reg;
+
+	return err;
 }
 
 /* Implementation details:
