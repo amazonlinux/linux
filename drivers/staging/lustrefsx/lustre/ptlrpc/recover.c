@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -228,22 +228,30 @@ void ptlrpc_wake_delayed(struct obd_import *imp)
 
 void ptlrpc_request_handle_notconn(struct ptlrpc_request *failed_req)
 {
-	struct obd_import *imp = failed_req->rq_import;
-	int conn = lustre_msg_get_conn_cnt(failed_req->rq_reqmsg);
-	ENTRY;
+        struct obd_import *imp = failed_req->rq_import;
+        ENTRY;
 
-	CDEBUG(D_HA, "import %s of %s@%s abruptly disconnected: reconnecting\n",
-		imp->imp_obd->obd_name, obd2cli_tgt(imp->imp_obd),
-		imp->imp_connection->c_remote_uuid.uuid);
+        CDEBUG(D_HA, "import %s of %s@%s abruptly disconnected: reconnecting\n",
+               imp->imp_obd->obd_name, obd2cli_tgt(imp->imp_obd),
+               imp->imp_connection->c_remote_uuid.uuid);
 
-	if (ptlrpc_set_import_discon(imp, conn, true)) {
-		/* to control recovery via lctl {disable|enable}_recovery */
-		if (imp->imp_deactive == 0)
-			ptlrpc_connect_import(imp);
-	}
+        if (ptlrpc_set_import_discon(imp,
+                              lustre_msg_get_conn_cnt(failed_req->rq_reqmsg))) {
+                if (!imp->imp_replayable) {
+                        CDEBUG(D_HA, "import %s@%s for %s not replayable, "
+                               "auto-deactivating\n",
+                               obd2cli_tgt(imp->imp_obd),
+                               imp->imp_connection->c_remote_uuid.uuid,
+                               imp->imp_obd->obd_name);
+                        ptlrpc_deactivate_import(imp);
+                }
+                /* to control recovery via lctl {disable|enable}_recovery */
+                if (imp->imp_deactive == 0)
+                        ptlrpc_connect_import(imp);
+        }
 
-	/* Wait for recovery to complete and resend. If evicted, then
-	   this request will be errored out later.*/
+        /* Wait for recovery to complete and resend. If evicted, then
+           this request will be errored out later.*/
 	spin_lock(&failed_req->rq_lock);
 	if (!failed_req->rq_no_resend)
 		failed_req->rq_resend = 1;
@@ -253,7 +261,7 @@ void ptlrpc_request_handle_notconn(struct ptlrpc_request *failed_req)
 }
 
 /**
- * Administratively active/deactive a client.
+ * Administratively active/deactive a client. 
  * This should only be called by the ioctl interface, currently
  *  - the lctl deactivate and activate commands
  *  - echo 0/1 >> /proc/osc/XXX/active
@@ -312,21 +320,21 @@ int ptlrpc_recover_import(struct obd_import *imp, char *new_uuid, int async)
 	    atomic_read(&imp->imp_inval_count))
 		rc = -EINVAL;
 	spin_unlock(&imp->imp_lock);
-	if (rc)
-		GOTO(out, rc);
+        if (rc)
+                GOTO(out, rc);
 
-	/* force import to be disconnected. */
-	ptlrpc_set_import_discon(imp, 0, false);
+        /* force import to be disconnected. */
+        ptlrpc_set_import_discon(imp, 0);
 
-	if (new_uuid) {
-		struct obd_uuid uuid;
+        if (new_uuid) {
+                struct obd_uuid uuid;
 
-		/* intruct import to use new uuid */
-		obd_str2uuid(&uuid, new_uuid);
-		rc = import_set_conn_priority(imp, &uuid);
-		if (rc)
-			GOTO(out, rc);
-	}
+                /* intruct import to use new uuid */
+                obd_str2uuid(&uuid, new_uuid);
+                rc = import_set_conn_priority(imp, &uuid);
+                if (rc)
+                        GOTO(out, rc);
+        }
 
         /* Check if reconnect is already in progress */
 	spin_lock(&imp->imp_lock);
@@ -346,9 +354,9 @@ int ptlrpc_recover_import(struct obd_import *imp, char *new_uuid, int async)
 
         if (!async) {
                 struct l_wait_info lwi;
-		long secs = cfs_time_seconds(obd_timeout);
+                int secs = cfs_time_seconds(obd_timeout);
 
-		CDEBUG(D_HA, "%s: recovery started, waiting %lu seconds\n",
+                CDEBUG(D_HA, "%s: recovery started, waiting %u seconds\n",
                        obd2cli_tgt(imp->imp_obd), secs);
 
                 lwi = LWI_TIMEOUT(secs, NULL, NULL);
@@ -369,8 +377,9 @@ int ptlrpc_import_in_recovery(struct obd_import *imp)
 	int in_recovery = 1;
 
 	spin_lock(&imp->imp_lock);
-	if (imp->imp_state <= LUSTRE_IMP_DISCON ||
-	    imp->imp_state >= LUSTRE_IMP_FULL ||
+	if (imp->imp_state == LUSTRE_IMP_FULL ||
+	    imp->imp_state == LUSTRE_IMP_CLOSED ||
+	    imp->imp_state == LUSTRE_IMP_DISCON ||
 	    imp->imp_obd->obd_no_recov)
 		in_recovery = 0;
 	spin_unlock(&imp->imp_lock);
