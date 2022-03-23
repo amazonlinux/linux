@@ -40,6 +40,7 @@
 #define __LST_CONRPC_H__
 
 #include <libcfs/libcfs.h>
+#include <lnet/lnet.h>
 #include <lnet/lib-types.h>
 #include "rpc.h"
 #include "selftest.h"
@@ -57,9 +58,9 @@ struct lstcon_tsb_hdr;
 struct lstcon_test;
 struct lstcon_node;
 
-struct lstcon_rpc {
+typedef struct lstcon_rpc {
 	struct list_head	 crp_link;	/* chain on rpc transaction */
-	struct srpc_client_rpc	*crp_rpc;	/* client rpc */
+	srpc_client_rpc_t	*crp_rpc;	/* client rpc */
 	struct lstcon_node	*crp_node;	/* destination node */
 	struct lstcon_rpc_trans *crp_trans;	/* conrpc transaction */
 
@@ -69,10 +70,10 @@ struct lstcon_rpc {
 	/** RPC is embedded in other structure and can't free it */
 	unsigned int		 crp_embedded:1;
         int                      crp_status;     /* console rpc errors */
-	s64			 crp_stamp_ns;	 /* replied time stamp */
-};
+        cfs_time_t               crp_stamp;      /* replied time stamp */
+} lstcon_rpc_t;
 
-struct lstcon_rpc_trans {
+typedef struct lstcon_rpc_trans {
 	/* link chain on owner list */
 	struct list_head	tas_olink;
 	/* link chain on global list */
@@ -86,7 +87,7 @@ struct lstcon_rpc_trans {
 	wait_queue_head_t	tas_waitq;	/* wait queue head */
 	atomic_t		tas_remaining;	/* # of un-scheduled rpcs */
 	struct list_head	tas_rpcs_list;	/* queued requests */
-};
+} lstcon_rpc_trans_t;
 
 #define LST_TRANS_PRIVATE       0x1000
 
@@ -104,37 +105,36 @@ struct lstcon_rpc_trans {
 
 #define LST_TRANS_STATQRY       0x21
 
-typedef int (*lstcon_rpc_cond_func_t)(int, struct lstcon_node *, void *);
-typedef int (*lstcon_rpc_readent_func_t)(int, struct srpc_msg *,
+typedef int (* lstcon_rpc_cond_func_t)(int, struct lstcon_node *, void *);
+typedef int (*lstcon_rpc_readent_func_t)(int, srpc_msg_t *,
 					 struct lstcon_rpc_ent __user *);
 
 int  lstcon_sesrpc_prep(struct lstcon_node *nd, int transop,
-			unsigned int version, struct lstcon_rpc **crpc);
+			unsigned version, lstcon_rpc_t **crpc);
 int  lstcon_dbgrpc_prep(struct lstcon_node *nd,
-			unsigned int version, struct lstcon_rpc **crpc);
+			unsigned version, lstcon_rpc_t **crpc);
 int  lstcon_batrpc_prep(struct lstcon_node *nd, int transop, unsigned version,
-			struct lstcon_tsb_hdr *tsb, struct lstcon_rpc **crpc);
+                        struct lstcon_tsb_hdr *tsb, lstcon_rpc_t **crpc);
 int  lstcon_testrpc_prep(struct lstcon_node *nd, int transop, unsigned version,
-			 struct lstcon_test *test, struct lstcon_rpc **crpc);
+                         struct lstcon_test *test, lstcon_rpc_t **crpc);
 int  lstcon_statrpc_prep(struct lstcon_node *nd, unsigned version,
-			 struct lstcon_rpc **crpc);
-void lstcon_rpc_put(struct lstcon_rpc *crpc);
+			 lstcon_rpc_t **crpc);
+void lstcon_rpc_put(lstcon_rpc_t *crpc);
 int  lstcon_rpc_trans_prep(struct list_head *translist,
-			   int transop, struct lstcon_rpc_trans **transpp);
+			   int transop, lstcon_rpc_trans_t **transpp);
 int  lstcon_rpc_trans_ndlist(struct list_head *ndlist,
 			     struct list_head *translist, int transop,
 			     void *arg, lstcon_rpc_cond_func_t condition,
-			     struct lstcon_rpc_trans **transpp);
-void lstcon_rpc_trans_stat(struct lstcon_rpc_trans *trans,
+			     lstcon_rpc_trans_t **transpp);
+void lstcon_rpc_trans_stat(lstcon_rpc_trans_t *trans,
 			   struct lstcon_trans_stat *stat);
-int  lstcon_rpc_trans_interpreter(struct lstcon_rpc_trans *trans,
+int  lstcon_rpc_trans_interpreter(lstcon_rpc_trans_t *trans,
 				  struct list_head __user *head_up,
 				  lstcon_rpc_readent_func_t readent);
-void lstcon_rpc_trans_abort(struct lstcon_rpc_trans *trans, int error);
-void lstcon_rpc_trans_destroy(struct lstcon_rpc_trans *trans);
-void lstcon_rpc_trans_addreq(struct lstcon_rpc_trans *trans,
-			     struct lstcon_rpc *req);
-int  lstcon_rpc_trans_postwait(struct lstcon_rpc_trans *trans, int timeout);
+void lstcon_rpc_trans_abort(lstcon_rpc_trans_t *trans, int error);
+void lstcon_rpc_trans_destroy(lstcon_rpc_trans_t *trans);
+void lstcon_rpc_trans_addreq(lstcon_rpc_trans_t *trans, lstcon_rpc_t *req);
+int  lstcon_rpc_trans_postwait(lstcon_rpc_trans_t *trans, int timeout);
 int  lstcon_rpc_pinger_start(void);
 void lstcon_rpc_pinger_stop(void);
 void lstcon_rpc_cleanup_wait(void);
