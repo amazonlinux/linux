@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -35,45 +35,93 @@
 
 #define OAP_MAGIC 8675309
 
-#include <libcfs/linux/linux-mem.h>
-#include <lustre_osc.h>
-
 extern atomic_t osc_pool_req_count;
 extern unsigned int osc_reqpool_maxreqcount;
 extern struct ptlrpc_request_pool *osc_rq_pool;
 
+struct lu_env;
+
+enum async_flags {
+        ASYNC_READY = 0x1, /* ap_make_ready will not be called before this
+                              page is added to an rpc */
+        ASYNC_URGENT = 0x2, /* page must be put into an RPC before return */
+        ASYNC_COUNT_STABLE = 0x4, /* ap_refresh_count will not be called
+                                     to give the caller a chance to update
+                                     or cancel the size of the io */
+        ASYNC_HP = 0x10,
+};
+
+struct osc_async_page {
+        int                     oap_magic;
+        unsigned short          oap_cmd;
+        unsigned short          oap_interrupted:1;
+
+	struct list_head	oap_pending_item;
+	struct list_head	oap_rpc_item;
+
+	loff_t			oap_obj_off;
+        unsigned                oap_page_off;
+        enum async_flags        oap_async_flags;
+
+        struct brw_page         oap_brw_page;
+
+        struct ptlrpc_request   *oap_request;
+        struct client_obd       *oap_cli;
+	struct osc_object       *oap_obj;
+
+	spinlock_t		 oap_lock;
+};
+
+#define oap_page        oap_brw_page.pg
+#define oap_count       oap_brw_page.count
+#define oap_brw_flags   oap_brw_page.flag
+
+static inline struct osc_async_page *brw_page2oap(struct brw_page *pga)
+{
+	return (struct osc_async_page *)container_of(pga, struct osc_async_page,
+						     oap_brw_page);
+}
+
+struct osc_cache_waiter {
+	struct list_head	ocw_entry;
+	wait_queue_head_t	ocw_waitq;
+	struct osc_async_page  *ocw_oap;
+	int                     ocw_grant;
+	int                     ocw_rc;
+};
+
+void osc_wake_cache_waiters(struct client_obd *cli);
 int osc_shrink_grant_to_target(struct client_obd *cli, __u64 target_bytes);
 void osc_update_next_shrink(struct client_obd *cli);
-int lru_queue_work(const struct lu_env *env, void *data);
-int osc_extent_finish(const struct lu_env *env, struct osc_extent *ext,
-		      int sent, int rc);
-int osc_extent_release(const struct lu_env *env, struct osc_extent *ext);
-int osc_lock_discard_pages(const struct lu_env *env, struct osc_object *osc,
-			   pgoff_t start, pgoff_t end, bool discard);
+
+/*
+ * cl integration.
+ */
+#include <cl_object.h>
 
 extern struct ptlrpc_request_set *PTLRPCD_SET;
 
-void osc_lock_lvb_update(const struct lu_env *env,
-			 struct osc_object *osc,
-			 struct ldlm_lock *dlmlock,
-			 struct ost_lvb *lvb);
+typedef int (*osc_enqueue_upcall_f)(void *cookie, struct lustre_handle *lockh,
+				    int rc);
 
 int osc_enqueue_base(struct obd_export *exp, struct ldlm_res_id *res_id,
 		     __u64 *flags, union ldlm_policy_data *policy,
-		     struct ost_lvb *lvb, osc_enqueue_upcall_f upcall,
+		     struct ost_lvb *lvb, int kms_valid,
+		     osc_enqueue_upcall_f upcall,
 		     void *cookie, struct ldlm_enqueue_info *einfo,
-		     struct ptlrpc_request_set *rqset, int async,
-		     bool speculative);
+		     struct ptlrpc_request_set *rqset, int async, int agl);
 
-int osc_match_base(const struct lu_env *env, struct obd_export *exp,
-		   struct ldlm_res_id *res_id, enum ldlm_type type,
-		   union ldlm_policy_data *policy, enum ldlm_mode mode,
-		   __u64 *flags, struct osc_object *obj,
+int osc_match_base(struct obd_export *exp, struct ldlm_res_id *res_id,
+		   enum ldlm_type type, union ldlm_policy_data *policy,
+		   enum ldlm_mode mode, __u64 *flags, void *data,
 		   struct lustre_handle *lockh, int unref);
 
 int osc_setattr_async(struct obd_export *exp, struct obdo *oa,
 		      obd_enqueue_update_f upcall, void *cookie,
 		      struct ptlrpc_request_set *rqset);
+int osc_punch_base(struct obd_export *exp, struct obdo *oa,
+                   obd_enqueue_update_f upcall, void *cookie,
+                   struct ptlrpc_request_set *rqset);
 int osc_sync_base(struct osc_object *obj, struct obdo *oa,
 		  obd_enqueue_update_f upcall, void *cookie,
 		  struct ptlrpc_request_set *rqset);
@@ -84,6 +132,8 @@ int osc_ladvise_base(struct obd_export *exp, struct obdo *oa,
 int osc_process_config_base(struct obd_device *obd, struct lustre_cfg *cfg);
 int osc_build_rpc(const struct lu_env *env, struct client_obd *cli,
 		  struct list_head *ext_list, int cmd);
+long osc_lru_shrink(const struct lu_env *env, struct client_obd *cli,
+		   long target, bool force);
 unsigned long osc_lru_reserve(struct client_obd *cli, unsigned long npages);
 void osc_lru_unreserve(struct client_obd *cli, unsigned long npages);
 
@@ -94,35 +144,14 @@ unsigned long osc_ldlm_weigh_ast(struct ldlm_lock *dlmlock);
 int osc_cleanup(struct obd_device *obd);
 int osc_setup(struct obd_device *obd, struct lustre_cfg *lcfg);
 
-int osc_tunables_init(struct obd_device *obd);
+#ifdef CONFIG_PROC_FS
+extern struct lprocfs_vars lprocfs_osc_obd_vars[];
+int lproc_osc_attach_seqstat(struct obd_device *dev);
+#else
+static inline int lproc_osc_attach_seqstat(struct obd_device *dev) {return 0;}
+#endif
 
 extern struct lu_device_type osc_device_type;
-
-static inline struct cl_io *osc_env_thread_io(const struct lu_env *env)
-{
-	struct cl_io *io = &osc_env_info(env)->oti_io;
-
-	memset(io, 0, sizeof(*io));
-	return io;
-}
-
-static inline int osc_is_object(const struct lu_object *obj)
-{
-	return obj->lo_dev->ld_type == &osc_device_type;
-}
-
-static inline struct osc_lock *osc_lock_at(const struct cl_lock *lock)
-{
-	return cl2osc_lock(cl_lock_at(lock, &osc_device_type));
-}
-
-int osc_lock_init(const struct lu_env *env, struct cl_object *obj,
-		  struct cl_lock *lock, const struct cl_io *io);
-int osc_io_init(const struct lu_env *env, struct cl_object *obj,
-		struct cl_io *io);
-struct lu_object *osc_object_alloc(const struct lu_env *env,
-				   const struct lu_object_header *hdr,
-				   struct lu_device *dev);
 
 static inline int osc_recoverable_error(int rc)
 {
@@ -145,13 +174,41 @@ static inline char *cli_name(struct client_obd *cli)
         ({ type __x = (x); type __y = (y); __x < __y ? __x: __y; })
 #endif
 
+struct osc_device {
+        struct cl_device    od_cl;
+        struct obd_export  *od_exp;
+
+        /* Write stats is actually protected by client_obd's lock. */
+        struct osc_stats {
+                uint64_t     os_lockless_writes;          /* by bytes */
+                uint64_t     os_lockless_reads;           /* by bytes */
+                uint64_t     os_lockless_truncates;       /* by times */
+        } od_stats;
+
+        /* configuration item(s) */
+        int                 od_contention_time;
+        int                 od_lockless_truncate;
+};
+
+static inline struct osc_device *obd2osc_dev(const struct obd_device *d)
+{
+        return container_of0(d->obd_lu_dev, struct osc_device, od_cl.cd_lu_dev);
+}
+
+extern struct kmem_cache *osc_quota_kmem;
+struct osc_quota_info {
+	/** linkage for quota hash table */
+	struct hlist_node oqi_hash;
+	u32		  oqi_id;
+};
+
 struct osc_async_args {
 	struct obd_info	*aa_oi;
 };
 
 int osc_quota_setup(struct obd_device *obd);
 int osc_quota_cleanup(struct obd_device *obd);
-int osc_quota_setdq(struct client_obd *cli, __u64 xid, const unsigned int qid[],
+int osc_quota_setdq(struct client_obd *cli, const unsigned int qid[],
 		    u64 valid, u32 flags);
 int osc_quota_chkdq(struct client_obd *cli, const unsigned int qid[]);
 int osc_quotactl(struct obd_device *unused, struct obd_export *exp,
@@ -159,14 +216,24 @@ int osc_quotactl(struct obd_device *unused, struct obd_export *exp,
 void osc_inc_unstable_pages(struct ptlrpc_request *req);
 void osc_dec_unstable_pages(struct ptlrpc_request *req);
 bool osc_over_unstable_soft_limit(struct client_obd *cli);
-void osc_page_touch_at(const struct lu_env *env, struct cl_object *obj,
-		       pgoff_t idx, size_t to);
-
-struct ldlm_lock *osc_obj_dlmlock_at_pgoff(const struct lu_env *env,
-					   struct osc_object *obj,
-					   pgoff_t index,
-					   enum osc_dap_flags flags);
-
+/**
+ * Bit flags for osc_dlm_lock_at_pageoff().
+ */
+enum osc_dap_flags {
+	/**
+	 * Just check if the desired lock exists, it won't hold reference
+	 * count on lock.
+	 */
+	OSC_DAP_FL_TEST_LOCK = 1 << 0,
+	/**
+	 * Return the lock even if it is being canceled.
+	 */
+	OSC_DAP_FL_CANCELING = 1 << 1
+};
+struct ldlm_lock *osc_dlmlock_at_pgoff(const struct lu_env *env,
+				       struct osc_object *obj, pgoff_t index,
+				       enum osc_dap_flags flags);
+void osc_pack_req_body(struct ptlrpc_request *req, struct obdo *oa);
 int osc_object_invalidate(const struct lu_env *env, struct osc_object *osc);
 
 /** osc shrink list to link all osc client obd */
@@ -178,14 +245,4 @@ extern unsigned long osc_cache_shrink_count(struct shrinker *sk,
 extern unsigned long osc_cache_shrink_scan(struct shrinker *sk,
 					   struct shrink_control *sc);
 
-static inline void osc_set_io_portal(struct ptlrpc_request *req)
-{
-	struct obd_import *imp = req->rq_import;
-
-	/* Distinguish OSC from MDC here to use OST or MDS portal */
-	if (OCD_HAS_FLAG(&imp->imp_connect_data, IBITS))
-		req->rq_request_portal = MDS_IO_PORTAL;
-	else
-		req->rq_request_portal = OST_IO_PORTAL;
-}
 #endif /* OSC_INTERNAL_H */
