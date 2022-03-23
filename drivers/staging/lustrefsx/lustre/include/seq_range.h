@@ -34,7 +34,7 @@
 #ifndef _SEQ_RANGE_H_
 #define _SEQ_RANGE_H_
 
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 
 /**
  * computes the sequence range type \a range
