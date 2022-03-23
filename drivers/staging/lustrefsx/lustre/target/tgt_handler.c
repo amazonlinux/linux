@@ -21,7 +21,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2013, 2017, Intel Corporation.
+ * Copyright (c) 2013, 2016, Intel Corporation.
  */
 /*
  * lustre/target/tgt_handler.c
@@ -343,13 +343,10 @@ static int tgt_request_preprocess(struct tgt_session_info *tsi,
 
 		dlm_req = req_capsule_client_get(pill, &RMF_DLM_REQ);
 		if (dlm_req != NULL) {
-			union ldlm_wire_policy_data *policy =
-					&dlm_req->lock_desc.l_policy_data;
-
 			if (unlikely(dlm_req->lock_desc.l_resource.lr_type ==
 				     LDLM_IBITS &&
-				     (policy->l_inodebits.bits |
-				      policy->l_inodebits.try_bits) == 0)) {
+				     dlm_req->lock_desc.l_policy_data.\
+				     l_inodebits.bits == 0)) {
 				/*
 				 * Lock without inodebits makes no sense and
 				 * will oops later in ldlm. If client miss to
@@ -433,20 +430,6 @@ static int tgt_handle_request0(struct tgt_session_info *tsi,
 			req_capsule_set_size(tsi->tsi_pill,
 					     &RMF_ACL, RCL_SERVER,
 					     LUSTRE_POSIX_ACL_MAX_SIZE_OLD);
-
-		if (req_capsule_has_field(tsi->tsi_pill, &RMF_SHORT_IO,
-					  RCL_SERVER)) {
-			struct niobuf_remote *remote_nb =
-				req_capsule_client_get(tsi->tsi_pill,
-						       &RMF_NIOBUF_REMOTE);
-			struct ost_body *body = tsi->tsi_ost_body;
-
-			req_capsule_set_size(tsi->tsi_pill, &RMF_SHORT_IO,
-					 RCL_SERVER,
-					 (body->oa.o_valid & OBD_MD_FLFLAGS &&
-					  body->oa.o_flags & OBD_FL_SHORT_IO) ?
-					 remote_nb[0].rnb_len : 0);
-		}
 
 		rc = req_capsule_server_pack(tsi->tsi_pill);
 	}
@@ -613,14 +596,8 @@ static struct tgt_handler *tgt_handler_find_check(struct ptlrpc_request *req)
 
 	/* opcode was not found in slice */
 	if (unlikely(s->tos_hs == NULL)) {
-		static bool printed;
-
-		/* don't print error messages for known unhandled RPCs */
-		if (opc != OST_FALLOCATE && opc != OST_SEEK && !printed) {
-			CERROR("%s: no handler for opcode 0x%x from %s\n",
-			       tgt_name(tgt), opc, libcfs_id2str(req->rq_peer));
-			printed = true;
-		}
+		CERROR("%s: no handlers for opcode 0x%x\n", tgt_name(tgt),
+		       opc);
 		RETURN(ERR_PTR(-ENOTSUPP));
 	}
 
@@ -668,19 +645,6 @@ static int process_req_last_xid(struct ptlrpc_request *req)
 			RETURN(-EPROTO);
 	}
 
-	/* The "last_xid" is the minimum xid among unreplied requests,
-	 * if the request is from the previous connection, its xid can
-	 * still be larger than "exp_last_xid", then the above check of
-	 * xid is not enough to determine whether the request is delayed.
-	 *
-	 * For example, if some replay request was delayed and caused
-	 * timeout at client and the replay is restarted, the delayed
-	 * replay request will have the larger xid than "exp_last_xid"
-	 */
-	if (req->rq_export->exp_conn_cnt >
-	    lustre_msg_get_conn_cnt(req->rq_reqmsg))
-		RETURN(-ESTALE);
-
 	/* try to release in-memory reply data */
 	if (tgt_is_multimodrpcs_client(req->rq_export)) {
 		tgt_handle_received_xid(req->rq_export,
@@ -707,18 +671,8 @@ int tgt_request_handle(struct ptlrpc_request *req)
 	bool			 is_connect = false;
 	ENTRY;
 
-	if (unlikely(OBD_FAIL_CHECK(OBD_FAIL_TGT_RECOVERY_REQ_RACE))) {
-		if (cfs_fail_val == 0 &&
-		    lustre_msg_get_opc(msg) != OBD_PING &&
-		    lustre_msg_get_flags(msg) & MSG_REQ_REPLAY_DONE) {
-			struct l_wait_info lwi =  { 0 };
-
-			cfs_fail_val = 1;
-			cfs_race_state = 0;
-			l_wait_event(cfs_race_waitq, (cfs_race_state == 1),
-				     &lwi);
-		}
-	}
+	/* Refill the context, to make sure all thread keys are allocated */
+	lu_env_refill(req->rq_svc_thread->t_env);
 
 	req_capsule_init(&req->rq_pill, req, RCL_SERVER);
 	tsi->tsi_pill = &req->rq_pill;
@@ -882,9 +836,9 @@ EXPORT_SYMBOL(tgt_counter_incr);
 
 int tgt_connect_check_sptlrpc(struct ptlrpc_request *req, struct obd_export *exp)
 {
-	struct lu_target *tgt = class_exp2tgt(exp);
-	struct sptlrpc_flavor flvr;
-	int rc = 0;
+	struct lu_target	*tgt = class_exp2tgt(exp);
+	struct sptlrpc_flavor	 flvr;
+	int			 rc = 0;
 
 	LASSERT(tgt);
 	LASSERT(tgt->lut_obd);
@@ -909,13 +863,13 @@ int tgt_connect_check_sptlrpc(struct ptlrpc_request *req, struct obd_export *exp
 		exp->exp_sp_peer = req->rq_sp_from;
 		exp->exp_flvr = flvr;
 
-		/* when on mgs, if no restriction is set, or if the client
-		 * NID is on the local node, allow any flavor
-		 */
+		/* when on mgs, if no restriction is set, or if client
+		 * is loopback, allow any flavor */
 		if ((strcmp(exp->exp_obd->obd_type->typ_name,
 			   LUSTRE_MGS_NAME) == 0) &&
 		     (exp->exp_flvr.sf_rpc == SPTLRPC_FLVR_NULL ||
-		      LNetIsPeerLocal(exp->exp_connection->c_peer.nid)))
+		      LNET_NETTYP(LNET_NIDNET(exp->exp_connection->c_peer.nid))
+		      == LOLND))
 			exp->exp_flvr.sf_rpc = SPTLRPC_FLVR_ANY;
 
 		if (exp->exp_flvr.sf_rpc != SPTLRPC_FLVR_ANY &&
@@ -995,18 +949,8 @@ int tgt_connect(struct tgt_session_info *tsi)
 	reply = req_capsule_server_get(tsi->tsi_pill, &RMF_CONNECT_DATA);
 	spin_lock(&tsi->tsi_exp->exp_lock);
 	*exp_connect_flags_ptr(tsi->tsi_exp) = reply->ocd_connect_flags;
-	if (reply->ocd_connect_flags & OBD_CONNECT_FLAGS2)
-		*exp_connect_flags2_ptr(tsi->tsi_exp) =
-			reply->ocd_connect_flags2;
 	tsi->tsi_exp->exp_connect_data.ocd_brw_size = reply->ocd_brw_size;
 	spin_unlock(&tsi->tsi_exp->exp_lock);
-
-	if (strcmp(tsi->tsi_exp->exp_obd->obd_type->typ_name,
-		   LUSTRE_MDT_NAME) == 0) {
-		rc = req_check_sepol(tsi->tsi_pill);
-		if (rc)
-			GOTO(out, rc);
-	}
 
 	RETURN(0);
 out:
@@ -1020,8 +964,6 @@ int tgt_disconnect(struct tgt_session_info *tsi)
 	int rc;
 
 	ENTRY;
-
-	OBD_FAIL_TIMEOUT(OBD_FAIL_OST_DISCONNECT_DELAY, cfs_fail_val);
 
 	rc = target_handle_disconnect(tgt_ses_req(tsi));
 	if (rc)
@@ -1040,16 +982,7 @@ int tgt_obd_ping(struct tgt_session_info *tsi)
 
 	ENTRY;
 
-	/* The target-specific part of OBD_PING request handling.
-	 * It controls Filter Modification Data (FMD) expiration each time
-	 * PING is received.
-	 *
-	 * Valid only for replayable targets, e.g. MDT and OFD
-	 */
-	if (tsi->tsi_exp->exp_obd->obd_replayable)
-		tgt_fmd_expire(tsi->tsi_exp);
-
-	rc = req_capsule_server_pack(tsi->tsi_pill);
+	rc = target_handle_ping(tgt_ses_req(tsi));
 	if (rc)
 		RETURN(err_serious(rc));
 
@@ -1219,6 +1152,7 @@ out:
 
 struct tgt_handler tgt_obd_handlers[] = {
 TGT_OBD_HDL    (0,	OBD_PING,		tgt_obd_ping),
+TGT_OBD_HDL_VAR(0,	OBD_LOG_CANCEL,		tgt_obd_log_cancel),
 TGT_OBD_HDL    (0,	OBD_IDX_READ,		tgt_obd_idx_read)
 };
 EXPORT_SYMBOL(tgt_obd_handlers);
@@ -1282,8 +1216,8 @@ static int tgt_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 
 	if (flag == LDLM_CB_CANCELING &&
 	    (lock->l_granted_mode & (LCK_EX | LCK_PW | LCK_GROUP)) &&
-	    (tgt->lut_sync_lock_cancel == SYNC_LOCK_CANCEL_ALWAYS ||
-	     (tgt->lut_sync_lock_cancel == SYNC_LOCK_CANCEL_BLOCKING &&
+	    (tgt->lut_sync_lock_cancel == ALWAYS_SYNC_ON_CANCEL ||
+	     (tgt->lut_sync_lock_cancel == BLOCKING_SYNC_ON_CANCEL &&
 	      ldlm_is_cbpending(lock))) &&
 	    ((exp_connect_flags(lock->l_export) & OBD_CONNECT_MDS_MDS) ||
 	     lock->l_resource->lr_type == LDLM_EXTENT)) {
@@ -1292,7 +1226,7 @@ static int tgt_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
 
 		rc = lu_env_init(&env, LCT_DT_THREAD);
 		if (unlikely(rc != 0))
-			GOTO(err, rc);
+			RETURN(rc);
 
 		ost_fid_from_resid(&fid, &lock->l_resource->lr_name,
 				   tgt->lut_lsd.lsd_osd_index);
@@ -1323,7 +1257,7 @@ err_put:
 err_env:
 		lu_env_fini(&env);
 	}
-err:
+
 	rc = ldlm_server_blocking_ast(lock, desc, data, flag);
 	RETURN(rc);
 }
@@ -1395,7 +1329,7 @@ int tgt_cp_callback(struct tgt_session_info *tsi)
 /* generic LDLM target handler */
 struct tgt_handler tgt_dlm_handlers[] = {
 TGT_DLM_HDL    (HABEO_CLAVIS,	LDLM_ENQUEUE,		tgt_enqueue),
-TGT_DLM_HDL    (HABEO_CLAVIS,	LDLM_CONVERT,		tgt_convert),
+TGT_DLM_HDL_VAR(HABEO_CLAVIS,	LDLM_CONVERT,		tgt_convert),
 TGT_DLM_HDL_VAR(0,		LDLM_BL_CALLBACK,	tgt_bl_callback),
 TGT_DLM_HDL_VAR(0,		LDLM_CP_CALLBACK,	tgt_cp_callback)
 };
@@ -1415,6 +1349,30 @@ int tgt_llog_open(struct tgt_session_info *tsi)
 	RETURN(rc);
 }
 EXPORT_SYMBOL(tgt_llog_open);
+
+int tgt_llog_close(struct tgt_session_info *tsi)
+{
+	int rc;
+
+	ENTRY;
+
+	rc = llog_origin_handle_close(tgt_ses_req(tsi));
+
+	RETURN(rc);
+}
+EXPORT_SYMBOL(tgt_llog_close);
+
+
+int tgt_llog_destroy(struct tgt_session_info *tsi)
+{
+	int rc;
+
+	ENTRY;
+
+	rc = llog_origin_handle_destroy(tgt_ses_req(tsi));
+
+	RETURN(rc);
+}
 
 int tgt_llog_read_header(struct tgt_session_info *tsi)
 {
@@ -1458,6 +1416,8 @@ TGT_LLOG_HDL    (0,	LLOG_ORIGIN_HANDLE_CREATE,	tgt_llog_open),
 TGT_LLOG_HDL    (0,	LLOG_ORIGIN_HANDLE_NEXT_BLOCK,	tgt_llog_next_block),
 TGT_LLOG_HDL    (0,	LLOG_ORIGIN_HANDLE_READ_HEADER,	tgt_llog_read_header),
 TGT_LLOG_HDL    (0,	LLOG_ORIGIN_HANDLE_PREV_BLOCK,	tgt_llog_prev_block),
+TGT_LLOG_HDL    (0,	LLOG_ORIGIN_HANDLE_DESTROY,	tgt_llog_destroy),
+TGT_LLOG_HDL_VAR(0,	LLOG_ORIGIN_HANDLE_CLOSE,	tgt_llog_close),
 };
 EXPORT_SYMBOL(tgt_llog_handlers);
 
@@ -1607,48 +1567,13 @@ void tgt_io_thread_done(struct ptlrpc_thread *thread)
 	EXIT;
 }
 EXPORT_SYMBOL(tgt_io_thread_done);
-
-/**
- * Helper function for getting Data-on-MDT file server DLM lock
- * if asked by client.
- */
-int tgt_mdt_data_lock(struct ldlm_namespace *ns, struct ldlm_res_id *res_id,
-		      struct lustre_handle *lh, int mode, __u64 *flags)
-{
-	union ldlm_policy_data policy = {
-		.l_inodebits.bits = MDS_INODELOCK_DOM,
-	};
-	int rc;
-
-	ENTRY;
-
-	LASSERT(lh != NULL);
-	LASSERT(ns != NULL);
-	LASSERT(!lustre_handle_is_used(lh));
-
-	rc = ldlm_cli_enqueue_local(NULL, ns, res_id, LDLM_IBITS, &policy, mode,
-				    flags, ldlm_blocking_ast,
-				    ldlm_completion_ast, ldlm_glimpse_ast,
-				    NULL, 0, LVB_T_NONE, NULL, lh);
-
-	RETURN(rc == ELDLM_OK ? 0 : -EIO);
-}
-EXPORT_SYMBOL(tgt_mdt_data_lock);
-
-void tgt_mdt_data_unlock(struct lustre_handle *lh, enum ldlm_mode mode)
-{
-	LASSERT(lustre_handle_is_used(lh));
-	ldlm_lock_decref(lh, mode);
-}
-EXPORT_SYMBOL(tgt_mdt_data_unlock);
-
 /**
  * Helper function for getting server side [start, start+count] DLM lock
  * if asked by client.
  */
-int tgt_extent_lock(const struct lu_env *env, struct ldlm_namespace *ns,
-		    struct ldlm_res_id *res_id, __u64 start, __u64 end,
-		    struct lustre_handle *lh, int mode, __u64 *flags)
+int tgt_extent_lock(struct ldlm_namespace *ns, struct ldlm_res_id *res_id,
+		    __u64 start, __u64 end, struct lustre_handle *lh,
+		    int mode, __u64 *flags)
 {
 	union ldlm_policy_data policy;
 	int rc;
@@ -1671,8 +1596,8 @@ int tgt_extent_lock(const struct lu_env *env, struct ldlm_namespace *ns,
 	else
 		policy.l_extent.end = end | ~PAGE_MASK;
 
-	rc = ldlm_cli_enqueue_local(env, ns, res_id, LDLM_EXTENT, &policy,
-				    mode, flags, ldlm_blocking_ast,
+	rc = ldlm_cli_enqueue_local(ns, res_id, LDLM_EXTENT, &policy, mode,
+				    flags, ldlm_blocking_ast,
 				    ldlm_completion_ast, ldlm_glimpse_ast,
 				    NULL, 0, LVB_T_NONE, NULL, lh);
 	RETURN(rc == ELDLM_OK ? 0 : -EIO);
@@ -1686,16 +1611,13 @@ void tgt_extent_unlock(struct lustre_handle *lh, enum ldlm_mode mode)
 }
 EXPORT_SYMBOL(tgt_extent_unlock);
 
-static int tgt_brw_lock(const struct lu_env *env, struct obd_export *exp,
-			struct ldlm_res_id *res_id, struct obd_ioobj *obj,
-			struct niobuf_remote *nb, struct lustre_handle *lh,
-			enum ldlm_mode mode)
+int tgt_brw_lock(struct ldlm_namespace *ns, struct ldlm_res_id *res_id,
+		 struct obd_ioobj *obj, struct niobuf_remote *nb,
+		 struct lustre_handle *lh, enum ldlm_mode mode)
 {
-	struct ldlm_namespace	*ns = exp->exp_obd->obd_namespace;
 	__u64			 flags = 0;
 	int			 nrbufs = obj->ioo_bufcnt;
 	int			 i;
-	int			 rc;
 
 	ENTRY;
 
@@ -1712,19 +1634,14 @@ static int tgt_brw_lock(const struct lu_env *env, struct obd_export *exp,
 		if (!(nb[i].rnb_flags & OBD_BRW_SRVLOCK))
 			RETURN(-EFAULT);
 
-	/* MDT IO for data-on-mdt */
-	if (exp->exp_connect_data.ocd_connect_flags & OBD_CONNECT_IBITS)
-		rc = tgt_mdt_data_lock(ns, res_id, lh, mode, &flags);
-	else
-		rc = tgt_extent_lock(env, ns, res_id, nb[0].rnb_offset,
-				     nb[nrbufs - 1].rnb_offset +
-				     nb[nrbufs - 1].rnb_len - 1,
-				     lh, mode, &flags);
-	RETURN(rc);
+	RETURN(tgt_extent_lock(ns, res_id, nb[0].rnb_offset,
+			       nb[nrbufs - 1].rnb_offset +
+			       nb[nrbufs - 1].rnb_len - 1,
+			       lh, mode, &flags));
 }
 
-static void tgt_brw_unlock(struct obd_ioobj *obj, struct niobuf_remote *niob,
-			   struct lustre_handle *lh, enum ldlm_mode mode)
+void tgt_brw_unlock(struct obd_ioobj *obj, struct niobuf_remote *niob,
+		    struct lustre_handle *lh, enum ldlm_mode mode)
 {
 	ENTRY;
 
@@ -1737,82 +1654,86 @@ static void tgt_brw_unlock(struct obd_ioobj *obj, struct niobuf_remote *niob,
 		tgt_extent_unlock(lh, mode);
 	EXIT;
 }
-static int tgt_checksum_niobuf(struct lu_target *tgt,
-				 struct niobuf_local *local_nb, int npages,
-				 int opc, enum cksum_types cksum_type,
-				 __u32 *cksum)
+
+static __u32 tgt_checksum_bulk(struct lu_target *tgt,
+			       struct ptlrpc_bulk_desc *desc, int opc,
+			       cksum_type_t cksum_type)
 {
-	struct ahash_request	       *req;
+	struct cfs_crypto_hash_desc	*hdesc;
 	unsigned int			bufsize;
 	int				i, err;
 	unsigned char			cfs_alg = cksum_obd2cfs(cksum_type);
+	__u32				cksum;
 
-	req = cfs_crypto_hash_init(cfs_alg, NULL, 0);
-	if (IS_ERR(req)) {
+	LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
+
+	hdesc = cfs_crypto_hash_init(cfs_alg, NULL, 0);
+	if (IS_ERR(hdesc)) {
 		CERROR("%s: unable to initialize checksum hash %s\n",
 		       tgt_name(tgt), cfs_crypto_hash_name(cfs_alg));
-		return PTR_ERR(req);
+		return PTR_ERR(hdesc);
 	}
 
 	CDEBUG(D_INFO, "Checksum for algo %s\n", cfs_crypto_hash_name(cfs_alg));
-	for (i = 0; i < npages; i++) {
+	for (i = 0; i < desc->bd_iov_count; i++) {
 		/* corrupt the data before we compute the checksum, to
 		 * simulate a client->OST data error */
 		if (i == 0 && opc == OST_WRITE &&
 		    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_RECEIVE)) {
-			int off = local_nb[i].lnb_page_offset & ~PAGE_MASK;
-			int len = local_nb[i].lnb_len;
+			int off = BD_GET_KIOV(desc, i).kiov_offset &
+				~PAGE_MASK;
+			int len = BD_GET_KIOV(desc, i).kiov_len;
 			struct page *np = tgt_page_to_corrupt;
+			char *ptr = kmap(BD_GET_KIOV(desc, i).kiov_page) + off;
 
 			if (np) {
-				char *ptr = ll_kmap_atomic(local_nb[i].lnb_page,
-							KM_USER0);
-				char *ptr2 = page_address(np);
+				char *ptr2 = kmap(np) + off;
 
-				memcpy(ptr2 + off, ptr + off, len);
-				memcpy(ptr2 + off, "bad3", min(4, len));
-				ll_kunmap_atomic(ptr, KM_USER0);
+				memcpy(ptr2, ptr, len);
+				memcpy(ptr2, "bad3", min(4, len));
+				kunmap(np);
 
 				/* LU-8376 to preserve original index for
 				 * display in dump_all_bulk_pages() */
-				np->index = i;
+				np->index = BD_GET_KIOV(desc,
+							i).kiov_page->index;
 
-				cfs_crypto_hash_update_page(req, np, off,
-							    len);
-				continue;
+				BD_GET_KIOV(desc, i).kiov_page = np;
 			} else {
 				CERROR("%s: can't alloc page for corruption\n",
 				       tgt_name(tgt));
 			}
 		}
-		cfs_crypto_hash_update_page(req, local_nb[i].lnb_page,
-				  local_nb[i].lnb_page_offset & ~PAGE_MASK,
-				  local_nb[i].lnb_len);
+		cfs_crypto_hash_update_page(hdesc,
+				  BD_GET_KIOV(desc, i).kiov_page,
+				  BD_GET_KIOV(desc, i).kiov_offset &
+					~PAGE_MASK,
+				  BD_GET_KIOV(desc, i).kiov_len);
 
 		 /* corrupt the data after we compute the checksum, to
 		 * simulate an OST->client data error */
 		if (i == 0 && opc == OST_READ &&
 		    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_SEND)) {
-			int off = local_nb[i].lnb_page_offset & ~PAGE_MASK;
-			int len = local_nb[i].lnb_len;
+			int off = BD_GET_KIOV(desc, i).kiov_offset
+			  & ~PAGE_MASK;
+			int len = BD_GET_KIOV(desc, i).kiov_len;
 			struct page *np = tgt_page_to_corrupt;
+			char *ptr =
+			  kmap(BD_GET_KIOV(desc, i).kiov_page) + off;
 
 			if (np) {
-				char *ptr = ll_kmap_atomic(local_nb[i].lnb_page,
-							KM_USER0);
-				char *ptr2 = page_address(np);
+				char *ptr2 = kmap(np) + off;
 
-				memcpy(ptr2 + off, ptr + off, len);
-				memcpy(ptr2 + off, "bad4", min(4, len));
-				ll_kunmap_atomic(ptr, KM_USER0);
+				memcpy(ptr2, ptr, len);
+				memcpy(ptr2, "bad4", min(4, len));
+				kunmap(np);
 
 				/* LU-8376 to preserve original index for
 				 * display in dump_all_bulk_pages() */
-				np->index = i;
+				np->index = BD_GET_KIOV(desc,
+							i).kiov_page->index;
 
-				cfs_crypto_hash_update_page(req, np, off,
-							    len);
-				continue;
+				BD_GET_KIOV(desc, i).kiov_page = np;
 			} else {
 				CERROR("%s: can't alloc page for corruption\n",
 				       tgt_name(tgt));
@@ -1820,17 +1741,17 @@ static int tgt_checksum_niobuf(struct lu_target *tgt,
 		}
 	}
 
-	bufsize = sizeof(*cksum);
-	err = cfs_crypto_hash_final(req, (unsigned char *)cksum, &bufsize);
+	bufsize = sizeof(cksum);
+	err = cfs_crypto_hash_final(hdesc, (unsigned char *)&cksum, &bufsize);
 
-	return 0;
+	return cksum;
 }
 
 char dbgcksum_file_name[PATH_MAX];
 
 static void dump_all_bulk_pages(struct obdo *oa, int count,
-				struct niobuf_local *local_nb,
-				__u32 server_cksum, __u32 client_cksum)
+				    lnet_kiov_t *iov, __u32 server_cksum,
+				    __u32 client_cksum)
 {
 	struct file *filp;
 	int rc, i;
@@ -1847,9 +1768,9 @@ static void dump_all_bulk_pages(struct obdo *oa, int count,
 		 oa->o_valid & OBD_MD_FLFID ? oa->o_parent_seq : (__u64)0,
 		 oa->o_valid & OBD_MD_FLFID ? oa->o_parent_oid : 0,
 		 oa->o_valid & OBD_MD_FLFID ? oa->o_parent_ver : 0,
-		 local_nb[0].lnb_file_offset,
-		 local_nb[count-1].lnb_file_offset +
-		 local_nb[count-1].lnb_len - 1, client_cksum, server_cksum);
+		 (__u64)iov[0].kiov_page->index << PAGE_SHIFT,
+		 ((__u64)iov[count - 1].kiov_page->index << PAGE_SHIFT) +
+		 iov[count - 1].kiov_len - 1, client_cksum, server_cksum);
 	filp = filp_open(dbgcksum_file_name,
 			 O_CREAT | O_EXCL | O_WRONLY | O_LARGEFILE, 0600);
 	if (IS_ERR(filp)) {
@@ -1865,8 +1786,8 @@ static void dump_all_bulk_pages(struct obdo *oa, int count,
 	}
 
 	for (i = 0; i < count; i++) {
-		len = local_nb[i].lnb_len;
-		buf = kmap(local_nb[i].lnb_page);
+		len = iov[i].kiov_len;
+		buf = kmap(iov[i].kiov_page);
 		while (len != 0) {
 			rc = cfs_kernel_write(filp, buf, len, &filp->f_pos);
 			if (rc < 0) {
@@ -1879,7 +1800,7 @@ static void dump_all_bulk_pages(struct obdo *oa, int count,
 			CDEBUG(D_INFO, "%s: wrote %d bytes\n",
 			       dbgcksum_file_name, rc);
 		}
-		kunmap(local_nb[i].lnb_page);
+		kunmap(iov[i].kiov_page);
 	}
 
 	rc = ll_vfs_fsync_range(filp, 0, LLONG_MAX, 1);
@@ -1889,15 +1810,13 @@ static void dump_all_bulk_pages(struct obdo *oa, int count,
 	return;
 }
 
-static int check_read_checksum(struct niobuf_local *local_nb, int npages,
-			       struct obd_export *exp, struct obdo *oa,
-			       const struct lnet_process_id *peer,
+static int check_read_checksum(struct ptlrpc_bulk_desc *desc, struct obdo *oa,
+			       const lnet_process_id_t *peer,
 			       __u32 client_cksum, __u32 server_cksum,
-			       enum cksum_types server_cksum_type)
+			       cksum_type_t server_cksum_type)
 {
 	char *msg;
-	enum cksum_types cksum_type;
-	loff_t start, end;
+	cksum_type_t cksum_type;
 
 	/* unlikely to happen and only if resend does not occur due to cksum
 	 * control failure on Client */
@@ -1907,12 +1826,13 @@ static int check_read_checksum(struct niobuf_local *local_nb, int npages,
 		return 0;
 	}
 
-	if (exp->exp_obd->obd_checksum_dump)
-		dump_all_bulk_pages(oa, npages, local_nb, server_cksum,
+	if (desc->bd_export->exp_obd->obd_checksum_dump)
+		dump_all_bulk_pages(oa, desc->bd_iov_count,
+				    &BD_GET_KIOV(desc, 0), server_cksum,
 				    client_cksum);
 
-	cksum_type = obd_cksum_type_unpack(oa->o_valid & OBD_MD_FLFLAGS ?
-					   oa->o_flags : 0);
+	cksum_type = cksum_type_unpack(oa->o_valid & OBD_MD_FLFLAGS ?
+				       oa->o_flags : 0);
 
 	if (cksum_type != server_cksum_type)
 		msg = "the server may have not used the checksum type specified"
@@ -1920,235 +1840,22 @@ static int check_read_checksum(struct niobuf_local *local_nb, int npages,
 	else
 		msg = "should have changed on the client or in transit";
 
-	start = local_nb[0].lnb_file_offset;
-	end = local_nb[npages-1].lnb_file_offset +
-					local_nb[npages-1].lnb_len - 1;
-
 	LCONSOLE_ERROR_MSG(0x132, "%s: BAD READ CHECKSUM: %s: from %s inode "
 		DFID " object "DOSTID" extent [%llu-%llu], client returned csum"
 		" %x (type %x), server csum %x (type %x)\n",
-		exp->exp_obd->obd_name,
+		desc->bd_export->exp_obd->obd_name,
 		msg, libcfs_nid2str(peer->nid),
 		oa->o_valid & OBD_MD_FLFID ? oa->o_parent_seq : 0ULL,
 		oa->o_valid & OBD_MD_FLFID ? oa->o_parent_oid : 0,
 		oa->o_valid & OBD_MD_FLFID ? oa->o_parent_ver : 0,
 		POSTID(&oa->o_oi),
-		start, end, client_cksum, cksum_type, server_cksum,
-		server_cksum_type);
-
+		(__u64)BD_GET_KIOV(desc, 0).kiov_page->index << PAGE_SHIFT,
+		((__u64)BD_GET_KIOV(desc,
+				    desc->bd_iov_count - 1).kiov_page->index
+			<< PAGE_SHIFT) +
+			BD_GET_KIOV(desc, desc->bd_iov_count - 1).kiov_len - 1,
+		client_cksum, cksum_type, server_cksum, server_cksum_type);
 	return 1;
-}
-
-static int tgt_pages2shortio(struct niobuf_local *local, int npages,
-			     unsigned char *buf, int size)
-{
-	int	i, off, len, copied = size;
-	char	*ptr;
-
-	for (i = 0; i < npages; i++) {
-		off = local[i].lnb_page_offset & ~PAGE_MASK;
-		len = local[i].lnb_len;
-
-		CDEBUG(D_PAGE, "index %d offset = %d len = %d left = %d\n",
-		       i, off, len, size);
-		if (len > size)
-			return -EINVAL;
-
-		ptr = ll_kmap_atomic(local[i].lnb_page, KM_USER0);
-		memcpy(buf + off, ptr, len);
-		ll_kunmap_atomic(ptr, KM_USER0);
-		buf += len;
-		size -= len;
-	}
-	return copied - size;
-}
-
-static int tgt_checksum_niobuf_t10pi(struct lu_target *tgt,
-				     struct niobuf_local *local_nb,
-				     int npages, int opc,
-				     obd_dif_csum_fn *fn,
-				     int sector_size,
-				     u32 *check_sum)
-{
-	enum cksum_types t10_cksum_type = tgt->lut_dt_conf.ddp_t10_cksum_type;
-	unsigned char cfs_alg = cksum_obd2cfs(OBD_CKSUM_T10_TOP);
-	const char *obd_name = tgt->lut_obd->obd_name;
-	struct ahash_request *req;
-	unsigned int bufsize;
-	unsigned char *buffer;
-	struct page *__page;
-	__u16 *guard_start;
-	int guard_number;
-	int used_number = 0;
-	__u32 cksum;
-	int rc = 0;
-	int used;
-	int i;
-
-	__page = alloc_page(GFP_KERNEL);
-	if (__page == NULL)
-		return -ENOMEM;
-
-	req = cfs_crypto_hash_init(cfs_alg, NULL, 0);
-	if (IS_ERR(req)) {
-		CERROR("%s: unable to initialize checksum hash %s\n",
-		       tgt_name(tgt), cfs_crypto_hash_name(cfs_alg));
-		return PTR_ERR(req);
-	}
-
-	buffer = kmap(__page);
-	guard_start = (__u16 *)buffer;
-	guard_number = PAGE_SIZE / sizeof(*guard_start);
-	for (i = 0; i < npages; i++) {
-		/* corrupt the data before we compute the checksum, to
-		 * simulate a client->OST data error */
-		if (i == 0 && opc == OST_WRITE &&
-		    OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_RECEIVE)) {
-			int off = local_nb[i].lnb_page_offset & ~PAGE_MASK;
-			int len = local_nb[i].lnb_len;
-			struct page *np = tgt_page_to_corrupt;
-
-			if (np) {
-				char *ptr = ll_kmap_atomic(local_nb[i].lnb_page,
-							KM_USER0);
-				char *ptr2 = page_address(np);
-
-				memcpy(ptr2 + off, ptr + off, len);
-				memcpy(ptr2 + off, "bad3", min(4, len));
-				ll_kunmap_atomic(ptr, KM_USER0);
-
-				/* LU-8376 to preserve original index for
-				 * display in dump_all_bulk_pages() */
-				np->index = i;
-
-				cfs_crypto_hash_update_page(req, np, off,
-							    len);
-				continue;
-			} else {
-				CERROR("%s: can't alloc page for corruption\n",
-				       tgt_name(tgt));
-			}
-		}
-
-		/*
-		 * The left guard number should be able to hold checksums of a
-		 * whole page
-		 */
-		if (t10_cksum_type && opc == OST_READ &&
-		    local_nb[i].lnb_guard_disk) {
-			used = DIV_ROUND_UP(local_nb[i].lnb_len, sector_size);
-			if (used > (guard_number - used_number)) {
-				rc = -E2BIG;
-				break;
-			}
-			memcpy(guard_start + used_number,
-			       local_nb[i].lnb_guards,
-			       used * sizeof(*local_nb[i].lnb_guards));
-		} else {
-			rc = obd_page_dif_generate_buffer(obd_name,
-				local_nb[i].lnb_page,
-				local_nb[i].lnb_page_offset & ~PAGE_MASK,
-				local_nb[i].lnb_len, guard_start + used_number,
-				guard_number - used_number, &used, sector_size,
-				fn);
-			if (rc)
-				break;
-		}
-
-		LASSERT(used <= MAX_GUARD_NUMBER);
-		/*
-		 * If disk support T10PI checksum, copy guards to local_nb.
-		 * If the write is partial page, do not use the guards for bio
-		 * submission since the data might not be full-sector. The bio
-		 * guards will be generated later based on the full sectors. If
-		 * the sector size is 512B rather than 4 KB, or the page size
-		 * is larger than 4KB, this might drop some useful guards for
-		 * partial page write, but it will only add minimal extra time
-		 * of checksum calculation.
-		 */
-		if (t10_cksum_type && opc == OST_WRITE &&
-		    local_nb[i].lnb_len == PAGE_SIZE) {
-			local_nb[i].lnb_guard_rpc = 1;
-			memcpy(local_nb[i].lnb_guards,
-			       guard_start + used_number,
-			       used * sizeof(*local_nb[i].lnb_guards));
-		}
-
-		used_number += used;
-		if (used_number == guard_number) {
-			cfs_crypto_hash_update_page(req, __page, 0,
-				used_number * sizeof(*guard_start));
-			used_number = 0;
-		}
-
-		 /* corrupt the data after we compute the checksum, to
-		 * simulate an OST->client data error */
-		if (unlikely(i == 0 && opc == OST_READ &&
-			     OBD_FAIL_CHECK(OBD_FAIL_OST_CHECKSUM_SEND))) {
-			int off = local_nb[i].lnb_page_offset & ~PAGE_MASK;
-			int len = local_nb[i].lnb_len;
-			struct page *np = tgt_page_to_corrupt;
-
-			if (np) {
-				char *ptr = ll_kmap_atomic(local_nb[i].lnb_page,
-							KM_USER0);
-				char *ptr2 = page_address(np);
-
-				memcpy(ptr2 + off, ptr + off, len);
-				memcpy(ptr2 + off, "bad4", min(4, len));
-				ll_kunmap_atomic(ptr, KM_USER0);
-
-				/* LU-8376 to preserve original index for
-				 * display in dump_all_bulk_pages() */
-				np->index = i;
-
-				cfs_crypto_hash_update_page(req, np, off,
-							    len);
-				continue;
-			} else {
-				CERROR("%s: can't alloc page for corruption\n",
-				       tgt_name(tgt));
-			}
-		}
-	}
-	kunmap(__page);
-	if (rc)
-		GOTO(out, rc);
-
-	if (used_number != 0)
-		cfs_crypto_hash_update_page(req, __page, 0,
-			used_number * sizeof(*guard_start));
-
-	bufsize = sizeof(cksum);
-	rc = cfs_crypto_hash_final(req, (unsigned char *)&cksum, &bufsize);
-
-	if (rc == 0)
-		*check_sum = cksum;
-out:
-	__free_page(__page);
-	return rc;
-}
-
-static int tgt_checksum_niobuf_rw(struct lu_target *tgt,
-				  enum cksum_types cksum_type,
-				  struct niobuf_local *local_nb,
-				  int npages, int opc, u32 *check_sum)
-{
-	obd_dif_csum_fn *fn = NULL;
-	int sector_size = 0;
-	int rc;
-
-	ENTRY;
-	obd_t10_cksum2dif(cksum_type, &fn, &sector_size);
-
-	if (fn)
-		rc = tgt_checksum_niobuf_t10pi(tgt, local_nb, npages,
-					       opc, fn, sector_size,
-					       check_sum);
-	else
-		rc = tgt_checksum_niobuf(tgt, local_nb, npages, opc,
-					 cksum_type, check_sum);
-	RETURN(rc);
 }
 
 int tgt_brw_read(struct tgt_session_info *tsi)
@@ -2162,15 +1869,12 @@ int tgt_brw_read(struct tgt_session_info *tsi)
 	struct ost_body		*body, *repbody;
 	struct l_wait_info	 lwi;
 	struct lustre_handle	 lockh = { 0 };
-	int			 npages, nob = 0, rc, i, no_reply = 0,
-				 npages_read;
+	int			 npages, nob = 0, rc, i, no_reply = 0;
 	struct tgt_thread_big_cache *tbc = req->rq_svc_thread->t_data;
-	const char *obd_name = exp->exp_obd->obd_name;
 
 	ENTRY;
 
-	if (ptlrpc_req2svc(req)->srv_req_portal != OST_IO_PORTAL &&
-	    ptlrpc_req2svc(req)->srv_req_portal != MDS_IO_PORTAL) {
+	if (ptlrpc_req2svc(req)->srv_req_portal != OST_IO_PORTAL) {
 		CERROR("%s: deny read request from %s to portal %u\n",
 		       tgt_name(tsi->tsi_tgt),
 		       obd_export_nid2str(req->rq_export),
@@ -2213,8 +1917,8 @@ int tgt_brw_read(struct tgt_session_info *tsi)
 
 	local_nb = tbc->local;
 
-	rc = tgt_brw_lock(tsi->tsi_env, exp, &tsi->tsi_resid, ioo, remote_nb,
-			  &lockh, LCK_PR);
+	rc = tgt_brw_lock(exp->exp_obd->obd_namespace, &tsi->tsi_resid, ioo,
+			  remote_nb, &lockh, LCK_PR);
 	if (rc != 0)
 		RETURN(rc);
 
@@ -2232,17 +1936,6 @@ int tgt_brw_read(struct tgt_session_info *tsi)
 		GOTO(out_lock, rc = -ETIMEDOUT);
 	}
 
-	/*
-	 * Because we already sync grant info with client when
-	 * reconnect, grant info will be cleared for resent req,
-	 * otherwise, outdated grant count in the rpc would de-sync
-	 * grant counters in case of shrink
-	 */
-	if (lustre_msg_get_flags(req->rq_reqmsg) & (MSG_RESENT | MSG_REPLAY)) {
-		DEBUG_REQ(D_CACHE, req, "clear resent/replay req grant info");
-		body->oa.o_valid &= ~OBD_MD_FLGRANT;
-	}
-
 	repbody = req_capsule_server_get(&req->rq_pill, &RMF_OST_BODY);
 	repbody->oa = body->oa;
 
@@ -2252,42 +1945,33 @@ int tgt_brw_read(struct tgt_session_info *tsi)
 	if (rc != 0)
 		GOTO(out_lock, rc);
 
-	if (body->oa.o_valid & OBD_MD_FLFLAGS &&
-	    body->oa.o_flags & OBD_FL_SHORT_IO) {
-		desc = NULL;
-	} else {
-		desc = ptlrpc_prep_bulk_exp(req, npages, ioobj_max_brw_get(ioo),
-					    PTLRPC_BULK_PUT_SOURCE |
-						PTLRPC_BULK_BUF_KIOV,
-					    OST_BULK_PORTAL,
-					    &ptlrpc_bulk_kiov_nopin_ops);
-		if (desc == NULL)
-			GOTO(out_commitrw, rc = -ENOMEM);
-	}
+	desc = ptlrpc_prep_bulk_exp(req, npages, ioobj_max_brw_get(ioo),
+				    PTLRPC_BULK_PUT_SOURCE |
+					PTLRPC_BULK_BUF_KIOV,
+				    OST_BULK_PORTAL,
+				    &ptlrpc_bulk_kiov_nopin_ops);
+	if (desc == NULL)
+		GOTO(out_commitrw, rc = -ENOMEM);
 
 	nob = 0;
-	npages_read = npages;
 	for (i = 0; i < npages; i++) {
 		int page_rc = local_nb[i].lnb_rc;
 
 		if (page_rc < 0) {
 			rc = page_rc;
-			npages_read = i;
 			break;
 		}
 
 		nob += page_rc;
-		if (page_rc != 0 && desc != NULL) { /* some data! */
+		if (page_rc != 0) { /* some data! */
 			LASSERT(local_nb[i].lnb_page != NULL);
 			desc->bd_frag_ops->add_kiov_frag
 			  (desc, local_nb[i].lnb_page,
-			   local_nb[i].lnb_page_offset & ~PAGE_MASK,
+			   local_nb[i].lnb_page_offset,
 			   page_rc);
 		}
 
 		if (page_rc != local_nb[i].lnb_len) { /* short read */
-			local_nb[i].lnb_len = page_rc;
-			npages_read = i + (page_rc != 0 ? 1 : 0);
 			/* All subsequent pages should be 0 */
 			while (++i < npages)
 				LASSERT(local_nb[i].lnb_rc == 0);
@@ -2299,19 +1983,14 @@ int tgt_brw_read(struct tgt_session_info *tsi)
 		rc = -E2BIG;
 
 	if (body->oa.o_valid & OBD_MD_FLCKSUM) {
-		u32 flag = body->oa.o_valid & OBD_MD_FLFLAGS ?
-			   body->oa.o_flags : 0;
-		enum cksum_types cksum_type = obd_cksum_type_unpack(flag);
+		cksum_type_t cksum_type =
+			cksum_type_unpack(body->oa.o_valid & OBD_MD_FLFLAGS ?
+					  body->oa.o_flags : 0);
 
-		repbody->oa.o_flags = obd_cksum_type_pack(obd_name,
-							  cksum_type);
+		repbody->oa.o_flags = cksum_type_pack(cksum_type);
 		repbody->oa.o_valid = OBD_MD_FLCKSUM | OBD_MD_FLFLAGS;
-
-		rc = tgt_checksum_niobuf_rw(tsi->tsi_tgt, cksum_type,
-					    local_nb, npages_read, OST_READ,
-					    &repbody->oa.o_cksum);
-		if (rc < 0)
-			GOTO(out_commitrw, rc);
+		repbody->oa.o_cksum = tgt_checksum_bulk(tsi->tsi_tgt, desc,
+							OST_READ, cksum_type);
 		CDEBUG(D_PAGE, "checksum at read origin: %x\n",
 		       repbody->oa.o_cksum);
 
@@ -2320,46 +1999,21 @@ int tgt_brw_read(struct tgt_session_info *tsi)
 		 * zero-cksum case) */
 		if ((body->oa.o_valid & OBD_MD_FLFLAGS) &&
 		    (body->oa.o_flags & OBD_FL_RECOV_RESEND))
-			check_read_checksum(local_nb, npages_read, exp,
-					    &body->oa, &req->rq_peer,
+			check_read_checksum(desc, &body->oa, &req->rq_peer,
 					    body->oa.o_cksum,
 					    repbody->oa.o_cksum, cksum_type);
 	} else {
 		repbody->oa.o_valid = 0;
 	}
-	if (body->oa.o_valid & OBD_MD_FLGRANT)
-		repbody->oa.o_valid |= OBD_MD_FLGRANT;
 	/* We're finishing using body->oa as an input variable */
 
 	/* Check if client was evicted while we were doing i/o before touching
 	 * network */
-	if (rc == 0) {
-		if (body->oa.o_valid & OBD_MD_FLFLAGS &&
-		    body->oa.o_flags & OBD_FL_SHORT_IO) {
-			unsigned char *short_io_buf;
-			int short_io_size;
-
-			short_io_buf = req_capsule_server_get(&req->rq_pill,
-							      &RMF_SHORT_IO);
-			short_io_size = req_capsule_get_size(&req->rq_pill,
-							     &RMF_SHORT_IO,
-							     RCL_SERVER);
-			rc = tgt_pages2shortio(local_nb, npages_read,
-					       short_io_buf, short_io_size);
-			if (rc >= 0)
-				req_capsule_shrink(&req->rq_pill,
-						   &RMF_SHORT_IO, rc,
-						   RCL_SERVER);
-			rc = rc > 0 ? 0 : rc;
-		} else if (!CFS_FAIL_PRECHECK(OBD_FAIL_PTLRPC_CLIENT_BULK_CB2)) {
-			rc = target_bulk_io(exp, desc, &lwi);
-		}
+	if (likely(rc == 0 &&
+		   !CFS_FAIL_PRECHECK(OBD_FAIL_PTLRPC_CLIENT_BULK_CB2) &&
+		   !CFS_FAIL_CHECK(OBD_FAIL_PTLRPC_DROP_BULK))) {
+		rc = target_bulk_io(exp, desc, &lwi);
 		no_reply = rc != 0;
-	} else {
-		if (body->oa.o_valid & OBD_MD_FLFLAGS &&
-		    body->oa.o_flags & OBD_FL_SHORT_IO)
-			req_capsule_shrink(&req->rq_pill, &RMF_SHORT_IO, 0,
-					   RCL_SERVER);
 	}
 
 out_commitrw:
@@ -2382,15 +2036,13 @@ out_lock:
 		ptlrpc_req_drop_rs(req);
 		LCONSOLE_WARN("%s: Bulk IO read error with %s (at %s), "
 			      "client will retry: rc %d\n",
-			      obd_name,
+			      exp->exp_obd->obd_name,
 			      obd_uuid2str(&exp->exp_client_uuid),
 			      obd_export_nid2str(exp), rc);
 	}
 	/* send a bulk after reply to simulate a network delay or reordering
-	 * by a router - Note that !desc implies short io, so there is no bulk
-	 * to reorder. */
-	if (unlikely(CFS_FAIL_PRECHECK(OBD_FAIL_PTLRPC_CLIENT_BULK_CB2)) &&
-	    desc) {
+	 * by a router */
+	if (unlikely(CFS_FAIL_PRECHECK(OBD_FAIL_PTLRPC_CLIENT_BULK_CB2))) {
 		wait_queue_head_t	 waitq;
 		struct l_wait_info	 lwi1;
 
@@ -2407,32 +2059,6 @@ out_lock:
 }
 EXPORT_SYMBOL(tgt_brw_read);
 
-static int tgt_shortio2pages(struct niobuf_local *local, int npages,
-			     unsigned char *buf, unsigned int size)
-{
-	int	i, off, len;
-	char	*ptr;
-
-	for (i = 0; i < npages; i++) {
-		off = local[i].lnb_page_offset & ~PAGE_MASK;
-		len = local[i].lnb_len;
-
-		if (len == 0)
-			continue;
-
-		CDEBUG(D_PAGE, "index %d offset = %d len = %d left = %d\n",
-		       i, off, len, size);
-		ptr = ll_kmap_atomic(local[i].lnb_page, KM_USER0);
-		if (ptr == NULL)
-			return -EINVAL;
-		memcpy(ptr + off, buf, len < size ? len : size);
-		ll_kunmap_atomic(ptr, KM_USER0);
-		buf += len;
-		size -= len;
-	}
-	return 0;
-}
-
 static void tgt_warn_on_cksum(struct ptlrpc_request *req,
 			      struct ptlrpc_bulk_desc *desc,
 			      struct niobuf_local *local_nb, int npages,
@@ -2447,13 +2073,14 @@ static void tgt_warn_on_cksum(struct ptlrpc_request *req,
 	body = req_capsule_client_get(&req->rq_pill, &RMF_OST_BODY);
 	LASSERT(body != NULL);
 
-	if (desc && req->rq_peer.nid != desc->bd_sender) {
+	if (req->rq_peer.nid != desc->bd_sender) {
 		via = " via ";
 		router = libcfs_nid2str(desc->bd_sender);
 	}
 
 	if (exp->exp_obd->obd_checksum_dump)
-		dump_all_bulk_pages(&body->oa, npages, local_nb, server_cksum,
+		dump_all_bulk_pages(&body->oa, desc->bd_iov_count,
+				    &BD_GET_KIOV(desc, 0), server_cksum,
 				    client_cksum);
 
 	if (mmap) {
@@ -2494,16 +2121,14 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 	__u32			*rcs;
 	int			 objcount, niocount, npages;
 	int			 rc, i, j;
-	enum cksum_types cksum_type = OBD_CKSUM_CRC32;
+	cksum_type_t		 cksum_type = OBD_CKSUM_CRC32;
 	bool			 no_reply = false, mmap;
 	struct tgt_thread_big_cache *tbc = req->rq_svc_thread->t_data;
 	bool wait_sync = false;
-	const char *obd_name = exp->exp_obd->obd_name;
 
 	ENTRY;
 
-	if (ptlrpc_req2svc(req)->srv_req_portal != OST_IO_PORTAL &&
-	    ptlrpc_req2svc(req)->srv_req_portal != MDS_IO_PORTAL) {
+	if (ptlrpc_req2svc(req)->srv_req_portal != OST_IO_PORTAL) {
 		CERROR("%s: deny write request from %s to portal %u\n",
 		       tgt_name(tsi->tsi_tgt),
 		       obd_export_nid2str(req->rq_export),
@@ -2526,9 +2151,6 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 	/* pause before transaction has been started */
 	CFS_FAIL_TIMEOUT(OBD_FAIL_OST_BRW_PAUSE_BULK, cfs_fail_val > 0 ?
 			 cfs_fail_val : (obd_timeout + 1) / 4);
-
-	/* Delay write commit to show stale size information */
-	CFS_FAIL_TIMEOUT(OBD_FAIL_OSC_NO_SIZE_DATA, cfs_fail_val);
 
 	/* There must be big cache in current thread to process this request
 	 * if it is NULL then something went wrong and it wasn't allocated,
@@ -2570,8 +2192,8 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 
 	local_nb = tbc->local;
 
-	rc = tgt_brw_lock(tsi->tsi_env, exp, &tsi->tsi_resid, ioo, remote_nb,
-			  &lockh, LCK_PW);
+	rc = tgt_brw_lock(exp->exp_obd->obd_namespace, &tsi->tsi_resid, ioo,
+			  remote_nb, &lockh, LCK_PW);
 	if (rc != 0)
 		GOTO(out, rc);
 
@@ -2608,46 +2230,26 @@ int tgt_brw_write(struct tgt_session_info *tsi)
 			objcount, ioo, remote_nb, &npages, local_nb);
 	if (rc < 0)
 		GOTO(out_lock, rc);
-	if (body->oa.o_valid & OBD_MD_FLFLAGS &&
-	    body->oa.o_flags & OBD_FL_SHORT_IO) {
-		unsigned int short_io_size;
-		unsigned char *short_io_buf;
 
-		short_io_size = req_capsule_get_size(&req->rq_pill,
-						     &RMF_SHORT_IO,
-						     RCL_CLIENT);
-		short_io_buf = req_capsule_client_get(&req->rq_pill,
-						      &RMF_SHORT_IO);
-		CDEBUG(D_INFO, "Client use short io for data transfer,"
-			       " size = %d\n", short_io_size);
+	desc = ptlrpc_prep_bulk_exp(req, npages, ioobj_max_brw_get(ioo),
+				    PTLRPC_BULK_GET_SINK | PTLRPC_BULK_BUF_KIOV,
+				    OST_BULK_PORTAL,
+				    &ptlrpc_bulk_kiov_nopin_ops);
+	if (desc == NULL)
+		GOTO(skip_transfer, rc = -ENOMEM);
 
-		/* Copy short io buf to pages */
-		rc = tgt_shortio2pages(local_nb, npages, short_io_buf,
-				       short_io_size);
-		desc = NULL;
-	} else {
-		desc = ptlrpc_prep_bulk_exp(req, npages, ioobj_max_brw_get(ioo),
-					    PTLRPC_BULK_GET_SINK |
-					    PTLRPC_BULK_BUF_KIOV,
-					    OST_BULK_PORTAL,
-					    &ptlrpc_bulk_kiov_nopin_ops);
-		if (desc == NULL)
-			GOTO(skip_transfer, rc = -ENOMEM);
+	/* NB Having prepped, we must commit... */
+	for (i = 0; i < npages; i++)
+		desc->bd_frag_ops->add_kiov_frag(desc,
+						 local_nb[i].lnb_page,
+						 local_nb[i].lnb_page_offset,
+						 local_nb[i].lnb_len);
 
-		/* NB Having prepped, we must commit... */
-		for (i = 0; i < npages; i++)
-			desc->bd_frag_ops->add_kiov_frag(desc,
-					local_nb[i].lnb_page,
-					local_nb[i].lnb_page_offset & ~PAGE_MASK,
-					local_nb[i].lnb_len);
+	rc = sptlrpc_svc_prep_bulk(req, desc);
+	if (rc != 0)
+		GOTO(skip_transfer, rc);
 
-		rc = sptlrpc_svc_prep_bulk(req, desc);
-		if (rc != 0)
-			GOTO(skip_transfer, rc);
-
-		rc = target_bulk_io(exp, desc, &lwi);
-	}
-
+	rc = target_bulk_io(exp, desc, &lwi);
 	no_reply = rc != 0;
 
 skip_transfer:
@@ -2655,19 +2257,13 @@ skip_transfer:
 		static int cksum_counter;
 
 		if (body->oa.o_valid & OBD_MD_FLFLAGS)
-			cksum_type = obd_cksum_type_unpack(body->oa.o_flags);
+			cksum_type = cksum_type_unpack(body->oa.o_flags);
 
 		repbody->oa.o_valid |= OBD_MD_FLCKSUM | OBD_MD_FLFLAGS;
 		repbody->oa.o_flags &= ~OBD_FL_CKSUM_ALL;
-		repbody->oa.o_flags |= obd_cksum_type_pack(obd_name,
-							   cksum_type);
-
-		rc = tgt_checksum_niobuf_rw(tsi->tsi_tgt, cksum_type,
-					    local_nb, npages, OST_WRITE,
-					    &repbody->oa.o_cksum);
-		if (rc < 0)
-			GOTO(out_commitrw, rc);
-
+		repbody->oa.o_flags |= cksum_type_pack(cksum_type);
+		repbody->oa.o_cksum = tgt_checksum_bulk(tsi->tsi_tgt, desc,
+							OST_WRITE, cksum_type);
 		cksum_counter++;
 
 		if (unlikely(body->oa.o_cksum != repbody->oa.o_cksum)) {
@@ -2686,7 +2282,6 @@ skip_transfer:
 		}
 	}
 
-out_commitrw:
 	/* Must commit after prep above in all cases */
 	rc = obd_commitrw(tsi->tsi_env, OBD_BRW_WRITE, exp, &repbody->oa,
 			  objcount, ioo, remote_nb, npages, local_nb, rc);
@@ -2742,7 +2337,7 @@ out:
 		if (!exp->exp_obd->obd_no_transno)
 			LCONSOLE_WARN("%s: Bulk IO write error with %s (at %s),"
 				      " client will retry: rc = %d\n",
-				      obd_name,
+				      exp->exp_obd->obd_name,
 				      obd_uuid2str(&exp->exp_client_uuid),
 				      obd_export_nid2str(exp), rc);
 	}

@@ -33,6 +33,7 @@
 
 #define DEBUG_SUBSYSTEM S_LNET
 
+#include <linux/workqueue.h>
 #include <libcfs/libcfs.h>
 
 struct cfs_var_array {
@@ -171,12 +172,9 @@ cfs_array_alloc(int count, unsigned int size)
 }
 EXPORT_SYMBOL(cfs_array_alloc);
 
-#ifdef HAVE_LIBCFS_VFREE_ATOMIC
-#include <linux/workqueue.h>
 /*
  * This is opencoding of vfree_atomic from Linux kernel added in 4.10 with
- * minimum changes needed to work on some older kernels too.
- * For RHEL6, just use vfree() directly since it is missing too much code.
+ * minimum changes needed to work on older kernels too.
  */
 
 #ifndef raw_cpu_ptr
@@ -185,12 +183,12 @@ EXPORT_SYMBOL(cfs_array_alloc);
 
 #ifndef llist_for_each_safe
 #define llist_for_each_safe(pos, n, node)                       \
-	for ((pos) = (node); (pos) && ((n) = (pos)->next, true); (pos) = (n))
+		for ((pos) = (node); (pos) && ((n) = (pos)->next, true); (pos) = (n))
 #endif
 
 struct vfree_deferred {
-	struct llist_head list;
-	struct work_struct wq;
+		struct llist_head list;
+		struct work_struct wq;
 };
 static DEFINE_PER_CPU(struct vfree_deferred, vfree_deferred);
 
@@ -232,4 +230,3 @@ void __exit exit_libcfs_vfree_atomic(void)
 {
 	flush_scheduled_work();
 }
-#endif /* HAVE_LIBCFS_VFREE_ATOMIC */
