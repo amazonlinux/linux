@@ -20,7 +20,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2013, 2017, Intel Corporation.
+ * Copyright (c) 2013, 2016, Intel Corporation.
  *
  * Copyright 2012 Xyratex Technology Limited
  */
@@ -610,8 +610,10 @@ static void nrs_crrn_req_stop(struct ptlrpc_nrs_policy *policy,
 	       libcfs_id2str(req->rq_peer), nrq->nr_u.crr.cr_round);
 }
 
+#ifdef CONFIG_PROC_FS
+
 /**
- * debugfs interface
+ * lprocfs interface
  */
 
 /**
@@ -716,7 +718,7 @@ ptlrpc_lprocfs_nrs_crrn_quantum_seq_write(struct file *file,
         if (count > (sizeof(kernbuf) - 1))
                 return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 
         kernbuf[count] = '\0';
@@ -729,9 +731,7 @@ ptlrpc_lprocfs_nrs_crrn_quantum_seq_write(struct file *file,
 	val = lprocfs_find_named_value(kernbuf, NRS_LPROCFS_QUANTUM_NAME_REG,
 				       &count_copy);
 	if (val != kernbuf) {
-		rc = kstrtol(val, 10, &quantum_reg);
-		if (rc)
-			return rc;
+		quantum_reg = simple_strtol(val, NULL, 10);
 
 		queue |= PTLRPC_NRS_QUEUE_REG;
 	}
@@ -747,9 +747,7 @@ ptlrpc_lprocfs_nrs_crrn_quantum_seq_write(struct file *file,
 		if (!nrs_svc_has_hp(svc))
 			return -ENODEV;
 
-		rc = kstrtol(val, 10, &quantum_hp);
-		if (rc)
-			return rc;
+		quantum_hp = simple_strtol(val, NULL, 10);
 
 		queue |= PTLRPC_NRS_QUEUE_HP;
 	}
@@ -759,9 +757,10 @@ ptlrpc_lprocfs_nrs_crrn_quantum_seq_write(struct file *file,
 	 * value
 	 */
 	if (queue == 0) {
-		rc = kstrtol(kernbuf, 10, &quantum_reg);
-		if (rc)
-			return rc;
+		if (!isdigit(kernbuf[0]))
+			return -EINVAL;
+
+		quantum_reg = simple_strtol(kernbuf, NULL, 10);
 
 		queue = PTLRPC_NRS_QUEUE_REG;
 
@@ -809,8 +808,7 @@ ptlrpc_lprocfs_nrs_crrn_quantum_seq_write(struct file *file,
 
 	return rc == -ENODEV && rc2 == -ENODEV ? -ENODEV : count;
 }
-
-LDEBUGFS_SEQ_FOPS(ptlrpc_lprocfs_nrs_crrn_quantum);
+LPROC_SEQ_FOPS(ptlrpc_lprocfs_nrs_crrn_quantum);
 
 /**
  * Initializes a CRR-N policy's lprocfs interface for service \a svc
@@ -822,18 +820,33 @@ LDEBUGFS_SEQ_FOPS(ptlrpc_lprocfs_nrs_crrn_quantum);
  */
 static int nrs_crrn_lprocfs_init(struct ptlrpc_service *svc)
 {
-	struct ldebugfs_vars nrs_crrn_lprocfs_vars[] = {
+	struct lprocfs_vars nrs_crrn_lprocfs_vars[] = {
 		{ .name		= "nrs_crrn_quantum",
 		  .fops		= &ptlrpc_lprocfs_nrs_crrn_quantum_fops,
 		  .data = svc },
 		{ NULL }
 	};
 
-	if (IS_ERR_OR_NULL(svc->srv_debugfs_entry))
+	if (svc->srv_procroot == NULL)
 		return 0;
 
-	return ldebugfs_add_vars(svc->srv_debugfs_entry, nrs_crrn_lprocfs_vars, NULL);
+	return lprocfs_add_vars(svc->srv_procroot, nrs_crrn_lprocfs_vars, NULL);
 }
+
+/**
+ * Cleans up a CRR-N policy's lprocfs interface for service \a svc
+ *
+ * \param[in] svc the service
+ */
+static void nrs_crrn_lprocfs_fini(struct ptlrpc_service *svc)
+{
+	if (svc->srv_procroot == NULL)
+		return;
+
+	lprocfs_remove_proc_entry("nrs_crrn_quantum", svc->srv_procroot);
+}
+
+#endif /* CONFIG_PROC_FS */
 
 /**
  * CRR-N policy operations
@@ -848,7 +861,10 @@ static const struct ptlrpc_nrs_pol_ops nrs_crrn_ops = {
 	.op_req_enqueue		= nrs_crrn_req_add,
 	.op_req_dequeue		= nrs_crrn_req_del,
 	.op_req_stop		= nrs_crrn_req_stop,
+#ifdef CONFIG_PROC_FS
 	.op_lprocfs_init	= nrs_crrn_lprocfs_init,
+	.op_lprocfs_fini	= nrs_crrn_lprocfs_fini,
+#endif
 };
 
 /**

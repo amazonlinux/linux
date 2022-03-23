@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -32,9 +32,7 @@
 
 #define DEBUG_SUBSYSTEM S_LNET
 
-#include <linux/fs.h>
 #include <linux/miscdevice.h>
-#include <linux/uaccess.h>
 #include <libcfs/libcfs.h>
 
 static inline size_t libcfs_ioctl_packlen(struct libcfs_ioctl_data *data)

@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -44,8 +44,8 @@
 #include <string.h>
 
 #include <libcfs/util/string.h>
-#include <linux/lnet/lnet-types.h>
-#include <linux/lnet/nidstr.h>
+#include <lnet/types.h>
+#include <lnet/nidstr.h>
 #ifdef HAVE_NETDB_H
 # include <netdb.h>
 #endif

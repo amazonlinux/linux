@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2015, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,6 +47,8 @@
 #include <lprocfs_status.h>
 #include "fid_internal.h"
 
+#ifdef CONFIG_PROC_FS
+
 /* Format: [0x64BIT_INT - 0x64BIT_INT] + 32 bytes just in case */
 #define MAX_FID_RANGE_STRLEN (32 + 2 * 2 * sizeof(__u64))
 /**
@@ -58,37 +60,34 @@
  * safe for production use.
  */
 static int
-ldebugfs_fid_write_common(const char __user *buffer, size_t count,
-			  struct lu_seq_range *range)
+lprocfs_fid_write_common(struct file *file, const char __user *buffer,
+				size_t count, struct lu_seq_range *range)
 {
-	char kernbuf[MAX_FID_RANGE_STRLEN];
 	struct lu_seq_range tmp = {
 		.lsr_start = 0,
 	};
-	int rc;
-
+	char kernbuf[MAX_FID_RANGE_STRLEN];
 	ENTRY;
-	LASSERT(range);
+
+	LASSERT(range != NULL);
 
 	if (count >= sizeof(kernbuf))
 		RETURN(-EINVAL);
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		RETURN(-EFAULT);
 
 	kernbuf[count] = 0;
 
 	if (count == 5 && strcmp(kernbuf, "clear") == 0) {
 		memset(range, 0, sizeof(*range));
-		RETURN(count);
+		RETURN(0);
 	}
 
 	/* of the form "[0x0000000240000400 - 0x000000028000400]" */
-	rc = sscanf(kernbuf, "[%llx - %llx]\n",
-		    (unsigned long long *)&tmp.lsr_start,
-		    (unsigned long long *)&tmp.lsr_end);
-	if (rc != 2)
-		RETURN(-EINVAL);
+	sscanf(kernbuf, "[%llx - %llx]\n",
+	       (long long unsigned *)&tmp.lsr_start,
+	       (long long unsigned *)&tmp.lsr_end);
 	if (!lu_seq_range_is_sane(&tmp) || lu_seq_range_is_zero(&tmp) ||
 	    tmp.lsr_start < range->lsr_start || tmp.lsr_end > range->lsr_end)
 		RETURN(-EINVAL);
@@ -98,24 +97,23 @@ ldebugfs_fid_write_common(const char __user *buffer, size_t count,
 
 #ifdef HAVE_SERVER_SUPPORT
 /*
- * Server side debugfs stuff.
+ * Server side procfs stuff.
  */
 static ssize_t
-ldebugfs_server_fid_space_seq_write(struct file *file,
-				    const char __user *buffer,
-				    size_t count, loff_t *off)
+lprocfs_server_fid_space_seq_write(struct file *file, const char __user *buffer,
+					size_t count, loff_t *off)
 {
-	struct lu_server_seq *seq;
+	struct lu_server_seq *seq = ((struct seq_file *)file->private_data)->private;
 	int rc;
-
 	ENTRY;
-	seq = ((struct seq_file *)file->private_data)->private;
+
+	LASSERT(seq != NULL);
 
 	mutex_lock(&seq->lss_mutex);
-	rc = ldebugfs_fid_write_common(buffer, count, &seq->lss_space);
+	rc = lprocfs_fid_write_common(file, buffer, count, &seq->lss_space);
 	if (rc == 0) {
-		CDEBUG(D_INFO, "%s: Space: " DRANGE "\n",
-		       seq->lss_name, PRANGE(&seq->lss_space));
+		CDEBUG(D_INFO, "%s: Space: "DRANGE"\n",
+			seq->lss_name, PRANGE(&seq->lss_space));
 	}
 	mutex_unlock(&seq->lss_mutex);
 
@@ -123,10 +121,12 @@ ldebugfs_server_fid_space_seq_write(struct file *file,
 }
 
 static int
-ldebugfs_server_fid_space_seq_show(struct seq_file *m, void *unused)
+lprocfs_server_fid_space_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_server_seq *seq = (struct lu_server_seq *)m->private;
 	ENTRY;
+
+	LASSERT(seq != NULL);
 
 	mutex_lock(&seq->lss_mutex);
 	seq_printf(m, "[%#llx - %#llx]:%x:%s\n", PRANGE(&seq->lss_space));
@@ -136,11 +136,13 @@ ldebugfs_server_fid_space_seq_show(struct seq_file *m, void *unused)
 }
 
 static int
-ldebugfs_server_fid_server_seq_show(struct seq_file *m, void *unused)
+lprocfs_server_fid_server_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_server_seq *seq = (struct lu_server_seq *)m->private;
 	struct client_obd *cli;
 	ENTRY;
+
+	LASSERT(seq != NULL);
 
 	if (seq->lss_cli) {
 		if (seq->lss_cli->lcs_exp != NULL) {
@@ -156,23 +158,33 @@ ldebugfs_server_fid_server_seq_show(struct seq_file *m, void *unused)
 	RETURN(0);
 }
 
-static ssize_t ldebugfs_server_fid_width_seq_write(struct file *file,
-						   const char __user *buffer,
-						   size_t count, loff_t *off)
+static ssize_t
+lprocfs_server_fid_width_seq_write(struct file *file, const char __user *buffer,
+					size_t count, loff_t *off)
 {
-	struct seq_file *m = file->private_data;
-	struct lu_server_seq *seq = m->private;
+	struct lu_server_seq *seq = ((struct seq_file *)file->private_data)->private;
 	int rc;
-
+	__s64 val;
 	ENTRY;
+
+	LASSERT(seq != NULL);
+
 	mutex_lock(&seq->lss_mutex);
 
-	rc = kstrtoull_from_user(buffer, count, 0, &seq->lss_width);
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
 	if (rc) {
 		CERROR("%s: invalid FID sequence width: rc = %d\n",
 		       seq->lss_name, rc);
 		GOTO(out_unlock, count = rc);
 	}
+
+	if (val < 0) {
+		CERROR("%s: invalid FID sequence width: rc = %d\n",
+		       seq->lss_name, -ERANGE);
+		GOTO(out_unlock, count = -ERANGE);
+	}
+
+	seq->lss_width = val;
 
 	CDEBUG(D_INFO, "%s: Width: %llu\n",
 	       seq->lss_name, seq->lss_width);
@@ -183,11 +195,13 @@ out_unlock:
 }
 
 static int
-ldebugfs_server_fid_width_seq_show(struct seq_file *m, void *unused)
+lprocfs_server_fid_width_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_server_seq *seq = (struct lu_server_seq *)m->private;
-
 	ENTRY;
+
+	LASSERT(seq != NULL);
+
 	mutex_lock(&seq->lss_mutex);
 	seq_printf(m, "%llu\n", seq->lss_width);
 	mutex_unlock(&seq->lss_mutex);
@@ -195,17 +209,17 @@ ldebugfs_server_fid_width_seq_show(struct seq_file *m, void *unused)
 	RETURN(0);
 }
 
-LDEBUGFS_SEQ_FOPS(ldebugfs_server_fid_space);
-LDEBUGFS_SEQ_FOPS(ldebugfs_server_fid_width);
-LDEBUGFS_SEQ_FOPS_RO(ldebugfs_server_fid_server);
+LPROC_SEQ_FOPS(lprocfs_server_fid_space);
+LPROC_SEQ_FOPS(lprocfs_server_fid_width);
+LPROC_SEQ_FOPS_RO(lprocfs_server_fid_server);
 
-struct ldebugfs_vars seq_server_debugfs_list[] = {
+struct lprocfs_vars seq_server_proc_list[] = {
 	{ .name	=	"space",
-	  .fops	=	&ldebugfs_server_fid_space_fops	},
+	  .fops	=	&lprocfs_server_fid_space_fops	},
 	{ .name	=	"width",
-	  .fops	=	&ldebugfs_server_fid_width_fops	},
+	  .fops	=	&lprocfs_server_fid_width_fops	},
 	{ .name	=	"server",
-	  .fops	=	&ldebugfs_server_fid_server_fops},
+	  .fops	=	&lprocfs_server_fid_server_fops	},
 	{ NULL }
 };
 
@@ -336,7 +350,7 @@ struct seq_operations fldb_sops = {
 static int fldb_seq_open(struct inode *inode, struct file *file)
 {
 	struct seq_file		*seq;
-	struct lu_server_seq *ss = inode->i_private;
+	struct lu_server_seq    *ss = (struct lu_server_seq *) PDE_DATA(inode);
 	struct lu_server_fld    *fld;
 	struct dt_object	*obj;
 	const struct dt_it_ops  *iops;
@@ -346,6 +360,10 @@ static int fldb_seq_open(struct inode *inode, struct file *file)
 
 	fld = ss->lss_site->ss_server_fld;
 	LASSERT(fld != NULL);
+
+	rc = LPROCFS_ENTRY_CHECK(inode);
+	if (rc < 0)
+		return rc;
 
 	rc = seq_open(file, &fldb_sops);
 	if (rc)
@@ -398,7 +416,7 @@ static int fldb_seq_release(struct inode *inode, struct file *file)
 
 	param = seq->private;
 	if (param == NULL) {
-		seq_release(inode, file);
+		lprocfs_seq_release(inode, file);
 		return 0;
 	}
 
@@ -412,7 +430,7 @@ static int fldb_seq_release(struct inode *inode, struct file *file)
 	iops->fini(&param->fsp_env, param->fsp_it);
 	lu_env_fini(&param->fsp_env);
 	OBD_FREE_PTR(param);
-	seq_release(inode, file);
+	lprocfs_seq_release(inode, file);
 
 	return 0;
 }
@@ -478,7 +496,7 @@ out:
 	RETURN(rc < 0 ? rc : len);
 }
 
-const struct file_operations seq_fld_debugfs_seq_fops = {
+const struct file_operations seq_fld_proc_seq_fops = {
 	.owner	 = THIS_MODULE,
 	.open	 = fldb_seq_open,
 	.read	 = seq_read,
@@ -488,22 +506,21 @@ const struct file_operations seq_fld_debugfs_seq_fops = {
 
 #endif /* HAVE_SERVER_SUPPORT */
 
-/* Client side debugfs stuff */
+/* Client side procfs stuff */
 static ssize_t
-ldebugfs_client_fid_space_seq_write(struct file *file,
-				    const char __user *buffer,
-				    size_t count, loff_t *off)
+lprocfs_client_fid_space_seq_write(struct file *file, const char __user *buffer,
+				   size_t count, loff_t *off)
 {
-	struct lu_client_seq *seq;
+	struct lu_client_seq *seq = ((struct seq_file *)file->private_data)->private;
 	int rc;
-
 	ENTRY;
-	seq = ((struct seq_file *)file->private_data)->private;
+
+	LASSERT(seq != NULL);
 
 	mutex_lock(&seq->lcs_mutex);
-	rc = ldebugfs_fid_write_common(buffer, count, &seq->lcs_space);
+	rc = lprocfs_fid_write_common(file, buffer, count, &seq->lcs_space);
 	if (rc == 0) {
-		CDEBUG(D_INFO, "%s: Space: " DRANGE "\n",
+		CDEBUG(D_INFO, "%s: Space: "DRANGE"\n",
                        seq->lcs_name, PRANGE(&seq->lcs_space));
 	}
 
@@ -512,58 +529,68 @@ ldebugfs_client_fid_space_seq_write(struct file *file,
 	RETURN(count);
 }
 
-static int ldebugfs_client_fid_space_seq_show(struct seq_file *m, void *unused)
+static int
+lprocfs_client_fid_space_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_client_seq *seq = (struct lu_client_seq *)m->private;
-
 	ENTRY;
+
+	LASSERT(seq != NULL);
+
 	mutex_lock(&seq->lcs_mutex);
-	seq_printf(m, "[%#llx - %#llx]:%x:%s\n", PRANGE(&seq->lcs_space));
+	seq_printf(m, "[%#llx - %#llx]:%x:%s\n",
+		   PRANGE(&seq->lcs_space));
 	mutex_unlock(&seq->lcs_mutex);
 
 	RETURN(0);
 }
 
-static ssize_t ldebugfs_client_fid_width_seq_write(struct file *file,
-						   const char __user *buffer,
-						   size_t count, loff_t *off)
+static ssize_t
+lprocfs_client_fid_width_seq_write(struct file *file, const char __user *buffer,
+				   size_t count, loff_t *off)
 {
-	struct seq_file *m = file->private_data;
-	struct lu_client_seq *seq = m->private;
-	u64 val;
-	u64 max;
+	struct lu_client_seq *seq = ((struct seq_file *)file->private_data)->private;
+	__u64 max;
 	int rc;
-
+	__s64 val;
 	ENTRY;
-	rc = kstrtoull_from_user(buffer, count, 0, &val);
-	if (rc)
-		return rc;
+
+	LASSERT(seq != NULL);
 
 	mutex_lock(&seq->lcs_mutex);
+
+	rc = lprocfs_str_to_s64(file, buffer, count, &val);
+	if (rc) {
+		GOTO(out_unlock, count = rc);
+	}
+
 	if (seq->lcs_type == LUSTRE_SEQ_DATA)
 		max = LUSTRE_DATA_SEQ_MAX_WIDTH;
 	else
 		max = LUSTRE_METADATA_SEQ_MAX_WIDTH;
 
-	if (val <= max) {
+	if (val <= max && val > 0) {
 		seq->lcs_width = val;
 
-		CDEBUG(D_INFO, "%s: Sequence size: %llu\n", seq->lcs_name,
-		       seq->lcs_width);
+		CDEBUG(D_INFO, "%s: Sequence size: %llu\n",
+		       seq->lcs_name, seq->lcs_width);
 	} else {
-		count = -ERANGE;
+		GOTO(out_unlock, count = -ERANGE);
 	}
 
+out_unlock:
 	mutex_unlock(&seq->lcs_mutex);
 	RETURN(count);
 }
 
 static int
-ldebugfs_client_fid_width_seq_show(struct seq_file *m, void *unused)
+lprocfs_client_fid_width_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_client_seq *seq = (struct lu_client_seq *)m->private;
-
 	ENTRY;
+
+	LASSERT(seq != NULL);
+
 	mutex_lock(&seq->lcs_mutex);
 	seq_printf(m, "%llu\n", seq->lcs_width);
 	mutex_unlock(&seq->lcs_mutex);
@@ -572,11 +599,13 @@ ldebugfs_client_fid_width_seq_show(struct seq_file *m, void *unused)
 }
 
 static int
-ldebugfs_client_fid_fid_seq_show(struct seq_file *m, void *unused)
+lprocfs_client_fid_fid_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_client_seq *seq = (struct lu_client_seq *)m->private;
-
 	ENTRY;
+
+	LASSERT(seq != NULL);
+
 	mutex_lock(&seq->lcs_mutex);
 	seq_printf(m, DFID"\n", PFID(&seq->lcs_fid));
 	mutex_unlock(&seq->lcs_mutex);
@@ -585,37 +614,38 @@ ldebugfs_client_fid_fid_seq_show(struct seq_file *m, void *unused)
 }
 
 static int
-ldebugfs_client_fid_server_seq_show(struct seq_file *m, void *unused)
+lprocfs_client_fid_server_seq_show(struct seq_file *m, void *unused)
 {
 	struct lu_client_seq *seq = (struct lu_client_seq *)m->private;
 	struct client_obd *cli;
 	ENTRY;
 
-	if (seq->lcs_exp) {
+	LASSERT(seq != NULL);
+
+	if (seq->lcs_exp != NULL) {
 		cli = &seq->lcs_exp->exp_obd->u.cli;
 		seq_printf(m, "%s\n", cli->cl_target_uuid.uuid);
-#ifdef HAVE_SERVER_SUPPORT
 	} else {
 		seq_printf(m, "%s\n", seq->lcs_srv->lss_name);
-#endif /* HAVE_SERVER_SUPPORT */
 	}
-
 	RETURN(0);
 }
 
-LDEBUGFS_SEQ_FOPS(ldebugfs_client_fid_space);
-LDEBUGFS_SEQ_FOPS(ldebugfs_client_fid_width);
-LDEBUGFS_SEQ_FOPS_RO(ldebugfs_client_fid_server);
-LDEBUGFS_SEQ_FOPS_RO(ldebugfs_client_fid_fid);
+LPROC_SEQ_FOPS(lprocfs_client_fid_space);
+LPROC_SEQ_FOPS(lprocfs_client_fid_width);
+LPROC_SEQ_FOPS_RO(lprocfs_client_fid_server);
+LPROC_SEQ_FOPS_RO(lprocfs_client_fid_fid);
 
-struct ldebugfs_vars seq_client_debugfs_list[] = {
+struct lprocfs_vars seq_client_proc_list[] = {
 	{ .name	=	"space",
-	  .fops	=	&ldebugfs_client_fid_space_fops	},
+	  .fops	=	&lprocfs_client_fid_space_fops	},
 	{ .name	=	"width",
-	  .fops	=	&ldebugfs_client_fid_width_fops	},
+	  .fops	=	&lprocfs_client_fid_width_fops	},
 	{ .name	=	"server",
-	  .fops	=	&ldebugfs_client_fid_server_fops},
+	  .fops	=	&lprocfs_client_fid_server_fops	},
 	{ .name	=	"fid",
-	  .fops	=	&ldebugfs_client_fid_fid_fops	},
+	  .fops	=	&lprocfs_client_fid_fid_fops	},
 	{ NULL }
 };
+
+#endif /* CONFIG_PROC_FS */
