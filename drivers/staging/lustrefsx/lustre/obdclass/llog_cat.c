@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -88,12 +88,13 @@ static int llog_cat_new_log(const struct lu_env *env,
 		if (cathandle->lgh_name == NULL) {
 			CWARN("%s: there are no more free slots in catalog "
 			      DFID":%x\n",
-			      loghandle2name(loghandle),
+			      loghandle->lgh_ctxt->loc_obd->obd_name,
 			      PFID(&cathandle->lgh_id.lgl_oi.oi_fid),
 			      cathandle->lgh_id.lgl_ogen);
 		} else {
 			CWARN("%s: there are no more free slots in "
-			      "catalog %s\n", loghandle2name(loghandle),
+			      "catalog %s\n",
+			      loghandle->lgh_ctxt->loc_obd->obd_name,
 			      cathandle->lgh_name);
 		}
 		RETURN(-ENOSPC);
@@ -152,7 +153,7 @@ static int llog_cat_new_log(const struct lu_env *env,
 		GOTO(out, rc = 0);
 	} else if (rc != 0) {
 		CERROR("%s: can't create new plain llog in catalog: rc = %d\n",
-		       loghandle2name(loghandle), rc);
+		       loghandle->lgh_ctxt->loc_obd->obd_name, rc);
 		GOTO(out, rc);
 	}
 
@@ -212,135 +213,9 @@ out_destroy:
 	loghandle->lgh_hdr->llh_flags &= ~LLOG_F_ZAP_WHEN_EMPTY;
 	/* this is to mimic full log, so another llog_cat_current_log()
 	 * can skip it and ask for another onet */
-	loghandle->lgh_last_idx = LLOG_HDR_BITMAP_SIZE(loghandle->lgh_hdr) + 1;
+	loghandle->lgh_last_idx = LLOG_HDR_BITMAP_SIZE(llh) + 1;
 	llog_trans_destroy(env, loghandle, th);
-	if (handle != NULL)
-		dt_trans_stop(env, dt, handle);
 	RETURN(rc);
-}
-
-static int llog_cat_refresh(const struct lu_env *env,
-			    struct llog_handle *cathandle)
-{
-	struct llog_handle *loghandle;
-	int rc;
-
-	down_write(&cathandle->lgh_lock);
-	list_for_each_entry(loghandle, &cathandle->u.chd.chd_head,
-			    u.phd.phd_entry) {
-		if (!llog_exist(loghandle))
-			continue;
-
-		rc = llog_read_header(env, loghandle, NULL);
-		if (rc)
-			goto unlock;
-	}
-
-	rc = llog_read_header(env, cathandle, NULL);
-unlock:
-	up_write(&loghandle->lgh_lock);
-
-	return rc;
-}
-
-/*
- * prepare current/next log for catalog.
- *
- * if \a *ploghandle is NULL, open it, and declare create, NB, if \a
- * *ploghandle is remote, create it synchronously here, see comments
- * below.
- *
- * \a cathandle->lgh_lock is down_read-ed, it gets down_write-ed if \a
- * *ploghandle has to be opened.
- */
-static int llog_cat_prep_log(const struct lu_env *env,
-			     struct llog_handle *cathandle,
-			     struct llog_handle **ploghandle,
-			     struct thandle *th)
-{
-	int rc;
-	int sem_upgraded;
-
-start:
-	rc = 0;
-	sem_upgraded = 0;
-	if (IS_ERR_OR_NULL(*ploghandle)) {
-		up_read(&cathandle->lgh_lock);
-		down_write(&cathandle->lgh_lock);
-		sem_upgraded = 1;
-		if (IS_ERR_OR_NULL(*ploghandle)) {
-			struct llog_handle *loghandle;
-
-			rc = llog_open(env, cathandle->lgh_ctxt, &loghandle,
-				       NULL, NULL, LLOG_OPEN_NEW);
-			if (!rc) {
-				*ploghandle = loghandle;
-				list_add_tail(&loghandle->u.phd.phd_entry,
-					      &cathandle->u.chd.chd_head);
-			}
-		}
-		if (rc)
-			GOTO(out, rc);
-	}
-
-	rc = llog_exist(*ploghandle);
-	if (rc < 0)
-		GOTO(out, rc);
-	if (rc)
-		GOTO(out, rc = 0);
-
-	if (dt_object_remote(cathandle->lgh_obj)) {
-		down_write_nested(&(*ploghandle)->lgh_lock, LLOGH_LOG);
-		if (!llog_exist(*ploghandle)) {
-			/* For remote operation, if we put the llog object
-			 * creation in the current transaction, then the
-			 * llog object will not be created on the remote
-			 * target until the transaction stop, if other
-			 * operations start before the transaction stop,
-			 * and use the same llog object, will be dependent
-			 * on the success of this transaction. So let's
-			 * create the llog object synchronously here to
-			 * remove the dependency. */
-			rc = llog_cat_new_log(env, cathandle, *ploghandle,
-					      NULL);
-			if (rc == -ESTALE) {
-				up_write(&(*ploghandle)->lgh_lock);
-				if (sem_upgraded)
-					up_write(&cathandle->lgh_lock);
-				else
-					up_read(&cathandle->lgh_lock);
-
-				rc = llog_cat_refresh(env, cathandle);
-				down_read_nested(&cathandle->lgh_lock,
-						 LLOGH_CAT);
-				if (rc)
-					return rc;
-				/* *ploghandle might become NULL, restart */
-				goto start;
-			}
-		}
-		up_write(&(*ploghandle)->lgh_lock);
-	} else {
-		struct llog_thread_info	*lgi = llog_info(env);
-		struct llog_logid_rec *lirec = &lgi->lgi_logid;
-
-		rc = llog_declare_create(env, *ploghandle, th);
-		if (rc)
-			GOTO(out, rc);
-
-		lirec->lid_hdr.lrh_len = sizeof(*lirec);
-		rc = llog_declare_write_rec(env, cathandle, &lirec->lid_hdr, -1,
-					    th);
-	}
-
-out:
-	if (sem_upgraded) {
-		up_write(&cathandle->lgh_lock);
-		down_read_nested(&cathandle->lgh_lock, LLOGH_CAT);
-		if (rc == 0)
-			goto start;
-	}
-	return rc;
 }
 
 /* Open an existent log handle and add it to the open list.
@@ -374,21 +249,14 @@ int llog_cat_id2handle(const struct lu_env *env, struct llog_handle *cathandle,
 		    ostid_seq(&cgl->lgl_oi) == ostid_seq(&logid->lgl_oi)) {
 			if (cgl->lgl_ogen != logid->lgl_ogen) {
 				CWARN("%s: log "DFID" generation %x != %x\n",
-				      loghandle2name(loghandle),
+				      loghandle->lgh_ctxt->loc_obd->obd_name,
 				      PFID(&logid->lgl_oi.oi_fid),
 				      cgl->lgl_ogen, logid->lgl_ogen);
 				continue;
 			}
-			*res = llog_handle_get(loghandle);
-			if (!*res) {
-				CERROR("%s: log "DFID" refcount is zero!\n",
-				       loghandle2name(loghandle),
-				       PFID(&logid->lgl_oi.oi_fid));
-				continue;
-			}
 			loghandle->u.phd.phd_cat_handle = cathandle;
 			up_write(&cathandle->lgh_lock);
-			RETURN(rc);
+			GOTO(out, rc = 0);
 		}
 	}
 	up_write(&cathandle->lgh_lock);
@@ -397,20 +265,18 @@ int llog_cat_id2handle(const struct lu_env *env, struct llog_handle *cathandle,
 		       LLOG_OPEN_EXISTS);
 	if (rc < 0) {
 		CERROR("%s: error opening log id "DFID":%x: rc = %d\n",
-		       loghandle2name(cathandle), PFID(&logid->lgl_oi.oi_fid),
-		       logid->lgl_ogen, rc);
+		       cathandle->lgh_ctxt->loc_obd->obd_name,
+		       PFID(&logid->lgl_oi.oi_fid), logid->lgl_ogen, rc);
 		RETURN(rc);
 	}
 
 	rc = llog_init_handle(env, loghandle, LLOG_F_IS_PLAIN | fmt, NULL);
 	if (rc < 0) {
 		llog_close(env, loghandle);
-		*res = NULL;
+		loghandle = NULL;
 		RETURN(rc);
 	}
 
-	*res = llog_handle_get(loghandle);
-	LASSERT(*res);
 	down_write(&cathandle->lgh_lock);
 	list_add_tail(&loghandle->u.phd.phd_entry, &cathandle->u.chd.chd_head);
 	up_write(&cathandle->lgh_lock);
@@ -419,7 +285,11 @@ int llog_cat_id2handle(const struct lu_env *env, struct llog_handle *cathandle,
 	loghandle->u.phd.phd_cookie.lgc_lgl = cathandle->lgh_id;
 	loghandle->u.phd.phd_cookie.lgc_index =
 				loghandle->lgh_hdr->llh_cat_idx;
-	RETURN(0);
+	EXIT;
+out:
+	llog_handle_get(loghandle);
+	*res = loghandle;
+	return 0;
 }
 
 int llog_cat_close(const struct lu_env *env, struct llog_handle *cathandle)
@@ -444,7 +314,8 @@ int llog_cat_close(const struct lu_env *env, struct llog_handle *cathandle)
 			if (rc)
 				CERROR("%s: failure destroying log during "
 				       "cleanup: rc = %d\n",
-				       loghandle2name(loghandle), rc);
+				       loghandle->lgh_ctxt->loc_obd->obd_name,
+				       rc);
 
 			index = loghandle->u.phd.phd_cookie.lgc_index;
 			llog_cat_cleanup(env, cathandle, NULL, index);
@@ -530,7 +401,7 @@ next:
 	 * meet this situation. */
 	if (IS_ERR_OR_NULL(cathandle->u.chd.chd_next_log)) {
 		CERROR("%s: next log does not exist!\n",
-		       loghandle2name(cathandle));
+		       cathandle->lgh_ctxt->loc_obd->obd_name);
 		loghandle = ERR_PTR(-EIO);
 		if (cathandle->u.chd.chd_next_log == NULL) {
 			/* Store the error in chd_next_log, so
@@ -552,6 +423,40 @@ out_unlock:
 	up_write(&cathandle->lgh_lock);
 	LASSERT(loghandle);
 	RETURN(loghandle);
+}
+
+static int llog_cat_update_header(const struct lu_env *env,
+			   struct llog_handle *cathandle)
+{
+	struct llog_handle *loghandle;
+	int rc;
+	ENTRY;
+
+	/* refresh llog */
+	down_write(&cathandle->lgh_lock);
+	if (!cathandle->lgh_stale) {
+		up_write(&cathandle->lgh_lock);
+		RETURN(0);
+	}
+	list_for_each_entry(loghandle, &cathandle->u.chd.chd_head,
+			    u.phd.phd_entry) {
+		if (!llog_exist(loghandle))
+			continue;
+
+		rc = llog_read_header(env, loghandle, NULL);
+		if (rc != 0) {
+			up_write(&cathandle->lgh_lock);
+			GOTO(out, rc);
+		}
+	}
+	rc = llog_read_header(env, cathandle, NULL);
+	if (rc == 0)
+		cathandle->lgh_stale = 0;
+	up_write(&cathandle->lgh_lock);
+	if (rc != 0)
+		GOTO(out, rc);
+out:
+	RETURN(rc);
 }
 
 /* Add a single record to the recovery log(s) using a catalog
@@ -607,7 +512,7 @@ retry:
 		if (retried++ == 0)
 			GOTO(retry, rc);
 		CERROR("%s: error on 2nd llog: rc = %d\n",
-		       loghandle2name(cathandle), rc);
+		       cathandle->lgh_ctxt->loc_obd->obd_name, rc);
 	}
 
 	RETURN(rc);
@@ -618,43 +523,167 @@ int llog_cat_declare_add_rec(const struct lu_env *env,
 			     struct llog_handle *cathandle,
 			     struct llog_rec_hdr *rec, struct thandle *th)
 {
-	int rc;
+	struct llog_thread_info	*lgi = llog_info(env);
+	struct llog_logid_rec	*lirec = &lgi->lgi_logid;
+	struct llog_handle	*loghandle, *next;
+	int			 rc = 0;
 
 	ENTRY;
 
-start:
-	down_read_nested(&cathandle->lgh_lock, LLOGH_CAT);
-	rc = llog_cat_prep_log(env, cathandle,
-			       &cathandle->u.chd.chd_current_log, th);
+	if (cathandle->u.chd.chd_current_log == NULL) {
+		/* declare new plain llog */
+		down_write(&cathandle->lgh_lock);
+		if (cathandle->u.chd.chd_current_log == NULL) {
+			rc = llog_open(env, cathandle->lgh_ctxt, &loghandle,
+				       NULL, NULL, LLOG_OPEN_NEW);
+			if (rc == 0) {
+				cathandle->u.chd.chd_current_log = loghandle;
+				list_add_tail(&loghandle->u.phd.phd_entry,
+					      &cathandle->u.chd.chd_head);
+			}
+		}
+		up_write(&cathandle->lgh_lock);
+	} else if (cathandle->u.chd.chd_next_log == NULL ||
+		   IS_ERR(cathandle->u.chd.chd_next_log)) {
+		/* declare next plain llog */
+		down_write(&cathandle->lgh_lock);
+		if (cathandle->u.chd.chd_next_log == NULL ||
+		    IS_ERR(cathandle->u.chd.chd_next_log)) {
+			rc = llog_open(env, cathandle->lgh_ctxt, &loghandle,
+				       NULL, NULL, LLOG_OPEN_NEW);
+			if (rc == 0) {
+				cathandle->u.chd.chd_next_log = loghandle;
+				list_add_tail(&loghandle->u.phd.phd_entry,
+					      &cathandle->u.chd.chd_head);
+			}
+		}
+		up_write(&cathandle->lgh_lock);
+	}
 	if (rc)
-		GOTO(unlock, rc);
+		GOTO(out, rc);
 
-	rc = llog_cat_prep_log(env, cathandle, &cathandle->u.chd.chd_next_log,
-			       th);
-	if (rc)
-		GOTO(unlock, rc);
+	lirec->lid_hdr.lrh_len = sizeof(*lirec);
 
-	rc = llog_declare_write_rec(env, cathandle->u.chd.chd_current_log,
-				    rec, -1, th);
-	if (rc == -ESTALE && dt_object_remote(cathandle->lgh_obj)) {
-		up_read(&cathandle->lgh_lock);
-		rc = llog_cat_refresh(env, cathandle);
-		if (rc)
-			RETURN(rc);
-		goto start;
+	if (!llog_exist(cathandle->u.chd.chd_current_log)) {
+		if (dt_object_remote(cathandle->lgh_obj)) {
+			/* For remote operation, if we put the llog object
+			 * creation in the current transaction, then the
+			 * llog object will not be created on the remote
+			 * target until the transaction stop, if other
+			 * operations start before the transaction stop,
+			 * and use the same llog object, will be dependent
+			 * on the success of this transaction. So let's
+			 * create the llog object synchronously here to
+			 * remove the dependency. */
+create_again:
+			down_read_nested(&cathandle->lgh_lock, LLOGH_CAT);
+			loghandle = cathandle->u.chd.chd_current_log;
+			down_write_nested(&loghandle->lgh_lock, LLOGH_LOG);
+			if (cathandle->lgh_stale) {
+				up_write(&loghandle->lgh_lock);
+				up_read(&cathandle->lgh_lock);
+				GOTO(out, rc = -EIO);
+			}
+			if (!llog_exist(loghandle)) {
+				rc = llog_cat_new_log(env, cathandle, loghandle,
+						      NULL);
+				if (rc == -ESTALE)
+					cathandle->lgh_stale = 1;
+			}
+			up_write(&loghandle->lgh_lock);
+			up_read(&cathandle->lgh_lock);
+			if (rc == -ESTALE) {
+				rc = llog_cat_update_header(env, cathandle);
+				if (rc != 0)
+					GOTO(out, rc);
+				goto create_again;
+			} else if (rc < 0) {
+				GOTO(out, rc);
+			}
+		} else {
+			rc = llog_declare_create(env,
+					cathandle->u.chd.chd_current_log, th);
+			if (rc)
+				GOTO(out, rc);
+			llog_declare_write_rec(env, cathandle,
+					       &lirec->lid_hdr, -1, th);
+		}
 	}
 
-#if 0
-	/*
-	 * XXX: we hope for declarations made for existing llog this might be
-	 * not correct with some backends where declarations are expected
-	 * against specific object like ZFS with full debugging enabled.
-	 */
-	rc = llog_declare_write_rec(env, cathandle->u.chd.chd_next_log, rec, -1,
-				    th);
-#endif
-unlock:
-	up_read(&cathandle->lgh_lock);
+write_again:
+	/* declare records in the llogs */
+	rc = llog_declare_write_rec(env, cathandle->u.chd.chd_current_log,
+				    rec, -1, th);
+	if (rc == -ESTALE) {
+		down_write(&cathandle->lgh_lock);
+		if (cathandle->lgh_stale) {
+			up_write(&cathandle->lgh_lock);
+			GOTO(out, rc = -EIO);
+		}
+
+		cathandle->lgh_stale = 1;
+		up_write(&cathandle->lgh_lock);
+		rc = llog_cat_update_header(env, cathandle);
+		if (rc != 0)
+			GOTO(out, rc);
+		goto write_again;
+	} else if (rc < 0) {
+		GOTO(out, rc);
+	}
+
+	next = cathandle->u.chd.chd_next_log;
+	if (!IS_ERR_OR_NULL(next)) {
+		if (!llog_exist(next)) {
+			if (dt_object_remote(cathandle->lgh_obj)) {
+				/* For remote operation, if we put the llog
+				 * object creation in the current transaction,
+				 * then the llog object will not be created on
+				 * the remote target until the transaction stop,
+				 * if other operations start before the
+				 * transaction stop, and use the same llog
+				 * object, will be dependent on the success of
+				 * this transaction. So let's create the llog
+				 * object synchronously here to remove the
+				 * dependency. */
+				down_write_nested(&cathandle->lgh_lock,
+						 LLOGH_CAT);
+				next = cathandle->u.chd.chd_next_log;
+				if (IS_ERR_OR_NULL(next)) {
+					/* Sigh, another thread just tried,
+					 * let's fail as well */
+					up_write(&cathandle->lgh_lock);
+					if (next == NULL)
+						rc = -EIO;
+					else
+						rc = PTR_ERR(next);
+					GOTO(out, rc);
+				}
+
+				down_write_nested(&next->lgh_lock, LLOGH_LOG);
+				if (!llog_exist(next)) {
+					rc = llog_cat_new_log(env, cathandle,
+							      next, NULL);
+					if (rc < 0)
+						cathandle->u.chd.chd_next_log =
+								ERR_PTR(rc);
+				}
+				up_write(&next->lgh_lock);
+				up_write(&cathandle->lgh_lock);
+				if (rc < 0)
+					GOTO(out, rc);
+			} else {
+				rc = llog_declare_create(env, next, th);
+				llog_declare_write_rec(env, cathandle,
+						&lirec->lid_hdr, -1, th);
+			}
+		}
+		/* XXX: we hope for declarations made for existing llog
+		 *	this might be not correct with some backends
+		 *	where declarations are expected against specific
+		 *	object like ZFS with full debugging enabled */
+		/*llog_declare_write_rec(env, next, rec, -1, th);*/
+	}
+out:
 	RETURN(rc);
 }
 EXPORT_SYMBOL(llog_cat_declare_add_rec);
@@ -717,7 +746,8 @@ int llog_cat_cancel_records(const struct lu_env *env,
 		rc = llog_cat_id2handle(env, cathandle, &loghandle, lgl);
 		if (rc) {
 			CDEBUG(D_HA, "%s: cannot find llog for handle "DFID":%x"
-			       ": rc = %d\n", loghandle2name(cathandle),
+			       ": rc = %d\n",
+			       cathandle->lgh_ctxt->loc_obd->obd_name,
 			       PFID(&lgl->lgl_oi.oi_fid), lgl->lgl_ogen, rc);
 			failed++;
 			continue;
@@ -732,7 +762,8 @@ int llog_cat_cancel_records(const struct lu_env *env,
 			 */
 			lrc = -ENOENT;
 			CDEBUG(D_HA, "%s: llog "DFID":%x does not exist"
-			       ": rc = %d\n", loghandle2name(cathandle),
+			       ": rc = %d\n",
+			       cathandle->lgh_ctxt->loc_obd->obd_name,
 			       PFID(&lgl->lgl_oi.oi_fid), lgl->lgl_ogen, lrc);
 			failed++;
 			if (rc == 0)
@@ -755,85 +786,67 @@ int llog_cat_cancel_records(const struct lu_env *env,
 			if (rc == 0)
 				rc = lrc;
 		}
-		llog_handle_put(env, loghandle);
+		llog_handle_put(loghandle);
 	}
 	if (rc)
 		CERROR("%s: fail to cancel %d of %d llog-records: rc = %d\n",
-		       loghandle2name(cathandle), failed, count, rc);
+		       cathandle->lgh_ctxt->loc_obd->obd_name, failed, count,
+		       rc);
 
 	RETURN(rc);
 }
 EXPORT_SYMBOL(llog_cat_cancel_records);
-
-static int llog_cat_process_common(const struct lu_env *env,
-				   struct llog_handle *cat_llh,
-				   struct llog_rec_hdr *rec,
-				   struct llog_handle **llhp)
-{
-	struct llog_logid_rec *lir = container_of(rec, typeof(*lir), lid_hdr);
-	struct llog_log_hdr *hdr;
-	int rc;
-
-	ENTRY;
-	if (rec->lrh_type != le32_to_cpu(LLOG_LOGID_MAGIC)) {
-		rc = -EINVAL;
-		CWARN("%s: invalid record in catalog "DFID":%x: rc = %d\n",
-		      loghandle2name(cat_llh),
-		      PFID(&cat_llh->lgh_id.lgl_oi.oi_fid),
-		      cat_llh->lgh_id.lgl_ogen, rc);
-		RETURN(rc);
-	}
-	CDEBUG(D_HA, "processing log "DFID":%x at index %u of catalog "DFID"\n",
-	       PFID(&lir->lid_id.lgl_oi.oi_fid), lir->lid_id.lgl_ogen,
-	       le32_to_cpu(rec->lrh_index),
-	       PFID(&cat_llh->lgh_id.lgl_oi.oi_fid));
-
-	rc = llog_cat_id2handle(env, cat_llh, llhp, &lir->lid_id);
-	if (rc) {
-		/* After a server crash, a stub of index record in catlog could
-		 * be kept, because plain log destroy + catlog index record
-		 * deletion are not atomic. So we end up with an index but no
-		 * actual record. Destroy the index and move on. */
-		if (rc == -ENOENT || rc == -ESTALE)
-			rc = LLOG_DEL_RECORD;
-		else if (rc)
-			CWARN("%s: can't find llog handle "DFID":%x: rc = %d\n",
-			      loghandle2name(cat_llh),
-			      PFID(&lir->lid_id.lgl_oi.oi_fid),
-			      lir->lid_id.lgl_ogen, rc);
-
-		RETURN(rc);
-	}
-
-	/* clean old empty llogs, do not consider current llog in use */
-	/* ignore remote (lgh_obj == NULL) llogs */
-	hdr = (*llhp)->lgh_hdr;
-	if ((hdr->llh_flags & LLOG_F_ZAP_WHEN_EMPTY) &&
-	    hdr->llh_count == 1 && cat_llh->lgh_obj != NULL &&
-	    *llhp != cat_llh->u.chd.chd_current_log) {
-		rc = llog_destroy(env, *llhp);
-		if (rc)
-			CWARN("%s: can't destroy empty log "DFID": rc = %d\n",
-			      loghandle2name((*llhp)),
-			      PFID(&lir->lid_id.lgl_oi.oi_fid), rc);
-		rc = LLOG_DEL_PLAIN;
-	}
-
-	RETURN(rc);
-}
 
 static int llog_cat_process_cb(const struct lu_env *env,
 			       struct llog_handle *cat_llh,
 			       struct llog_rec_hdr *rec, void *data)
 {
 	struct llog_process_data *d = data;
-	struct llog_handle *llh = NULL;
+	struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
+	struct llog_handle *llh;
+	struct llog_log_hdr *hdr;
 	int rc;
 
 	ENTRY;
-	rc = llog_cat_process_common(env, cat_llh, rec, &llh);
-	if (rc)
-		GOTO(out, rc);
+	if (rec->lrh_type != LLOG_LOGID_MAGIC) {
+		CERROR("invalid record in catalog\n");
+		RETURN(-EINVAL);
+	}
+	CDEBUG(D_HA, "processing log "DFID":%x at index %u of catalog "
+	       DFID"\n", PFID(&lir->lid_id.lgl_oi.oi_fid), lir->lid_id.lgl_ogen,
+	       rec->lrh_index, PFID(&cat_llh->lgh_id.lgl_oi.oi_fid));
+
+	rc = llog_cat_id2handle(env, cat_llh, &llh, &lir->lid_id);
+	if (rc) {
+		CERROR("%s: cannot find handle for llog "DFID": rc = %d\n",
+		       cat_llh->lgh_ctxt->loc_obd->obd_name,
+		       PFID(&lir->lid_id.lgl_oi.oi_fid), rc);
+		if (rc == -ENOENT || rc == -ESTALE) {
+			/* After a server crash, a stub of index
+			 * record in catlog could be kept, because
+			 * plain log destroy + catlog index record
+			 * deletion are not atomic. So we end up with
+			 * an index but no actual record. Destroy the
+			 * index and move on. */
+			rc = llog_cat_cleanup(env, cat_llh, NULL,
+					      rec->lrh_index);
+		}
+
+		RETURN(rc);
+	}
+
+	/* clean old empty llogs, do not consider current llog in use */
+	/* ignore remote (lgh_obj=NULL) llogs */
+	hdr = llh->lgh_hdr;
+	if ((hdr->llh_flags & LLOG_F_ZAP_WHEN_EMPTY) &&
+	    hdr->llh_count == 1 && cat_llh->lgh_obj != NULL &&
+	    llh != cat_llh->u.chd.chd_current_log) {
+		rc = llog_destroy(env, llh);
+		if (rc)
+			CERROR("%s: fail to destroy empty log: rc = %d\n",
+			       llh->lgh_ctxt->loc_obd->obd_name, rc);
+		GOTO(out, rc = LLOG_DEL_PLAIN);
+	}
 
 	if (rec->lrh_index < d->lpd_startcat) {
 		/* Skip processing of the logs until startcat */
@@ -851,29 +864,13 @@ static int llog_cat_process_cb(const struct lu_env *env,
 		rc = llog_process_or_fork(env, llh, d->lpd_cb, d->lpd_data,
 					  NULL, false);
 	}
-	if (rc == -ENOENT && (cat_llh->lgh_hdr->llh_flags & LLOG_F_RM_ON_ERR)) {
-		/*
-		 * plain llog is reported corrupted, so better to just remove
-		 * it if the caller is fine with that.
-		 */
-		CERROR("%s: remove corrupted/missing llog "DFID"\n",
-		       loghandle2name(cat_llh),
-		       PFID(&llh->lgh_id.lgl_oi.oi_fid));
-		rc = LLOG_DEL_PLAIN;
-	}
 
 out:
 	/* The empty plain log was destroyed while processing */
-	if (rc == LLOG_DEL_PLAIN) {
+	if (rc == LLOG_DEL_PLAIN)
 		rc = llog_cat_cleanup(env, cat_llh, llh,
 				      llh->u.phd.phd_cookie.lgc_index);
-	} else if (rc == LLOG_DEL_RECORD) {
-		/* clear wrong catalog entry */
-		rc = llog_cat_cleanup(env, cat_llh, NULL, rec->lrh_index);
-	}
-
-	if (llh)
-		llog_handle_put(env, llh);
+	llog_handle_put(llh);
 
 	RETURN(rc);
 }
@@ -883,62 +880,43 @@ int llog_cat_process_or_fork(const struct lu_env *env,
 			     llog_cb_t cb, void *data, int startcat,
 			     int startidx, bool fork)
 {
-	struct llog_process_data d;
-	struct llog_log_hdr *llh = cat_llh->lgh_hdr;
-	int rc;
+        struct llog_process_data d;
+        struct llog_log_hdr *llh = cat_llh->lgh_hdr;
+        int rc;
+        ENTRY;
 
-	ENTRY;
-
-	LASSERT(llh->llh_flags & LLOG_F_IS_CAT);
-	d.lpd_data = data;
-	d.lpd_cb = cb;
-	d.lpd_startcat = (startcat == LLOG_CAT_FIRST ? 0 : startcat);
-	d.lpd_startidx = startidx;
+        LASSERT(llh->llh_flags & LLOG_F_IS_CAT);
+        d.lpd_data = data;
+        d.lpd_cb = cb;
+        d.lpd_startcat = startcat;
+        d.lpd_startidx = startidx;
 
 	if (llh->llh_cat_idx >= cat_llh->lgh_last_idx &&
 	    llh->llh_count > 1) {
 		struct llog_process_cat_data cd;
 
 		CWARN("%s: catlog "DFID" crosses index zero\n",
-		      loghandle2name(cat_llh),
+		      cat_llh->lgh_ctxt->loc_obd->obd_name,
 		      PFID(&cat_llh->lgh_id.lgl_oi.oi_fid));
-		/*startcat = 0 is default value for general processing */
-		if ((startcat != LLOG_CAT_FIRST &&
-		    startcat >= llh->llh_cat_idx) || !startcat) {
-			/* processing the catalog part at the end */
-			cd.lpcd_first_idx = (startcat ? startcat :
-					     llh->llh_cat_idx);
-			if (OBD_FAIL_PRECHECK(OBD_FAIL_CAT_RECORDS))
-				cd.lpcd_last_idx = cfs_fail_val;
-			else
-				cd.lpcd_last_idx = 0;
-			rc = llog_process_or_fork(env, cat_llh, cat_cb,
-						  &d, &cd, fork);
-			/* Reset the startcat becasue it has already reached
-			 * catalog bottom.
-			 */
-			startcat = 0;
-			if (rc != 0)
-				RETURN(rc);
-		}
-		/* processing the catalog part at the begining */
-		cd.lpcd_first_idx = (startcat == LLOG_CAT_FIRST) ? 0 : startcat;
-		/* Note, the processing will stop at the lgh_last_idx value,
-		 * and it could be increased during processing. So records
-		 * between current lgh_last_idx and lgh_last_idx in future
-		 * would left unprocessed.
-		 */
+
+		cd.lpcd_first_idx = llh->llh_cat_idx;
+		cd.lpcd_last_idx = 0;
+		rc = llog_process_or_fork(env, cat_llh, cat_cb,
+					  &d, &cd, fork);
+		if (rc != 0)
+			RETURN(rc);
+
+		cd.lpcd_first_idx = 0;
 		cd.lpcd_last_idx = cat_llh->lgh_last_idx;
 		rc = llog_process_or_fork(env, cat_llh, cat_cb,
 					  &d, &cd, fork);
-	} else {
+        } else {
 		rc = llog_process_or_fork(env, cat_llh, cat_cb,
 					  &d, NULL, fork);
-	}
+        }
 
-	RETURN(rc);
+        RETURN(rc);
 }
-EXPORT_SYMBOL(llog_cat_process_or_fork);
 
 int llog_cat_process(const struct lu_env *env, struct llog_handle *cat_llh,
 		     llog_cb_t cb, void *data, int startcat, int startidx)
@@ -953,33 +931,39 @@ static int llog_cat_size_cb(const struct lu_env *env,
 			     struct llog_rec_hdr *rec, void *data)
 {
 	struct llog_process_data *d = data;
-	struct llog_handle *llh = NULL;
+	struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
+	struct llog_handle *llh;
+	int rc;
 	__u64 *cum_size = d->lpd_data;
 	__u64 size;
-	int rc;
 
 	ENTRY;
-	rc = llog_cat_process_common(env, cat_llh, rec, &llh);
-
-	if (rc == LLOG_DEL_PLAIN) {
-		/* empty log was deleted, don't count it */
-		rc = llog_cat_cleanup(env, cat_llh, llh,
-				      llh->u.phd.phd_cookie.lgc_index);
-	} else if (rc == LLOG_DEL_RECORD) {
-		/* clear wrong catalog entry */
-		rc = llog_cat_cleanup(env, cat_llh, NULL, rec->lrh_index);
-	} else {
-		size = llog_size(env, llh);
-		*cum_size += size;
-
-		CDEBUG(D_INFO, "Add llog entry "DFID" size=%llu, tot=%llu\n",
-		       PFID(&llh->lgh_id.lgl_oi.oi_fid), size, *cum_size);
+	if (rec->lrh_type != LLOG_LOGID_MAGIC) {
+		CERROR("%s: invalid record in catalog, rc = %d\n",
+		       cat_llh->lgh_ctxt->loc_obd->obd_name, -EINVAL);
+		RETURN(-EINVAL);
 	}
+	CDEBUG(D_HA, "processing log "DFID":%x at index %u of catalog "
+	       DFID"\n", PFID(&lir->lid_id.lgl_oi.oi_fid), lir->lid_id.lgl_ogen,
+	       rec->lrh_index, PFID(&cat_llh->lgh_id.lgl_oi.oi_fid));
 
-	if (llh != NULL)
-		llog_handle_put(env, llh);
+	rc = llog_cat_id2handle(env, cat_llh, &llh, &lir->lid_id);
+	if (rc) {
+		CWARN("%s: cannot find handle for llog "DFID": rc = %d\n",
+		      cat_llh->lgh_ctxt->loc_obd->obd_name,
+		      PFID(&lir->lid_id.lgl_oi.oi_fid), rc);
+		RETURN(0);
+	}
+	size = llog_size(env, llh);
+	*cum_size += size;
+
+	CDEBUG(D_INFO, "Add llog entry "DFID" size %llu\n",
+	       PFID(&llh->lgh_id.lgl_oi.oi_fid), size);
+
+	llog_handle_put(llh);
 
 	RETURN(0);
+
 }
 
 __u64 llog_cat_size(const struct lu_env *env, struct llog_handle *cat_llh)
@@ -993,58 +977,65 @@ __u64 llog_cat_size(const struct lu_env *env, struct llog_handle *cat_llh)
 }
 EXPORT_SYMBOL(llog_cat_size);
 
-/* currently returns the number of "free" entries in catalog,
- * ie the available entries for a new plain LLOG file creation,
- * even if catalog has wrapped
- */
-__u32 llog_cat_free_space(struct llog_handle *cat_llh)
-{
-	/* simulate almost full Catalog */
-	if (OBD_FAIL_CHECK(OBD_FAIL_CAT_FREE_RECORDS))
-		return cfs_fail_val;
-
-	if (cat_llh->lgh_hdr->llh_count == 1)
-		return LLOG_HDR_BITMAP_SIZE(cat_llh->lgh_hdr) - 1;
-
-	if (cat_llh->lgh_last_idx > cat_llh->lgh_hdr->llh_cat_idx)
-		return LLOG_HDR_BITMAP_SIZE(cat_llh->lgh_hdr) - 1 +
-		       cat_llh->lgh_hdr->llh_cat_idx - cat_llh->lgh_last_idx;
-
-	/* catalog is presently wrapped */
-	return cat_llh->lgh_hdr->llh_cat_idx - cat_llh->lgh_last_idx;
-}
-EXPORT_SYMBOL(llog_cat_free_space);
-
 static int llog_cat_reverse_process_cb(const struct lu_env *env,
 				       struct llog_handle *cat_llh,
 				       struct llog_rec_hdr *rec, void *data)
 {
 	struct llog_process_data *d = data;
+	struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
 	struct llog_handle *llh;
+	struct llog_log_hdr *hdr;
 	int rc;
 
-	ENTRY;
-	rc = llog_cat_process_common(env, cat_llh, rec, &llh);
-
-	/* The empty plain log was destroyed while processing */
-	if (rc == LLOG_DEL_PLAIN) {
-		rc = llog_cat_cleanup(env, cat_llh, llh,
-				      llh->u.phd.phd_cookie.lgc_index);
-	} else if (rc == LLOG_DEL_RECORD) {
-		/* clear wrong catalog entry */
-		rc = llog_cat_cleanup(env, cat_llh, NULL, rec->lrh_index);
+	if (le32_to_cpu(rec->lrh_type) != LLOG_LOGID_MAGIC) {
+		CERROR("invalid record in catalog\n");
+		RETURN(-EINVAL);
 	}
-	if (rc)
+	CDEBUG(D_HA, "processing log "DFID":%x at index %u of catalog "
+	       DFID"\n", PFID(&lir->lid_id.lgl_oi.oi_fid), lir->lid_id.lgl_ogen,
+	       le32_to_cpu(rec->lrh_index),
+	       PFID(&cat_llh->lgh_id.lgl_oi.oi_fid));
+
+	rc = llog_cat_id2handle(env, cat_llh, &llh, &lir->lid_id);
+	if (rc) {
+		CERROR("%s: cannot find handle for llog "DFID": rc = %d\n",
+		       cat_llh->lgh_ctxt->loc_obd->obd_name,
+		       PFID(&lir->lid_id.lgl_oi.oi_fid), rc);
+		if (rc == -ENOENT || rc == -ESTALE) {
+			/* After a server crash, a stub of index
+			 * record in catlog could be kept, because
+			 * plain log destroy + catlog index record
+			 * deletion are not atomic. So we end up with
+			 * an index but no actual record. Destroy the
+			 * index and move on. */
+			rc = llog_cat_cleanup(env, cat_llh, NULL,
+					      rec->lrh_index);
+		}
+
 		RETURN(rc);
+	}
+
+	/* clean old empty llogs, do not consider current llog in use */
+	hdr = llh->lgh_hdr;
+	if ((hdr->llh_flags & LLOG_F_ZAP_WHEN_EMPTY) &&
+	    hdr->llh_count == 1 &&
+	    llh != cat_llh->u.chd.chd_current_log) {
+		rc = llog_destroy(env, llh);
+		if (rc)
+			CERROR("%s: fail to destroy empty log: rc = %d\n",
+			       llh->lgh_ctxt->loc_obd->obd_name, rc);
+		GOTO(out, rc = LLOG_DEL_PLAIN);
+	}
 
 	rc = llog_reverse_process(env, llh, d->lpd_cb, d->lpd_data, NULL);
 
+out:
 	/* The empty plain was destroyed while processing */
 	if (rc == LLOG_DEL_PLAIN)
 		rc = llog_cat_cleanup(env, cat_llh, llh,
 				      llh->u.phd.phd_cookie.lgc_index);
 
-	llog_handle_put(env, llh);
+	llog_handle_put(llh);
 	RETURN(rc);
 }
 
@@ -1065,7 +1056,7 @@ int llog_cat_reverse_process(const struct lu_env *env,
 	if (llh->llh_cat_idx >= cat_llh->lgh_last_idx &&
 	    llh->llh_count > 1) {
 		CWARN("%s: catalog "DFID" crosses index zero\n",
-		      loghandle2name(cat_llh),
+		      cat_llh->lgh_ctxt->loc_obd->obd_name,
 		      PFID(&cat_llh->lgh_id.lgl_oi.oi_fid));
 
 		cd.lpcd_first_idx = 0;
@@ -1123,7 +1114,7 @@ static int llog_cat_set_first_idx(struct llog_handle *cathandle, int idx)
 			}
 		}
 
-		CDEBUG(D_HA, "catlog "DFID" first idx %u, last_idx %u\n",
+		CDEBUG(D_RPCTRACE, "catlog "DFID" first idx %u, last_idx %u\n",
 		       PFID(&cathandle->lgh_id.lgl_oi.oi_fid),
 		       llh->llh_cat_idx, cathandle->lgh_last_idx);
 	}
@@ -1136,13 +1127,11 @@ int llog_cat_cleanup(const struct lu_env *env, struct llog_handle *cathandle,
 		     struct llog_handle *loghandle, int index)
 {
 	int rc;
-	struct lu_fid fid = {.f_seq = 0, .f_oid = 0, .f_ver = 0};
 
 	LASSERT(index);
 	if (loghandle != NULL) {
 		/* remove destroyed llog from catalog list and
 		 * chd_current_log variable */
-		fid = loghandle->lgh_id.lgl_oi.oi_fid;
 		down_write(&cathandle->lgh_lock);
 		if (cathandle->u.chd.chd_current_log == loghandle)
 			cathandle->u.chd.chd_current_log = NULL;
@@ -1161,9 +1150,7 @@ int llog_cat_cleanup(const struct lu_env *env, struct llog_handle *cathandle,
 	llog_cat_set_first_idx(cathandle, index);
 	rc = llog_cancel_rec(env, cathandle, index);
 	if (rc == 0)
-		CDEBUG(D_HA,
-		       "cancel plain log "DFID" at index %u of catalog "DFID"\n",
-		       PFID(&fid), index,
-		       PFID(&cathandle->lgh_id.lgl_oi.oi_fid));
+		CDEBUG(D_HA, "cancel plain log at index %u of catalog "DFID"\n",
+		       index, PFID(&cathandle->lgh_id.lgl_oi.oi_fid));
 	return rc;
 }
