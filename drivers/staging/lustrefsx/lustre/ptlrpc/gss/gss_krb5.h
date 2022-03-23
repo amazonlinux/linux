@@ -80,7 +80,7 @@ struct krb5_ctx {
 				kc_cfx:1,
 				kc_seed_init:1,
 				kc_have_acceptor_subkey:1;
-	time64_t		kc_endtime;
+	__s32			kc_endtime;
 	__u8			kc_seed[16];
 	__u64			kc_seq_send;
 	__u64			kc_seq_recv;

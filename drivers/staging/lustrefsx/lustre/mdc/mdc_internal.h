@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -35,7 +35,9 @@
 
 #include <lustre_mdc.h>
 
-int mdc_tunables_init(struct obd_device *obd);
+#ifdef CONFIG_PROC_FS
+extern struct lprocfs_vars lprocfs_mdc_obd_vars[];
+#endif
 
 void mdc_pack_body(struct ptlrpc_request *req, const struct lu_fid *fid,
 		   u64 valid, size_t ea_size, u32 suppgid, u32 flags);
@@ -56,7 +58,6 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 void mdc_file_secctx_pack(struct ptlrpc_request *req,
 			  const char *secctx_name,
 			  const void *secctx, size_t secctx_size);
-void mdc_file_sepol_pack(struct ptlrpc_request *req);
 
 void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
 void mdc_getxattr_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
@@ -64,8 +65,6 @@ void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
 void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const char *old, size_t oldlen,
 		     const char *new, size_t newlen);
-void mdc_migrate_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
-			const char *name, size_t namelen);
 void mdc_close_pack(struct ptlrpc_request *req, struct md_op_data *op_data);
 
 /* mdc/mdc_locks.c */
@@ -96,8 +95,6 @@ int mdc_save_lovea(struct ptlrpc_request *req,
 /* mdc/mdc_request.c */
 int mdc_fid_alloc(const struct lu_env *env, struct obd_export *exp,
 		  struct lu_fid *fid, struct md_op_data *op_data);
-int mdc_setup(struct obd_device *obd, struct lustre_cfg *cfg);
-int mdc_process_config(struct obd_device *obd, size_t len, void *buf);
 
 struct obd_client_handle;
 
@@ -130,7 +127,6 @@ int mdc_setattr(struct obd_export *exp, struct md_op_data *op_data,
 		void *ea, size_t ealen, struct ptlrpc_request **request);
 int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
 	       struct ptlrpc_request **request);
-int mdc_file_resync(struct obd_export *exp, struct md_op_data *data);
 int mdc_cancel_unused(struct obd_export *exp, const struct lu_fid *fid,
 		      union ldlm_policy_data *policy, enum ldlm_mode mode,
 		      enum ldlm_cancel_flags flags, void *opaque);
@@ -146,11 +142,6 @@ enum ldlm_mode mdc_lock_match(struct obd_export *exp, __u64 flags,
 			      union ldlm_policy_data *policy,
 			      enum ldlm_mode mode, struct lustre_handle *lockh);
 
-
-#define MDC_CHANGELOG_DEV_COUNT LMV_MAX_STRIPE_COUNT
-#define MDC_CHANGELOG_DEV_NAME	"changelog"
-extern struct class *mdc_changelog_class;
-extern dev_t mdc_changelog_dev;
 
 int mdc_changelog_cdev_init(struct obd_device *obd);
 
@@ -171,16 +162,5 @@ static inline unsigned long hash_x_index(__u64 hash, int hash64)
 	/* save hash 0 with hash 1 */
 	return ~0UL - (hash + !hash);
 }
-
-/* mdc_dev.c */
-extern struct lu_device_type mdc_device_type;
-int mdc_ldlm_blocking_ast(struct ldlm_lock *dlmlock,
-			  struct ldlm_lock_desc *new, void *data, int flag);
-int mdc_ldlm_glimpse_ast(struct ldlm_lock *dlmlock, void *data);
-int mdc_fill_lvb(struct ptlrpc_request *req, struct ost_lvb *lvb);
-
-/* the minimum inline repsize should be PAGE_SIZE at least */
-#define MDC_DOM_DEF_INLINE_REPSIZE max(8192UL, PAGE_SIZE)
-#define MDC_DOM_MAX_INLINE_REPSIZE XATTR_SIZE_MAX
 
 #endif
