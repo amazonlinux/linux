@@ -36,7 +36,6 @@
 #ifndef __LIBCFS_PRIM_H__
 #define __LIBCFS_PRIM_H__
 
-#include <linux/mm.h>
 #include <linux/sched.h>
 
 /*
