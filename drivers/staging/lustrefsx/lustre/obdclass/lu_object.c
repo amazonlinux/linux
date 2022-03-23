@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -44,36 +44,12 @@
 #include <linux/list.h>
 #include <libcfs/libcfs.h>
 #include <libcfs/libcfs_hash.h> /* hash_long() */
-#include <libcfs/linux/linux-mem.h>
-#include <libcfs/linux/linux-hash.h>
 #include <obd_class.h>
 #include <obd_support.h>
 #include <lustre_disk.h>
 #include <lustre_fid.h>
 #include <lu_object.h>
 #include <lu_ref.h>
-
-struct lu_site_bkt_data {
-	/**
-	 * LRU list, updated on each access to object. Protected by
-	 * bucket lock of lu_site::ls_obj_hash.
-	 *
-	 * "Cold" end of LRU is lu_site::ls_lru.next. Accessed object are
-	 * moved to the lu_site::ls_lru.prev (this is due to the non-existence
-	 * of list_for_each_entry_safe_reverse()).
-	 */
-	struct list_head		lsb_lru;
-	/**
-	 * Wait-queue signaled when an object in this site is ultimately
-	 * destroyed (lu_object_free()) or initialized (lu_object_start()).
-	 * It is used by lu_object_find() to wait before re-trying when
-	 * object in the process of destruction is found in the hash table;
-	 * or wait object to be initialized by the allocator.
-	 *
-	 * \see htable_lookup().
-	 */
-	wait_queue_head_t		lsb_waitq;
-};
 
 enum {
 	LU_CACHE_PERCENT_MAX     = 50,
@@ -109,18 +85,6 @@ MODULE_PARM_DESC(lu_cache_nr, "Maximum number of objects in lu_object cache");
 static void lu_object_free(const struct lu_env *env, struct lu_object *o);
 static __u32 ls_stats_read(struct lprocfs_stats *stats, int idx);
 
-wait_queue_head_t *
-lu_site_wq_from_fid(struct lu_site *site, struct lu_fid *fid)
-{
-	struct cfs_hash_bd bd;
-	struct lu_site_bkt_data *bkt;
-
-	cfs_hash_bd_get(site->ls_obj_hash, fid, &bd);
-	bkt = cfs_hash_bd_extra_get(site->ls_obj_hash, &bd);
-	return &bkt->lsb_waitq;
-}
-EXPORT_SYMBOL(lu_site_wq_from_fid);
-
 /**
  * Decrease reference counter on object. If last reference is freed, return
  * object to the cache, unless lu_object_is_dying(o) holds. In the latter
@@ -129,18 +93,22 @@ EXPORT_SYMBOL(lu_site_wq_from_fid);
 void lu_object_put(const struct lu_env *env, struct lu_object *o)
 {
 	struct lu_site_bkt_data *bkt;
-	struct lu_object_header *top = o->lo_header;
-	struct lu_site *site = o->lo_dev->ld_site;
-	struct lu_object *orig = o;
+	struct lu_object_header *top;
+	struct lu_site *site;
+	struct lu_object *orig;
 	struct cfs_hash_bd bd;
-	const struct lu_fid *fid = lu_object_fid(o);
-	bool is_dying;
+	const struct lu_fid *fid;
+
+	top  = o->lo_header;
+	site = o->lo_dev->ld_site;
+	orig = o;
 
 	/*
 	 * till we have full fids-on-OST implemented anonymous objects
 	 * are possible in OSP. such an object isn't listed in the site
 	 * so we should not remove it from the site.
 	 */
+	fid = lu_object_fid(o);
 	if (fid_is_zero(fid)) {
 		LASSERT(top->loh_hash.next == NULL
 			&& top->loh_hash.pprev == NULL);
@@ -158,19 +126,13 @@ void lu_object_put(const struct lu_env *env, struct lu_object *o)
 	cfs_hash_bd_get(site->ls_obj_hash, &top->loh_fid, &bd);
 	bkt = cfs_hash_bd_extra_get(site->ls_obj_hash, &bd);
 
-	is_dying = lu_object_is_dying(top);
 	if (!cfs_hash_bd_dec_and_lock(site->ls_obj_hash, &bd, &top->loh_ref)) {
-		/* at this point the object reference is dropped and lock is
-		 * not taken, so lu_object should not be touched because it
-		 * can be freed by concurrent thread. Use local variable for
-		 * check.
-		 */
-		if (is_dying) {
+		if (lu_object_is_dying(top)) {
 			/*
 			 * somebody may be waiting for this, currently only
 			 * used for cl_object, see cl_object_put_last().
 			 */
-			wake_up_all(&bkt->lsb_waitq);
+			wake_up_all(&bkt->lsb_marche_funebre);
 		}
 		return;
 	}
@@ -184,17 +146,15 @@ void lu_object_put(const struct lu_env *env, struct lu_object *o)
 			o->lo_ops->loo_object_release(env, o);
 	}
 
-	/* don't use local 'is_dying' here because if was taken without lock
-	 * but here we need the latest actual value of it so check lu_object
-	 * directly here.
-	 */
 	if (!lu_object_is_dying(top) &&
 	    (lu_object_exists(orig) || lu_object_is_cl(orig))) {
 		LASSERT(list_empty(&top->loh_lru));
 		list_add_tail(&top->loh_lru, &bkt->lsb_lru);
+		bkt->lsb_lru_len++;
 		percpu_counter_inc(&site->ls_lru_len_counter);
-		CDEBUG(D_INODE, "Add %p/%p to site lru. hash: %p, bkt: %p\n",
-		       orig, top, site->ls_obj_hash, bkt);
+		CDEBUG(D_INODE, "Add %p to site lru. hash: %p, bkt: %p, "
+		       "lru_len: %ld\n",
+		       o, site->ls_obj_hash, bkt, bkt->lsb_lru_len);
 		cfs_hash_bd_unlock(site->ls_obj_hash, &bd, 1);
 		return;
 	}
@@ -253,6 +213,7 @@ void lu_object_unhash(const struct lu_env *env, struct lu_object *o)
 
 			list_del_init(&top->loh_lru);
 			bkt = cfs_hash_bd_extra_get(obj_hash, &bd);
+			bkt->lsb_lru_len--;
 			percpu_counter_dec(&site->ls_lru_len_counter);
 		}
 		cfs_hash_bd_del_locked(obj_hash, &bd, &top->loh_hash);
@@ -269,9 +230,17 @@ EXPORT_SYMBOL(lu_object_unhash);
  */
 static struct lu_object *lu_object_alloc(const struct lu_env *env,
 					 struct lu_device *dev,
-					 const struct lu_fid *f)
+					 const struct lu_fid *f,
+					 const struct lu_object_conf *conf)
 {
+	struct lu_object *scan;
 	struct lu_object *top;
+	struct list_head *layers;
+	unsigned int init_mask = 0;
+	unsigned int init_flag;
+	int clean;
+	int result;
+	ENTRY;
 
 	/*
 	 * Create top-level object slice. This will also create
@@ -279,36 +248,15 @@ static struct lu_object *lu_object_alloc(const struct lu_env *env,
 	 */
 	top = dev->ld_ops->ldo_object_alloc(env, NULL, dev);
 	if (top == NULL)
-		return ERR_PTR(-ENOMEM);
+		RETURN(ERR_PTR(-ENOMEM));
 	if (IS_ERR(top))
-		return top;
-	/*
-	 * This is the only place where object fid is assigned. It's constant
-	 * after this point.
-	 */
-	top->lo_header->loh_fid = *f;
-
-	return top;
-}
-
-/**
- * Initialize object.
- *
- * This is called after object hash insertion to avoid returning an object with
- * stale attributes.
- */
-static int lu_object_start(const struct lu_env *env, struct lu_device *dev,
-			   struct lu_object *top,
-			   const struct lu_object_conf *conf)
-{
-	struct lu_object *scan;
-	struct list_head *layers;
-	unsigned int init_mask = 0;
-	unsigned int init_flag;
-	int clean;
-	int result;
-
-	layers = &top->lo_header->loh_layers;
+		RETURN(top);
+        /*
+         * This is the only place where object fid is assigned. It's constant
+         * after this point.
+         */
+        top->lo_header->loh_fid = *f;
+        layers = &top->lo_header->loh_layers;
 
 	do {
 		/*
@@ -323,9 +271,10 @@ static int lu_object_start(const struct lu_env *env, struct lu_device *dev,
 			clean = 0;
 			scan->lo_header = top->lo_header;
 			result = scan->lo_ops->loo_object_init(env, scan, conf);
-			if (result)
-				return result;
-
+			if (result != 0) {
+				lu_object_free(env, top);
+				RETURN(ERR_PTR(result));
+			}
 			init_mask |= init_flag;
 next:
 			init_flag <<= 1;
@@ -333,18 +282,17 @@ next:
 	} while (!clean);
 
 	list_for_each_entry_reverse(scan, layers, lo_linkage) {
-		if (scan->lo_ops->loo_object_start != NULL) {
-			result = scan->lo_ops->loo_object_start(env, scan);
-			if (result)
-				return result;
-		}
-	}
+                if (scan->lo_ops->loo_object_start != NULL) {
+                        result = scan->lo_ops->loo_object_start(env, scan);
+                        if (result != 0) {
+                                lu_object_free(env, top);
+                                RETURN(ERR_PTR(result));
+                        }
+                }
+        }
 
-	lprocfs_counter_incr(dev->ld_site->ls_stats, LU_SS_CREATED);
-
-	set_bit(LU_OBJECT_INITED, &top->lo_header->loh_flags);
-
-	return 0;
+        lprocfs_counter_incr(dev->ld_site->ls_stats, LU_SS_CREATED);
+        RETURN(top);
 }
 
 /**
@@ -352,15 +300,15 @@ next:
  */
 static void lu_object_free(const struct lu_env *env, struct lu_object *o)
 {
-	wait_queue_head_t *wq;
+	struct lu_site_bkt_data *bkt;
 	struct lu_site		*site;
 	struct lu_object	*scan;
 	struct list_head	*layers;
 	struct list_head	 splice;
 
-	site = o->lo_dev->ld_site;
-	layers = &o->lo_header->loh_layers;
-	wq = lu_site_wq_from_fid(site, &o->lo_header->loh_fid);
+        site   = o->lo_dev->ld_site;
+        layers = &o->lo_header->loh_layers;
+        bkt    = lu_site_bkt_from_fid(site, &o->lo_header->loh_fid);
         /*
          * First call ->loo_object_delete() method to release all resources.
          */
@@ -389,8 +337,8 @@ static void lu_object_free(const struct lu_env *env, struct lu_object *o)
 		o->lo_ops->loo_object_free(env, o);
 	}
 
-	if (waitqueue_active(wq))
-		wake_up_all(wq);
+	if (waitqueue_active(&bkt->lsb_marche_funebre))
+		wake_up_all(&bkt->lsb_marche_funebre);
 }
 
 /**
@@ -451,6 +399,7 @@ int lu_site_purge_objects(const struct lu_env *env, struct lu_site *s,
                         cfs_hash_bd_del_locked(s->ls_obj_hash,
                                                &bd2, &h->loh_hash);
 			list_move(&h->loh_lru, &dispose);
+			bkt->lsb_lru_len--;
 			percpu_counter_dec(&s->ls_lru_len_counter);
                         if (did_sth == 0)
                                 did_sth = 1;
@@ -642,6 +591,7 @@ static struct lu_object *htable_lookup(struct lu_site *s,
 				       const struct lu_fid *f,
 				       __u64 *version)
 {
+	struct lu_site_bkt_data	*bkt;
 	struct lu_object_header	*h;
 	struct hlist_node *hnode;
 	__u64 ver = cfs_hash_bd_version_get(bd);
@@ -650,6 +600,7 @@ static struct lu_object *htable_lookup(struct lu_site *s,
 		return ERR_PTR(-ENOENT);
 
 	*version = ver;
+	bkt = cfs_hash_bd_extra_get(s->ls_obj_hash, bd);
 	/* cfs_hash_bd_peek_locked is a somehow "internal" function
 	 * of cfs_hash, it doesn't add refcount on object. */
 	hnode = cfs_hash_bd_peek_locked(s->ls_obj_hash, bd, (void *)f);
@@ -663,6 +614,7 @@ static struct lu_object *htable_lookup(struct lu_site *s,
 	lprocfs_counter_incr(s->ls_stats, LU_SS_CACHE_HIT);
 	if (!list_empty(&h->loh_lru)) {
 		list_del_init(&h->loh_lru);
+		bkt->lsb_lru_len--;
 		percpu_counter_dec(&s->ls_lru_len_counter);
 	}
 	return lu_object_top(h);
@@ -705,6 +657,29 @@ static void lu_object_limit(const struct lu_env *env,
 			      MIN(size - nr, LU_CACHE_NR_MAX_ADJUST), 0);
 }
 
+static struct lu_object *lu_object_new(const struct lu_env *env,
+				       struct lu_device *dev,
+				       const struct lu_fid *f,
+				       const struct lu_object_conf *conf)
+{
+	struct lu_object *o;
+	struct cfs_hash *hs;
+	struct cfs_hash_bd bd;
+
+	o = lu_object_alloc(env, dev, f, conf);
+	if (unlikely(IS_ERR(o)))
+		return o;
+
+	hs = dev->ld_site->ls_obj_hash;
+	cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
+	cfs_hash_bd_add_locked(hs, &bd, &o->lo_header->loh_hash);
+	cfs_hash_bd_unlock(hs, &bd, 1);
+
+	lu_object_limit(env, dev);
+
+	return o;
+}
+
 /**
  * Core logic of lu_object_find*() functions.
  *
@@ -722,19 +697,7 @@ struct lu_object *lu_object_find_at(const struct lu_env *env,
 	struct lu_site *s;
 	struct cfs_hash *hs;
 	struct cfs_hash_bd bd;
-	struct lu_site_bkt_data *bkt;
-	struct l_wait_info lwi = { 0 };
 	__u64 version = 0;
-	int rc;
-
-	ENTRY;
-
-	/* FID is from disk or network, zero FID is meaningless, return error
-	 * early to avoid assertion in lu_object_put. If a zero FID is wanted,
-	 * it should be allocated via lu_object_anon().
-	 */
-	if (fid_is_zero(f))
-		RETURN(ERR_PTR(-EINVAL));
 
 	/*
 	 * This uses standard index maintenance protocol:
@@ -753,99 +716,46 @@ struct lu_object *lu_object_find_at(const struct lu_env *env,
 	 * It is unnecessary to perform lookup-alloc-lookup-insert, instead,
 	 * just alloc and insert directly.
 	 *
+	 * If dying object is found during index search, add @waiter to the
+	 * site wait-queue and return ERR_PTR(-EAGAIN).
 	 */
+	if (conf && conf->loc_flags & LOC_F_NEW)
+		return lu_object_new(env, dev, f, conf);
+
 	s  = dev->ld_site;
 	hs = s->ls_obj_hash;
-
-	if (unlikely(OBD_FAIL_PRECHECK(OBD_FAIL_OBD_ZERO_NLINK_RACE)))
-		lu_site_purge(env, s, -1);
-
-	cfs_hash_bd_get(hs, f, &bd);
-	bkt = cfs_hash_bd_extra_get(s->ls_obj_hash, &bd);
-	if (!(conf && conf->loc_flags & LOC_F_NEW)) {
-		cfs_hash_bd_lock(hs, &bd, 1);
-		o = htable_lookup(s, &bd, f, &version);
-		cfs_hash_bd_unlock(hs, &bd, 1);
-
-		if (!IS_ERR(o)) {
-			if (likely(lu_object_is_inited(o->lo_header)))
-				RETURN(o);
-
-			l_wait_event(bkt->lsb_waitq,
-				     lu_object_is_inited(o->lo_header) ||
-				     lu_object_is_dying(o->lo_header), &lwi);
-
-			if (lu_object_is_dying(o->lo_header)) {
-				lu_object_put(env, o);
-
-				RETURN(ERR_PTR(-ENOENT));
-			}
-
-			RETURN(o);
-		}
-
-		if (PTR_ERR(o) != -ENOENT)
-			RETURN(o);
-	}
+	cfs_hash_bd_get_and_lock(hs, (void *)f, &bd, 1);
+	o = htable_lookup(s, &bd, f, &version);
+	cfs_hash_bd_unlock(hs, &bd, 1);
+	if (!IS_ERR(o) || PTR_ERR(o) != -ENOENT)
+		return o;
 
 	/*
-	 * Allocate new object, NB, object is unitialized in case object
-	 * is changed between allocation and hash insertion, thus the object
-	 * with stale attributes is returned.
+	 * Allocate new object. This may result in rather complicated
+	 * operations, including fld queries, inode loading, etc.
 	 */
-	o = lu_object_alloc(env, dev, f);
-	if (IS_ERR(o))
-		RETURN(o);
+	o = lu_object_alloc(env, dev, f, conf);
+	if (unlikely(IS_ERR(o)))
+		return o;
 
 	LASSERT(lu_fid_eq(lu_object_fid(o), f));
 
-	CFS_RACE_WAIT(OBD_FAIL_OBD_ZERO_NLINK_RACE);
-
 	cfs_hash_bd_lock(hs, &bd, 1);
 
-	if (conf && conf->loc_flags & LOC_F_NEW)
-		shadow = ERR_PTR(-ENOENT);
-	else
-		shadow = htable_lookup(s, &bd, f, &version);
-	if (likely(PTR_ERR(shadow) == -ENOENT)) {
+	shadow = htable_lookup(s, &bd, f, &version);
+	if (likely(IS_ERR(shadow) && PTR_ERR(shadow) == -ENOENT)) {
 		cfs_hash_bd_add_locked(hs, &bd, &o->lo_header->loh_hash);
 		cfs_hash_bd_unlock(hs, &bd, 1);
 
-		/*
-		 * This may result in rather complicated operations, including
-		 * fld queries, inode loading, etc.
-		 */
-		rc = lu_object_start(env, dev, o, conf);
-		if (rc) {
-			lu_object_put_nocache(env, o);
-			RETURN(ERR_PTR(rc));
-		}
-
-		wake_up_all(&bkt->lsb_waitq);
-
 		lu_object_limit(env, dev);
 
-		RETURN(o);
+		return o;
 	}
 
 	lprocfs_counter_incr(s->ls_stats, LU_SS_CACHE_RACE);
 	cfs_hash_bd_unlock(hs, &bd, 1);
 	lu_object_free(env, o);
-
-	if (!(conf && conf->loc_flags & LOC_F_NEW) &&
-	    !lu_object_is_inited(shadow->lo_header)) {
-		l_wait_event(bkt->lsb_waitq,
-			     lu_object_is_inited(shadow->lo_header) ||
-			     lu_object_is_dying(shadow->lo_header), &lwi);
-
-		if (lu_object_is_dying(shadow->lo_header)) {
-			lu_object_put(env, shadow);
-
-			RETURN(ERR_PTR(-ENOENT));
-		}
-	}
-
-	RETURN(shadow);
+	return shadow;
 }
 EXPORT_SYMBOL(lu_object_find_at);
 
@@ -1132,7 +1042,7 @@ int lu_site_init(struct lu_site *s, struct lu_device *top)
 	cfs_hash_for_each_bucket(s->ls_obj_hash, &bd, i) {
 		bkt = cfs_hash_bd_extra_get(s->ls_obj_hash, &bd);
 		INIT_LIST_HEAD(&bkt->lsb_lru);
-		init_waitqueue_head(&bkt->lsb_waitq);
+		init_waitqueue_head(&bkt->lsb_marche_funebre);
 	}
 
         s->ls_stats = lprocfs_alloc_stats(LU_SS_LAST_STAT, 0);
@@ -1476,8 +1386,7 @@ static void key_fini(struct lu_context *ctx, int index)
 
                 key->lct_fini(ctx, key, ctx->lc_value[index]);
                 lu_ref_del(&key->lct_reference, "ctx", ctx);
-		if (atomic_dec_and_test(&key->lct_used))
-			wake_up_var(&key->lct_used);
+		atomic_dec(&key->lct_used);
 
 		LASSERT(key->lct_owner != NULL);
 		if ((ctx->lc_tags & LCT_NOREF) == 0) {
@@ -1498,23 +1407,29 @@ void lu_context_key_degister(struct lu_context_key *key)
 
 	lu_context_key_quiesce(key);
 
+	write_lock(&lu_keys_guard);
+	++key_set_version;
 	key_fini(&lu_shrink_env.le_ctx, key->lct_index);
 
 	/**
 	 * Wait until all transient contexts referencing this key have
 	 * run lu_context_key::lct_fini() method.
 	 */
-	atomic_dec(&key->lct_used);
-	wait_var_event(&key->lct_used, atomic_read(&key->lct_used) == 0);
-
-	write_lock(&lu_keys_guard);
+	while (atomic_read(&key->lct_used) > 1) {
+		write_unlock(&lu_keys_guard);
+		CDEBUG(D_INFO, "lu_context_key_degister: \"%s\" %p, %d\n",
+		       key->lct_owner ? key->lct_owner->name : "", key,
+		       atomic_read(&key->lct_used));
+		schedule();
+		write_lock(&lu_keys_guard);
+	}
 	if (lu_keys[key->lct_index]) {
 		lu_keys[key->lct_index] = NULL;
 		lu_ref_fini(&key->lct_reference);
 	}
 	write_unlock(&lu_keys_guard);
 
-	LASSERTF(atomic_read(&key->lct_used) == 0,
+	LASSERTF(atomic_read(&key->lct_used) == 1,
 		 "key has instances: %d\n",
 		 atomic_read(&key->lct_used));
 }
@@ -1978,119 +1893,6 @@ int lu_env_refill_by_tags(struct lu_env *env, __u32 ctags,
 }
 EXPORT_SYMBOL(lu_env_refill_by_tags);
 
-#ifdef HAVE_SERVER_SUPPORT
-struct lu_env_item {
-	struct task_struct *lei_task;	/* rhashtable key */
-	struct rhash_head lei_linkage;
-	struct lu_env *lei_env;
-	struct rcu_head lei_rcu_head;
-};
-
-static const struct rhashtable_params lu_env_rhash_params = {
-	.key_len     = sizeof(struct task_struct *),
-	.key_offset  = offsetof(struct lu_env_item, lei_task),
-	.head_offset = offsetof(struct lu_env_item, lei_linkage),
-};
-
-struct rhashtable lu_env_rhash;
-
-struct lu_env_percpu {
-	struct task_struct *lep_task;
-	struct lu_env *lep_env ____cacheline_aligned_in_smp;
-};
-
-static struct lu_env_percpu lu_env_percpu[NR_CPUS];
-
-int lu_env_add(struct lu_env *env)
-{
-	struct lu_env_item *lei, *old;
-
-	LASSERT(env);
-
-	OBD_ALLOC_PTR(lei);
-	if (!lei)
-		return -ENOMEM;
-
-	lei->lei_task = current;
-	lei->lei_env = env;
-
-	old = rhashtable_lookup_get_insert_fast(&lu_env_rhash,
-						&lei->lei_linkage,
-						lu_env_rhash_params);
-	LASSERT(!old);
-
-	return 0;
-}
-EXPORT_SYMBOL(lu_env_add);
-
-static void lu_env_item_free(struct rcu_head *head)
-{
-	struct lu_env_item *lei;
-
-	lei = container_of(head, struct lu_env_item, lei_rcu_head);
-	OBD_FREE_PTR(lei);
-}
-
-void lu_env_remove(struct lu_env *env)
-{
-	struct lu_env_item *lei;
-	const void *task = current;
-	int i;
-
-	for_each_possible_cpu(i) {
-		if (lu_env_percpu[i].lep_env == env) {
-			LASSERT(lu_env_percpu[i].lep_task == task);
-			lu_env_percpu[i].lep_task = NULL;
-			lu_env_percpu[i].lep_env = NULL;
-		}
-	}
-
-	/* The rcu_lock is not taking in this case since the key
-	 * used is the actual task_struct. This implies that each
-	 * object is only removed by the owning thread, so there
-	 * can never be a race on a particular object.
-	 */
-	lei = rhashtable_lookup_fast(&lu_env_rhash, &task,
-				     lu_env_rhash_params);
-	if (lei && rhashtable_remove_fast(&lu_env_rhash, &lei->lei_linkage,
-					  lu_env_rhash_params) == 0)
-		call_rcu(&lei->lei_rcu_head, lu_env_item_free);
-}
-EXPORT_SYMBOL(lu_env_remove);
-
-struct lu_env *lu_env_find(void)
-{
-	struct lu_env *env = NULL;
-	struct lu_env_item *lei;
-	const void *task = current;
-	int i = get_cpu();
-
-	if (lu_env_percpu[i].lep_task == current) {
-		env = lu_env_percpu[i].lep_env;
-		put_cpu();
-		LASSERT(env);
-		return env;
-	}
-
-	lei = rhashtable_lookup_fast(&lu_env_rhash, &task,
-				     lu_env_rhash_params);
-	if (lei) {
-		env = lei->lei_env;
-		lu_env_percpu[i].lep_task = current;
-		lu_env_percpu[i].lep_env = env;
-	}
-	put_cpu();
-
-	return env;
-}
-EXPORT_SYMBOL(lu_env_find);
-#define lu_env_rhash_init(rhash, params) rhashtable_init(rhash, params)
-#define lu_env_rhash_destroy(rhash)	 rhashtable_destroy(rhash)
-#else
-#define lu_env_rhash_init(rhash, params) 0
-#define lu_env_rhash_destroy(rhash)	 do {} while (0)
-#endif /* HAVE_SERVER_SUPPORT */
-
 static struct shrinker *lu_site_shrinker;
 
 typedef struct lu_site_stats{
@@ -2100,24 +1902,19 @@ typedef struct lu_site_stats{
         unsigned        lss_busy;
 } lu_site_stats_t;
 
-static void lu_site_stats_get(const struct lu_site *s,
+static void lu_site_stats_get(struct cfs_hash *hs,
                               lu_site_stats_t *stats, int populated)
 {
-	struct cfs_hash *hs = s->ls_obj_hash;
 	struct cfs_hash_bd bd;
-	unsigned int i;
-	/*
-	 * percpu_counter_sum_positive() won't accept a const pointer
-	 * as it does modify the struct by taking a spinlock
-	 */
-	struct lu_site *s2 = (struct lu_site *)s;
+	unsigned int  i;
 
-	stats->lss_busy += cfs_hash_size_get(hs) -
-		percpu_counter_sum_positive(&s2->ls_lru_len_counter);
         cfs_hash_for_each_bucket(hs, &bd, i) {
-		struct hlist_head *hhead;
+                struct lu_site_bkt_data *bkt = cfs_hash_bd_extra_get(hs, &bd);
+		struct hlist_head	*hhead;
 
                 cfs_hash_bd_lock(hs, &bd, 1);
+		stats->lss_busy  +=
+			cfs_hash_bd_count_get(&bd) - bkt->lsb_lru_len;
                 stats->lss_total += cfs_hash_bd_count_get(&bd);
                 stats->lss_max_search = max((int)stats->lss_max_search,
                                             cfs_hash_bd_depmax_get(&bd));
@@ -2306,7 +2103,7 @@ void lu_context_keys_dump(void)
  */
 int lu_global_init(void)
 {
-	int result;
+        int result;
 	DEF_SHRINKER_VAR(shvar, lu_cache_shrink,
 			 lu_cache_shrink_count, lu_cache_shrink_scan);
 
@@ -2341,8 +2138,6 @@ int lu_global_init(void)
         if (lu_site_shrinker == NULL)
                 return -ENOMEM;
 
-	result = lu_env_rhash_init(&lu_env_rhash, &lu_env_rhash_params);
-
         return result;
 }
 
@@ -2365,8 +2160,6 @@ void lu_global_fini(void)
 	down_write(&lu_sites_guard);
         lu_env_fini(&lu_shrink_env);
 	up_write(&lu_sites_guard);
-
-	lu_env_rhash_destroy(&lu_env_rhash);
 
         lu_ref_global_fini();
 }
@@ -2392,7 +2185,7 @@ int lu_site_stats_seq_print(const struct lu_site *s, struct seq_file *m)
 	lu_site_stats_t stats;
 
 	memset(&stats, 0, sizeof(stats));
-	lu_site_stats_get(s, &stats, 1);
+	lu_site_stats_get(s->ls_obj_hash, &stats, 1);
 
 	seq_printf(m, "%d/%d %d/%d %d %d %d %d %d %d %d\n",
 		   stats.lss_busy,
@@ -2490,19 +2283,11 @@ struct lu_object *lu_object_anon(const struct lu_env *env,
 				 struct lu_device *dev,
 				 const struct lu_object_conf *conf)
 {
-	struct lu_fid fid;
+	struct lu_fid     fid;
 	struct lu_object *o;
-	int rc;
 
 	fid_zero(&fid);
-	o = lu_object_alloc(env, dev, &fid);
-	if (!IS_ERR(o)) {
-		rc = lu_object_start(env, dev, o, conf);
-		if (rc) {
-			lu_object_free(env, o);
-			return ERR_PTR(rc);
-		}
-	}
+	o = lu_object_alloc(env, dev, &fid, conf);
 
 	return o;
 }
