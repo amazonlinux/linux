@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,10 +42,8 @@
  * @{
  */
 
-#include <linux/workqueue.h>
-
 #include <lprocfs_status.h>
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_dlm.h>
 
 struct mds_client_data;
@@ -101,13 +99,6 @@ struct tg_export_data {
 	long			ted_grant;    /* in bytes */
 	long			ted_pending;  /* bytes just being written */
 	__u8			ted_pagebits; /* log2 of client page size */
-
-	/**
-	 * File Modification Data (FMD) tracking
-	 */
-	spinlock_t		ted_fmd_lock; /* protects ted_fmd_list */
-	struct list_head	ted_fmd_list; /* FIDs being modified */
-	int			ted_fmd_count;/* items in ted_fmd_list */
 };
 
 /**
@@ -128,10 +119,13 @@ struct ec_export_data { /* echo client */
 /** Filter (oss-side) specific import data */
 struct filter_export_data {
 	struct tg_export_data	fed_ted;
+	spinlock_t		fed_lock;	/**< protects fed_mod_list */
 	__u64			fed_lastid_gen;
+	struct list_head	fed_mod_list; /* files being modified */
 	/* count of SOFT_SYNC RPCs, which will be reset after
 	 * ofd_soft_sync_limit number of RPCs, and trigger a sync. */
 	atomic_t		fed_soft_sync_count;
+	int			fed_mod_count;/* items in fed_writing list */
 	__u32			fed_group;
 };
 
@@ -208,8 +202,6 @@ struct obd_export {
 	struct obd_uuid		exp_client_uuid;
         /** To link all exports on an obd device */
 	struct list_head	exp_obd_chain;
-	/** work_struct for destruction of export */
-	struct work_struct	exp_zombie_work;
 	/* Unlinked export list */
 	struct list_head	exp_stale_list;
 	struct hlist_node	exp_uuid_hash;	/** uuid-export hash*/
@@ -247,44 +239,45 @@ struct obd_export {
 	/** Last committed transno for this export */
 	__u64			exp_last_committed;
 	/** When was last request received */
-	time64_t		exp_last_request_time;
+	cfs_time_t		exp_last_request_time;
 	/** On replay all requests waiting for replay are linked here */
 	struct list_head	exp_req_replay_queue;
 	/**
 	 * protects exp_flags, exp_outstanding_replies and the change
 	 * of exp_imp_reverse
 	 */
-	spinlock_t		exp_lock;
+	spinlock_t		  exp_lock;
 	/** Compatibility flags for this export are embedded into
 	 *  exp_connect_data */
-	struct obd_connect_data exp_connect_data;
-	enum obd_option		exp_flags;
-	unsigned long		exp_failed:1,
-				exp_in_recovery:1,
-				exp_disconnected:1,
-				exp_connecting:1,
-				/** VBR: export missed recovery */
-				exp_delayed:1,
-				/** VBR: failed version checking */
-				exp_vbr_failed:1,
-				exp_req_replay_needed:1,
-				exp_lock_replay_needed:1,
-				exp_need_sync:1,
-				exp_flvr_changed:1,
-				exp_flvr_adapt:1,
-				/* if to swap nidtbl entries for 2.2 clients.
-				 * Only used by the MGS to fix LU-1644. */
-				exp_need_mne_swab:1,
-				/* The export already got final replay ping
-				 * request. */
-				exp_replay_done:1;
-	/* also protected by exp_lock */
-	enum lustre_sec_part	exp_sp_peer;
-	struct sptlrpc_flavor	exp_flvr;		/* current */
-	struct sptlrpc_flavor	exp_flvr_old[2];	/* about-to-expire */
-	time64_t		exp_flvr_expire[2];	/* seconds */
+	struct obd_connect_data   exp_connect_data;
+        enum obd_option           exp_flags;
+        unsigned long             exp_failed:1,
+                                  exp_in_recovery:1,
+                                  exp_disconnected:1,
+                                  exp_connecting:1,
+                                  /** VBR: export missed recovery */
+                                  exp_delayed:1,
+                                  /** VBR: failed version checking */
+                                  exp_vbr_failed:1,
+                                  exp_req_replay_needed:1,
+                                  exp_lock_replay_needed:1,
+                                  exp_need_sync:1,
+                                  exp_flvr_changed:1,
+                                  exp_flvr_adapt:1,
+                                  exp_libclient:1, /* liblustre client? */
+				  /* if to swap nidtbl entries for 2.2 clients.
+				   * Only used by the MGS to fix LU-1644. */
+				  exp_need_mne_swab:1,
+				  /* The export already got final replay ping
+				   * request. */
+				  exp_replay_done:1;
+        /* also protected by exp_lock */
+        enum lustre_sec_part      exp_sp_peer;
+        struct sptlrpc_flavor     exp_flvr;             /* current */
+        struct sptlrpc_flavor     exp_flvr_old[2];      /* about-to-expire */
+	time64_t		  exp_flvr_expire[2];	/* seconds */
 
-	/** protects exp_hp_rpcs */
+        /** protects exp_hp_rpcs */
 	spinlock_t		exp_rpc_lock;
 	struct list_head	exp_hp_rpcs;	/* (potential) HP RPCs */
 	struct list_head	exp_reg_rpcs;  /* RPC being handled */
@@ -325,18 +318,6 @@ static inline __u64 exp_connect_flags(struct obd_export *exp)
 	return *exp_connect_flags_ptr(exp);
 }
 
-static inline __u64 *exp_connect_flags2_ptr(struct obd_export *exp)
-{
-	return &exp->exp_connect_data.ocd_connect_flags2;
-}
-
-static inline __u64 exp_connect_flags2(struct obd_export *exp)
-{
-	if (exp_connect_flags(exp) & OBD_CONNECT_FLAGS2)
-		return *exp_connect_flags2_ptr(exp);
-	return 0;
-}
-
 static inline int exp_max_brw_size(struct obd_export *exp)
 {
 	LASSERT(exp != NULL);
@@ -349,6 +330,13 @@ static inline int exp_max_brw_size(struct obd_export *exp)
 static inline int exp_connect_multibulk(struct obd_export *exp)
 {
 	return exp_max_brw_size(exp) > ONE_MB_BRW_SIZE;
+}
+
+static inline int exp_expired(struct obd_export *exp, cfs_duration_t age)
+{
+        LASSERT(exp->exp_delayed);
+        return cfs_time_before(cfs_time_add(exp->exp_last_request_time, age),
+                               cfs_time_current_sec());
 }
 
 static inline int exp_connect_cancelset(struct obd_export *exp)
@@ -419,13 +407,6 @@ static inline bool imp_connect_disp_stripe(struct obd_import *imp)
 	return ocd->ocd_connect_flags & OBD_CONNECT_DISP_STRIPE;
 }
 
-static inline bool imp_connect_shortio(struct obd_import *imp)
-{
-	struct obd_connect_data *ocd = &imp->imp_connect_data;
-
-	return ocd->ocd_connect_flags & OBD_CONNECT_SHORTIO;
-}
-
 static inline __u64 exp_connect_ibits(struct obd_export *exp)
 {
 	struct obd_connect_data *ocd;
@@ -439,50 +420,13 @@ static inline int exp_connect_large_acl(struct obd_export *exp)
 	return !!(exp_connect_flags(exp) & OBD_CONNECT_LARGE_ACL);
 }
 
-static inline int exp_connect_lockahead_old(struct obd_export *exp)
-{
-	return !!(exp_connect_flags(exp) & OBD_CONNECT_LOCKAHEAD_OLD);
-}
-
-static inline int exp_connect_lockahead(struct obd_export *exp)
-{
-	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_LOCKAHEAD);
-}
-
-static inline int exp_connect_flr(struct obd_export *exp)
-{
-	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_FLR);
-}
-
-static inline int exp_connect_lock_convert(struct obd_export *exp)
-{
-	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_LOCK_CONVERT);
-}
-
 extern struct obd_export *class_conn2export(struct lustre_handle *conn);
+extern struct obd_device *class_conn2obd(struct lustre_handle *conn);
 
-static inline int exp_connect_archive_id_array(struct obd_export *exp)
-{
-	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_ARCHIVE_ID_ARRAY);
-}
-
-static inline int exp_connect_sepol(struct obd_export *exp)
-{
-	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_SELINUX_POLICY);
-}
-
-enum {
-	/* archive_ids in array format */
-	KKUC_CT_DATA_ARRAY_MAGIC	= 0x092013cea,
-	/* archive_ids in bitmap format */
-	KKUC_CT_DATA_BITMAP_MAGIC	= 0x082018cea,
-};
-
-
+#define KKUC_CT_DATA_MAGIC	0x092013cea
 struct kkuc_ct_data {
 	__u32		kcd_magic;
-	__u32		kcd_nr_archives;
-	__u32		kcd_archives[0];
+	__u32		kcd_archive;
 };
 
 /** @} export */
