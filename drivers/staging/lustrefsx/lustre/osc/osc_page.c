@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -36,9 +36,8 @@
  */
 
 #define DEBUG_SUBSYSTEM S_OSC
-#include <lustre_osc.h>
 
-#include "osc_internal.h"
+#include "osc_cl_internal.h"
 
 static void osc_lru_del(struct client_obd *cli, struct osc_page *opg);
 static void osc_lru_use(struct client_obd *cli, struct osc_page *opg);
@@ -119,12 +118,12 @@ static const char *osc_list(struct list_head *head)
 	return list_empty(head) ? "-" : "+";
 }
 
-static inline s64 osc_submit_duration(struct osc_page *opg)
+static inline cfs_time_t osc_submit_duration(struct osc_page *opg)
 {
-	if (ktime_to_ns(opg->ops_submit_time) == 0)
-		return 0;
+        if (opg->ops_submit_time == 0)
+                return 0;
 
-	return ktime_ms_delta(ktime_get(), opg->ops_submit_time);
+        return (cfs_time_current() - opg->ops_submit_time);
 }
 
 static int osc_page_print(const struct lu_env *env,
@@ -139,8 +138,8 @@ static int osc_page_print(const struct lu_env *env,
 	return (*printer)(env, cookie, LUSTRE_OSC_NAME"-page@%p %lu: "
 			  "1< %#x %d %u %s %s > "
 			  "2< %lld %u %u %#x %#x | %p %p %p > "
-			  "3< %d %lld %d > "
-			  "4< %d %d %d %lu %c | %s %s %s %s > "
+			  "3< %d %lu %d > "
+			  "4< %d %d %d %lu %s | %s %s %s %s > "
 			  "5< %s %s %s %s | %d %s | %d %s %s>\n",
 			  opg, osc_index(opg),
                           /* 1 */
@@ -159,7 +158,7 @@ static int osc_page_print(const struct lu_env *env,
                           cli->cl_r_in_flight, cli->cl_w_in_flight,
                           cli->cl_max_rpcs_in_flight,
                           cli->cl_avail_grant,
-			  waitqueue_active(&cli->cl_cache_waiters) ? '+' : '-',
+                          osc_list(&cli->cl_cache_waiters),
                           osc_list(&cli->cl_loi_ready_list),
                           osc_list(&cli->cl_loi_hp_ready_list),
                           osc_list(&cli->cl_loi_write_list),
@@ -255,22 +254,12 @@ static int osc_page_flush(const struct lu_env *env,
 	RETURN(rc);
 }
 
-static void osc_page_touch(const struct lu_env *env,
-			  const struct cl_page_slice *slice, size_t to)
-{
-	struct osc_page *opg = cl2osc_page(slice);
-	struct cl_object *obj = opg->ops_cl.cpl_obj;
-
-	osc_page_touch_at(env, obj, osc_index(opg), to);
-}
-
 static const struct cl_page_operations osc_page_ops = {
 	.cpo_print         = osc_page_print,
 	.cpo_delete        = osc_page_delete,
 	.cpo_clip           = osc_page_clip,
 	.cpo_cancel         = osc_page_cancel,
-	.cpo_flush          = osc_page_flush,
-	.cpo_page_touch	   = osc_page_touch,
+	.cpo_flush          = osc_page_flush
 };
 
 int osc_page_init(const struct lu_env *env, struct cl_object *obj,
@@ -318,7 +307,6 @@ int osc_page_init(const struct lu_env *env, struct cl_object *obj,
 
 	return result;
 }
-EXPORT_SYMBOL(osc_page_init);
 
 /**
  * Helper function called by osc_io_submit() for every page in an immediate
@@ -327,7 +315,6 @@ EXPORT_SYMBOL(osc_page_init);
 void osc_page_submit(const struct lu_env *env, struct osc_page *opg,
 		     enum cl_req_type crt, int brw_flags)
 {
-	struct osc_io *oio = osc_env_io(env);
 	struct osc_async_page *oap = &opg->ops_oap;
 
 	LASSERTF(oap->oap_magic == OAP_MAGIC, "Bad oap magic: oap %p, "
@@ -340,12 +327,12 @@ void osc_page_submit(const struct lu_env *env, struct osc_page *opg,
 	oap->oap_count     = opg->ops_to - opg->ops_from;
 	oap->oap_brw_flags = OBD_BRW_SYNC | brw_flags;
 
-	if (oio->oi_cap_sys_resource) {
+	if (cfs_capable(CFS_CAP_SYS_RESOURCE)) {
 		oap->oap_brw_flags |= OBD_BRW_NOQUOTA;
 		oap->oap_cmd |= OBD_BRW_NOQUOTA;
 	}
 
-	opg->ops_submit_time = ktime_get();
+	opg->ops_submit_time = cfs_time_current();
 	osc_page_transfer_get(opg, "transfer\0imm");
 	osc_page_transfer_add(env, opg, crt);
 }
@@ -529,22 +516,19 @@ static void osc_lru_use(struct client_obd *cli, struct osc_page *opg)
 static void discard_pagevec(const struct lu_env *env, struct cl_io *io,
 				struct cl_page **pvec, int max_index)
 {
-	struct pagevec *pagevec = &osc_env_info(env)->oti_pagevec;
-	int i;
+        int i;
 
-	ll_pagevec_init(pagevec, 0);
-	for (i = 0; i < max_index; i++) {
-		struct cl_page *page = pvec[i];
+        for (i = 0; i < max_index; i++) {
+                struct cl_page *page = pvec[i];
 
 		LASSERT(cl_page_is_owned(page, io));
 		cl_page_delete(env, page);
 		cl_page_discard(env, io, page);
 		cl_page_disown(env, io, page);
-		cl_pagevec_put(env, page, pagevec);
+                cl_page_put(env, page);
 
-		pvec[i] = NULL;
-	}
-	pagevec_release(pagevec);
+                pvec[i] = NULL;
+        }
 }
 
 /**
@@ -604,7 +588,7 @@ long osc_lru_shrink(const struct lu_env *env, struct client_obd *cli,
 	}
 
 	pvec = (struct cl_page **)osc_env_info(env)->oti_pvec;
-	io = osc_env_thread_io(env);
+	io = &osc_env_info(env)->oti_io;
 
 	spin_lock(&cli->cl_lru_list_lock);
 	if (force)
@@ -706,7 +690,6 @@ long osc_lru_shrink(const struct lu_env *env, struct client_obd *cli,
 	}
 	RETURN(count > 0 ? count : rc);
 }
-EXPORT_SYMBOL(osc_lru_shrink);
 
 /**
  * Reclaim LRU pages by an IO thread. The caller wants to reclaim at least
@@ -799,7 +782,6 @@ static int osc_lru_alloc(const struct lu_env *env, struct client_obd *cli,
 	struct l_wait_info lwi = LWI_INTR(LWI_ON_SIGNAL_NOOP, NULL);
 	struct osc_io *oio = osc_env_io(env);
 	int rc = 0;
-
 	ENTRY;
 
 	if (cli->cl_cache == NULL) /* shall not be in LRU */
@@ -905,27 +887,17 @@ void osc_lru_unreserve(struct client_obd *cli, unsigned long npages)
 #endif
 
 static inline void unstable_page_accounting(struct ptlrpc_bulk_desc *desc,
-					    struct osc_brw_async_args *aa,
 					    int factor)
 {
-	int page_count;
+	int page_count = desc->bd_iov_count;
 	void *zone = NULL;
 	int count = 0;
 	int i;
 
-	if (desc != NULL) {
-		LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
-		page_count = desc->bd_iov_count;
-	} else {
-		page_count = aa->aa_page_count;
-	}
+	LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
 
 	for (i = 0; i < page_count; i++) {
-		void *pz;
-		if (desc)
-			pz = page_zone(BD_GET_KIOV(desc, i).kiov_page);
-		else
-			pz = page_zone(aa->aa_ppga[i]->pg);
+		void *pz = page_zone(BD_GET_KIOV(desc, i).kiov_page);
 
 		if (likely(pz == zone)) {
 			++count;
@@ -944,16 +916,14 @@ static inline void unstable_page_accounting(struct ptlrpc_bulk_desc *desc,
 		mod_zone_page_state(zone, NR_WRITEBACK, factor * count);
 }
 
-static inline void add_unstable_page_accounting(struct ptlrpc_bulk_desc *desc,
-						struct osc_brw_async_args *aa)
+static inline void add_unstable_page_accounting(struct ptlrpc_bulk_desc *desc)
 {
-	unstable_page_accounting(desc, aa, 1);
+	unstable_page_accounting(desc, 1);
 }
 
-static inline void dec_unstable_page_accounting(struct ptlrpc_bulk_desc *desc,
-						struct osc_brw_async_args *aa)
+static inline void dec_unstable_page_accounting(struct ptlrpc_bulk_desc *desc)
 {
-	unstable_page_accounting(desc, aa, -1);
+	unstable_page_accounting(desc, -1);
 }
 
 /**
@@ -970,19 +940,12 @@ static inline void dec_unstable_page_accounting(struct ptlrpc_bulk_desc *desc,
 void osc_dec_unstable_pages(struct ptlrpc_request *req)
 {
 	struct ptlrpc_bulk_desc *desc       = req->rq_bulk;
-	struct osc_brw_async_args *aa = (void *)&req->rq_async_args;
 	struct client_obd       *cli        = &req->rq_import->imp_obd->u.cli;
-	int			 page_count;
+	int			 page_count = desc->bd_iov_count;
 	long			 unstable_count;
 
-	if (desc)
-		page_count = desc->bd_iov_count;
-	else
-		page_count = aa->aa_page_count;
-
 	LASSERT(page_count >= 0);
-
-	dec_unstable_page_accounting(desc, aa);
+	dec_unstable_page_accounting(desc);
 
 	unstable_count = atomic_long_sub_return(page_count,
 						&cli->cl_unstable_count);
@@ -1004,20 +967,14 @@ void osc_dec_unstable_pages(struct ptlrpc_request *req)
 void osc_inc_unstable_pages(struct ptlrpc_request *req)
 {
 	struct ptlrpc_bulk_desc *desc = req->rq_bulk;
-	struct osc_brw_async_args *aa = (void *)&req->rq_async_args;
 	struct client_obd       *cli  = &req->rq_import->imp_obd->u.cli;
-	long			 page_count;
+	long			 page_count = desc->bd_iov_count;
 
 	/* No unstable page tracking */
 	if (cli->cl_cache == NULL || !cli->cl_cache->ccc_unstable_check)
 		return;
 
-	if (desc)
-		page_count = desc->bd_iov_count;
-	else
-		page_count = aa->aa_page_count;
-
-	add_unstable_page_accounting(desc, aa);
+	add_unstable_page_accounting(desc);
 	atomic_long_add(page_count, &cli->cl_unstable_count);
 	atomic_long_add(page_count, &cli->cl_cache->ccc_unstable_nr);
 
