@@ -13,12 +13,17 @@
  * General Public License version 2 for more details (a copy is included
  * in the LICENSE file that accompanied this code).
  *
+ * You should have received a copy of the GNU General Public License
+ * version 2 along with this program; if not, write to the
+ * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
+ * Boston, MA 021110-1307, USA
+ *
  * GPL HEADER END
  */
 /*
  * Copyright (c) 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,16 +47,16 @@
  *
  *     Example: if there are 8 cores on the system, while creating a CPT
  *     with cpu_npartitions=4:
- *		core[0, 1] = partition[0], core[2, 3] = partition[1]
- *		core[4, 5] = partition[2], core[6, 7] = partition[3]
+ *              core[0, 1] = partition[0], core[2, 3] = partition[1]
+ *              core[4, 5] = partition[2], core[6, 7] = partition[3]
  *
  *          cpu_npartitions=1:
- *		core[0, 1, ... 7] = partition[0]
+ *              core[0, 1, ... 7] = partition[0]
  *
  *   . User can also specify CPU partitions by string pattern
  *
  *     Examples: cpu_partitions="0[0,1], 1[2,3]"
- *		 cpu_partitions="N 0[0-3], 1[4-8]"
+ *               cpu_partitions="N 0[0-3], 1[4-8]"
  *
  *     The first character "N" means following numbers are numa ID
  *
@@ -71,55 +76,20 @@
 #ifndef __LIBCFS_CPU_H__
 #define __LIBCFS_CPU_H__
 
-#include <linux/cpu.h>
-#include <linux/cpuset.h>
-#include <linux/slab.h>
-#include <linux/topology.h>
-#include <linux/version.h>
-#include <linux/vmalloc.h>
+#ifndef HAVE_LIBCFS_CPT
 
-#include <libcfs/linux/linux-cpu.h>
-
-#ifdef CONFIG_SMP
-
-/** virtual processing unit */
-struct cfs_cpu_partition {
-	/* CPUs mask for this partition */
-	cpumask_t			*cpt_cpumask;
-	/* nodes mask for this partition */
-	nodemask_t			*cpt_nodemask;
-	/* NUMA distance between CPTs */
-	unsigned int			*cpt_distance;
-	/* spread rotor for NUMA allocator */
-	unsigned int			 cpt_spread_rotor;
-	/* NUMA node if cpt_nodemask is empty */
-	int				 cpt_node;
-};
-#endif /* CONFIG_SMP */
-
-/** descriptor for CPU partitions */
 struct cfs_cpt_table {
-#ifdef CONFIG_SMP
-	/* spread rotor for NUMA allocator */
-	unsigned int			 ctb_spread_rotor;
-	/* maximum NUMA distance between all nodes in table */
-	unsigned int			 ctb_distance;
-	/* partitions tables */
-	struct cfs_cpu_partition	*ctb_parts;
-	/* shadow HW CPU to CPU partition ID */
-	int				*ctb_cpu2cpt;
-	/* shadow HW node to CPU partition ID */
-	int				*ctb_node2cpt;
 	/* # of CPU partitions */
-	int				 ctb_nparts;
-	/* all nodes in this partition table */
-	nodemask_t			*ctb_nodemask;
-#else
-	nodemask_t			 ctb_nodemask;
-#endif /* CONFIG_SMP */
-	/* all cpus in this partition table */
-	cpumask_t			*ctb_cpumask;
+	int			ctb_nparts;
+	/* cpu mask */
+	cpumask_t		ctb_mask;
+	/* node mask */
+	nodemask_t		ctb_nodemask;
+	/* version */
+	__u64			ctb_version;
 };
+
+#endif /* !HAVE_LIBCFS_CPT */
 
 /* any CPU partition */
 #define CFS_CPT_ANY		(-1)
@@ -147,7 +117,7 @@ int cfs_cpt_distance_print(struct cfs_cpt_table *cptab, char *buf, int len);
  */
 int cfs_cpt_number(struct cfs_cpt_table *cptab);
 /**
- * return number of HW cores or hyper-threadings in a CPU partition \a cpt
+ * return number of HW cores or hypter-threadings in a CPU partition \a cpt
  */
 int cfs_cpt_weight(struct cfs_cpt_table *cptab, int cpt);
 /**
@@ -177,13 +147,13 @@ int cfs_cpt_of_node(struct cfs_cpt_table *cptab, int node);
 /**
  * NUMA distance between \a cpt1 and \a cpt2 in \a cptab
  */
-unsigned int cfs_cpt_distance(struct cfs_cpt_table *cptab, int cpt1, int cpt2);
+unsigned cfs_cpt_distance(struct cfs_cpt_table *cptab, int cpt1, int cpt2);
 /**
  * bind current thread on a CPU-partition \a cpt of \a cptab
  */
 int cfs_cpt_bind(struct cfs_cpt_table *cptab, int cpt);
 /**
- * add \a cpu to CPU partition @cpt of \a cptab, return 1 for success,
+ * add \a cpu to CPU partion @cpt of \a cptab, return 1 for success,
  * otherwise 0 is returned
  */
 int cfs_cpt_set_cpu(struct cfs_cpt_table *cptab, int cpt, int cpu);
@@ -195,6 +165,7 @@ void cfs_cpt_unset_cpu(struct cfs_cpt_table *cptab, int cpt, int cpu);
  * add all cpus in \a mask to CPU partition \a cpt
  * return 1 if successfully set all CPUs, otherwise return 0
  */
+
 int cfs_cpt_set_cpumask(struct cfs_cpt_table *cptab, int cpt,
 			const cpumask_t *mask);
 /**
@@ -232,15 +203,15 @@ int cfs_cpt_spread_node(struct cfs_cpt_table *cptab, int cpt);
 /*
  * allocate per-cpu-partition data, returned value is an array of pointers,
  * variable can be indexed by CPU ID.
- *	cptab != NULL: size of array is number of CPU partitions
- *	cptab == NULL: size of array is number of HW cores
+ *      cptab != NULL: size of array is number of CPU partitions
+ *      cptab == NULL: size of array is number of HW cores
  */
 void *cfs_percpt_alloc(struct cfs_cpt_table *cptab, unsigned int size);
 /*
- * destroy per-cpu-partition variable
+ * destory per-cpu-partition variable
  */
-void cfs_percpt_free(void *vars);
-int cfs_percpt_number(void *vars);
+void  cfs_percpt_free(void *vars);
+int   cfs_percpt_number(void *vars);
 
 #define cfs_percpt_for_each(var, i, vars)		\
 	for (i = 0; i < cfs_percpt_number(vars) &&	\
@@ -289,17 +260,16 @@ void cfs_percpt_lock_free(struct cfs_percpt_lock *pcl);
 
 /* lock private lock \a index of \a pcl */
 void cfs_percpt_lock(struct cfs_percpt_lock *pcl, int index);
-
 /* unlock private lock \a index of \a pcl */
 void cfs_percpt_unlock(struct cfs_percpt_lock *pcl, int index);
 
-#define CFS_PERCPT_LOCK_KEYS	256
+#define CFS_PERCPT_LOCK_KEYS   256
 
 /* NB: don't allocate keys dynamically, lockdep needs them to be in ".data" */
 #define cfs_percpt_lock_alloc(cptab)					\
 ({									\
-	static struct lock_class_key ___keys[CFS_PERCPT_LOCK_KEYS];	\
-	struct cfs_percpt_lock *___lk;					\
+	static struct lock_class_key  ___keys[CFS_PERCPT_LOCK_KEYS];	\
+	struct cfs_percpt_lock	     *___lk;				\
 									\
 	if (cfs_cpt_number(cptab) > CFS_PERCPT_LOCK_KEYS)		\
 		___lk = cfs_percpt_lock_create(cptab, NULL);		\
@@ -367,6 +337,14 @@ cfs_mem_cache_cpt_alloc(struct kmem_cache *cachep, struct cfs_cpt_table *cptab,
  */
 #define cfs_cpt_for_each(i, cptab)	\
 	for (i = 0; i < cfs_cpt_number(cptab); i++)
+
+#ifndef __read_mostly
+# define __read_mostly
+#endif
+
+#ifndef ____cacheline_aligned
+#define ____cacheline_aligned
+#endif
 
 int  cfs_cpu_init(void);
 void cfs_cpu_fini(void);
