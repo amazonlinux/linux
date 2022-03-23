@@ -63,7 +63,6 @@ static int crc32c_pclmul_setkey(struct crypto_shash *hash, const u8 *key,
 
 	if (keylen != sizeof(u32))
 		return -EINVAL;
-
 	*mctx = le32_to_cpup((__le32 *)key);
 	return 0;
 }
@@ -132,9 +131,7 @@ static struct shash_alg alg = {
 			.cra_name		= "crc32c",
 			.cra_driver_name	= "crc32c-pclmul",
 			.cra_priority		= 150,
-#ifdef CRYPTO_ALG_OPTIONAL_KEY
 			.cra_flags		= CRYPTO_ALG_OPTIONAL_KEY,
-#endif
 			.cra_blocksize		= CHKSUM_BLOCK_SIZE,
 			.cra_ctxsize		= sizeof(u32),
 			.cra_module		= NULL,
