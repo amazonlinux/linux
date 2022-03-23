@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -33,28 +33,11 @@
 #ifndef __LIBCFS_LIBCFS_H__
 #define __LIBCFS_LIBCFS_H__
 
-#include <linux/kernel.h>
-#include <linux/module.h>
+#ifdef __KERNEL__
+# include <libcfs/linux/libcfs.h>
+# include "curproc.h"
 
-#include <libcfs/linux/linux-misc.h>
-#include <libcfs/linux/linux-time.h>
-#include <libcfs/linux/linux-wait.h>
-#include <libcfs/linux/linux-mem.h>
-
-#include <uapi/linux/lnet/libcfs_ioctl.h>
-#include <libcfs/libcfs_debug.h>
-#include <libcfs/libcfs_private.h>
-#include <libcfs/bitmap.h>
-#include <libcfs/libcfs_cpu.h>
-#include <libcfs/libcfs_prim.h>
-#include <libcfs/libcfs_string.h>
-#include <libcfs/libcfs_workitem.h>
-#include <libcfs/libcfs_hash.h>
-#include <libcfs/libcfs_heap.h>
-#include <libcfs/libcfs_fail.h>
-#include "curproc.h"
-
-#define LIBCFS_VERSION	"0.7.1"
+#define LIBCFS_VERSION	"0.5.0"
 
 #define PO2_ROUNDUP_TYPED(x, po2, type) (-(-(type)(x) & -(type)(po2)))
 #define LOWEST_BIT_SET(x) ((x) & ~((x) - 1))
@@ -99,19 +82,15 @@ void lc_watchdog_delete(struct lc_watchdog *lcw);
  #endif
 #endif
 
-typedef s32 timeout_t;
-
 /* need both kernel and user-land acceptor */
 #define LNET_ACCEPTOR_MIN_RESERVED_PORT    512
 #define LNET_ACCEPTOR_MAX_RESERVED_PORT    1023
 
-extern struct blocking_notifier_head libcfs_ioctl_list;
-static inline int notifier_from_ioctl_errno(int err)
-{
-	if (err == -EINVAL)
-		return NOTIFY_OK;
-	return notifier_from_errno(err) | NOTIFY_STOP_MASK;
-}
+/*
+ * Drop into debugger, if possible. Implementation is provided by platform.
+ */
+
+void cfs_enter_debugger(void);
 
 /*
  * Defined by platform
@@ -132,6 +111,21 @@ unsigned int cfs_rand(void);
 /* seed the generator */
 void cfs_srand(unsigned int, unsigned int);
 void cfs_get_random_bytes(void *buf, int size);
+#endif /* __KERNEL__ */
+
+#include <libcfs/libcfs_debug.h>
+#ifdef __KERNEL__
+# include <libcfs/libcfs_private.h>
+# include <libcfs/bitmap.h>
+# include <libcfs/libcfs_cpu.h>
+# include <libcfs/libcfs_ioctl.h>
+# include <libcfs/libcfs_prim.h>
+# include <libcfs/libcfs_time.h>
+# include <libcfs/libcfs_string.h>
+# include <libcfs/libcfs_workitem.h>
+# include <libcfs/libcfs_hash.h>
+# include <libcfs/libcfs_heap.h>
+# include <libcfs/libcfs_fail.h>
 
 int libcfs_ioctl_data_adjust(struct libcfs_ioctl_data *data);
 int libcfs_ioctl(unsigned long cmd, void __user *uparam);
@@ -145,30 +139,12 @@ static inline void *__container_of(const void *ptr, unsigned long shift)
 		return (char *)ptr - shift;
 }
 
-#define container_of0(ptr, type, member) \
+#define container_of0(ptr, type, member)				\
 	((type *)__container_of((ptr), offsetof(type, member)))
 
-struct lnet_debugfs_symlink_def {
-	const char *name;
-	const char *target;
-};
-
-void lnet_insert_debugfs(struct ctl_table *table);
-void lnet_remove_debugfs(struct ctl_table *table);
-
-/* helper for sysctl handlers */
-int lprocfs_call_handler(void *data, int write, loff_t *ppos,
-			 void __user *buffer, size_t *lenp,
-			 int (*handler)(void *data, int write, loff_t pos,
-					void __user *buffer, int len));
-int debugfs_doint(struct ctl_table *table, int write,
-		  void __user *buffer, size_t *lenp, loff_t *ppos);
+#endif /* __KERNEL__ */
 
 /* atomic-context safe vfree */
-#ifdef HAVE_LIBCFS_VFREE_ATOMIC
 void libcfs_vfree_atomic(const void *addr);
-#else
-#define libcfs_vfree_atomic(ptr) vfree(ptr)
-#endif
 
 #endif /* _LIBCFS_LIBCFS_H_ */
