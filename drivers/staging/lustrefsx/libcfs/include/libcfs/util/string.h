@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -43,6 +43,14 @@
 
 #include <linux/types.h>
 #include <libcfs/util/list.h>
+
+#ifndef HAVE_STRLCPY /* not in glibc for RHEL 5.x, remove when obsolete */
+size_t strlcpy(char *tgt, const char *src, size_t tgt_len);
+#endif
+
+#ifndef HAVE_STRLCAT /* not in glibc for RHEL 5.x, remove when obsolete */
+size_t strlcat(char *tgt, const char *src, size_t tgt_len);
+#endif
 
 /**
  * Structure to represent NULL-less strings.
@@ -85,6 +93,5 @@ int cfs_ip_addr_parse(char *str, int len, struct list_head *list);
 int cfs_ip_addr_range_gen(__u32 *ip_list, int count,
 			  struct list_head *ip_addr_expr);
 int cfs_ip_addr_match(__u32 addr, struct list_head *list);
-int cfs_abs_path(const char *request_path, char **resolved_path);
 
 #endif

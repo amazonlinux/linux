@@ -26,7 +26,7 @@
 #ifndef LDLM_ALL_FLAGS_MASK
 
 /** l_flags bits marked as "all_flags" bits */
-#define LDLM_FL_ALL_FLAGS_MASK          0x00FFFFFFC28F932FULL
+#define LDLM_FL_ALL_FLAGS_MASK          0x00FFFFFFC08F932FULL
 
 /** extent, mode, or resource changed */
 #define LDLM_FL_LOCK_CHANGED            0x0000000000000001ULL // bit   0
@@ -44,7 +44,7 @@
 
 /**
  * Server placed lock on conv list, or a recovering client wants the lock
- * added to the conv list, no questions asked. (obsoleted) */
+ * added to the conv list, no questions asked. */
 #define LDLM_FL_BLOCK_CONV              0x0000000000000004ULL // bit   2
 #define ldlm_is_block_conv(_l)          LDLM_TEST_FLAG(( _l), 1ULL <<  2)
 #define ldlm_set_block_conv(_l)         LDLM_SET_FLAG((  _l), 1ULL <<  2)
@@ -57,15 +57,6 @@
 #define ldlm_is_block_wait(_l)          LDLM_TEST_FLAG(( _l), 1ULL <<  3)
 #define ldlm_set_block_wait(_l)         LDLM_SET_FLAG((  _l), 1ULL <<  3)
 #define ldlm_clear_block_wait(_l)       LDLM_CLEAR_FLAG((_l), 1ULL <<  3)
-
-/**
- * Lock request is speculative/asynchronous, and cannot wait for any reason.
- * Fail the lock request if any blocking locks are encountered.
- * */
-#define LDLM_FL_SPECULATIVE		0x0000000000000010ULL /* bit   4 */
-#define ldlm_is_speculative(_l)		LDLM_TEST_FLAG((_l), 1ULL <<  4)
-#define ldlm_set_speculative(_l)	LDLM_SET_FLAG((_l), 1ULL <<  4)
-#define ldlm_clear_specualtive_(_l)	LDLM_CLEAR_FLAG((_l), 1ULL <<  4)
 
 /** blocking or cancel packet was queued for sending. */
 #define LDLM_FL_AST_SENT                0x0000000000000020ULL // bit   5
@@ -146,35 +137,6 @@
 #define ldlm_is_cos_incompat(_l)	LDLM_TEST_FLAG((_l), 1ULL << 24)
 #define ldlm_set_cos_incompat(_l)	LDLM_SET_FLAG((_l), 1ULL << 24)
 #define ldlm_clear_cos_incompat(_l)	LDLM_CLEAR_FLAG((_l), 1ULL << 24)
-
-/*
- * Flag indicates that lock is being converted (downgraded) during the blocking
- * AST instead of cancelling. Used for IBITS locks now and drops conflicting
- * bits only keepeing other.
- */
-#define LDLM_FL_CONVERTING              0x0000000002000000ULL /* bit  25 */
-#define ldlm_is_converting(_l)          LDLM_TEST_FLAG((_l), 1ULL << 25)
-#define ldlm_set_converting(_l)         LDLM_SET_FLAG((_l), 1ULL << 25)
-#define ldlm_clear_converting(_l)       LDLM_CLEAR_FLAG((_l), 1ULL << 25)
-
-/**
- * Part of original lockahead implementation, OBD_CONNECT_LOCKAHEAD_OLD.
- * Reserved temporarily to allow those implementations to keep working.
- * Will be removed after 2.12 release.
- * */
-#define LDLM_FL_LOCKAHEAD_OLD_RESERVED	0x0000000010000000ULL /* bit  28 */
-#define ldlm_is_do_not_expand_io(_l)	 LDLM_TEST_FLAG((_l), 1ULL << 28)
-#define ldlm_set_do_not_expand_io(_l)	 LDLM_SET_FLAG((_l), 1ULL << 28)
-#define ldlm_clear_do_not_expand_io(_l) LDLM_CLEAR_FLAG((_l), 1ULL << 28)
-
-/**
- * Do not expand this lock.  Grant it only on the extent requested.
- * Used for manually requested locks from the client (LU_LADVISE_LOCKAHEAD).
- * */
-#define LDLM_FL_NO_EXPANSION		0x0000000020000000ULL /* bit  29 */
-#define ldlm_is_do_not_expand(_l)	LDLM_TEST_FLAG((_l), 1ULL << 29)
-#define ldlm_set_do_not_expand(_l)	LDLM_SET_FLAG((_l), 1ULL << 29)
-#define ldlm_clear_do_not_expand(_l)	LDLM_CLEAR_FLAG((_l), 1ULL << 29)
 
 /**
  * measure lock contention and return -EUSERS if locking contention is high */
@@ -392,43 +354,26 @@
 #define ldlm_is_cos_enabled(_l)          LDLM_TEST_FLAG((_l), 1ULL << 57)
 #define ldlm_set_cos_enabled(_l)         LDLM_SET_FLAG((_l), 1ULL << 57)
 
-/**
- * This flags means to use non-delay RPC to send dlm request RPC.
- */
-#define LDLM_FL_NDELAY			 0x0400000000000000ULL /* bit  58 */
-#define ldlm_is_ndelay(_l)		 LDLM_TEST_FLAG((_l), 1ULL << 58)
-#define ldlm_set_ndelay(_l)		 LDLM_SET_FLAG((_l), 1ULL << 58)
-
-/**
- * LVB from this lock is cached in osc object
- */
-#define LDLM_FL_LVB_CACHED              0x0800000000000000ULL /* bit  59 */
-#define ldlm_is_lvb_cached(_l)          LDLM_TEST_FLAG((_l), 1ULL << 59)
-#define ldlm_set_lvb_cached(_l)         LDLM_SET_FLAG((_l), 1ULL << 59)
-#define ldlm_clear_lvb_cached(_l)       LDLM_CLEAR_FLAG((_l), 1ULL << 59)
-
 /** l_flags bits marked as "ast" bits */
 #define LDLM_FL_AST_MASK                (LDLM_FL_FLOCK_DEADLOCK		|\
-					 LDLM_FL_DISCARD_DATA)
+					 LDLM_FL_AST_DISCARD_DATA)
 
 /** l_flags bits marked as "blocked" bits */
 #define LDLM_FL_BLOCKED_MASK            (LDLM_FL_BLOCK_GRANTED		|\
+					 LDLM_FL_BLOCK_CONV		|\
 					 LDLM_FL_BLOCK_WAIT)
 
 /** l_flags bits marked as "gone" bits */
 #define LDLM_FL_GONE_MASK		(LDLM_FL_DESTROYED		|\
 					 LDLM_FL_FAILED)
 
-/** l_flags bits marked as "inherit" bits
- * Flags inherited from wire on enqueue/reply between client/server.
- * CANCEL_ON_BLOCK so server will not grant if a blocking lock is found
- * NO_TIMEOUT flag to force ldlm_lock_match() to wait with no timeout.
- * TEST_LOCK flag to not let TEST lock to be granted.
- * NO_EXPANSION to tell server not to expand extent of lock request */
+/** l_flags bits marked as "inherit" bits */
+/* Flags inherited from wire on enqueue/reply between client/server. */
+/* NO_TIMEOUT flag to force ldlm_lock_match() to wait with no timeout. */
+/* TEST_LOCK flag to not let TEST lock to be granted. */
 #define LDLM_FL_INHERIT_MASK            (LDLM_FL_CANCEL_ON_BLOCK	|\
 					 LDLM_FL_NO_TIMEOUT		|\
-					 LDLM_FL_TEST_LOCK              |\
-					 LDLM_FL_NO_EXPANSION)
+					 LDLM_FL_TEST_LOCK)
 
 /** flags returned in @flags parameter on ldlm_lock_enqueue,
  * to be re-constructed on re-send */

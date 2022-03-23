@@ -37,7 +37,7 @@ static int peer_buffer_credits;
 module_param(peer_buffer_credits, int, 0444);
 MODULE_PARM_DESC(peer_buffer_credits, "# per-peer router buffer credits");
 
-static int peer_timeout = DEFAULT_PEER_TIMEOUT;
+static int peer_timeout = 180;
 module_param(peer_timeout, int, 0444);
 MODULE_PARM_DESC(peer_timeout, "Seconds without aliveness news to declare peer dead (<=0 to disable)");
 
@@ -155,7 +155,7 @@ module_param(protocol, int, 0644);
 MODULE_PARM_DESC(protocol, "protocol version");
 #endif
 
-struct ksock_tunables ksocknal_tunables;
+ksock_tunables_t ksocknal_tunables;
 
 int ksocknal_tunables_init(void)
 {
