@@ -41,6 +41,7 @@
 #include <obd.h>
 #include <obd_class.h>
 #include <obd_support.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_net.h>
 #include <lustre_import.h>
 #include <lprocfs_status.h>
@@ -132,40 +133,12 @@ static const struct file_operations gss_proc_secinit = {
 	.write = gss_proc_write_secinit,
 };
 
-int sptlrpc_krb5_allow_old_client_csum_seq_show(struct seq_file *m, void *data)
-{
-	seq_printf(m, "%u\n", krb5_allow_old_client_csum);
-	return 0;
-}
-
-ssize_t sptlrpc_krb5_allow_old_client_csum_seq_write(struct file *file,
-						     const char __user *buffer,
-						     size_t count, loff_t *off)
-{
-	bool val;
-	int rc;
-
-	rc = kstrtobool_from_user(buffer, count, &val);
-	if (rc)
-		return rc;
-
-	krb5_allow_old_client_csum = val;
-	return count;
-}
-LPROC_SEQ_FOPS(sptlrpc_krb5_allow_old_client_csum);
-
-static struct ldebugfs_vars gss_debugfs_vars[] = {
+static struct lprocfs_vars gss_lprocfs_vars[] = {
 	{ .name	=	"replays",
 	  .fops	=	&gss_proc_oos_fops	},
 	{ .name	=	"init_channel",
 	  .fops	=	&gss_proc_secinit,
 	  .proc_mode =	0222			},
-	{ NULL }
-};
-
-static struct lprocfs_vars gss_lprocfs_vars[] = {
-	{ .name	=	"krb5_allow_old_client_csum",
-	  .fops	=	&sptlrpc_krb5_allow_old_client_csum_fops },
 	{ NULL }
 };
 
@@ -186,14 +159,14 @@ static ssize_t
 gss_lk_proc_dl_seq_write(struct file *file, const char __user *buffer,
 				size_t count, loff_t *off)
 {
-	unsigned int val;
 	int rc;
+	__s64 val;
 
-	rc = kstrtouint_from_user(buffer, count, 0, &val);
+	rc = lprocfs_str_to_s64(buffer, count, &val);
 	if (rc < 0)
 		return rc;
 
-	if (val > 4)
+	if (val < 0 || val > 4)
 		return -ERANGE;
 
 	gss_lk_debug_level = val;
@@ -202,7 +175,7 @@ gss_lk_proc_dl_seq_write(struct file *file, const char __user *buffer,
 }
 LPROC_SEQ_FOPS(gss_lk_proc_dl);
 
-static struct ldebugfs_vars gss_lk_debugfs_vars[] = {
+static struct lprocfs_vars gss_lk_lprocfs_vars[] = {
 	{ .name	=	"debug_level",
 	  .fops	=	&gss_lk_proc_dl_fops	},
 	{ NULL }
@@ -236,7 +209,7 @@ int gss_init_lproc(void)
 	}
 
 	gss_proc_lk = lprocfs_register("lgss_keyring", gss_proc_root,
-				       gss_lk_ldebugfs_vars, NULL);
+				       gss_lk_lprocfs_vars, NULL);
 	if (IS_ERR(gss_proc_lk)) {
 		rc = PTR_ERR(gss_proc_lk);
 		gss_proc_lk = NULL;
