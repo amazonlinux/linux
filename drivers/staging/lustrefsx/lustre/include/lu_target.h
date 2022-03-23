@@ -23,7 +23,7 @@
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -126,17 +126,14 @@ struct tg_grants_data {
 	u64			 tgd_tot_granted;
 	/* grant used by I/Os in progress (between prepare and commit) */
 	u64			 tgd_tot_pending;
-	/* amount of available space in percentage that is never used for
-	 * grants, used on MDT to always keep space for metadata. */
-	u64			 tgd_reserved_pcnt;
 	/* number of clients using grants */
 	int			 tgd_tot_granted_clients;
 	/* shall we grant space to clients not
 	 * supporting OBD_CONNECT_GRANT_PARAM? */
-	unsigned int		 tgd_grant_compat_disable:1;
+	int			 tgd_grant_compat_disable;
 	/* protect all statfs-related counters */
 	spinlock_t		 tgd_osfs_lock;
-	time64_t		 tgd_osfs_age;
+	__u64			 tgd_osfs_age;
 	int			 tgd_blockbits;
 	/* counters used during statfs update, protected by ofd_osfs_lock.
 	 * record when some statfs refresh are in progress */
@@ -204,17 +201,7 @@ struct lu_target {
 
 	/* target grants fields */
 	struct tg_grants_data	 lut_tgd;
-
-	/* target tunables */
-	const struct attribute	**lut_attrs;
-
-	/* FMD (file modification data) values */
-	int			 lut_fmd_max_num;
-	time64_t		 lut_fmd_max_age;
 };
-
-#define LUT_FMD_MAX_NUM_DEFAULT 128
-#define LUT_FMD_MAX_AGE_DEFAULT (obd_timeout + 10)
 
 /* number of slots in reply bitmap */
 #define LUT_REPLY_SLOTS_PER_CHUNK (1<<20)
@@ -369,7 +356,7 @@ struct tgt_handler {
 	/* Flags in enum tgt_handler_flags */
 	__u32			 th_flags;
 	/* Request version for this opcode */
-	enum lustre_msg_version	 th_version;
+	int			 th_version;
 	/* Handler function */
 	int			(*th_act)(struct tgt_session_info *tsi);
 	/* Handler function for high priority requests */
@@ -422,6 +409,8 @@ int tgt_convert(struct tgt_session_info *tsi);
 int tgt_bl_callback(struct tgt_session_info *tsi);
 int tgt_cp_callback(struct tgt_session_info *tsi);
 int tgt_llog_open(struct tgt_session_info *tsi);
+int tgt_llog_close(struct tgt_session_info *tsi);
+int tgt_llog_destroy(struct tgt_session_info *tsi);
 int tgt_llog_read_header(struct tgt_session_info *tsi);
 int tgt_llog_next_block(struct tgt_session_info *tsi);
 int tgt_llog_prev_block(struct tgt_session_info *tsi);
@@ -437,13 +426,15 @@ int tgt_sync(const struct lu_env *env, struct lu_target *tgt,
 int tgt_io_thread_init(struct ptlrpc_thread *thread);
 void tgt_io_thread_done(struct ptlrpc_thread *thread);
 
-int tgt_mdt_data_lock(struct ldlm_namespace *ns, struct ldlm_res_id *res_id,
-		      struct lustre_handle *lh, int mode, __u64 *flags);
-void tgt_mdt_data_unlock(struct lustre_handle *lh, enum ldlm_mode mode);
-int tgt_extent_lock(const struct lu_env *env, struct ldlm_namespace *ns,
-		    struct ldlm_res_id *res_id, __u64 start, __u64 end,
-		    struct lustre_handle *lh, int mode, __u64 *flags);
+int tgt_extent_lock(struct ldlm_namespace *ns, struct ldlm_res_id *res_id,
+		    __u64 start, __u64 end, struct lustre_handle *lh,
+		    int mode, __u64 *flags);
 void tgt_extent_unlock(struct lustre_handle *lh, enum ldlm_mode mode);
+int tgt_brw_lock(struct ldlm_namespace *ns, struct ldlm_res_id *res_id,
+		 struct obd_ioobj *obj, struct niobuf_remote *nb,
+		 struct lustre_handle *lh, enum ldlm_mode mode);
+void tgt_brw_unlock(struct obd_ioobj *obj, struct niobuf_remote *niob,
+		    struct lustre_handle *lh, enum ldlm_mode mode);
 int tgt_brw_read(struct tgt_session_info *tsi);
 int tgt_brw_write(struct tgt_session_info *tsi);
 int tgt_hpreq_handler(struct ptlrpc_request *req);
@@ -503,8 +494,6 @@ int tgt_add_reply_data(const struct lu_env *env, struct lu_target *tgt,
 		       struct thandle *th, bool update_lrd_file);
 struct tg_reply_data *tgt_lookup_reply_by_xid(struct tg_export_data *ted,
 					       __u64 xid);
-int tgt_tunables_init(struct lu_target *lut);
-void tgt_tunables_fini(struct lu_target *lut);
 
 /* target/tgt_grant.c */
 static inline int exp_grant_param_supp(struct obd_export *exp)
@@ -532,36 +521,8 @@ int tgt_grant_commit_cb_add(struct thandle *th, struct obd_export *exp,
 long tgt_grant_create(const struct lu_env *env, struct obd_export *exp,
 		      s64 *nr);
 int tgt_statfs_internal(const struct lu_env *env, struct lu_target *lut,
-			struct obd_statfs *osfs, time64_t max_age,
+			struct obd_statfs *osfs, __u64 max_age,
 			int *from_cache);
-#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 16, 53, 0)
-ssize_t sync_lock_cancel_show(struct kobject *kobj,
-			      struct attribute *attr, char *buf);
-ssize_t sync_lock_cancel_store(struct kobject *kobj, struct attribute *attr,
-			       const char *buffer, size_t count);
-#endif
-ssize_t tot_dirty_show(struct kobject *kobj, struct attribute *attr,
-		       char *buf);
-ssize_t tot_granted_show(struct kobject *kobj, struct attribute *attr,
-			 char *buf);
-ssize_t tot_pending_show(struct kobject *kobj, struct attribute *attr,
-			 char *buf);
-ssize_t grant_compat_disable_show(struct kobject *kobj, struct attribute *attr,
-				  char *buf);
-ssize_t grant_compat_disable_store(struct kobject *kobj,
-				   struct attribute *attr,
-				   const char *buffer, size_t count);
-
-/* FMD */
-void tgt_fmd_update(struct obd_export *exp, const struct lu_fid *fid,
-		    __u64 xid);
-bool tgt_fmd_check(struct obd_export *exp, const struct lu_fid *fid,
-		   __u64 xid);
-#ifdef DO_FMD_DROP
-void tgt_fmd_drop(struct obd_export *exp, const struct lu_fid *fid);
-#else
-#define tgt_fmd_drop(exp, fid) do {} while (0)
-#endif
 
 /* target/update_trans.c */
 int distribute_txn_init(const struct lu_env *env,
