@@ -23,7 +23,7 @@
  * Copyright (c) 1999, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,16 +42,17 @@
 
 #include <obd_support.h>
 #include <obd_class.h>
-#include <uapi/linux/lnet/lnetctl.h>
+#include <lnet/lnetctl.h>
 #include <lustre_debug.h>
 #include <lustre_kernelcomm.h>
 #include <lprocfs_status.h>
+#include <lustre_ver.h>
 #include <cl_object.h>
 #ifdef HAVE_SERVER_SUPPORT
 # include <dt_object.h>
 # include <md_object.h>
 #endif /* HAVE_SERVER_SUPPORT */
-#include <uapi/linux/lustre/lustre_ioctl.h>
+#include <uapi/linux/lustre_ioctl.h>
 #include "llog_internal.h"
 
 #ifdef CONFIG_PROC_FS
@@ -69,8 +70,6 @@ unsigned int obd_dump_on_timeout;
 EXPORT_SYMBOL(obd_dump_on_timeout);
 unsigned int obd_dump_on_eviction;
 EXPORT_SYMBOL(obd_dump_on_eviction);
-unsigned int obd_lbug_on_eviction;
-EXPORT_SYMBOL(obd_lbug_on_eviction);
 unsigned long obd_max_dirty_pages;
 EXPORT_SYMBOL(obd_max_dirty_pages);
 atomic_long_t obd_dirty_pages;
@@ -98,10 +97,91 @@ EXPORT_SYMBOL(at_early_margin);
 int at_extra = 30;
 EXPORT_SYMBOL(at_extra);
 
+atomic_long_t obd_dirty_transit_pages;
+EXPORT_SYMBOL(obd_dirty_transit_pages);
+
+char obd_jobid_var[JOBSTATS_JOBID_VAR_MAX_LEN + 1] = JOBSTATS_DISABLE;
+
 #ifdef CONFIG_PROC_FS
 struct lprocfs_stats *obd_memory = NULL;
 EXPORT_SYMBOL(obd_memory);
 #endif
+
+char obd_jobid_node[LUSTRE_JOBID_SIZE + 1];
+
+/* Get jobid of current process by reading the environment variable
+ * stored in between the "env_start" & "env_end" of task struct.
+ *
+ * TODO:
+ * It's better to cache the jobid for later use if there is any
+ * efficient way, the cl_env code probably could be reused for this
+ * purpose.
+ *
+ * If some job scheduler doesn't store jobid in the "env_start/end",
+ * then an upcall could be issued here to get the jobid by utilizing
+ * the userspace tools/api. Then, the jobid must be cached.
+ */
+int lustre_get_jobid(char *jobid)
+{
+	int jobid_len = LUSTRE_JOBID_SIZE;
+	char tmp_jobid[LUSTRE_JOBID_SIZE] = { 0 };
+	int rc = 0;
+	ENTRY;
+
+	/* Jobstats isn't enabled */
+	if (strcmp(obd_jobid_var, JOBSTATS_DISABLE) == 0)
+		GOTO(out, rc = 0);
+
+	/* Whole node dedicated to single job */
+	if (strcmp(obd_jobid_var, JOBSTATS_NODELOCAL) == 0) {
+		memcpy(tmp_jobid, obd_jobid_node, LUSTRE_JOBID_SIZE);
+		GOTO(out, rc = 0);
+	}
+
+	/* Use process name + fsuid as jobid */
+	if (strcmp(obd_jobid_var, JOBSTATS_PROCNAME_UID) == 0) {
+		snprintf(tmp_jobid, LUSTRE_JOBID_SIZE, "%s.%u",
+			 current_comm(),
+			 from_kuid(&init_user_ns, current_fsuid()));
+		GOTO(out, rc = 0);
+	}
+
+	rc = cfs_get_environ(obd_jobid_var, tmp_jobid, &jobid_len);
+	if (rc) {
+		if (rc == -EOVERFLOW) {
+			/* For the PBS_JOBID and LOADL_STEP_ID keys (which are
+			 * variable length strings instead of just numbers), it
+			 * might make sense to keep the unique parts for JobID,
+			 * instead of just returning an error.  That means a
+			 * larger temp buffer for cfs_get_environ(), then
+			 * truncating the string at some separator to fit into
+			 * the specified jobid_len.  Fix later if needed. */
+			static bool printed;
+			if (unlikely(!printed)) {
+				LCONSOLE_ERROR_MSG(0x16b, "%s value too large "
+						   "for JobID buffer (%d)\n",
+						   obd_jobid_var, jobid_len);
+				printed = true;
+			}
+		} else {
+			CDEBUG((rc == -ENOENT || rc == -EINVAL ||
+				rc == -EDEADLK) ? D_INFO : D_ERROR,
+			       "Get jobid for (%s) failed: rc = %d\n",
+			       obd_jobid_var, rc);
+		}
+	}
+
+out:
+	if (rc != 0)
+		RETURN(rc);
+
+	/* Only replace the job ID if it changed. */
+	if (strcmp(jobid, tmp_jobid) != 0)
+		memcpy(jobid, tmp_jobid, jobid_len);
+
+	RETURN(0);
+}
+EXPORT_SYMBOL(lustre_get_jobid);
 
 static int class_resolve_dev_name(__u32 len, const char *name)
 {
@@ -131,159 +211,6 @@ static int class_resolve_dev_name(__u32 len, const char *name)
 out:
         RETURN(rc);
 }
-
-#define OBD_MAX_IOCTL_BUFFER	8192
-
-static int obd_ioctl_is_invalid(struct obd_ioctl_data *data)
-{
-	if (data->ioc_len > BIT(30)) {
-		CERROR("OBD ioctl: ioc_len larger than 1<<30\n");
-		return 1;
-	}
-
-	if (data->ioc_inllen1 > BIT(30)) {
-		CERROR("OBD ioctl: ioc_inllen1 larger than 1<<30\n");
-		return 1;
-	}
-
-	if (data->ioc_inllen2 > BIT(30)) {
-		CERROR("OBD ioctl: ioc_inllen2 larger than 1<<30\n");
-		return 1;
-	}
-
-	if (data->ioc_inllen3 > BIT(30)) {
-		CERROR("OBD ioctl: ioc_inllen3 larger than 1<<30\n");
-		return 1;
-	}
-
-	if (data->ioc_inllen4 > BIT(30)) {
-		CERROR("OBD ioctl: ioc_inllen4 larger than 1<<30\n");
-		return 1;
-	}
-
-	if (data->ioc_inlbuf1 && data->ioc_inllen1 == 0) {
-		CERROR("OBD ioctl: inlbuf1 pointer but 0 length\n");
-		return 1;
-	}
-
-	if (data->ioc_inlbuf2 && data->ioc_inllen2 == 0) {
-		CERROR("OBD ioctl: inlbuf2 pointer but 0 length\n");
-		return 1;
-	}
-
-	if (data->ioc_inlbuf3 && data->ioc_inllen3 == 0) {
-		CERROR("OBD ioctl: inlbuf3 pointer but 0 length\n");
-		return 1;
-	}
-
-	if (data->ioc_inlbuf4 && data->ioc_inllen4 == 0) {
-		CERROR("OBD ioctl: inlbuf4 pointer but 0 length\n");
-		return 1;
-	}
-
-	if (data->ioc_pbuf1 && data->ioc_plen1 == 0) {
-		CERROR("OBD ioctl: pbuf1 pointer but 0 length\n");
-		return 1;
-	}
-
-	if (data->ioc_pbuf2 && data->ioc_plen2 == 0) {
-		CERROR("OBD ioctl: pbuf2 pointer but 0 length\n");
-		return 1;
-	}
-
-	if (!data->ioc_pbuf1 && data->ioc_plen1 != 0) {
-		CERROR("OBD ioctl: plen1 set but NULL pointer\n");
-		return 1;
-	}
-
-	if (!data->ioc_pbuf2 && data->ioc_plen2 != 0) {
-		CERROR("OBD ioctl: plen2 set but NULL pointer\n");
-		return 1;
-	}
-
-	if (obd_ioctl_packlen(data) > data->ioc_len) {
-		CERROR("OBD ioctl: packlen exceeds ioc_len (%d > %d)\n",
-		       obd_ioctl_packlen(data), data->ioc_len);
-		return 1;
-	}
-
-	return 0;
-}
-
-/* buffer MUST be at least the size of obd_ioctl_hdr */
-int obd_ioctl_getdata(char **buf, int *len, void __user *arg)
-{
-	struct obd_ioctl_hdr hdr;
-	struct obd_ioctl_data *data;
-	int offset = 0;
-
-	ENTRY;
-	if (copy_from_user(&hdr, arg, sizeof(hdr)))
-		RETURN(-EFAULT);
-
-	if (hdr.ioc_version != OBD_IOCTL_VERSION) {
-		CERROR("Version mismatch kernel (%x) vs application (%x)\n",
-		       OBD_IOCTL_VERSION, hdr.ioc_version);
-		RETURN(-EINVAL);
-	}
-
-	if (hdr.ioc_len > OBD_MAX_IOCTL_BUFFER) {
-		CERROR("User buffer len %d exceeds %d max buffer\n",
-		       hdr.ioc_len, OBD_MAX_IOCTL_BUFFER);
-		RETURN(-EINVAL);
-	}
-
-	if (hdr.ioc_len < sizeof(struct obd_ioctl_data)) {
-		CERROR("User buffer too small for ioctl (%d)\n", hdr.ioc_len);
-		RETURN(-EINVAL);
-	}
-
-	/* When there are lots of processes calling vmalloc on multi-core
-	 * system, the high lock contention will hurt performance badly,
-	 * obdfilter-survey is an example, which relies on ioctl. So we'd
-	 * better avoid vmalloc on ioctl path. LU-66
-	 */
-	OBD_ALLOC_LARGE(*buf, hdr.ioc_len);
-	if (!*buf) {
-		CERROR("Cannot allocate control buffer of len %d\n",
-		       hdr.ioc_len);
-		RETURN(-EINVAL);
-	}
-	*len = hdr.ioc_len;
-	data = (struct obd_ioctl_data *)*buf;
-
-	if (copy_from_user(*buf, arg, hdr.ioc_len)) {
-		OBD_FREE_LARGE(*buf, hdr.ioc_len);
-		RETURN(-EFAULT);
-	}
-
-	if (obd_ioctl_is_invalid(data)) {
-		CERROR("ioctl not correctly formatted\n");
-		OBD_FREE_LARGE(*buf, hdr.ioc_len);
-		RETURN(-EINVAL);
-	}
-
-	if (data->ioc_inllen1) {
-		data->ioc_inlbuf1 = &data->ioc_bulk[0];
-		offset += cfs_size_round(data->ioc_inllen1);
-	}
-
-	if (data->ioc_inllen2) {
-		data->ioc_inlbuf2 = &data->ioc_bulk[0] + offset;
-		offset += cfs_size_round(data->ioc_inllen2);
-	}
-
-	if (data->ioc_inllen3) {
-		data->ioc_inlbuf3 = &data->ioc_bulk[0] + offset;
-		offset += cfs_size_round(data->ioc_inllen3);
-	}
-
-	if (data->ioc_inllen4)
-		data->ioc_inlbuf4 = &data->ioc_bulk[0] + offset;
-
-	RETURN(0);
-}
-EXPORT_SYMBOL(obd_ioctl_getdata);
 
 int class_handle_ioctl(unsigned int cmd, unsigned long arg)
 {
@@ -500,57 +427,8 @@ out:
 	RETURN(err);
 } /* class_handle_ioctl */
 
-/*  opening /dev/obd */
-static int obd_class_open(struct inode * inode, struct file * file)
-{
-	ENTRY;
-	try_module_get(THIS_MODULE);
-	RETURN(0);
-}
-
-/*  closing /dev/obd */
-static int obd_class_release(struct inode * inode, struct file * file)
-{
-	ENTRY;
-
-	module_put(THIS_MODULE);
-	RETURN(0);
-}
-
-/* to control /dev/obd */
-static long obd_class_ioctl(struct file *filp, unsigned int cmd,
-			    unsigned long arg)
-{
-	int err = 0;
-
-	ENTRY;
-	/* Allow non-root access for OBD_IOC_PING_TARGET - used by lfs check */
-	if (!cfs_capable(CFS_CAP_SYS_ADMIN) && (cmd != OBD_IOC_PING_TARGET))
-		RETURN(err = -EACCES);
-
-	if ((cmd & 0xffffff00) == ((int)'T') << 8) /* ignore all tty ioctls */
-		RETURN(err = -ENOTTY);
-
-	err = class_handle_ioctl(cmd, (unsigned long)arg);
-
-	RETURN(err);
-}
-
-/* declare character device */
-static struct file_operations obd_psdev_fops = {
-	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= obd_class_ioctl,	/* unlocked_ioctl */
-	.open		= obd_class_open,	/* open */
-	.release	= obd_class_release,	/* release */
-};
-
-/* modules setup */
-struct miscdevice obd_psdev = {
-	.minor	= MISC_DYNAMIC_MINOR,
-	.name	= OBD_DEV_NAME,
-	.fops	= &obd_psdev_fops,
-};
-
+#define OBD_INIT_CHECK
+#ifdef OBD_INIT_CHECK
 static int obd_init_checks(void)
 {
         __u64 u64val, div64val;
@@ -616,6 +494,9 @@ static int obd_init_checks(void)
 
         return ret;
 }
+#else
+#define obd_init_checks() do {} while(0)
+#endif
 
 static int __init obdclass_init(void)
 {
@@ -732,6 +613,7 @@ cleanup_lu_global:
 	lu_global_fini();
 
 cleanup_class_procfs:
+	obd_sysctl_clean();
 	class_procfs_clean();
 
 cleanup_caches:
@@ -801,6 +683,7 @@ static void __exit obdclass_exit(void)
 	lu_global_fini();
 
         obd_cleanup_caches();
+        obd_sysctl_clean();
 
         class_procfs_clean();
 
