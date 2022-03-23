@@ -11,8 +11,7 @@
 #ifndef __PTLRPC_GSS_GSS_INTERNAL_H_
 #define __PTLRPC_GSS_GSS_INTERNAL_H_
 
-#include <crypto/hash.h>
-#include <libcfs/libcfs_crypto.h>
+#include <linux/crypto.h>
 #include <lustre_sec.h>
 
 /*
@@ -73,16 +72,17 @@ int buffer_extract_bytes(const void **buf, __u32 *buflen,
  */
 #define GSS_GC_INTERVAL                 (60 * 60) /* 60 minutes */
 
-static inline time64_t gss_round_ctx_expiry(time64_t expiry,
-					    unsigned long sec_flags)
+static inline
+unsigned long gss_round_ctx_expiry(unsigned long expiry,
+                                   unsigned long sec_flags)
 {
-	if (sec_flags & PTLRPC_SEC_FL_REVERSE)
-		return expiry;
+        if (sec_flags & PTLRPC_SEC_FL_REVERSE)
+                return expiry;
 
-	if (ktime_get_real_seconds() + __TIMEOUT_DELTA <= expiry)
-		return expiry - __TIMEOUT_DELTA;
+        if (ktime_get_real_seconds() + __TIMEOUT_DELTA <= expiry)
+                return expiry - __TIMEOUT_DELTA;
 
-	return expiry;
+        return expiry;
 }
 
 /*
@@ -117,9 +117,8 @@ enum ptlrpc_gss_tgt {
 };
 
 enum ptlrpc_gss_header_flags {
-	LUSTRE_GSS_PACK_BULK            = 1,
-	LUSTRE_GSS_PACK_USER            = 2,
-	LUSTRE_GSS_PACK_KCSUM           = 4,
+        LUSTRE_GSS_PACK_BULK            = 1,
+        LUSTRE_GSS_PACK_USER            = 2,
 };
 
 static inline
@@ -287,9 +286,9 @@ struct gss_cli_ctx {
 };
 
 struct gss_cli_ctx_keyring {
-	struct gss_cli_ctx      gck_base;
-	struct key             *gck_key;
-	struct timer_list       gck_timer;
+        struct gss_cli_ctx      gck_base;
+        struct key             *gck_key;
+        struct timer_list      *gck_timer;
 };
 
 struct gss_sec {
@@ -358,14 +357,6 @@ static inline struct gss_sec_keyring *sec2gsec_keyring(struct ptlrpc_sec *sec)
         return container_of(sec2gsec(sec), struct gss_sec_keyring, gsk_base);
 }
 
-#ifdef HAVE_CACHE_HASH_SPINLOCK
-# define sunrpc_cache_lookup(c, i, h) sunrpc_cache_lookup_rcu((c), (i), (h))
-# define cache_read_lock(cdetail)   spin_lock(&((cdetail)->hash_lock))
-# define cache_read_unlock(cdetail) spin_unlock(&((cdetail)->hash_lock))
-#else /* ! HAVE_CACHE_HASH_SPINLOCK */
-# define cache_read_lock(cdetail)   read_lock(&((cdetail)->hash_lock))
-# define cache_read_unlock(cdetail) read_unlock(&((cdetail)->hash_lock))
-#endif
 
 #define GSS_CTX_INIT_MAX_LEN            (1024)
 
@@ -518,7 +509,6 @@ void gss_svc_upcall_destroy_ctx(struct gss_svc_ctx *ctx);
 
 int  __init gss_init_svc_upcall(void);
 void gss_exit_svc_upcall(void);
-extern unsigned int krb5_allow_old_client_csum;
 
 /* lproc_gss.c */
 void gss_stat_oos_record_cli(int behind);
@@ -562,15 +552,6 @@ void __dbg_memdump(char *name, void *ptr, int size)
         buf[size + size] = '\0';
         LCONSOLE_INFO("DUMP %s@%p(%d): %s\n", name, ptr, size, buf);
         OBD_FREE(buf, bufsize);
-}
-
-static inline unsigned int ll_read_key_usage(struct key *key)
-{
-#ifdef HAVE_KEY_USAGE_REFCOUNT
-	return refcount_read(&key->usage);
-#else
-	return atomic_read(&key->usage);
-#endif
 }
 
 #endif /* __PTLRPC_GSS_GSS_INTERNAL_H_ */
