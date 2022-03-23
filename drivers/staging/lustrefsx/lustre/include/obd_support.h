@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -33,8 +33,11 @@
 #ifndef _OBD_SUPPORT
 #define _OBD_SUPPORT
 
+#ifndef __KERNEL__
+# error Userspace should not include obd_support.h.
+#endif /* !__KERNEL__ */
+
 #include <linux/atomic.h>
-#include <linux/ctype.h>
 #include <linux/highmem.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -53,7 +56,6 @@ enum {
 extern unsigned int obd_debug_peer_on_timeout;
 extern unsigned int obd_dump_on_timeout;
 extern unsigned int obd_dump_on_eviction;
-extern unsigned int obd_lbug_on_eviction;
 /* obd_timeout should only be used for recovery, not for
    networking / disk / timings affected by load (use Adaptive Timeouts) */
 extern unsigned int obd_timeout;          /* seconds */
@@ -68,6 +70,7 @@ extern int at_early_margin;
 extern int at_extra;
 extern unsigned long obd_max_dirty_pages;
 extern atomic_long_t obd_dirty_pages;
+extern atomic_long_t obd_dirty_transit_pages;
 extern char obd_jobid_var[];
 
 /* Some hash init argument constants */
@@ -179,9 +182,7 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_MDS_GET_ROOT_NET	 0x11b
 #define OBD_FAIL_MDS_GET_ROOT_PACK	 0x11c
 #define OBD_FAIL_MDS_STATFS_PACK         0x11d
-#define OBD_FAIL_MDS_STATFS_SUM_PACK     0x11d
 #define OBD_FAIL_MDS_STATFS_NET          0x11e
-#define OBD_FAIL_MDS_STATFS_SUM_NET      0x11e
 #define OBD_FAIL_MDS_GETATTR_NAME_NET    0x11f
 #define OBD_FAIL_MDS_PIN_NET             0x120
 #define OBD_FAIL_MDS_UNPIN_NET           0x121
@@ -244,16 +245,11 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_MDS_REINT_MULTI_NET_REP 0x15a
 #define OBD_FAIL_MDS_LLOG_CREATE_FAILED2 0x15b
 #define OBD_FAIL_MDS_FLD_LOOKUP			0x15c
-#define OBD_FAIL_MDS_CHANGELOG_REORDER	0x15d
 #define OBD_FAIL_MDS_INTENT_DELAY		0x160
 #define OBD_FAIL_MDS_XATTR_REP			0x161
 #define OBD_FAIL_MDS_TRACK_OVERFLOW	 0x162
 #define OBD_FAIL_MDS_LOV_CREATE_RACE	 0x163
 #define OBD_FAIL_MDS_HSM_CDT_DELAY	 0x164
-#define OBD_FAIL_MDS_ORPHAN_DELETE	 0x165
-#define OBD_FAIL_MDS_RMFID_NET		 0x166
-#define OBD_FAIL_MDS_REINT_OPEN		 0x169
-#define OBD_FAIL_MDS_REINT_OPEN2	 0x16a
 
 /* layout lock */
 #define OBD_FAIL_MDS_NO_LL_GETATTR	 0x170
@@ -269,8 +265,6 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_MDS_RECOVERY_ACCEPTS_GAPS 0x185
 #define OBD_FAIL_MDS_GET_INFO_NET        0x186
 #define OBD_FAIL_MDS_DQACQ_NET           0x187
-#define OBD_FAIL_MDS_STRIPE_CREATE	 0x188
-#define OBD_FAIL_MDS_STRIPE_FID		 0x189
 
 /* OI scrub */
 #define OBD_FAIL_OSD_SCRUB_DELAY			0x190
@@ -281,12 +275,6 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_OSD_COMPAT_INVALID_ENTRY		0x195
 #define OBD_FAIL_OSD_COMPAT_NO_ENTRY			0x196
 #define OBD_FAIL_OSD_OST_EA_FID_SET			0x197
-#define OBD_FAIL_OSD_NO_OI_ENTRY			0x198
-#define OBD_FAIL_OSD_INDEX_CRASH			0x199
-
-#define OBD_FAIL_OSD_TXN_START				0x19a
-
-#define OBD_FAIL_OSD_DUPLICATE_MAP			0x19b
 
 #define OBD_FAIL_OFD_SET_OID				0x1e0
 
@@ -341,14 +329,6 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_OST_PAUSE_PUNCH         0x236
 #define OBD_FAIL_OST_LADVISE_PAUSE	 0x237
 #define OBD_FAIL_OST_FAKE_RW		 0x238
-#define OBD_FAIL_OST_LIST_ASSERT         0x239
-#define OBD_FAIL_OST_GL_WORK_ALLOC	 0x240
-#define OBD_FAIL_OST_SKIP_LV_CHECK	 0x241
-#define OBD_FAIL_OST_STATFS_DELAY	 0x242
-#define OBD_FAIL_OST_INTEGRITY_FAULT	 0x243
-#define OBD_FAIL_OST_INTEGRITY_CMP	 0x244
-#define OBD_FAIL_OST_DISCONNECT_DELAY	 0x245
-#define OBD_FAIL_OST_2BIG_NIOBUF	 0x248
 
 #define OBD_FAIL_LDLM                    0x300
 #define OBD_FAIL_LDLM_NAMESPACE_NEW      0x301
@@ -391,11 +371,9 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_LDLM_SRV_GL_AST	 0x326
 #define OBD_FAIL_LDLM_WATERMARK_LOW	 0x327
 #define OBD_FAIL_LDLM_WATERMARK_HIGH	 0x328
-#define OBD_FAIL_LDLM_PAUSE_CANCEL_LOCAL 0x329
 
 #define OBD_FAIL_LDLM_GRANT_CHECK        0x32a
 #define OBD_FAIL_LDLM_PROLONG_PAUSE	 0x32b
-#define OBD_FAIL_LDLM_LOCK_REPLAY	 0x32d
 
 /* LOCKLESS IO */
 #define OBD_FAIL_LDLM_SET_CONTENTION     0x385
@@ -421,7 +399,6 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_OSC_DELAY_SETTIME	 0x412
 #define OBD_FAIL_OSC_CONNECT_GRANT_PARAM 0x413
 #define OBD_FAIL_OSC_DELAY_IO            0x414
-#define OBD_FAIL_OSC_NO_SIZE_DATA        0x415
 
 #define OBD_FAIL_PTLRPC                  0x500
 #define OBD_FAIL_PTLRPC_ACK              0x501
@@ -450,21 +427,19 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_PTLRPC_LONG_BOTH_UNLINK 0x51c
 #define OBD_FAIL_PTLRPC_CLIENT_BULK_CB3  0x520
 #define OBD_FAIL_PTLRPC_BULK_ATTACH      0x521
-#define OBD_FAIL_PTLRPC_RESEND_RACE	 0x525
 #define OBD_FAIL_PTLRPC_CONNECT_RACE	 0x531
 
 #define OBD_FAIL_OBD_PING_NET            0x600
-/*	OBD_FAIL_OBD_LOG_CANCEL_NET      0x601 obsolete since 1.5 */
+#define OBD_FAIL_OBD_LOG_CANCEL_NET      0x601
 #define OBD_FAIL_OBD_LOGD_NET            0x602
 /*	OBD_FAIL_OBD_QC_CALLBACK_NET     0x603 obsolete since 2.4 */
 #define OBD_FAIL_OBD_DQACQ               0x604
 #define OBD_FAIL_OBD_LLOG_SETUP          0x605
-/*	OBD_FAIL_OBD_LOG_CANCEL_REP      0x606 obsolete since 1.5 */
+#define OBD_FAIL_OBD_LOG_CANCEL_REP      0x606
 #define OBD_FAIL_OBD_IDX_READ_NET        0x607
 #define OBD_FAIL_OBD_IDX_READ_BREAK	 0x608
 #define OBD_FAIL_OBD_NO_LRU		 0x609
 #define OBD_FAIL_OBDCLASS_MODULE_LOAD	 0x60a
-#define OBD_FAIL_OBD_ZERO_NLINK_RACE	 0x60b
 
 #define OBD_FAIL_TGT_REPLY_NET           0x700
 #define OBD_FAIL_TGT_CONN_RACE           0x701
@@ -487,19 +462,14 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_TGT_CLIENT_DEL		 0x718
 #define OBD_FAIL_TGT_SLUGGISH_NET	 0x719
 #define OBD_FAIL_TGT_RCVD_EIO		 0x720
-#define OBD_FAIL_TGT_RECOVERY_REQ_RACE	 0x721
-#define OBD_FAIL_TGT_REPLY_DATA_RACE	 0x722
-#define OBD_FAIL_TGT_NO_GRANT		 0x725
 
 #define OBD_FAIL_MDC_REVALIDATE_PAUSE    0x800
 #define OBD_FAIL_MDC_ENQUEUE_PAUSE       0x801
 #define OBD_FAIL_MDC_OLD_EXT_FLAGS       0x802
 #define OBD_FAIL_MDC_GETATTR_ENQUEUE     0x803
-#define OBD_FAIL_MDC_RPCS_SEM		 0x804 /* deprecated */
+#define OBD_FAIL_MDC_RPCS_SEM		 0x804
 #define OBD_FAIL_MDC_LIGHTWEIGHT	 0x805
 #define OBD_FAIL_MDC_CLOSE		 0x806
-#define OBD_FAIL_MDC_MERGE		 0x807
-#define OBD_FAIL_MDC_GLIMPSE_DDOS	 0x808
 
 #define OBD_FAIL_MGS                     0x900
 #define OBD_FAIL_MGS_ALL_REQUEST_NET     0x901
@@ -531,7 +501,6 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_FLD                     0x1100
 #define OBD_FAIL_FLD_QUERY_NET           0x1101
 #define OBD_FAIL_FLD_READ_NET		 0x1102
-#define OBD_FAIL_FLD_QUERY_REQ		 0x1103
 
 #define OBD_FAIL_SEC_CTX                 0x1200
 #define OBD_FAIL_SEC_CTX_INIT_NET        0x1201
@@ -540,25 +509,18 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_SEC_CTX_HDL_PAUSE       0x1204
 
 #define OBD_FAIL_LLOG                               0x1300
-/* was	OBD_FAIL_LLOG_ORIGIN_CONNECT_NET            0x1301 until 2.4 */
+#define OBD_FAIL_LLOG_ORIGIN_CONNECT_NET            0x1301
 #define OBD_FAIL_LLOG_ORIGIN_HANDLE_CREATE_NET      0x1302
-/* was	OBD_FAIL_LLOG_ORIGIN_HANDLE_DESTROY_NET     0x1303 until 2.11 */
+#define OBD_FAIL_LLOG_ORIGIN_HANDLE_DESTROY_NET     0x1303
 #define OBD_FAIL_LLOG_ORIGIN_HANDLE_READ_HEADER_NET 0x1304
 #define OBD_FAIL_LLOG_ORIGIN_HANDLE_NEXT_BLOCK_NET  0x1305
 #define OBD_FAIL_LLOG_ORIGIN_HANDLE_PREV_BLOCK_NET  0x1306
-/* was	OBD_FAIL_LLOG_ORIGIN_HANDLE_WRITE_REC_NET   0x1307 until 2.1 */
-/* was	OBD_FAIL_LLOG_ORIGIN_HANDLE_CLOSE_NET       0x1308 until 1.8 */
-/* was	OBD_FAIL_LLOG_CATINFO_NET                   0x1309 until 2.3 */
+#define OBD_FAIL_LLOG_ORIGIN_HANDLE_WRITE_REC_NET   0x1307
+#define OBD_FAIL_LLOG_ORIGIN_HANDLE_CLOSE_NET       0x1308
+#define OBD_FAIL_LLOG_CATINFO_NET                   0x1309
 #define OBD_FAIL_MDS_SYNC_CAPA_SL                   0x1310
 #define OBD_FAIL_SEQ_ALLOC                          0x1311
 #define OBD_FAIL_CAT_RECORDS			    0x1312
-#define OBD_FAIL_CAT_FREE_RECORDS		    0x1313
-#define OBD_FAIL_TIME_IN_CHLOG_USER		    0x1314
-#define CFS_FAIL_CHLOG_USER_REG_UNREG_RACE	    0x1315
-#define OBD_FAIL_FORCE_GC_THREAD		    0x1316
-#define OBD_FAIL_LLOG_PROCESS_TIMEOUT		    0x1317
-#define OBD_FAIL_LLOG_PURGE_DELAY		    0x1318
-#define OBD_FAIL_CATLIST			    0x131b
 
 #define OBD_FAIL_LLITE                              0x1400
 #define OBD_FAIL_LLITE_FAULT_TRUNC_RACE             0x1401
@@ -574,10 +536,9 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_LLITE_NEWNODE_PAUSE		    0x140a
 #define OBD_FAIL_LLITE_SETDIRSTRIPE_PAUSE	    0x140b
 #define OBD_FAIL_LLITE_CREATE_NODE_PAUSE	    0x140c
+#define OBD_FAIL_LLITE_PTASK_IO_FAIL		    0x140d
 #define OBD_FAIL_LLITE_IMUTEX_SEC		    0x140e
 #define OBD_FAIL_LLITE_IMUTEX_NOSEC		    0x140f
-#define OBD_FAIL_LLITE_OPEN_BY_NAME		    0x1410
-#define OBD_FAIL_LLITE_SHORT_COMMIT		    0x1415
 
 #define OBD_FAIL_FID_INDIR	0x1501
 #define OBD_FAIL_FID_INLMA	0x1502
@@ -626,11 +587,9 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_LFSCK_LOST_SLAVE_LMV	0x162a
 #define OBD_FAIL_LFSCK_BAD_SLAVE_LMV	0x162b
 #define OBD_FAIL_LFSCK_BAD_SLAVE_NAME	0x162c
-#define OBD_FAIL_LFSCK_ENGINE_DELAY	0x162d
+#define OBD_FAIL_LFSCK_ASSISTANT_DIRECT	0x162d
 #define OBD_FAIL_LFSCK_LOST_MDTOBJ2	0x162e
 #define OBD_FAIL_LFSCK_BAD_PFL_RANGE	0x162f
-#define OBD_FAIL_LFSCK_NO_AGENTOBJ	0x1630
-#define OBD_FAIL_LFSCK_NO_AGENTENT	0x1631
 
 #define OBD_FAIL_LFSCK_NOTIFY_NET	0x16f0
 #define OBD_FAIL_LFSCK_QUERY_NET	0x16f1
@@ -644,16 +603,13 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_INVALIDATE_UPDATE	0x1705
 
 /* MIGRATE */
+#define OBD_FAIL_MIGRATE_NET_REP		0x1800
 #define OBD_FAIL_MIGRATE_ENTRIES		0x1801
+#define OBD_FAIL_MIGRATE_LINKEA			0x1802
+#define OBD_FAIL_MIGRATE_DELAY			0x1803
 
 /* LMV */
 #define OBD_FAIL_UNKNOWN_LMV_STRIPE		0x1901
-
-/* FLR */
-#define OBD_FAIL_FLR_GLIMPSE_IMMUTABLE		0x1A00
-#define OBD_FAIL_FLR_LV_DELAY			0x1A01
-#define OBD_FAIL_FLR_LV_INC			0x1A02
-#define OBD_FAIL_FLR_RANDOM_PICK_MIRROR	0x1A03
 
 /* DT */
 #define OBD_FAIL_DT_DECLARE_ATTR_GET		0x2000
@@ -686,18 +642,13 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_OSP_CHECK_INVALID_REC		0x2100
 #define OBD_FAIL_OSP_CHECK_ENOMEM		0x2101
 #define OBD_FAIL_OSP_FAKE_PRECREATE		0x2102
-#define OBD_FAIL_OSP_RPCS_SEM			0x2104
-#define OBD_FAIL_OSP_CANT_PROCESS_LLOG		0x2105
-#define OBD_FAIL_OSP_INVALID_LOGID		0x2106
 
-/* barrier */
+ /* barrier */
 #define OBD_FAIL_MGS_BARRIER_READ_NET		0x2200
 #define OBD_FAIL_MGS_BARRIER_NOTIFY_NET		0x2201
 
 #define OBD_FAIL_BARRIER_DELAY			0x2202
 #define OBD_FAIL_BARRIER_FAILURE		0x2203
-
-#define OBD_FAIL_OSD_FAIL_AT_TRUNCATE		0x2301
 
 /* Assign references to moved code to reduce code changes */
 #define OBD_FAIL_PRECHECK(id)                   CFS_FAIL_PRECHECK(id)
@@ -780,13 +731,11 @@ static inline void obd_memory_sub(long size)
 
 #define __OBD_MALLOC_VERBOSE(ptr, cptab, cpt, size, flags)		      \
 do {									      \
-	if (cptab)							      \
-		ptr = cfs_cpt_malloc((cptab), (cpt), (size),		      \
-				     (flags) | __GFP_ZERO | __GFP_NOWARN);    \
-	if (!(cptab) || unlikely(!(ptr))) /* retry without CPT if failure */  \
-		ptr = kmalloc(size, (flags) | __GFP_ZERO);		      \
-	if (likely((ptr) != NULL))					      \
-		OBD_ALLOC_POST((ptr), (size), "kmalloced");		      \
+	(ptr) = (cptab) == NULL ?					      \
+		kmalloc(size, (flags) | __GFP_ZERO) :			      \
+		cfs_cpt_malloc(cptab, cpt, size, (flags) | __GFP_ZERO);	      \
+	if (likely((ptr) != NULL))                                            \
+		OBD_ALLOC_POST(ptr, size, "kmalloced");                       \
 } while (0)
 
 #define OBD_ALLOC_GFP(ptr, size, gfp_mask)				      \
@@ -813,7 +762,7 @@ do {									      \
 #define __OBD_VMALLOC_VERBOSE(ptr, cptab, cpt, size)			      \
 do {									      \
 	(ptr) = cptab == NULL ?						      \
-		__ll_vmalloc(size, GFP_NOFS | __GFP_HIGHMEM | __GFP_ZERO) :   \
+		__ll_vmalloc(size, GFP_NOFS | __GFP_HIGHMEM | __GFP_ZERO):    \
 		cfs_cpt_vzalloc(cptab, cpt, size);			      \
 	if (unlikely((ptr) == NULL)) {                                        \
 		CERROR("vmalloc of '" #ptr "' (%d bytes) failed\n",           \
@@ -874,7 +823,7 @@ do {									      \
 do {									      \
 	if (is_vmalloc_addr(ptr)) {					      \
 		OBD_FREE_PRE(ptr, size, "vfreed");			      \
-		libcfs_vfree_atomic(ptr);				      \
+		libcfs_vfree_atomic(ptr);						      \
 		POISON_PTR(ptr);					      \
 	} else {							      \
 		OBD_FREE(ptr, size);					      \
@@ -960,31 +909,6 @@ static inline int lma_to_lustre_flags(__u32 lma_flags)
 static inline int lustre_to_lma_flags(__u32 la_flags)
 {
 	return (la_flags & LUSTRE_ORPHAN_FL) ? LMAI_ORPHAN : 0;
-}
-
-/* Convert wire LUSTRE_*_FL to corresponding client local VFS S_* values
- * for the client inode i_flags.  The LUSTRE_*_FL are the Lustre wire
- * protocol equivalents of LDISKFS_*_FL values stored on disk, while
- * the S_* flags are kernel-internal values that change between kernel
- * versions. These flags are set/cleared via FSFILT_IOC_{GET,SET}_FLAGS.
- * See b=16526 for a full history.
- */
-static inline int ll_ext_to_inode_flags(int flags)
-{
-	return (((flags & LUSTRE_SYNC_FL)      ? S_SYNC      : 0) |
-		((flags & LUSTRE_NOATIME_FL)   ? S_NOATIME   : 0) |
-		((flags & LUSTRE_APPEND_FL)    ? S_APPEND    : 0) |
-		((flags & LUSTRE_DIRSYNC_FL)   ? S_DIRSYNC   : 0) |
-		((flags & LUSTRE_IMMUTABLE_FL) ? S_IMMUTABLE : 0));
-}
-
-static inline int ll_inode_to_ext_flags(int iflags)
-{
-	return (((iflags & S_SYNC)      ? LUSTRE_SYNC_FL      : 0) |
-		((iflags & S_NOATIME)   ? LUSTRE_NOATIME_FL   : 0) |
-		((iflags & S_APPEND)    ? LUSTRE_APPEND_FL    : 0) |
-		((iflags & S_DIRSYNC)   ? LUSTRE_DIRSYNC_FL   : 0) |
-		((iflags & S_IMMUTABLE) ? LUSTRE_IMMUTABLE_FL : 0));
 }
 
 #endif
