@@ -38,7 +38,7 @@
  * @{
  */
 
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 #include <libcfs/libcfs.h>
 #include <seq_range.h>
 
@@ -67,10 +67,9 @@ struct lu_fld_target {
 };
 
 struct lu_server_fld {
-	/**
-	 * Fld dir debugfs entry.
-	 */
-	struct dentry		*lsf_debugfs_entry;
+        /**
+         * Fld dir proc entry. */
+	struct proc_dir_entry	*lsf_proc_dir;
 
         /**
          * /fld file object device */
@@ -109,9 +108,8 @@ struct lu_server_fld {
 
 struct lu_client_fld {
 	/**
-	 * Client side debugfs entry.
-	 */
-	struct dentry		*lcf_debugfs_entry;
+	 * Client side proc entry. */
+	struct proc_dir_entry	*lcf_proc_dir;
 
 	/**
 	 * List of exports client FLD knows about. */
@@ -134,8 +132,7 @@ struct lu_client_fld {
         struct fld_cache        *lcf_cache;
 
         /**
-	 * Client fld debugfs entry name.
-	 */
+         * Client fld proc entry name. */
         char                     lcf_name[80];
 };
 
@@ -192,7 +189,7 @@ int fld_client_add_target(struct lu_client_fld *fld,
 int fld_client_del_target(struct lu_client_fld *fld,
                           __u64 idx);
 
-void fld_client_debugfs_fini(struct lu_client_fld *fld);
+void fld_client_proc_fini(struct lu_client_fld *fld);
 
 /** @} fld */
 

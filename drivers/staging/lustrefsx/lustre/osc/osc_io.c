@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,13 +38,26 @@
 #define DEBUG_SUBSYSTEM S_OSC
 
 #include <lustre_obdo.h>
-#include <lustre_osc.h>
 
-#include "osc_internal.h"
+#include "osc_cl_internal.h"
 
-/** \addtogroup osc
- *  @{
+/** \addtogroup osc 
+ *  @{ 
  */
+
+/*****************************************************************************
+ *
+ * Type conversions.
+ *
+ */
+
+static struct osc_io *cl2osc_io(const struct lu_env *env,
+                                const struct cl_io_slice *slice)
+{
+        struct osc_io *oio = container_of0(slice, struct osc_io, oi_cl);
+        LINVRNT(oio == osc_env_io(env));
+        return oio;
+}
 
 /*****************************************************************************
  *
@@ -56,7 +69,8 @@ static void osc_io_fini(const struct lu_env *env, const struct cl_io_slice *io)
 {
 }
 
-void osc_read_ahead_release(const struct lu_env *env, void *cbdata)
+static void osc_read_ahead_release(const struct lu_env *env,
+				   void *cbdata)
 {
 	struct ldlm_lock *dlmlock = cbdata;
 	struct lustre_handle lockh;
@@ -65,7 +79,6 @@ void osc_read_ahead_release(const struct lu_env *env, void *cbdata)
 	ldlm_lock_decref(&lockh, LCK_PR);
 	LDLM_LOCK_PUT(dlmlock);
 }
-EXPORT_SYMBOL(osc_read_ahead_release);
 
 static int osc_io_read_ahead(const struct lu_env *env,
 			     const struct cl_io_slice *ios,
@@ -104,8 +117,9 @@ static int osc_io_read_ahead(const struct lu_env *env,
  * or, if page is already submitted, changes osc flags through
  * osc_set_async_flags().
  */
-int osc_io_submit(const struct lu_env *env, const struct cl_io_slice *ios,
-		  enum cl_req_type crt, struct cl_2queue *queue)
+static int osc_io_submit(const struct lu_env *env,
+                         const struct cl_io_slice *ios,
+			 enum cl_req_type crt, struct cl_2queue *queue)
 {
 	struct cl_page	  *page;
 	struct cl_page	  *tmp;
@@ -119,6 +133,7 @@ int osc_io_submit(const struct lu_env *env, const struct cl_io_slice *ios,
 	struct cl_page_list *qout     = &queue->c2_qout;
 	unsigned int queued = 0;
 	int result = 0;
+	int cmd;
 	int brw_flags;
 	unsigned int max_pages;
 
@@ -130,14 +145,8 @@ int osc_io_submit(const struct lu_env *env, const struct cl_io_slice *ios,
 	cli = osc_cli(osc);
 	max_pages = cli->cl_max_pages_per_rpc;
 
+	cmd = crt == CRT_WRITE ? OBD_BRW_WRITE : OBD_BRW_READ;
 	brw_flags = osc_io_srvlock(cl2osc_io(env, ios)) ? OBD_BRW_SRVLOCK : 0;
-	brw_flags |= crt == CRT_WRITE ? OBD_BRW_WRITE : OBD_BRW_READ;
-	if (crt == CRT_READ && ios->cis_io->ci_ndelay)
-		brw_flags |= OBD_BRW_NDELAY;
-
-	page = cl_page_list_first(qin);
-	if (page->cp_type == CPT_TRANSIENT)
-		brw_flags |= OBD_BRW_NOCACHE;
 
         /*
          * NOTE: here @page is a top-level page. This is done to avoid
@@ -191,7 +200,7 @@ int osc_io_submit(const struct lu_env *env, const struct cl_io_slice *ios,
 
 		if (++queued == max_pages) {
 			queued = 0;
-			result = osc_queue_sync_pages(env, io, osc, &list,
+			result = osc_queue_sync_pages(env, osc, &list, cmd,
 						      brw_flags);
 			if (result < 0)
 				break;
@@ -199,7 +208,7 @@ int osc_io_submit(const struct lu_env *env, const struct cl_io_slice *ios,
 	}
 
 	if (queued > 0)
-		result = osc_queue_sync_pages(env, io, osc, &list, brw_flags);
+		result = osc_queue_sync_pages(env, osc, &list, cmd, brw_flags);
 
 	/* Update c/mtime for sync write. LU-7310 */
 	if (crt == CRT_WRITE && qout->pl_nr > 0 && result == 0) {
@@ -215,31 +224,36 @@ int osc_io_submit(const struct lu_env *env, const struct cl_io_slice *ios,
 	CDEBUG(D_INFO, "%d/%d %d\n", qin->pl_nr, qout->pl_nr, result);
 	return qout->pl_nr > 0 ? 0 : result;
 }
-EXPORT_SYMBOL(osc_io_submit);
 
 /**
- * This is called to update the attributes when modifying a specific page,
- * both when making new pages and when doing updates to existing cached pages.
+ * This is called when a page is accessed within file in a way that creates
+ * new page, if one were missing (i.e., if there were a hole at that place in
+ * the file, or accessed page is beyond the current file size).
  *
  * Expand stripe KMS if necessary.
  */
-void osc_page_touch_at(const struct lu_env *env, struct cl_object *obj,
-		       pgoff_t idx, size_t to)
+static void osc_page_touch_at(const struct lu_env *env,
+			      struct cl_object *obj, pgoff_t idx, size_t to)
 {
-	struct lov_oinfo  *loi  = cl2osc(obj)->oo_oinfo;
-	struct cl_attr    *attr = &osc_env_info(env)->oti_attr;
-	int valid;
-	__u64 kms;
+        struct lov_oinfo  *loi  = cl2osc(obj)->oo_oinfo;
+        struct cl_attr    *attr = &osc_env_info(env)->oti_attr;
+        int valid;
+        __u64 kms;
 
-	ENTRY;
+        /* offset within stripe */
+        kms = cl_offset(obj, idx) + to;
 
-	/* offset within stripe */
-	kms = cl_offset(obj, idx) + to;
-
-	cl_object_attr_lock(obj);
+        cl_object_attr_lock(obj);
+        /*
+         * XXX old code used
+         *
+         *         ll_inode_size_lock(inode, 0); lov_stripe_lock(lsm);
+         *
+         * here
+         */
 	CDEBUG(D_INODE, "stripe KMS %sincreasing %llu->%llu %llu\n",
-	       kms > loi->loi_kms ? "" : "not ", loi->loi_kms, kms,
-	       loi->loi_lvb.lvb_size);
+               kms > loi->loi_kms ? "" : "not ", loi->loi_kms, kms,
+               loi->loi_lvb.lvb_size);
 
 	attr->cat_mtime = attr->cat_ctime = ktime_get_real_seconds();
 	valid = CAT_MTIME | CAT_CTIME;
@@ -253,14 +267,12 @@ void osc_page_touch_at(const struct lu_env *env, struct cl_object *obj,
 	}
 	cl_object_attr_update(env, obj, attr, valid);
 	cl_object_attr_unlock(obj);
-
-	EXIT;
 }
 
-int osc_io_commit_async(const struct lu_env *env,
-			const struct cl_io_slice *ios,
-			struct cl_page_list *qin, int from, int to,
-			cl_commit_cbt cb)
+static int osc_io_commit_async(const struct lu_env *env,
+				const struct cl_io_slice *ios,
+				struct cl_page_list *qin, int from, int to,
+				cl_commit_cbt cb)
 {
 	struct cl_io    *io = ios->cis_io;
 	struct osc_io   *oio = cl2osc_io(env, ios);
@@ -293,9 +305,6 @@ int osc_io_commit_async(const struct lu_env *env,
 		page = cl_page_list_first(qin);
 		opg = osc_cl_page_osc(page, osc);
 		oap = &opg->ops_oap;
-
-		LASSERTF(osc == oap->oap_obj,
-			 "obj mismatch: %p / %p\n", osc, oap->oap_obj);
 
 		if (!list_empty(&oap->oap_rpc_item)) {
 			CDEBUG(D_CACHE, "Busy oap %p page %p for submit.\n",
@@ -332,47 +341,29 @@ int osc_io_commit_async(const struct lu_env *env,
 	CDEBUG(D_INFO, "%d %d\n", qin->pl_nr, result);
 	RETURN(result);
 }
-EXPORT_SYMBOL(osc_io_commit_async);
 
-static bool osc_import_not_healthy(struct obd_import *imp)
-{
-	return imp->imp_invalid || imp->imp_deactive ||
-	       !(imp->imp_state == LUSTRE_IMP_FULL ||
-		 imp->imp_state == LUSTRE_IMP_IDLE);
-}
-
-int osc_io_iter_init(const struct lu_env *env, const struct cl_io_slice *ios)
+static int osc_io_iter_init(const struct lu_env *env,
+			    const struct cl_io_slice *ios)
 {
 	struct osc_object *osc = cl2osc(ios->cis_obj);
 	struct obd_import *imp = osc_cli(osc)->cl_import;
-	struct osc_io *oio = osc_env_io(env);
 	int rc = -EIO;
-	ENTRY;
 
 	spin_lock(&imp->imp_lock);
-	/**
-	 * check whether this OSC device is available for non-delay read,
-	 * fast switching mirror if we haven't tried all mirrors.
-	 */
-	if (ios->cis_io->ci_type == CIT_READ && ios->cis_io->ci_ndelay &&
-	    !ios->cis_io->ci_tried_all_mirrors && osc_import_not_healthy(imp)) {
-		rc = -EWOULDBLOCK;
-	} else if (likely(!imp->imp_invalid)) {
+	if (likely(!imp->imp_invalid)) {
+		struct osc_io *oio = osc_env_io(env);
+
 		atomic_inc(&osc->oo_nr_ios);
 		oio->oi_is_active = 1;
 		rc = 0;
 	}
 	spin_unlock(&imp->imp_lock);
 
-	if (cfs_capable(CFS_CAP_SYS_RESOURCE))
-		oio->oi_cap_sys_resource = 1;
-
-	RETURN(rc);
+	return rc;
 }
-EXPORT_SYMBOL(osc_io_iter_init);
 
-int osc_io_write_iter_init(const struct lu_env *env,
-			   const struct cl_io_slice *ios)
+static int osc_io_write_iter_init(const struct lu_env *env,
+				  const struct cl_io_slice *ios)
 {
 	struct cl_io *io = ios->cis_io;
 	struct osc_io *oio = osc_env_io(env);
@@ -383,18 +374,17 @@ int osc_io_write_iter_init(const struct lu_env *env,
 	if (cl_io_is_append(io))
 		RETURN(osc_io_iter_init(env, ios));
 
-	npages = io->u.ci_rw.crw_count >> PAGE_SHIFT;
-	if (io->u.ci_rw.crw_pos & ~PAGE_MASK)
+	npages = io->u.ci_rw.rw_range.cir_count >> PAGE_SHIFT;
+	if (io->u.ci_rw.rw_range.cir_pos & ~PAGE_MASK)
 		++npages;
 
 	oio->oi_lru_reserved = osc_lru_reserve(osc_cli(osc), npages);
 
 	RETURN(osc_io_iter_init(env, ios));
 }
-EXPORT_SYMBOL(osc_io_write_iter_init);
 
-void osc_io_iter_fini(const struct lu_env *env,
-		      const struct cl_io_slice *ios)
+static void osc_io_iter_fini(const struct lu_env *env,
+			     const struct cl_io_slice *ios)
 {
 	struct osc_io *oio = osc_env_io(env);
 
@@ -407,10 +397,9 @@ void osc_io_iter_fini(const struct lu_env *env,
 			wake_up_all(&osc->oo_io_waitq);
 	}
 }
-EXPORT_SYMBOL(osc_io_iter_fini);
 
-void osc_io_write_iter_fini(const struct lu_env *env,
-			    const struct cl_io_slice *ios)
+static void osc_io_write_iter_fini(const struct lu_env *env,
+				   const struct cl_io_slice *ios)
 {
 	struct osc_io *oio = osc_env_io(env);
 	struct osc_object *osc = cl2osc(ios->cis_obj);
@@ -423,9 +412,9 @@ void osc_io_write_iter_fini(const struct lu_env *env,
 
 	osc_io_iter_fini(env, ios);
 }
-EXPORT_SYMBOL(osc_io_write_iter_fini);
 
-int osc_io_fault_start(const struct lu_env *env, const struct cl_io_slice *ios)
+static int osc_io_fault_start(const struct lu_env *env,
+			      const struct cl_io_slice *ios)
 {
 	struct cl_io       *io;
 	struct cl_fault_io *fio;
@@ -445,8 +434,6 @@ int osc_io_fault_start(const struct lu_env *env, const struct cl_io_slice *ios)
 				  fio->ft_index, fio->ft_nob);
 	RETURN(0);
 }
-EXPORT_SYMBOL(osc_io_fault_start);
-
 
 static int osc_async_upcall(void *a, int rc)
 {
@@ -510,11 +497,10 @@ static int osc_io_setattr_start(const struct lu_env *env,
         struct obdo             *oa     = &oio->oi_oa;
 	struct osc_async_cbargs *cbargs = &oio->oi_cbarg;
 	__u64                    size   = io->u.ci_setattr.sa_attr.lvb_size;
-	unsigned int ia_avalid = io->u.ci_setattr.sa_avalid;
-	enum op_xvalid ia_xvalid = io->u.ci_setattr.sa_xvalid;
-	int result = 0;
-
+	unsigned int             ia_valid = io->u.ci_setattr.sa_valid;
+	int                      result = 0;
 	ENTRY;
+
 	/* truncate cache dirty pages first */
 	if (cl_io_is_trunc(io))
 		result = osc_cache_truncate_start(env, cl2osc(obj), size,
@@ -527,20 +513,19 @@ static int osc_io_setattr_start(const struct lu_env *env,
 			struct ost_lvb *lvb = &io->u.ci_setattr.sa_attr;
 			unsigned int cl_valid = 0;
 
-			if (ia_avalid & ATTR_SIZE) {
-				attr->cat_size = size;
-				attr->cat_kms = size;
+			if (ia_valid & ATTR_SIZE) {
+				attr->cat_size = attr->cat_kms = size;
 				cl_valid = (CAT_SIZE | CAT_KMS);
 			}
-			if (ia_avalid & ATTR_MTIME_SET) {
+			if (ia_valid & ATTR_MTIME_SET) {
 				attr->cat_mtime = lvb->lvb_mtime;
 				cl_valid |= CAT_MTIME;
 			}
-			if (ia_avalid & ATTR_ATIME_SET) {
+			if (ia_valid & ATTR_ATIME_SET) {
 				attr->cat_atime = lvb->lvb_atime;
 				cl_valid |= CAT_ATIME;
 			}
-			if (ia_xvalid & OP_XVALID_CTIME_SET) {
+			if (ia_valid & ATTR_CTIME_SET) {
 				attr->cat_ctime = lvb->lvb_ctime;
 				cl_valid |= CAT_CTIME;
 			}
@@ -557,47 +542,42 @@ static int osc_io_setattr_start(const struct lu_env *env,
 		oa->o_layout = io->u.ci_setattr.sa_layout;
 		oa->o_valid |= OBD_MD_FLID | OBD_MD_FLGROUP |
 			OBD_MD_FLOSTLAYOUT;
-		if (ia_avalid & ATTR_CTIME) {
+		if (ia_valid & ATTR_CTIME) {
 			oa->o_valid |= OBD_MD_FLCTIME;
 			oa->o_ctime = attr->cat_ctime;
 		}
-		if (ia_avalid & ATTR_ATIME) {
+		if (ia_valid & ATTR_ATIME) {
 			oa->o_valid |= OBD_MD_FLATIME;
 			oa->o_atime = attr->cat_atime;
 		}
-		if (ia_avalid & ATTR_MTIME) {
+		if (ia_valid & ATTR_MTIME) {
 			oa->o_valid |= OBD_MD_FLMTIME;
 			oa->o_mtime = attr->cat_mtime;
 		}
-		if (ia_avalid & ATTR_SIZE) {
-			oa->o_size = size;
-			oa->o_blocks = OBD_OBJECT_EOF;
-			oa->o_valid |= OBD_MD_FLSIZE | OBD_MD_FLBLOCKS;
+                if (ia_valid & ATTR_SIZE) {
+                        oa->o_size = size;
+                        oa->o_blocks = OBD_OBJECT_EOF;
+                        oa->o_valid |= OBD_MD_FLSIZE | OBD_MD_FLBLOCKS;
 
-			if (oio->oi_lockless) {
-				oa->o_flags = OBD_FL_SRVLOCK;
-				oa->o_valid |= OBD_MD_FLFLAGS;
-			}
+                        if (oio->oi_lockless) {
+                                oa->o_flags = OBD_FL_SRVLOCK;
+                                oa->o_valid |= OBD_MD_FLFLAGS;
+                        }
+                } else {
+                        LASSERT(oio->oi_lockless == 0);
+                }
 
-			if (io->ci_layout_version > 0) {
-				/* verify layout version */
-				oa->o_valid |= OBD_MD_LAYOUT_VERSION;
-				oa->o_layout_version = io->ci_layout_version;
-			}
-		} else {
-			LASSERT(oio->oi_lockless == 0);
-		}
-
-		if (ia_xvalid & OP_XVALID_FLAGS) {
+		if (ia_valid & ATTR_ATTR_FLAG) {
 			oa->o_flags = io->u.ci_setattr.sa_attr_flags;
 			oa->o_valid |= OBD_MD_FLFLAGS;
 		}
 
 		init_completion(&cbargs->opc_sync);
 
-		if (ia_avalid & ATTR_SIZE)
-			result = osc_punch_send(osc_export(cl2osc(obj)),
-						oa, osc_async_upcall, cbargs);
+		if (ia_valid & ATTR_SIZE)
+			result = osc_punch_base(osc_export(cl2osc(obj)),
+						oa, osc_async_upcall,
+						cbargs, PTLRPCD_SET);
 		else
 			result = osc_setattr_async(osc_export(cl2osc(obj)),
 						   oa, osc_async_upcall,
@@ -609,50 +589,37 @@ static int osc_io_setattr_start(const struct lu_env *env,
 	RETURN(result);
 }
 
-void osc_io_setattr_end(const struct lu_env *env,
-			const struct cl_io_slice *slice)
+static void osc_io_setattr_end(const struct lu_env *env,
+                               const struct cl_io_slice *slice)
 {
 	struct cl_io     *io  = slice->cis_io;
 	struct osc_io    *oio = cl2osc_io(env, slice);
 	struct cl_object *obj = slice->cis_obj;
 	struct osc_async_cbargs *cbargs = &oio->oi_cbarg;
-	struct cl_attr  *attr = &osc_env_info(env)->oti_attr;
-	struct obdo *oa = &oio->oi_oa;
-	unsigned int cl_valid = 0;
-	int result = 0;
+        int result = 0;
 
 	if (cbargs->opc_rpc_sent) {
 		wait_for_completion(&cbargs->opc_sync);
 		result = io->ci_result = cbargs->opc_rc;
 	}
+        if (result == 0) {
+                if (oio->oi_lockless) {
+                        /* lockless truncate */
+                        struct osc_device *osd = lu2osc_dev(obj->co_lu.lo_dev);
 
-	if (result == 0) {
-		if (oio->oi_lockless) {
-			/* lockless truncate */
-			struct osc_device *osd = lu2osc_dev(obj->co_lu.lo_dev);
-
-			LASSERT(cl_io_is_trunc(io));
-			/* XXX: Need a lock. */
-			osd->od_stats.os_lockless_truncates++;
-		}
-	}
+                        LASSERT(cl_io_is_trunc(io));
+                        /* XXX: Need a lock. */
+                        osd->od_stats.os_lockless_truncates++;
+                }
+        }
 
 	if (cl_io_is_trunc(io)) {
 		__u64 size = io->u.ci_setattr.sa_attr.lvb_size;
-		cl_object_attr_lock(obj);
-		if (oa->o_valid & OBD_MD_FLBLOCKS) {
-			attr->cat_blocks = oa->o_blocks;
-			cl_valid |= CAT_BLOCKS;
-		}
-
-		cl_object_attr_update(env, obj, attr, cl_valid);
-		cl_object_attr_unlock(obj);
 		osc_trunc_check(env, io, oio, size);
 		osc_cache_truncate_end(env, oio->oi_trunc);
 		oio->oi_trunc = NULL;
 	}
 }
-EXPORT_SYMBOL(osc_io_setattr_end);
 
 struct osc_data_version_args {
 	struct osc_io *dva_oio;
@@ -749,23 +716,18 @@ static void osc_io_data_version_end(const struct lu_env *env,
 
 	if (cbargs->opc_rc != 0) {
 		slice->cis_io->ci_result = cbargs->opc_rc;
+	} else if (!(oio->oi_oa.o_valid & OBD_MD_FLDATAVERSION)) {
+		slice->cis_io->ci_result = -EOPNOTSUPP;
 	} else {
+		dv->dv_data_version = oio->oi_oa.o_data_version;
 		slice->cis_io->ci_result = 0;
-		if (!(oio->oi_oa.o_valid &
-		      (OBD_MD_LAYOUT_VERSION | OBD_MD_FLDATAVERSION)))
-			slice->cis_io->ci_result = -ENOTSUPP;
-
-		if (oio->oi_oa.o_valid & OBD_MD_LAYOUT_VERSION)
-			dv->dv_layout_version = oio->oi_oa.o_layout_version;
-		if (oio->oi_oa.o_valid & OBD_MD_FLDATAVERSION)
-			dv->dv_data_version = oio->oi_oa.o_data_version;
 	}
 
 	EXIT;
 }
 
-int osc_io_read_start(const struct lu_env *env,
-		      const struct cl_io_slice *slice)
+static int osc_io_read_start(const struct lu_env *env,
+                             const struct cl_io_slice *slice)
 {
 	struct cl_object *obj  = slice->cis_obj;
 	struct cl_attr	 *attr = &osc_env_info(env)->oti_attr;
@@ -781,10 +743,9 @@ int osc_io_read_start(const struct lu_env *env,
 
 	RETURN(rc);
 }
-EXPORT_SYMBOL(osc_io_read_start);
 
-int osc_io_write_start(const struct lu_env *env,
-		       const struct cl_io_slice *slice)
+static int osc_io_write_start(const struct lu_env *env,
+                              const struct cl_io_slice *slice)
 {
 	struct cl_object *obj   = slice->cis_obj;
 	struct cl_attr   *attr  = &osc_env_info(env)->oti_attr;
@@ -799,10 +760,9 @@ int osc_io_write_start(const struct lu_env *env,
 
 	RETURN(rc);
 }
-EXPORT_SYMBOL(osc_io_write_start);
 
-int osc_fsync_ost(const struct lu_env *env, struct osc_object *obj,
-		  struct cl_fsync_io *fio)
+static int osc_fsync_ost(const struct lu_env *env, struct osc_object *obj,
+			 struct cl_fsync_io *fio)
 {
 	struct osc_io    *oio   = osc_env_io(env);
 	struct obdo      *oa    = &oio->oi_oa;
@@ -827,10 +787,9 @@ int osc_fsync_ost(const struct lu_env *env, struct osc_object *obj,
 	rc = osc_sync_base(obj, oa, osc_async_upcall, cbargs, PTLRPCD_SET);
 	RETURN(rc);
 }
-EXPORT_SYMBOL(osc_fsync_ost);
 
-int osc_io_fsync_start(const struct lu_env *env,
-		       const struct cl_io_slice *slice)
+static int osc_io_fsync_start(const struct lu_env *env,
+			      const struct cl_io_slice *slice)
 {
 	struct cl_io       *io  = slice->cis_io;
 	struct cl_fsync_io *fio = &io->u.ci_fsync;
@@ -869,8 +828,8 @@ int osc_io_fsync_start(const struct lu_env *env,
 	RETURN(result);
 }
 
-void osc_io_fsync_end(const struct lu_env *env,
-		      const struct cl_io_slice *slice)
+static void osc_io_fsync_end(const struct lu_env *env,
+			     const struct cl_io_slice *slice)
 {
 	struct cl_fsync_io *fio = &slice->cis_io->u.ci_fsync;
 	struct cl_object   *obj = slice->cis_obj;
@@ -890,7 +849,6 @@ void osc_io_fsync_end(const struct lu_env *env,
 	}
 	slice->cis_io->ci_result = result;
 }
-EXPORT_SYMBOL(osc_io_fsync_end);
 
 static int osc_io_ladvise_start(const struct lu_env *env,
 				const struct cl_io_slice *slice)
@@ -962,7 +920,8 @@ static void osc_io_ladvise_end(const struct lu_env *env,
 	slice->cis_io->ci_result = result;
 }
 
-void osc_io_end(const struct lu_env *env, const struct cl_io_slice *slice)
+static void osc_io_end(const struct lu_env *env,
+		       const struct cl_io_slice *slice)
 {
 	struct osc_io *oio = cl2osc_io(env, slice);
 
@@ -971,7 +930,6 @@ void osc_io_end(const struct lu_env *env, const struct cl_io_slice *slice)
 		oio->oi_active = NULL;
 	}
 }
-EXPORT_SYMBOL(osc_io_end);
 
 static const struct cl_io_operations osc_io_ops = {
 	.op = {
