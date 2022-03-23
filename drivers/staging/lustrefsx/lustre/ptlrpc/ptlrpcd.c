@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -212,7 +212,7 @@ void ptlrpcd_add_rqset(struct ptlrpc_request_set *set)
 
 		LASSERT(req->rq_phase == RQ_PHASE_NEW);
 		req->rq_set = new;
-		req->rq_queued_time = ktime_get_seconds();
+		req->rq_queued_time = cfs_time_current();
 	}
 
 	spin_lock(&new->set_new_req_lock);
@@ -476,7 +476,7 @@ static int ptlrpcd(void *arg)
          */
         do {
                 struct l_wait_info lwi;
-		time64_t timeout;
+                int timeout;
 
                 timeout = ptlrpc_set_next_timeout(set);
 		lwi = LWI_TIMEOUT(cfs_time_seconds(timeout),
@@ -503,11 +503,11 @@ static int ptlrpcd(void *arg)
                  */
         } while (exit < 2);
 
-	/*
-	 * Wait for inflight requests to drain.
-	 */
+        /*
+         * Wait for inflight requests to drain.
+         */
 	if (!list_empty(&set->set_requests))
-		ptlrpc_set_wait(&env, set);
+                ptlrpc_set_wait(set);
 	lu_context_fini(&env.le_ctx);
 	lu_context_fini(env.le_ses);
 
