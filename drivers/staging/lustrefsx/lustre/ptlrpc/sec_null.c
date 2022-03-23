@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2014, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -63,7 +63,14 @@ void null_encode_sec_part(struct lustre_msg *msg, enum lustre_sec_part sp)
 static inline
 enum lustre_sec_part null_decode_sec_part(struct lustre_msg *msg)
 {
-	return (msg->lm_secflvr >> 24) & 0xFF;
+        return (msg->lm_secflvr >> 24) & 0xFF;
+}
+
+static int null_ctx_refresh(struct ptlrpc_cli_ctx *ctx)
+{
+        /* should never reach here */
+        LBUG();
+        return 0;
 }
 
 static
@@ -363,9 +370,11 @@ int null_authorize(struct ptlrpc_request *req)
 }
 
 static struct ptlrpc_ctx_ops null_ctx_ops = {
-	.sign                   = null_ctx_sign,
-	.verify                 = null_ctx_verify,
+        .refresh                = null_ctx_refresh,
+        .sign                   = null_ctx_sign,
+        .verify                 = null_ctx_verify,
 };
+
 static struct ptlrpc_sec_cops null_sec_cops = {
         .create_sec             = null_create_sec,
         .destroy_sec            = null_destroy_sec,
