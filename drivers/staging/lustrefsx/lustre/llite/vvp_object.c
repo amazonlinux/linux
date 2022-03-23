@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -169,13 +169,6 @@ static int vvp_prune(const struct lu_env *env, struct cl_object *obj)
 	}
 
 	truncate_inode_pages(inode->i_mapping, 0);
-	if (inode->i_mapping->nrpages) {
-		CDEBUG(D_VFSTRACE, DFID ": still has %lu pages remaining\n",
-		       PFID(lu_object_fid(&obj->co_lu)),
-		       inode->i_mapping->nrpages);
-		RETURN(-EIO);
-	}
-
 	RETURN(0);
 }
 
@@ -205,25 +198,26 @@ static void vvp_req_attr_set(const struct lu_env *env, struct cl_object *obj,
 {
 	struct inode *inode;
 	struct obdo  *oa;
-	u64 valid_flags = OBD_MD_FLTYPE | OBD_MD_FLUID | OBD_MD_FLGID;
+	u64 valid_flags = OBD_MD_FLTYPE;
 
 	oa = attr->cra_oa;
 	inode = vvp_object_inode(obj);
 
 	if (attr->cra_type == CRT_WRITE) {
-		valid_flags |= OBD_MD_FLMTIME | OBD_MD_FLCTIME;
+		valid_flags |= OBD_MD_FLMTIME | OBD_MD_FLCTIME |
+			       OBD_MD_FLUID | OBD_MD_FLGID;
 		obdo_set_o_projid(oa, ll_i2info(inode)->lli_projid);
 	}
 	obdo_from_inode(oa, inode, valid_flags & attr->cra_flags);
 	obdo_set_parent_fid(oa, &ll_i2info(inode)->lli_fid);
 	if (OBD_FAIL_CHECK(OBD_FAIL_LFSCK_INVALID_PFID))
 		oa->o_parent_oid++;
-	memcpy(attr->cra_jobid, ll_i2info(inode)->lli_jobid,
-	       sizeof(attr->cra_jobid));
+	memcpy(attr->cra_jobid, ll_i2info(inode)->lli_jobid, LUSTRE_JOBID_SIZE);
 }
 
 static const struct cl_object_operations vvp_ops = {
 	.coo_page_init    = vvp_page_init,
+	.coo_lock_init    = vvp_lock_init,
 	.coo_io_init      = vvp_io_init,
 	.coo_attr_get     = vvp_attr_get,
 	.coo_attr_update  = vvp_attr_update,
