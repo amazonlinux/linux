@@ -20,7 +20,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2014, 2017, Intel Corporation.
+ * Copyright (c) 2014, 2015, Intel Corporation.
  */
 /*
  * lustre/target/out_lib.c
@@ -53,7 +53,6 @@ const char *update_op_str(__u16 opc)
 		[OUT_ATTR_GET] = "attr_get",
 		[OUT_XATTR_SET] = "xattr_set",
 		[OUT_XATTR_GET] = "xattr_get",
-		[OUT_XATTR_LIST] = "xattr_list",
 		[OUT_INDEX_LOOKUP] = "lookup",
 		[OUT_INDEX_INSERT] = "insert",
 		[OUT_INDEX_DELETE] = "delete",
@@ -103,7 +102,7 @@ int out_update_header_pack(const struct lu_env *env,
 	unsigned int			i;
 	size_t				update_size;
 
-	if (reply_size  >= LNET_MTU)
+	if (((reply_size + 7) >> 3) >= 1ULL << 16)
 		return -EINVAL;
 
 	/* Check whether the packing exceeding the maxima update length */
@@ -405,15 +404,6 @@ int out_xattr_get_pack(const struct lu_env *env, struct object_update *update,
 }
 EXPORT_SYMBOL(out_xattr_get_pack);
 
-int out_xattr_list_pack(const struct lu_env *env, struct object_update *update,
-		       size_t *max_update_size, const struct lu_fid *fid,
-		       const int bufsize)
-{
-	return out_update_pack(env, update, max_update_size, OUT_XATTR_LIST,
-			       fid, 0, NULL, NULL, bufsize);
-}
-EXPORT_SYMBOL(out_xattr_list_pack);
-
 int out_read_pack(const struct lu_env *env, struct object_update *update,
 		  size_t *max_update_size, const struct lu_fid *fid,
 		  size_t size, loff_t pos)
@@ -598,10 +588,6 @@ int out_create_add_exec(const struct lu_env *env, struct dt_object *obj,
 	struct tx_arg *arg;
 	int rc;
 
-	/* LU-13653: ignore quota for DNE directory creation */
-	if (dof->dof_type == DFT_DIR)
-		th->th_ignore_quota = 1;
-
 	rc = dt_declare_create(env, obj, attr, NULL, dof, th);
 	if (rc != 0)
 		return rc;
@@ -670,10 +656,6 @@ int out_attr_set_add_exec(const struct lu_env *env, struct dt_object *dt_obj,
 	rc = dt_declare_attr_set(env, dt_obj, attr, th);
 	if (rc != 0)
 		return rc;
-
-	if (attr->la_valid & LA_FLAGS &&
-	    attr->la_flags & LUSTRE_SET_SYNC_FL)
-		th->th_sync |= 1;
 
 	arg = tx_add_exec(ta, out_tx_attr_set_exec, out_tx_attr_set_undo,
 			  file, line);
@@ -815,7 +797,8 @@ static int out_tx_xattr_set_exec(const struct lu_env *env,
 
 				lu_buf_free(&tbuf);
 				if (update) {
-					leh->leh_overflow_time = ktime_get_real_seconds();
+					leh->leh_overflow_time =
+							cfs_time_current_sec();
 					if (unlikely(!leh->leh_overflow_time))
 						leh->leh_overflow_time++;
 				}
@@ -1077,7 +1060,7 @@ static int out_obj_index_insert(const struct lu_env *env,
 		return -ENOTDIR;
 
 	dt_write_lock(env, dt_obj, MOR_TGT_CHILD);
-	rc = dt_insert(env, dt_obj, rec, key, th);
+	rc = dt_insert(env, dt_obj, rec, key, th, 0);
 	dt_write_unlock(env, dt_obj);
 
 	return rc;
