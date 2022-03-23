@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -129,14 +129,14 @@ int ldlm_process_plain_lock(struct ldlm_lock *lock, __u64 *flags,
 			    enum ldlm_error *err, struct list_head *work_list)
 {
 	struct ldlm_resource *res = lock->l_resource;
-	struct list_head *grant_work = intention == LDLM_PROCESS_ENQUEUE ?
-							NULL : work_list;
+	struct list_head rpc_list;
 	int rc;
 	ENTRY;
 
-	LASSERT(!ldlm_is_granted(lock));
+	LASSERT(lock->l_granted_mode != lock->l_req_mode);
 	check_res_locked(res);
-	*err = ELDLM_OK;
+	LASSERT(list_empty(&res->lr_converting));
+	INIT_LIST_HEAD(&rpc_list);
 
 	if (intention == LDLM_PROCESS_RESCAN) {
                 LASSERT(work_list != NULL);
@@ -148,19 +148,31 @@ int ldlm_process_plain_lock(struct ldlm_lock *lock, __u64 *flags,
                         RETURN(LDLM_ITER_STOP);
 
                 ldlm_resource_unlink_lock(lock);
-		ldlm_grant_lock(lock, grant_work);
+                ldlm_grant_lock(lock, work_list);
                 RETURN(LDLM_ITER_CONTINUE);
         }
 
-	rc = ldlm_plain_compat_queue(&res->lr_granted, lock, work_list);
-	rc += ldlm_plain_compat_queue(&res->lr_waiting, lock, work_list);
+	LASSERT((intention == LDLM_PROCESS_ENQUEUE && work_list == NULL) ||
+		(intention == LDLM_PROCESS_RECOVERY && work_list != NULL));
+ restart:
+        rc = ldlm_plain_compat_queue(&res->lr_granted, lock, &rpc_list);
+        rc += ldlm_plain_compat_queue(&res->lr_waiting, lock, &rpc_list);
 
-	if (rc == 2) {
+        if (rc != 2) {
+		rc = ldlm_handle_conflict_lock(lock, flags, &rpc_list, 0);
+		if (rc == -ERESTART)
+			GOTO(restart, rc);
+		*err = rc;
+	} else {
 		ldlm_resource_unlink_lock(lock);
-		ldlm_grant_lock(lock, grant_work);
+		ldlm_grant_lock(lock, work_list);
+		rc = 0;
 	}
 
-	RETURN(LDLM_ITER_CONTINUE);
+	if (!list_empty(&rpc_list))
+		ldlm_discard_bl_list(&rpc_list);
+
+	RETURN(rc);
 }
 #endif /* HAVE_SERVER_SUPPORT */
 

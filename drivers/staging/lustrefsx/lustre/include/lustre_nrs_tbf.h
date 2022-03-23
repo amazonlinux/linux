@@ -51,31 +51,7 @@ struct nrs_tbf_jobid {
 	struct list_head tj_linkage;
 };
 
-#define MAX_U32_STR_LEN	10
-#define NRS_TBF_KEY_LEN	(LNET_NIDSTR_SIZE + LUSTRE_JOBID_SIZE + \
-			 MAX_U32_STR_LEN + MAX_U32_STR_LEN + 3 + 2)
-
-enum nrs_tbf_flag {
-	NRS_TBF_FLAG_INVALID    = 0x0000000,
-	NRS_TBF_FLAG_JOBID      = 0x0000001,
-	NRS_TBF_FLAG_NID        = 0x0000002,
-	NRS_TBF_FLAG_OPCODE     = 0x0000004,
-	NRS_TBF_FLAG_GENERIC    = 0x0000008,
-	NRS_TBF_FLAG_UID        = 0x0000010,
-	NRS_TBF_FLAG_GID        = 0x0000020,
-};
-
-struct tbf_id {
-	enum nrs_tbf_flag	ti_type;
-	u32			ti_uid;
-	u32			ti_gid;
-};
-
-struct nrs_tbf_id {
-	struct tbf_id		nti_id;
-	struct list_head	nti_linkage;
-};
-
+#define NRS_TBF_KEY_LEN	(LNET_NIDSTR_SIZE + LUSTRE_JOBID_SIZE + 3 + 2)
 struct nrs_tbf_client {
 	/** Resource object for policy instance. */
 	struct ptlrpc_nrs_resource	 tc_res;
@@ -87,8 +63,6 @@ struct nrs_tbf_client {
 	char				 tc_jobid[LUSTRE_JOBID_SIZE];
 	/** opcode of the client. */
 	__u32				 tc_opcode;
-	/** gid or uid of the client. */
-	struct tbf_id			tc_id;
 	/** Hash key of the client. */
 	char				 tc_key[NRS_TBF_KEY_LEN];
 	/** Reference number of the client. */
@@ -111,13 +85,6 @@ struct nrs_tbf_client {
 	__u64				 tc_depth;
 	/** Time check-point. */
 	__u64				 tc_check_time;
-	/** Deadline of a class */
-	__u64				 tc_deadline;
-	/**
-	 * Time residue: the remainder of elapsed time
-	 * divided by nsecs when dequeue a request.
-	 */
-	__u64				 tc_nsecs_resid;
 	/** List of queued requests. */
 	struct list_head		 tc_list;
 	/** Node in binary heap. */
@@ -135,11 +102,8 @@ struct nrs_tbf_client {
 
 #define MAX_TBF_NAME (16)
 
-enum nrs_rule_flags {
-	NTRS_STOPPING	= 0x00000001,
-	NTRS_DEFAULT	= 0x00000002,
-	NTRS_REALTIME	= 0x00000004,
-};
+#define NTRS_STOPPING	0x0000001
+#define NTRS_DEFAULT	0x0000002
 
 struct nrs_tbf_rule {
 	/** Name of the rule. */
@@ -156,10 +120,6 @@ struct nrs_tbf_rule {
 	struct list_head		 tr_jobids;
 	/** Jobid list string of the rule.*/
 	char				*tr_jobids_str;
-	/** uid/gid list of the rule. */
-	struct list_head		tr_ids;
-	/** uid/gid list string of the rule. */
-	char				*tr_ids_str;
 	/** Opcode bitmap of the rule. */
 	struct cfs_bitmap		*tr_opcodes;
 	/** Opcode list string of the rule.*/
@@ -179,7 +139,7 @@ struct nrs_tbf_rule {
 	/** List of client. */
 	struct list_head		 tr_cli_list;
 	/** Flags of the rule. */
-	enum nrs_rule_flags		 tr_flags;
+	__u32				 tr_flags;
 	/** Usage Reference count taken on the rule. */
 	atomic_t			 tr_ref;
 	/** Generation of the rule. */
@@ -208,9 +168,15 @@ struct nrs_tbf_ops {
 #define NRS_TBF_TYPE_NID	"nid"
 #define NRS_TBF_TYPE_OPCODE	"opcode"
 #define NRS_TBF_TYPE_GENERIC	"generic"
-#define NRS_TBF_TYPE_UID	"uid"
-#define NRS_TBF_TYPE_GID	"gid"
 #define NRS_TBF_TYPE_MAX_LEN	20
+
+enum nrs_tbf_flag {
+	NRS_TBF_FLAG_INVALID	= 0x0000000,
+	NRS_TBF_FLAG_JOBID	= 0x0000001,
+	NRS_TBF_FLAG_NID	= 0x0000002,
+	NRS_TBF_FLAG_OPCODE	= 0x0000004,
+	NRS_TBF_FLAG_GENERIC	= 0x0000008,
+};
 
 struct nrs_tbf_type {
 	const char		*ntt_name;
@@ -304,14 +270,12 @@ struct nrs_tbf_cmd {
 			char			*ts_nids_str;
 			struct list_head	 ts_jobids;
 			char			*ts_jobids_str;
-			struct list_head	 ts_ids;
-			char			*ts_ids_str;
 			struct cfs_bitmap	*ts_opcodes;
 			char			*ts_opcodes_str;
 			struct list_head	 ts_conds;
 			char			*ts_conds_str;
 			__u32			 ts_valid_type;
-			enum nrs_rule_flags	 ts_rule_flags;
+			__u32			 ts_rule_flags;
 			char			*ts_next_name;
 		} tc_start;
 		struct nrs_tbf_cmd_change {
@@ -325,8 +289,6 @@ enum nrs_tbf_field {
 	NRS_TBF_FIELD_NID,
 	NRS_TBF_FIELD_JOBID,
 	NRS_TBF_FIELD_OPCODE,
-	NRS_TBF_FIELD_UID,
-	NRS_TBF_FIELD_GID,
 	NRS_TBF_FIELD_MAX
 };
 
