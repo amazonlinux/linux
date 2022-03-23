@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,15 +42,11 @@
  * @{
  */
 
-#ifdef HAVE_SCHED_HEADERS
-#include <linux/sched/signal.h>
-#include <linux/sched/mm.h>
-#endif
-
+#include <libcfs/linux/linux-misc.h>
 #include <libcfs/libcfs.h>
-#include <uapi/linux/lustre/lustre_idl.h>
-#include <uapi/linux/lustre/lustre_ver.h>
-#include <uapi/linux/lustre/lustre_cfg.h>
+#include <lustre/lustre_idl.h>
+#include <lustre_ver.h>
+#include <uapi/linux/lustre_cfg.h>
 
 /* target.c */
 struct ptlrpc_request;
@@ -73,6 +69,7 @@ int rev_import_init(struct obd_export *exp);
 int target_handle_connect(struct ptlrpc_request *req);
 int target_handle_disconnect(struct ptlrpc_request *req);
 void target_destroy_export(struct obd_export *exp);
+int target_handle_ping(struct ptlrpc_request *req);
 void target_committed_to_req(struct ptlrpc_request *req);
 void target_cancel_recovery_timer(struct obd_device *obd);
 void target_stop_recovery_thread(struct obd_device *obd);
@@ -164,9 +161,9 @@ static inline int back_to_sleep(void *arg)
 #define LWI_ON_SIGNAL_NOOP ((void (*)(void *))(-1))
 
 struct l_wait_info {
-	long		lwi_timeout;
-	long		lwi_interval;
-	int		lwi_allow_intr;
+        cfs_duration_t lwi_timeout;
+        cfs_duration_t lwi_interval;
+        int            lwi_allow_intr;
         int  (*lwi_on_timeout)(void *);
         void (*lwi_on_signal)(void *);
         void  *lwi_cb_data;
@@ -258,8 +255,8 @@ static inline void __add_wait_queue_exclusive(wait_queue_head_t *q,
 #define __l_wait_event(wq, condition, info, ret, l_add_wait)                   \
 do {                                                                           \
 	wait_queue_entry_t __wait;                                             \
-	long __timeout = info->lwi_timeout;				       \
-	sigset_t __blocked;						       \
+	cfs_duration_t __timeout = info->lwi_timeout;                          \
+	sigset_t   __blocked;                                              \
 	int   __allow_intr = info->lwi_allow_intr;                             \
 									       \
 	ret = 0;                                                               \
@@ -308,12 +305,13 @@ do {                                                                           \
 		if (__timeout == 0) {                                          \
 			schedule();					       \
 		} else {                                                       \
-			long interval = info->lwi_interval ?		       \
-						min_t(long, info->lwi_interval,\
-						      __timeout) : __timeout;  \
-			long remaining = schedule_timeout(interval);	       \
-									       \
-			__timeout -= interval - remaining;		       \
+			cfs_duration_t interval = info->lwi_interval?          \
+					     min_t(cfs_duration_t,             \
+						 info->lwi_interval,__timeout):\
+					     __timeout;                        \
+			cfs_duration_t remaining = schedule_timeout(interval); \
+			__timeout = cfs_time_sub(__timeout,                    \
+					    cfs_time_sub(interval, remaining));\
 			if (__timeout == 0) {                                  \
 				if (info->lwi_on_timeout == NULL ||            \
 				    info->lwi_on_timeout(info->lwi_cb_data)) { \
