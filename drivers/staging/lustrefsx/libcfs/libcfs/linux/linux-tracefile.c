@@ -33,7 +33,6 @@
 #define DEBUG_SUBSYSTEM S_LNET
 #define LUSTRE_TRACEFILE_PRIVATE
 
-#include <linux/slab.h>
 #include <libcfs/libcfs.h>
 #include "tracefile.h"
 
