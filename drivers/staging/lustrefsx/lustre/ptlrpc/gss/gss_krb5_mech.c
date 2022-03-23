@@ -58,6 +58,7 @@
 #include <obd.h>
 #include <obd_class.h>
 #include <obd_support.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_net.h>
 #include <lustre_import.h>
 #include <lustre_sec.h>
@@ -94,20 +95,18 @@ static struct krb5_enctype enctypes[] = {
 		.ke_hash_size	= 16,
 		.ke_conf_size	= 8,
 	},
-#ifdef HAVE_DES3_SUPPORT
 	[ENCTYPE_DES3_CBC_RAW] = {		/* des3-hmac-sha1 */
 		.ke_dispname	= "des3-hmac-sha1",
 		.ke_enc_name	= "cbc(des3_ede)",
-		.ke_hash_name	= "sha1",
+		.ke_hash_name	= "hmac(sha1)",
 		.ke_hash_size	= 20,
 		.ke_conf_size	= 8,
 		.ke_hash_hmac	= 1,
 	},
-#endif
 	[ENCTYPE_AES128_CTS_HMAC_SHA1_96] = {	/* aes128-cts */
 		.ke_dispname	= "aes128-cts-hmac-sha1-96",
 		.ke_enc_name	= "cbc(aes)",
-		.ke_hash_name	= "sha1",
+		.ke_hash_name	= "hmac(sha1)",
 		.ke_hash_size	= 12,
 		.ke_conf_size	= 16,
 		.ke_hash_hmac	= 1,
@@ -115,7 +114,7 @@ static struct krb5_enctype enctypes[] = {
 	[ENCTYPE_AES256_CTS_HMAC_SHA1_96] = {	/* aes256-cts */
 		.ke_dispname	= "aes256-cts-hmac-sha1-96",
 		.ke_enc_name	= "cbc(aes)",
-		.ke_hash_name	= "sha1",
+		.ke_hash_name	= "hmac(sha1)",
 		.ke_hash_size	= 12,
 		.ke_conf_size	= 16,
 		.ke_hash_hmac	= 1,
@@ -123,31 +122,33 @@ static struct krb5_enctype enctypes[] = {
 	[ENCTYPE_ARCFOUR_HMAC] = {		/* arcfour-hmac-md5 */
 		.ke_dispname	= "arcfour-hmac-md5",
 		.ke_enc_name	= "ecb(arc4)",
-		.ke_hash_name	= "md5",
+		.ke_hash_name	= "hmac(md5)",
 		.ke_hash_size	= 16,
 		.ke_conf_size	= 8,
 		.ke_hash_hmac	= 1,
 	}
 };
 
+#define MAX_ENCTYPES    sizeof(enctypes)/sizeof(struct krb5_enctype)
+
 static const char * enctype2str(__u32 enctype)
 {
-	if (enctype < ARRAY_SIZE(enctypes) && enctypes[enctype].ke_dispname)
-		return enctypes[enctype].ke_dispname;
+        if (enctype < MAX_ENCTYPES && enctypes[enctype].ke_dispname)
+                return enctypes[enctype].ke_dispname;
 
-	return "unknown";
+        return "unknown";
 }
 
 static
 int krb5_init_keys(struct krb5_ctx *kctx)
 {
-	struct krb5_enctype *ke;
+        struct krb5_enctype *ke;
 
-	if (kctx->kc_enctype >= ARRAY_SIZE(enctypes) ||
-	    enctypes[kctx->kc_enctype].ke_hash_size == 0) {
-		CERROR("unsupported enctype %x\n", kctx->kc_enctype);
-		return -1;
-	}
+        if (kctx->kc_enctype >= MAX_ENCTYPES ||
+            enctypes[kctx->kc_enctype].ke_hash_size == 0) {
+                CERROR("unsupported enctype %x\n", kctx->kc_enctype);
+                return -1;
+        }
 
         ke = &enctypes[kctx->kc_enctype];
 
@@ -196,13 +197,8 @@ __u32 import_context_rfc1964(struct krb5_ctx *kctx, char *p, char *end)
 	    gss_get_bytes(&p, end, &tmp_uint, sizeof(tmp_uint)))
 		goto out_err;
 
-	/* end time. While kc_endtime might be 64 bit the krb5 API
-	 * still uses 32 bits. To delay the 2038 bug see the incoming
-	 * value as a u32 which give us until 2106. See the link for details:
-	 *
-	 * http://web.mit.edu/kerberos/www/krb5-current/doc/appdev/y2038.html
-	 */
-	if (gss_get_bytes(&p, end, &kctx->kc_endtime, sizeof(u32)))
+	/* end time */
+	if (gss_get_bytes(&p, end, &kctx->kc_endtime, sizeof(kctx->kc_endtime)))
 		goto out_err;
 
 	/* seq send */
@@ -266,13 +262,8 @@ __u32 import_context_rfc4121(struct krb5_ctx *kctx, char *p, char *end)
 {
 	unsigned int    tmp_uint, keysize;
 
-	/* end time. While kc_endtime might be 64 bit the krb5 API
-	 * still uses 32 bits. To delay the 2038 bug see the incoming
-	 * value as a u32 which give us until 2106. See the link for details:
-	 *
-	 * http://web.mit.edu/kerberos/www/krb5-current/doc/appdev/y2038.html
-	 */
-	if (gss_get_bytes(&p, end, &kctx->kc_endtime, sizeof(u32)))
+	/* end time */
+	if (gss_get_bytes(&p, end, &kctx->kc_endtime, sizeof(kctx->kc_endtime)))
 		goto out_err;
 
 	/* flags */
@@ -420,11 +411,11 @@ out_err:
 
 static
 __u32 gss_inquire_context_kerberos(struct gss_ctx *gctx,
-				   time64_t *endtime)
+                                   unsigned long  *endtime)
 {
         struct krb5_ctx *kctx = gctx->internal_ctx_id;
 
-	*endtime = kctx->kc_endtime;
+	*endtime = (unsigned long)((__u32) kctx->kc_endtime);
         return GSS_S_COMPLETE;
 }
 
@@ -447,66 +438,41 @@ __s32 krb5_make_checksum(__u32 enctype,
 			 struct krb5_header *khdr,
 			 int msgcnt, rawobj_t *msgs,
 			 int iovcnt, lnet_kiov_t *iovs,
-			 rawobj_t *cksum,
-			 digest_hash hash_func)
+			 rawobj_t *cksum)
 {
-	struct krb5_enctype *ke = &enctypes[enctype];
-	struct ahash_request *req = NULL;
-	enum cfs_crypto_hash_alg hash_algo;
-	rawobj_t hdr;
-	int rc;
+        struct krb5_enctype   *ke = &enctypes[enctype];
+	struct crypto_hash    *tfm;
+	rawobj_t	       hdr;
+        __u32                  code = GSS_S_FAILURE;
+        int                    rc;
 
-	hash_algo = cfs_crypto_hash_alg(ke->ke_hash_name);
+	if (!(tfm = crypto_alloc_hash(ke->ke_hash_name, 0, 0))) {
+                CERROR("failed to alloc TFM: %s\n", ke->ke_hash_name);
+                return GSS_S_FAILURE;
+        }
 
-	/* For the cbc(des) case we want md5 instead of hmac(md5) */
-	if (strcmp(ke->ke_enc_name, "cbc(des)"))
-		req = cfs_crypto_hash_init(hash_algo, kb->kb_key.data,
-					   kb->kb_key.len);
-	else
-		req = cfs_crypto_hash_init(hash_algo, NULL, 0);
-	if (IS_ERR(req)) {
-		rc = PTR_ERR(req);
-		CERROR("failed to alloc hash %s : rc = %d\n",
-		       ke->ke_hash_name, rc);
-		goto out_no_hash;
-	}
-
-	cksum->len = cfs_crypto_hash_digestsize(hash_algo);
-	OBD_ALLOC_LARGE(cksum->data, cksum->len);
-	if (!cksum->data) {
-		cksum->len = 0;
-		rc = -ENOMEM;
-		goto out_free_hash;
-	}
+	cksum->len = crypto_hash_digestsize(tfm);
+        OBD_ALLOC_LARGE(cksum->data, cksum->len);
+        if (!cksum->data) {
+                cksum->len = 0;
+                goto out_tfm;
+        }
 
 	hdr.data = (__u8 *)khdr;
 	hdr.len = sizeof(*khdr);
 
-	if (!hash_func) {
-		rc = -EPROTO;
-		CERROR("hash function for %s undefined\n",
-		       ke->ke_hash_name);
-		goto out_free_hash;
-	}
-	rc = hash_func(req, &hdr, msgcnt, msgs, iovcnt, iovs);
-	if (rc)
-		goto out_free_hash;
+        if (ke->ke_hash_hmac)
+		rc = gss_digest_hmac(tfm, &kb->kb_key,
+				     &hdr, msgcnt, msgs, iovcnt, iovs, cksum);
+        else
+		rc = gss_digest_norm(tfm, kb,
+				     &hdr, msgcnt, msgs, iovcnt, iovs, cksum);
 
-	if (!ke->ke_hash_hmac) {
-		LASSERT(kb->kb_tfm);
-
-		cfs_crypto_hash_final(req, cksum->data, &cksum->len);
-		rc = gss_crypt_generic(kb->kb_tfm, 0, NULL,
-				       cksum->data, cksum->data,
-				       cksum->len);
-		goto out_no_hash;
-	}
-
-out_free_hash:
-	if (req)
-		cfs_crypto_hash_final(req, cksum->data, &cksum->len);
-out_no_hash:
-	return rc ? GSS_S_FAILURE : GSS_S_COMPLETE;
+        if (rc == 0)
+                code = GSS_S_COMPLETE;
+out_tfm:
+	crypto_free_hash(tfm);
+        return code;
 }
 
 static void fill_krb5_header(struct krb5_ctx *kctx,
@@ -579,118 +545,118 @@ static __u32 verify_krb5_header(struct krb5_ctx *kctx,
 
 static
 __u32 gss_get_mic_kerberos(struct gss_ctx *gctx,
-			   int msgcnt,
-			   rawobj_t *msgs,
-			   int iovcnt,
-			   lnet_kiov_t *iovs,
-			   rawobj_t *token)
+                           int msgcnt,
+                           rawobj_t *msgs,
+                           int iovcnt,
+                           lnet_kiov_t *iovs,
+                           rawobj_t *token)
 {
-	struct krb5_ctx     *kctx = gctx->internal_ctx_id;
-	struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
-	struct krb5_header  *khdr;
-	rawobj_t cksum = RAWOBJ_EMPTY;
-	u32 major;
+        struct krb5_ctx     *kctx = gctx->internal_ctx_id;
+        struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
+        struct krb5_header  *khdr;
+        rawobj_t             cksum = RAWOBJ_EMPTY;
 
-	/* fill krb5 header */
-	LASSERT(token->len >= sizeof(*khdr));
+        /* fill krb5 header */
+        LASSERT(token->len >= sizeof(*khdr));
 	khdr = (struct krb5_header *)token->data;
-	fill_krb5_header(kctx, khdr, 0);
+        fill_krb5_header(kctx, khdr, 0);
 
-	/* checksum */
-	if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyc, khdr,
-			       msgcnt, msgs, iovcnt, iovs, &cksum,
-			       gctx->hash_func))
-		GOTO(out_free_cksum, major = GSS_S_FAILURE);
+        /* checksum */
+        if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyc,
+                               khdr, msgcnt, msgs, iovcnt, iovs, &cksum))
+                return GSS_S_FAILURE;
 
-	LASSERT(cksum.len >= ke->ke_hash_size);
-	LASSERT(token->len >= sizeof(*khdr) + ke->ke_hash_size);
-	memcpy(khdr + 1, cksum.data + cksum.len - ke->ke_hash_size,
-	       ke->ke_hash_size);
+        LASSERT(cksum.len >= ke->ke_hash_size);
+        LASSERT(token->len >= sizeof(*khdr) + ke->ke_hash_size);
+        memcpy(khdr + 1, cksum.data + cksum.len - ke->ke_hash_size,
+               ke->ke_hash_size);
 
-	token->len = sizeof(*khdr) + ke->ke_hash_size;
-	major = GSS_S_COMPLETE;
-out_free_cksum:
-	rawobj_free(&cksum);
-	return major;
+        token->len = sizeof(*khdr) + ke->ke_hash_size;
+        rawobj_free(&cksum);
+        return GSS_S_COMPLETE;
 }
 
 static
 __u32 gss_verify_mic_kerberos(struct gss_ctx *gctx,
-			      int msgcnt,
-			      rawobj_t *msgs,
-			      int iovcnt,
-			      lnet_kiov_t *iovs,
-			      rawobj_t *token)
+                              int msgcnt,
+                              rawobj_t *msgs,
+                              int iovcnt,
+                              lnet_kiov_t *iovs,
+                              rawobj_t *token)
 {
-	struct krb5_ctx *kctx = gctx->internal_ctx_id;
-	struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
-	struct krb5_header *khdr;
-	rawobj_t cksum = RAWOBJ_EMPTY;
-	u32 major;
+        struct krb5_ctx     *kctx = gctx->internal_ctx_id;
+        struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
+        struct krb5_header  *khdr;
+        rawobj_t             cksum = RAWOBJ_EMPTY;
+        __u32                major;
 
-	if (token->len < sizeof(*khdr)) {
-		CERROR("short signature: %u\n", token->len);
-		return GSS_S_DEFECTIVE_TOKEN;
-	}
+        if (token->len < sizeof(*khdr)) {
+                CERROR("short signature: %u\n", token->len);
+                return GSS_S_DEFECTIVE_TOKEN;
+        }
 
 	khdr = (struct krb5_header *)token->data;
 
-	major = verify_krb5_header(kctx, khdr, 0);
-	if (major != GSS_S_COMPLETE) {
-		CERROR("bad krb5 header\n");
-		goto out;
-	}
+        major = verify_krb5_header(kctx, khdr, 0);
+        if (major != GSS_S_COMPLETE) {
+                CERROR("bad krb5 header\n");
+                return major;
+        }
 
-	if (token->len < sizeof(*khdr) + ke->ke_hash_size) {
-		CERROR("short signature: %u, require %d\n",
-		       token->len, (int) sizeof(*khdr) + ke->ke_hash_size);
-		GOTO(out, major = GSS_S_FAILURE);
-	}
+        if (token->len < sizeof(*khdr) + ke->ke_hash_size) {
+                CERROR("short signature: %u, require %d\n",
+                       token->len, (int) sizeof(*khdr) + ke->ke_hash_size);
+                return GSS_S_FAILURE;
+        }
 
-	if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyc,
-			       khdr, msgcnt, msgs, iovcnt, iovs, &cksum,
-			       gctx->hash_func))
-		GOTO(out_free_cksum, major = GSS_S_FAILURE);
+        if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyc,
+                               khdr, msgcnt, msgs, iovcnt, iovs, &cksum)) {
+                CERROR("failed to make checksum\n");
+                return GSS_S_FAILURE;
+        }
 
-	LASSERT(cksum.len >= ke->ke_hash_size);
-	if (memcmp(khdr + 1, cksum.data + cksum.len - ke->ke_hash_size,
-		   ke->ke_hash_size)) {
-		CERROR("checksum mismatch\n");
-		GOTO(out_free_cksum, major = GSS_S_BAD_SIG);
-	}
-	major = GSS_S_COMPLETE;
-out_free_cksum:
-	rawobj_free(&cksum);
-out:
-	return major;
+        LASSERT(cksum.len >= ke->ke_hash_size);
+        if (memcmp(khdr + 1, cksum.data + cksum.len - ke->ke_hash_size,
+                   ke->ke_hash_size)) {
+                CERROR("checksum mismatch\n");
+                rawobj_free(&cksum);
+                return GSS_S_BAD_SIG;
+        }
+
+        rawobj_free(&cksum);
+        return GSS_S_COMPLETE;
 }
 
 /*
  * if adj_nob != 0, we adjust desc->bd_nob to the actual cipher text size.
  */
 static
-int krb5_encrypt_bulk(struct crypto_sync_skcipher *tfm,
-		      struct krb5_header *khdr,
-		      char *confounder,
-		      struct ptlrpc_bulk_desc *desc,
-		      rawobj_t *cipher,
-		      int adj_nob)
+int krb5_encrypt_bulk(struct crypto_blkcipher *tfm,
+                      struct krb5_header *khdr,
+                      char *confounder,
+                      struct ptlrpc_bulk_desc *desc,
+                      rawobj_t *cipher,
+                      int adj_nob)
 {
-	__u8 local_iv[16] = {0};
-	struct scatterlist src, dst;
-	struct sg_table sg_src, sg_dst;
-	int blocksize, i, rc, nob = 0;
-	SYNC_SKCIPHER_REQUEST_ON_STACK(req, tfm);
+        struct blkcipher_desc   ciph_desc;
+        __u8                    local_iv[16] = {0};
+        struct scatterlist      src, dst;
+	struct sg_table		sg_src, sg_dst;
+        int                     blocksize, i, rc, nob = 0;
 
 	LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
-	LASSERT(desc->bd_iov_count);
+        LASSERT(desc->bd_iov_count);
 	LASSERT(GET_ENC_KIOV(desc));
 
-	blocksize = crypto_sync_skcipher_blocksize(tfm);
-	LASSERT(blocksize > 1);
-	LASSERT(cipher->len == blocksize + sizeof(*khdr));
+	blocksize = crypto_blkcipher_blocksize(tfm);
+        LASSERT(blocksize > 1);
+        LASSERT(cipher->len == blocksize + sizeof(*khdr));
 
-	/* encrypt confounder */
+        ciph_desc.tfm  = tfm;
+        ciph_desc.info = local_iv;
+        ciph_desc.flags = 0;
+
+        /* encrypt confounder */
 	rc = gss_setup_sgtable(&sg_src, &src, confounder, blocksize);
 	if (rc != 0)
 		return rc;
@@ -700,24 +666,20 @@ int krb5_encrypt_bulk(struct crypto_sync_skcipher *tfm,
 		gss_teardown_sgtable(&sg_src);
 		return rc;
 	}
-	skcipher_request_set_sync_tfm(req, tfm);
-	skcipher_request_set_callback(req, 0, NULL, NULL);
-	skcipher_request_set_crypt(req, sg_src.sgl, sg_dst.sgl,
-				   blocksize, local_iv);
 
-	rc = crypto_skcipher_encrypt_iv(req, sg_dst.sgl, sg_src.sgl, blocksize);
+	rc = crypto_blkcipher_encrypt_iv(&ciph_desc, sg_dst.sgl,
+					 sg_src.sgl, blocksize);
 
 	gss_teardown_sgtable(&sg_dst);
 	gss_teardown_sgtable(&sg_src);
 
-	if (rc) {
-		CERROR("error to encrypt confounder: %d\n", rc);
-		skcipher_request_zero(req);
-		return rc;
-	}
+        if (rc) {
+                CERROR("error to encrypt confounder: %d\n", rc);
+                return rc;
+        }
 
-	/* encrypt clear pages */
-	for (i = 0; i < desc->bd_iov_count; i++) {
+        /* encrypt clear pages */
+        for (i = 0; i < desc->bd_iov_count; i++) {
 		sg_init_table(&src, 1);
 		sg_set_page(&src, BD_GET_KIOV(desc, i).kiov_page,
 			    (BD_GET_KIOV(desc, i).kiov_len +
@@ -733,36 +695,28 @@ int krb5_encrypt_bulk(struct crypto_sync_skcipher *tfm,
 		BD_GET_ENC_KIOV(desc, i).kiov_offset = dst.offset;
 		BD_GET_ENC_KIOV(desc, i).kiov_len = dst.length;
 
-		skcipher_request_set_crypt(req, &src, &dst,
-					  src.length, local_iv);
-		rc = crypto_skcipher_encrypt_iv(req, &dst, &src, src.length);
-		if (rc) {
-			CERROR("error to encrypt page: %d\n", rc);
-			skcipher_request_zero(req);
-			return rc;
-		}
-	}
+		rc = crypto_blkcipher_encrypt_iv(&ciph_desc, &dst, &src,
+                                                    src.length);
+                if (rc) {
+                        CERROR("error to encrypt page: %d\n", rc);
+                        return rc;
+                }
+        }
 
-	/* encrypt krb5 header */
+        /* encrypt krb5 header */
 	rc = gss_setup_sgtable(&sg_src, &src, khdr, sizeof(*khdr));
-	if (rc != 0) {
-		skcipher_request_zero(req);
+	if (rc != 0)
 		return rc;
-	}
 
 	rc = gss_setup_sgtable(&sg_dst, &dst, cipher->data + blocksize,
 			   sizeof(*khdr));
 	if (rc != 0) {
 		gss_teardown_sgtable(&sg_src);
-		skcipher_request_zero(req);
 		return rc;
 	}
 
-	skcipher_request_set_crypt(req, sg_src.sgl, sg_dst.sgl,
-				   sizeof(*khdr), local_iv);
-	rc = crypto_skcipher_encrypt_iv(req, sg_dst.sgl, sg_src.sgl,
-					sizeof(*khdr));
-	skcipher_request_zero(req);
+	rc = crypto_blkcipher_encrypt_iv(&ciph_desc, sg_dst.sgl, sg_src.sgl,
+					 sizeof(*khdr));
 
 	gss_teardown_sgtable(&sg_dst);
 	gss_teardown_sgtable(&sg_src);
@@ -797,35 +751,39 @@ int krb5_encrypt_bulk(struct crypto_sync_skcipher *tfm,
  *   should have been done by prep_bulk().
  */
 static
-int krb5_decrypt_bulk(struct crypto_sync_skcipher *tfm,
-		      struct krb5_header *khdr,
-		      struct ptlrpc_bulk_desc *desc,
-		      rawobj_t *cipher,
-		      rawobj_t *plain,
-		      int adj_nob)
+int krb5_decrypt_bulk(struct crypto_blkcipher *tfm,
+                      struct krb5_header *khdr,
+                      struct ptlrpc_bulk_desc *desc,
+                      rawobj_t *cipher,
+                      rawobj_t *plain,
+                      int adj_nob)
 {
-	__u8 local_iv[16] = {0};
-	struct scatterlist src, dst;
-	struct sg_table sg_src, sg_dst;
-	int ct_nob = 0, pt_nob = 0;
-	int blocksize, i, rc;
-	SYNC_SKCIPHER_REQUEST_ON_STACK(req, tfm);
+        struct blkcipher_desc   ciph_desc;
+        __u8                    local_iv[16] = {0};
+        struct scatterlist      src, dst;
+	struct sg_table		sg_src, sg_dst;
+        int                     ct_nob = 0, pt_nob = 0;
+        int                     blocksize, i, rc;
 
 	LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
-	LASSERT(desc->bd_iov_count);
+        LASSERT(desc->bd_iov_count);
 	LASSERT(GET_ENC_KIOV(desc));
-	LASSERT(desc->bd_nob_transferred);
+        LASSERT(desc->bd_nob_transferred);
 
-	blocksize = crypto_sync_skcipher_blocksize(tfm);
-	LASSERT(blocksize > 1);
-	LASSERT(cipher->len == blocksize + sizeof(*khdr));
+	blocksize = crypto_blkcipher_blocksize(tfm);
+        LASSERT(blocksize > 1);
+        LASSERT(cipher->len == blocksize + sizeof(*khdr));
 
-	if (desc->bd_nob_transferred % blocksize) {
-		CERROR("odd transferred nob: %d\n", desc->bd_nob_transferred);
-		return -EPROTO;
-	}
+        ciph_desc.tfm  = tfm;
+        ciph_desc.info = local_iv;
+        ciph_desc.flags = 0;
 
-	/* decrypt head (confounder) */
+        if (desc->bd_nob_transferred % blocksize) {
+                CERROR("odd transferred nob: %d\n", desc->bd_nob_transferred);
+                return -EPROTO;
+        }
+
+        /* decrypt head (confounder) */
 	rc = gss_setup_sgtable(&sg_src, &src, cipher->data, blocksize);
 	if (rc != 0)
 		return rc;
@@ -836,31 +794,27 @@ int krb5_decrypt_bulk(struct crypto_sync_skcipher *tfm,
 		return rc;
 	}
 
-	skcipher_request_set_sync_tfm(req, tfm);
-	skcipher_request_set_callback(req, 0, NULL, NULL);
-	skcipher_request_set_crypt(req, sg_src.sgl, sg_dst.sgl,
-				   blocksize, local_iv);
-
-	rc = crypto_skcipher_encrypt_iv(req, sg_dst.sgl, sg_src.sgl, blocksize);
+	rc = crypto_blkcipher_decrypt_iv(&ciph_desc, sg_dst.sgl,
+					 sg_src.sgl, blocksize);
 
 	gss_teardown_sgtable(&sg_dst);
 	gss_teardown_sgtable(&sg_src);
 
-	if (rc) {
-		CERROR("error to decrypt confounder: %d\n", rc);
-		skcipher_request_zero(req);
-		return rc;
-	}
+        if (rc) {
+                CERROR("error to decrypt confounder: %d\n", rc);
+                return rc;
+        }
 
 	for (i = 0; i < desc->bd_iov_count && ct_nob < desc->bd_nob_transferred;
 	     i++) {
-		if (BD_GET_ENC_KIOV(desc, i).kiov_offset % blocksize != 0 ||
-		    BD_GET_ENC_KIOV(desc, i).kiov_len % blocksize != 0) {
+		if (BD_GET_ENC_KIOV(desc, i).kiov_offset % blocksize
+		    != 0 ||
+		    BD_GET_ENC_KIOV(desc, i).kiov_len % blocksize
+		    != 0) {
 			CERROR("page %d: odd offset %u len %u, blocksize %d\n",
 			       i, BD_GET_ENC_KIOV(desc, i).kiov_offset,
 			       BD_GET_ENC_KIOV(desc, i).kiov_len,
 			       blocksize);
-			skcipher_request_zero(req);
 			return -EFAULT;
 		}
 
@@ -897,14 +851,12 @@ int krb5_decrypt_bulk(struct crypto_sync_skcipher *tfm,
 			sg_assign_page(&dst,
 				       BD_GET_KIOV(desc, i).kiov_page);
 
-		skcipher_request_set_crypt(req, sg_src.sgl, sg_dst.sgl,
-					   src.length, local_iv);
-		rc = crypto_skcipher_decrypt_iv(req, &dst, &src, src.length);
-		if (rc) {
-			CERROR("error to decrypt page: %d\n", rc);
-			skcipher_request_zero(req);
-			return rc;
-		}
+		rc = crypto_blkcipher_decrypt_iv(&ciph_desc, &dst, &src,
+						 src.length);
+                if (rc) {
+                        CERROR("error to decrypt page: %d\n", rc);
+                        return rc;
+                }
 
 		if (BD_GET_KIOV(desc, i).kiov_len % blocksize != 0) {
 			memcpy(page_address(BD_GET_KIOV(desc, i).kiov_page) +
@@ -919,26 +871,24 @@ int krb5_decrypt_bulk(struct crypto_sync_skcipher *tfm,
 		pt_nob += BD_GET_KIOV(desc, i).kiov_len;
 	}
 
-	if (unlikely(ct_nob != desc->bd_nob_transferred)) {
-		CERROR("%d cipher text transferred but only %d decrypted\n",
-		       desc->bd_nob_transferred, ct_nob);
-		skcipher_request_zero(req);
-		return -EFAULT;
-	}
+        if (unlikely(ct_nob != desc->bd_nob_transferred)) {
+                CERROR("%d cipher text transferred but only %d decrypted\n",
+                       desc->bd_nob_transferred, ct_nob);
+                return -EFAULT;
+        }
 
-	if (unlikely(!adj_nob && pt_nob != desc->bd_nob)) {
-		CERROR("%d plain text expected but only %d received\n",
-		       desc->bd_nob, pt_nob);
-		skcipher_request_zero(req);
-		return -EFAULT;
-	}
+        if (unlikely(!adj_nob && pt_nob != desc->bd_nob)) {
+                CERROR("%d plain text expected but only %d received\n",
+                       desc->bd_nob, pt_nob);
+                return -EFAULT;
+        }
 
 	/* if needed, clear up the rest unused iovs */
 	if (adj_nob)
 		while (i < desc->bd_iov_count)
 			BD_GET_KIOV(desc, i++).kiov_len = 0;
 
-	/* decrypt tail (krb5 header) */
+        /* decrypt tail (krb5 header) */
 	rc = gss_setup_sgtable(&sg_src, &src, cipher->data + blocksize,
 			       sizeof(*khdr));
 	if (rc != 0)
@@ -951,170 +901,166 @@ int krb5_decrypt_bulk(struct crypto_sync_skcipher *tfm,
 		return rc;
 	}
 
-	skcipher_request_set_crypt(req, sg_src.sgl, sg_dst.sgl,
-				  src.length, local_iv);
-	rc = crypto_skcipher_decrypt_iv(req, sg_dst.sgl, sg_src.sgl,
-					sizeof(*khdr));
+	rc = crypto_blkcipher_decrypt_iv(&ciph_desc, sg_dst.sgl, sg_src.sgl,
+					 sizeof(*khdr));
+
 	gss_teardown_sgtable(&sg_src);
 	gss_teardown_sgtable(&sg_dst);
 
-	skcipher_request_zero(req);
-	if (rc) {
-		CERROR("error to decrypt tail: %d\n", rc);
-		return rc;
-	}
+        if (rc) {
+                CERROR("error to decrypt tail: %d\n", rc);
+                return rc;
+        }
 
-	if (memcmp(cipher->data + blocksize, khdr, sizeof(*khdr))) {
-		CERROR("krb5 header doesn't match\n");
-		return -EACCES;
-	}
+        if (memcmp(cipher->data + blocksize, khdr, sizeof(*khdr))) {
+                CERROR("krb5 header doesn't match\n");
+                return -EACCES;
+        }
 
-	return 0;
+        return 0;
 }
 
 static
 __u32 gss_wrap_kerberos(struct gss_ctx *gctx,
-			rawobj_t *gsshdr,
-			rawobj_t *msg,
-			int msg_buflen,
-			rawobj_t *token)
+                        rawobj_t *gsshdr,
+                        rawobj_t *msg,
+                        int msg_buflen,
+                        rawobj_t *token)
 {
-	struct krb5_ctx     *kctx = gctx->internal_ctx_id;
-	struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
-	struct krb5_header  *khdr;
-	int                  blocksize;
-	rawobj_t             cksum = RAWOBJ_EMPTY;
-	rawobj_t             data_desc[3], cipher;
-	__u8                 conf[GSS_MAX_CIPHER_BLOCK];
+        struct krb5_ctx     *kctx = gctx->internal_ctx_id;
+        struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
+        struct krb5_header  *khdr;
+        int                  blocksize;
+        rawobj_t             cksum = RAWOBJ_EMPTY;
+        rawobj_t             data_desc[3], cipher;
+        __u8                 conf[GSS_MAX_CIPHER_BLOCK];
 	__u8                 local_iv[16] = {0};
-	u32 major;
-	int                  rc = 0;
+        int                  rc = 0;
 
-	LASSERT(ke);
-	LASSERT(ke->ke_conf_size <= GSS_MAX_CIPHER_BLOCK);
-	LASSERT(kctx->kc_keye.kb_tfm == NULL ||
-		ke->ke_conf_size >=
-		crypto_sync_skcipher_blocksize(kctx->kc_keye.kb_tfm));
+        LASSERT(ke);
+        LASSERT(ke->ke_conf_size <= GSS_MAX_CIPHER_BLOCK);
+        LASSERT(kctx->kc_keye.kb_tfm == NULL ||
+                ke->ke_conf_size >=
+		crypto_blkcipher_blocksize(kctx->kc_keye.kb_tfm));
 
-	/*
-	 * final token format:
-	 * ---------------------------------------------------
-	 * | krb5 header | cipher text | checksum (16 bytes) |
-	 * ---------------------------------------------------
-	 */
+        /*
+         * final token format:
+         * ---------------------------------------------------
+         * | krb5 header | cipher text | checksum (16 bytes) |
+         * ---------------------------------------------------
+         */
 
-	/* fill krb5 header */
-	LASSERT(token->len >= sizeof(*khdr));
+        /* fill krb5 header */
+        LASSERT(token->len >= sizeof(*khdr));
 	khdr = (struct krb5_header *)token->data;
-	fill_krb5_header(kctx, khdr, 1);
+        fill_krb5_header(kctx, khdr, 1);
 
-	/* generate confounder */
-	cfs_get_random_bytes(conf, ke->ke_conf_size);
+        /* generate confounder */
+        cfs_get_random_bytes(conf, ke->ke_conf_size);
 
-	/* get encryption blocksize. note kc_keye might not associated with
-	 * a tfm, currently only for arcfour-hmac */
-	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
-		LASSERT(kctx->kc_keye.kb_tfm == NULL);
-		blocksize = 1;
-	} else {
-		LASSERT(kctx->kc_keye.kb_tfm);
-		blocksize = crypto_sync_skcipher_blocksize(
-							kctx->kc_keye.kb_tfm);
-	}
-	LASSERT(blocksize <= ke->ke_conf_size);
+        /* get encryption blocksize. note kc_keye might not associated with
+         * a tfm, currently only for arcfour-hmac */
+        if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
+                LASSERT(kctx->kc_keye.kb_tfm == NULL);
+                blocksize = 1;
+        } else {
+                LASSERT(kctx->kc_keye.kb_tfm);
+		blocksize = crypto_blkcipher_blocksize(kctx->kc_keye.kb_tfm);
+        }
+        LASSERT(blocksize <= ke->ke_conf_size);
 
 	/* padding the message */
 	if (gss_add_padding(msg, msg_buflen, blocksize))
 		return GSS_S_FAILURE;
 
-	/*
-	 * clear text layout for checksum:
-	 * ------------------------------------------------------
-	 * | confounder | gss header | clear msgs | krb5 header |
-	 * ------------------------------------------------------
-	 */
-	data_desc[0].data = conf;
-	data_desc[0].len = ke->ke_conf_size;
-	data_desc[1].data = gsshdr->data;
-	data_desc[1].len = gsshdr->len;
-	data_desc[2].data = msg->data;
-	data_desc[2].len = msg->len;
+        /*
+         * clear text layout for checksum:
+         * ------------------------------------------------------
+         * | confounder | gss header | clear msgs | krb5 header |
+         * ------------------------------------------------------
+         */
+        data_desc[0].data = conf;
+        data_desc[0].len = ke->ke_conf_size;
+        data_desc[1].data = gsshdr->data;
+        data_desc[1].len = gsshdr->len;
+        data_desc[2].data = msg->data;
+        data_desc[2].len = msg->len;
 
-	/* compute checksum */
-	if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyi,
-			       khdr, 3, data_desc, 0, NULL, &cksum,
-			       gctx->hash_func))
-		GOTO(out_free_cksum, major = GSS_S_FAILURE);
-	LASSERT(cksum.len >= ke->ke_hash_size);
+        /* compute checksum */
+        if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyi,
+                               khdr, 3, data_desc, 0, NULL, &cksum))
+                return GSS_S_FAILURE;
+        LASSERT(cksum.len >= ke->ke_hash_size);
 
-	/*
-	 * clear text layout for encryption:
-	 * -----------------------------------------
-	 * | confounder | clear msgs | krb5 header |
-	 * -----------------------------------------
-	 */
-	data_desc[0].data = conf;
-	data_desc[0].len = ke->ke_conf_size;
-	data_desc[1].data = msg->data;
-	data_desc[1].len = msg->len;
-	data_desc[2].data = (__u8 *) khdr;
-	data_desc[2].len = sizeof(*khdr);
+        /*
+         * clear text layout for encryption:
+         * -----------------------------------------
+         * | confounder | clear msgs | krb5 header |
+         * -----------------------------------------
+         */
+        data_desc[0].data = conf;
+        data_desc[0].len = ke->ke_conf_size;
+        data_desc[1].data = msg->data;
+        data_desc[1].len = msg->len;
+        data_desc[2].data = (__u8 *) khdr;
+        data_desc[2].len = sizeof(*khdr);
 
-	/* cipher text will be directly inplace */
+        /* cipher text will be directly inplace */
 	cipher.data = (__u8 *)(khdr + 1);
-	cipher.len = token->len - sizeof(*khdr);
-	LASSERT(cipher.len >= ke->ke_conf_size + msg->len + sizeof(*khdr));
+        cipher.len = token->len - sizeof(*khdr);
+        LASSERT(cipher.len >= ke->ke_conf_size + msg->len + sizeof(*khdr));
 
 	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
-		rawobj_t arc4_keye = RAWOBJ_EMPTY;
-		struct crypto_sync_skcipher *arc4_tfm;
+		rawobj_t		 arc4_keye;
+		struct crypto_blkcipher *arc4_tfm;
 
 		if (krb5_make_checksum(ENCTYPE_ARCFOUR_HMAC, &kctx->kc_keyi,
-				       NULL, 1, &cksum, 0, NULL, &arc4_keye,
-				       gctx->hash_func)) {
+				       NULL, 1, &cksum, 0, NULL, &arc4_keye)) {
 			CERROR("failed to obtain arc4 enc key\n");
-			GOTO(arc4_out_key, rc = -EACCES);
+			GOTO(arc4_out, rc = -EACCES);
 		}
 
-		arc4_tfm = crypto_alloc_sync_skcipher("ecb(arc4)", 0, 0);
+		arc4_tfm = crypto_alloc_blkcipher("ecb(arc4)", 0, 0);
 		if (IS_ERR(arc4_tfm)) {
 			CERROR("failed to alloc tfm arc4 in ECB mode\n");
 			GOTO(arc4_out_key, rc = -EACCES);
 		}
 
-		if (crypto_sync_skcipher_setkey(arc4_tfm, arc4_keye.data,
-						arc4_keye.len)) {
-			CERROR("failed to set arc4 key, len %d\n",
-			       arc4_keye.len);
-			GOTO(arc4_out_tfm, rc = -EACCES);
-		}
+		if (crypto_blkcipher_setkey(arc4_tfm, arc4_keye.data,
+                                               arc4_keye.len)) {
+                        CERROR("failed to set arc4 key, len %d\n",
+                               arc4_keye.len);
+                        GOTO(arc4_out_tfm, rc = -EACCES);
+                }
 
 		rc = gss_crypt_rawobjs(arc4_tfm, NULL, 3, data_desc,
 				       &cipher, 1);
 arc4_out_tfm:
-		crypto_free_sync_skcipher(arc4_tfm);
+		crypto_free_blkcipher(arc4_tfm);
 arc4_out_key:
-		rawobj_free(&arc4_keye);
-	} else {
+                rawobj_free(&arc4_keye);
+arc4_out:
+                do {} while(0); /* just to avoid compile warning */
+        } else {
 		rc = gss_crypt_rawobjs(kctx->kc_keye.kb_tfm, local_iv, 3,
 				       data_desc, &cipher, 1);
-	}
+        }
 
-	if (rc)
-		GOTO(out_free_cksum, major = GSS_S_FAILURE);
+        if (rc != 0) {
+                rawobj_free(&cksum);
+                return GSS_S_FAILURE;
+        }
 
-	/* fill in checksum */
-	LASSERT(token->len >= sizeof(*khdr) + cipher.len + ke->ke_hash_size);
-	memcpy((char *)(khdr + 1) + cipher.len,
-	       cksum.data + cksum.len - ke->ke_hash_size,
-	       ke->ke_hash_size);
+        /* fill in checksum */
+        LASSERT(token->len >= sizeof(*khdr) + cipher.len + ke->ke_hash_size);
+        memcpy((char *)(khdr + 1) + cipher.len,
+               cksum.data + cksum.len - ke->ke_hash_size,
+               ke->ke_hash_size);
+        rawobj_free(&cksum);
 
-	/* final token length */
-	token->len = sizeof(*khdr) + cipher.len + ke->ke_hash_size;
-	major = GSS_S_COMPLETE;
-out_free_cksum:
-	rawobj_free(&cksum);
-	return major;
+        /* final token length */
+        token->len = sizeof(*khdr) + cipher.len + ke->ke_hash_size;
+        return GSS_S_COMPLETE;
 }
 
 static
@@ -1129,7 +1075,7 @@ __u32 gss_prep_bulk_kerberos(struct gss_ctx *gctx,
 	LASSERT(GET_ENC_KIOV(desc));
 	LASSERT(kctx->kc_keye.kb_tfm);
 
-	blocksize = crypto_sync_skcipher_blocksize(kctx->kc_keye.kb_tfm);
+	blocksize = crypto_blkcipher_blocksize(kctx->kc_keye.kb_tfm);
 
 	for (i = 0; i < desc->bd_iov_count; i++) {
 		LASSERT(BD_GET_ENC_KIOV(desc, i).kiov_page);
@@ -1155,377 +1101,375 @@ __u32 gss_prep_bulk_kerberos(struct gss_ctx *gctx,
 
 static
 __u32 gss_wrap_bulk_kerberos(struct gss_ctx *gctx,
-			     struct ptlrpc_bulk_desc *desc,
-			     rawobj_t *token, int adj_nob)
+                             struct ptlrpc_bulk_desc *desc,
+                             rawobj_t *token, int adj_nob)
 {
-	struct krb5_ctx     *kctx = gctx->internal_ctx_id;
-	struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
-	struct krb5_header  *khdr;
-	int                  blocksz;
-	rawobj_t             cksum = RAWOBJ_EMPTY;
-	rawobj_t             data_desc[1], cipher;
-	__u8                 conf[GSS_MAX_CIPHER_BLOCK];
-	int rc = 0;
-	u32 major;
+        struct krb5_ctx     *kctx = gctx->internal_ctx_id;
+        struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
+        struct krb5_header  *khdr;
+        int                  blocksize;
+        rawobj_t             cksum = RAWOBJ_EMPTY;
+        rawobj_t             data_desc[1], cipher;
+        __u8                 conf[GSS_MAX_CIPHER_BLOCK];
+        int                  rc = 0;
 
 	LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
-	LASSERT(ke);
-	LASSERT(ke->ke_conf_size <= GSS_MAX_CIPHER_BLOCK);
+        LASSERT(ke);
+        LASSERT(ke->ke_conf_size <= GSS_MAX_CIPHER_BLOCK);
 
-	/*
-	 * final token format:
-	 * --------------------------------------------------
-	 * | krb5 header | head/tail cipher text | checksum |
-	 * --------------------------------------------------
-	 */
+        /*
+         * final token format:
+         * --------------------------------------------------
+         * | krb5 header | head/tail cipher text | checksum |
+         * --------------------------------------------------
+         */
 
-	/* fill krb5 header */
-	LASSERT(token->len >= sizeof(*khdr));
+        /* fill krb5 header */
+        LASSERT(token->len >= sizeof(*khdr));
 	khdr = (struct krb5_header *)token->data;
-	fill_krb5_header(kctx, khdr, 1);
+        fill_krb5_header(kctx, khdr, 1);
 
-	/* generate confounder */
-	cfs_get_random_bytes(conf, ke->ke_conf_size);
+        /* generate confounder */
+        cfs_get_random_bytes(conf, ke->ke_conf_size);
 
-	/* get encryption blocksize. note kc_keye might not associated with
-	 * a tfm, currently only for arcfour-hmac */
-	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
-		LASSERT(kctx->kc_keye.kb_tfm == NULL);
-		blocksz = 1;
-	} else {
-		LASSERT(kctx->kc_keye.kb_tfm);
-		blocksz = crypto_sync_skcipher_blocksize(kctx->kc_keye.kb_tfm);
-	}
+        /* get encryption blocksize. note kc_keye might not associated with
+         * a tfm, currently only for arcfour-hmac */
+        if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
+                LASSERT(kctx->kc_keye.kb_tfm == NULL);
+                blocksize = 1;
+        } else {
+                LASSERT(kctx->kc_keye.kb_tfm);
+		blocksize = crypto_blkcipher_blocksize(kctx->kc_keye.kb_tfm);
+        }
 
-	/*
-	 * we assume the size of krb5_header (16 bytes) must be n * blocksize.
-	 * the bulk token size would be exactly (sizeof(krb5_header) +
-	 * blocksize + sizeof(krb5_header) + hashsize)
-	 */
-	LASSERT(blocksz <= ke->ke_conf_size);
-	LASSERT(sizeof(*khdr) >= blocksz && sizeof(*khdr) % blocksz == 0);
-	LASSERT(token->len >= sizeof(*khdr) + blocksz + sizeof(*khdr) + 16);
+        /*
+         * we assume the size of krb5_header (16 bytes) must be n * blocksize.
+         * the bulk token size would be exactly (sizeof(krb5_header) +
+         * blocksize + sizeof(krb5_header) + hashsize)
+         */
+        LASSERT(blocksize <= ke->ke_conf_size);
+        LASSERT(sizeof(*khdr) >= blocksize && sizeof(*khdr) % blocksize == 0);
+        LASSERT(token->len >= sizeof(*khdr) + blocksize + sizeof(*khdr) + 16);
 
-	/*
-	 * clear text layout for checksum:
-	 * ------------------------------------------
-	 * | confounder | clear pages | krb5 header |
-	 * ------------------------------------------
-	 */
-	data_desc[0].data = conf;
-	data_desc[0].len = ke->ke_conf_size;
+        /*
+         * clear text layout for checksum:
+         * ------------------------------------------
+         * | confounder | clear pages | krb5 header |
+         * ------------------------------------------
+         */
+        data_desc[0].data = conf;
+        data_desc[0].len = ke->ke_conf_size;
 
 	/* compute checksum */
 	if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyi,
 			       khdr, 1, data_desc,
 			       desc->bd_iov_count, GET_KIOV(desc),
-			       &cksum, gctx->hash_func))
-		GOTO(out_free_cksum, major = GSS_S_FAILURE);
+			       &cksum))
+		return GSS_S_FAILURE;
 	LASSERT(cksum.len >= ke->ke_hash_size);
 
-	/*
-	 * clear text layout for encryption:
-	 * ------------------------------------------
-	 * | confounder | clear pages | krb5 header |
-	 * ------------------------------------------
-	 *        |              |             |
-	 *        ----------  (cipher pages)   |
-	 * result token:   |                   |
-	 * -------------------------------------------
-	 * | krb5 header | cipher text | cipher text |
-	 * -------------------------------------------
-	 */
-	data_desc[0].data = conf;
-	data_desc[0].len = ke->ke_conf_size;
+        /*
+         * clear text layout for encryption:
+         * ------------------------------------------
+         * | confounder | clear pages | krb5 header |
+         * ------------------------------------------
+         *        |              |             |
+         *        ----------  (cipher pages)   |
+         * result token:   |                   |
+         * -------------------------------------------
+         * | krb5 header | cipher text | cipher text |
+         * -------------------------------------------
+         */
+        data_desc[0].data = conf;
+        data_desc[0].len = ke->ke_conf_size;
 
 	cipher.data = (__u8 *)(khdr + 1);
-	cipher.len = blocksz + sizeof(*khdr);
+        cipher.len = blocksize + sizeof(*khdr);
 
-	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
-		LBUG();
-		rc = 0;
-	} else {
-		rc = krb5_encrypt_bulk(kctx->kc_keye.kb_tfm, khdr,
-				       conf, desc, &cipher, adj_nob);
-	}
-	if (rc)
-		GOTO(out_free_cksum, major = GSS_S_FAILURE);
+        if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
+                LBUG();
+                rc = 0;
+        } else {
+                rc = krb5_encrypt_bulk(kctx->kc_keye.kb_tfm, khdr,
+                                       conf, desc, &cipher, adj_nob);
+        }
 
-	/* fill in checksum */
-	LASSERT(token->len >= sizeof(*khdr) + cipher.len + ke->ke_hash_size);
-	memcpy((char *)(khdr + 1) + cipher.len,
-	       cksum.data + cksum.len - ke->ke_hash_size,
-	       ke->ke_hash_size);
+        if (rc != 0) {
+                rawobj_free(&cksum);
+                return GSS_S_FAILURE;
+        }
 
-	/* final token length */
-	token->len = sizeof(*khdr) + cipher.len + ke->ke_hash_size;
-	major = GSS_S_COMPLETE;
-out_free_cksum:
-	rawobj_free(&cksum);
-	return major;
+        /* fill in checksum */
+        LASSERT(token->len >= sizeof(*khdr) + cipher.len + ke->ke_hash_size);
+        memcpy((char *)(khdr + 1) + cipher.len,
+               cksum.data + cksum.len - ke->ke_hash_size,
+               ke->ke_hash_size);
+        rawobj_free(&cksum);
+
+        /* final token length */
+        token->len = sizeof(*khdr) + cipher.len + ke->ke_hash_size;
+        return GSS_S_COMPLETE;
 }
 
 static
 __u32 gss_unwrap_kerberos(struct gss_ctx  *gctx,
-			  rawobj_t        *gsshdr,
-			  rawobj_t        *token,
-			  rawobj_t        *msg)
+                          rawobj_t        *gsshdr,
+                          rawobj_t        *token,
+                          rawobj_t        *msg)
 {
-	struct krb5_ctx     *kctx = gctx->internal_ctx_id;
-	struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
-	struct krb5_header  *khdr;
-	unsigned char       *tmpbuf;
-	int                  blocksz, bodysize;
-	rawobj_t             cksum = RAWOBJ_EMPTY;
-	rawobj_t             cipher_in, plain_out;
-	rawobj_t             hash_objs[3];
-	int                  rc = 0;
-	__u32                major;
+        struct krb5_ctx     *kctx = gctx->internal_ctx_id;
+        struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
+        struct krb5_header  *khdr;
+        unsigned char       *tmpbuf;
+        int                  blocksize, bodysize;
+        rawobj_t             cksum = RAWOBJ_EMPTY;
+        rawobj_t             cipher_in, plain_out;
+        rawobj_t             hash_objs[3];
+        int                  rc = 0;
+        __u32                major;
 	__u8                 local_iv[16] = {0};
 
-	LASSERT(ke);
+        LASSERT(ke);
 
-	if (token->len < sizeof(*khdr)) {
-		CERROR("short signature: %u\n", token->len);
-		return GSS_S_DEFECTIVE_TOKEN;
-	}
+        if (token->len < sizeof(*khdr)) {
+                CERROR("short signature: %u\n", token->len);
+                return GSS_S_DEFECTIVE_TOKEN;
+        }
 
 	khdr = (struct krb5_header *)token->data;
 
-	major = verify_krb5_header(kctx, khdr, 1);
-	if (major != GSS_S_COMPLETE) {
-		CERROR("bad krb5 header\n");
-		return major;
-	}
+        major = verify_krb5_header(kctx, khdr, 1);
+        if (major != GSS_S_COMPLETE) {
+                CERROR("bad krb5 header\n");
+                return major;
+        }
 
-	/* block size */
-	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
-		LASSERT(kctx->kc_keye.kb_tfm == NULL);
-		blocksz = 1;
-	} else {
-		LASSERT(kctx->kc_keye.kb_tfm);
-		blocksz = crypto_sync_skcipher_blocksize(kctx->kc_keye.kb_tfm);
-	}
+        /* block size */
+        if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
+                LASSERT(kctx->kc_keye.kb_tfm == NULL);
+                blocksize = 1;
+        } else {
+                LASSERT(kctx->kc_keye.kb_tfm);
+		blocksize = crypto_blkcipher_blocksize(kctx->kc_keye.kb_tfm);
+        }
 
-	/* expected token layout:
-	 * ----------------------------------------
-	 * | krb5 header | cipher text | checksum |
-	 * ----------------------------------------
-	 */
-	bodysize = token->len - sizeof(*khdr) - ke->ke_hash_size;
+        /* expected token layout:
+         * ----------------------------------------
+         * | krb5 header | cipher text | checksum |
+         * ----------------------------------------
+         */
+        bodysize = token->len - sizeof(*khdr) - ke->ke_hash_size;
 
-	if (bodysize % blocksz) {
-		CERROR("odd bodysize %d\n", bodysize);
-		return GSS_S_DEFECTIVE_TOKEN;
-	}
+        if (bodysize % blocksize) {
+                CERROR("odd bodysize %d\n", bodysize);
+                return GSS_S_DEFECTIVE_TOKEN;
+        }
 
-	if (bodysize <= ke->ke_conf_size + sizeof(*khdr)) {
-		CERROR("incomplete token: bodysize %d\n", bodysize);
-		return GSS_S_DEFECTIVE_TOKEN;
-	}
+        if (bodysize <= ke->ke_conf_size + sizeof(*khdr)) {
+                CERROR("incomplete token: bodysize %d\n", bodysize);
+                return GSS_S_DEFECTIVE_TOKEN;
+        }
 
-	if (msg->len < bodysize - ke->ke_conf_size - sizeof(*khdr)) {
-		CERROR("buffer too small: %u, require %d\n",
-		       msg->len, bodysize - ke->ke_conf_size);
-		return GSS_S_FAILURE;
-	}
+        if (msg->len < bodysize - ke->ke_conf_size - sizeof(*khdr)) {
+                CERROR("buffer too small: %u, require %d\n",
+                       msg->len, bodysize - ke->ke_conf_size);
+                return GSS_S_FAILURE;
+        }
 
-	/* decrypting */
-	OBD_ALLOC_LARGE(tmpbuf, bodysize);
-	if (!tmpbuf)
-		return GSS_S_FAILURE;
+        /* decrypting */
+        OBD_ALLOC_LARGE(tmpbuf, bodysize);
+        if (!tmpbuf)
+                return GSS_S_FAILURE;
 
-	major = GSS_S_FAILURE;
+        major = GSS_S_FAILURE;
 
 	cipher_in.data = (__u8 *)(khdr + 1);
-	cipher_in.len = bodysize;
-	plain_out.data = tmpbuf;
-	plain_out.len = bodysize;
+        cipher_in.len = bodysize;
+        plain_out.data = tmpbuf;
+        plain_out.len = bodysize;
 
 	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
 		rawobj_t		 arc4_keye;
-		struct crypto_sync_skcipher *arc4_tfm;
+		struct crypto_blkcipher *arc4_tfm;
 
 		cksum.data = token->data + token->len - ke->ke_hash_size;
 		cksum.len = ke->ke_hash_size;
 
 		if (krb5_make_checksum(ENCTYPE_ARCFOUR_HMAC, &kctx->kc_keyi,
-				       NULL, 1, &cksum, 0, NULL, &arc4_keye,
-				       gctx->hash_func)) {
+				       NULL, 1, &cksum, 0, NULL, &arc4_keye)) {
 			CERROR("failed to obtain arc4 enc key\n");
 			GOTO(arc4_out, rc = -EACCES);
 		}
 
-		arc4_tfm = crypto_alloc_sync_skcipher("ecb(arc4)", 0, 0);
+		arc4_tfm = crypto_alloc_blkcipher("ecb(arc4)", 0, 0);
 		if (IS_ERR(arc4_tfm)) {
 			CERROR("failed to alloc tfm arc4 in ECB mode\n");
 			GOTO(arc4_out_key, rc = -EACCES);
 		}
 
-		if (crypto_sync_skcipher_setkey(arc4_tfm, arc4_keye.data,
-						arc4_keye.len)) {
-			CERROR("failed to set arc4 key, len %d\n",
-			       arc4_keye.len);
-			GOTO(arc4_out_tfm, rc = -EACCES);
-		}
+		if (crypto_blkcipher_setkey(arc4_tfm,
+                                         arc4_keye.data, arc4_keye.len)) {
+                        CERROR("failed to set arc4 key, len %d\n",
+                               arc4_keye.len);
+                        GOTO(arc4_out_tfm, rc = -EACCES);
+                }
 
 		rc = gss_crypt_rawobjs(arc4_tfm, NULL, 1, &cipher_in,
 				       &plain_out, 0);
 arc4_out_tfm:
-		crypto_free_sync_skcipher(arc4_tfm);
+		crypto_free_blkcipher(arc4_tfm);
 arc4_out_key:
-		rawobj_free(&arc4_keye);
+                rawobj_free(&arc4_keye);
 arc4_out:
-		cksum = RAWOBJ_EMPTY;
-	} else {
+                cksum = RAWOBJ_EMPTY;
+        } else {
 		rc = gss_crypt_rawobjs(kctx->kc_keye.kb_tfm, local_iv, 1,
 				       &cipher_in, &plain_out, 0);
-	}
+        }
 
-	if (rc != 0) {
-		CERROR("error decrypt\n");
-		goto out_free;
-	}
-	LASSERT(plain_out.len == bodysize);
+        if (rc != 0) {
+                CERROR("error decrypt\n");
+                goto out_free;
+        }
+        LASSERT(plain_out.len == bodysize);
 
-	/* expected clear text layout:
-	 * -----------------------------------------
-	 * | confounder | clear msgs | krb5 header |
-	 * -----------------------------------------
-	 */
+        /* expected clear text layout:
+         * -----------------------------------------
+         * | confounder | clear msgs | krb5 header |
+         * -----------------------------------------
+         */
 
-	/* verify krb5 header in token is not modified */
-	if (memcmp(khdr, plain_out.data + plain_out.len - sizeof(*khdr),
-		   sizeof(*khdr))) {
-		CERROR("decrypted krb5 header mismatch\n");
-		goto out_free;
-	}
+        /* verify krb5 header in token is not modified */
+        if (memcmp(khdr, plain_out.data + plain_out.len - sizeof(*khdr),
+                   sizeof(*khdr))) {
+                CERROR("decrypted krb5 header mismatch\n");
+                goto out_free;
+        }
 
-	/* verify checksum, compose clear text as layout:
-	 * ------------------------------------------------------
-	 * | confounder | gss header | clear msgs | krb5 header |
-	 * ------------------------------------------------------
-	 */
-	hash_objs[0].len = ke->ke_conf_size;
-	hash_objs[0].data = plain_out.data;
-	hash_objs[1].len = gsshdr->len;
-	hash_objs[1].data = gsshdr->data;
-	hash_objs[2].len = plain_out.len - ke->ke_conf_size - sizeof(*khdr);
-	hash_objs[2].data = plain_out.data + ke->ke_conf_size;
-	if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyi,
-			       khdr, 3, hash_objs, 0, NULL, &cksum,
-			       gctx->hash_func))
-		goto out_free;
+        /* verify checksum, compose clear text as layout:
+         * ------------------------------------------------------
+         * | confounder | gss header | clear msgs | krb5 header |
+         * ------------------------------------------------------
+         */
+        hash_objs[0].len = ke->ke_conf_size;
+        hash_objs[0].data = plain_out.data;
+        hash_objs[1].len = gsshdr->len;
+        hash_objs[1].data = gsshdr->data;
+        hash_objs[2].len = plain_out.len - ke->ke_conf_size - sizeof(*khdr);
+        hash_objs[2].data = plain_out.data + ke->ke_conf_size;
+        if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyi,
+                               khdr, 3, hash_objs, 0, NULL, &cksum))
+                goto out_free;
 
-	LASSERT(cksum.len >= ke->ke_hash_size);
-	if (memcmp((char *)(khdr + 1) + bodysize,
-		   cksum.data + cksum.len - ke->ke_hash_size,
-		   ke->ke_hash_size)) {
-		CERROR("checksum mismatch\n");
-		goto out_free;
-	}
+        LASSERT(cksum.len >= ke->ke_hash_size);
+        if (memcmp((char *)(khdr + 1) + bodysize,
+                   cksum.data + cksum.len - ke->ke_hash_size,
+                   ke->ke_hash_size)) {
+                CERROR("checksum mismatch\n");
+                goto out_free;
+        }
 
-	msg->len =  bodysize - ke->ke_conf_size - sizeof(*khdr);
-	memcpy(msg->data, tmpbuf + ke->ke_conf_size, msg->len);
+        msg->len =  bodysize - ke->ke_conf_size - sizeof(*khdr);
+        memcpy(msg->data, tmpbuf + ke->ke_conf_size, msg->len);
 
-	major = GSS_S_COMPLETE;
+        major = GSS_S_COMPLETE;
 out_free:
-	OBD_FREE_LARGE(tmpbuf, bodysize);
-	rawobj_free(&cksum);
-	return major;
+        OBD_FREE_LARGE(tmpbuf, bodysize);
+        rawobj_free(&cksum);
+        return major;
 }
 
 static
 __u32 gss_unwrap_bulk_kerberos(struct gss_ctx *gctx,
-			       struct ptlrpc_bulk_desc *desc,
-			       rawobj_t *token, int adj_nob)
+                               struct ptlrpc_bulk_desc *desc,
+                               rawobj_t *token, int adj_nob)
 {
-	struct krb5_ctx     *kctx = gctx->internal_ctx_id;
-	struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
-	struct krb5_header  *khdr;
-	int                  blocksz;
-	rawobj_t             cksum = RAWOBJ_EMPTY;
-	rawobj_t             cipher, plain;
-	rawobj_t             data_desc[1];
-	int                  rc;
-	__u32                major;
+        struct krb5_ctx     *kctx = gctx->internal_ctx_id;
+        struct krb5_enctype *ke = &enctypes[kctx->kc_enctype];
+        struct krb5_header  *khdr;
+        int                  blocksize;
+        rawobj_t             cksum = RAWOBJ_EMPTY;
+        rawobj_t             cipher, plain;
+        rawobj_t             data_desc[1];
+        int                  rc;
+        __u32                major;
 
 	LASSERT(ptlrpc_is_bulk_desc_kiov(desc->bd_type));
-	LASSERT(ke);
+        LASSERT(ke);
 
-	if (token->len < sizeof(*khdr)) {
-		CERROR("short signature: %u\n", token->len);
-		return GSS_S_DEFECTIVE_TOKEN;
-	}
+        if (token->len < sizeof(*khdr)) {
+                CERROR("short signature: %u\n", token->len);
+                return GSS_S_DEFECTIVE_TOKEN;
+        }
 
 	khdr = (struct krb5_header *)token->data;
 
-	major = verify_krb5_header(kctx, khdr, 1);
-	if (major != GSS_S_COMPLETE) {
-		CERROR("bad krb5 header\n");
-		return major;
-	}
+        major = verify_krb5_header(kctx, khdr, 1);
+        if (major != GSS_S_COMPLETE) {
+                CERROR("bad krb5 header\n");
+                return major;
+        }
 
-	/* block size */
-	if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
-		LASSERT(kctx->kc_keye.kb_tfm == NULL);
-		blocksz = 1;
-		LBUG();
-	} else {
-		LASSERT(kctx->kc_keye.kb_tfm);
-		blocksz = crypto_sync_skcipher_blocksize(kctx->kc_keye.kb_tfm);
-	}
-	LASSERT(sizeof(*khdr) >= blocksz && sizeof(*khdr) % blocksz == 0);
+        /* block size */
+        if (kctx->kc_enctype == ENCTYPE_ARCFOUR_HMAC) {
+                LASSERT(kctx->kc_keye.kb_tfm == NULL);
+                blocksize = 1;
+                LBUG();
+        } else {
+                LASSERT(kctx->kc_keye.kb_tfm);
+		blocksize = crypto_blkcipher_blocksize(kctx->kc_keye.kb_tfm);
+        }
+        LASSERT(sizeof(*khdr) >= blocksize && sizeof(*khdr) % blocksize == 0);
 
-	/*
-	 * token format is expected as:
-	 * -----------------------------------------------
-	 * | krb5 header | head/tail cipher text | cksum |
-	 * -----------------------------------------------
-	 */
-	if (token->len < sizeof(*khdr) + blocksz + sizeof(*khdr) +
-	    ke->ke_hash_size) {
-		CERROR("short token size: %u\n", token->len);
-		return GSS_S_DEFECTIVE_TOKEN;
-	}
+        /*
+         * token format is expected as:
+         * -----------------------------------------------
+         * | krb5 header | head/tail cipher text | cksum |
+         * -----------------------------------------------
+         */
+        if (token->len < sizeof(*khdr) + blocksize + sizeof(*khdr) +
+                         ke->ke_hash_size) {
+                CERROR("short token size: %u\n", token->len);
+                return GSS_S_DEFECTIVE_TOKEN;
+        }
 
-	cipher.data = (__u8 *) (khdr + 1);
-	cipher.len = blocksz + sizeof(*khdr);
-	plain.data = cipher.data;
-	plain.len = cipher.len;
+        cipher.data = (__u8 *) (khdr + 1);
+        cipher.len = blocksize + sizeof(*khdr);
+        plain.data = cipher.data;
+        plain.len = cipher.len;
 
-	rc = krb5_decrypt_bulk(kctx->kc_keye.kb_tfm, khdr,
-			       desc, &cipher, &plain, adj_nob);
-	if (rc)
-		return GSS_S_DEFECTIVE_TOKEN;
+        rc = krb5_decrypt_bulk(kctx->kc_keye.kb_tfm, khdr,
+                               desc, &cipher, &plain, adj_nob);
+        if (rc)
+                return GSS_S_DEFECTIVE_TOKEN;
 
-	/*
-	 * verify checksum, compose clear text as layout:
-	 * ------------------------------------------
-	 * | confounder | clear pages | krb5 header |
-	 * ------------------------------------------
-	 */
-	data_desc[0].data = plain.data;
-	data_desc[0].len = blocksz;
+        /*
+         * verify checksum, compose clear text as layout:
+         * ------------------------------------------
+         * | confounder | clear pages | krb5 header |
+         * ------------------------------------------
+         */
+        data_desc[0].data = plain.data;
+        data_desc[0].len = blocksize;
 
 	if (krb5_make_checksum(kctx->kc_enctype, &kctx->kc_keyi,
 			       khdr, 1, data_desc,
 			       desc->bd_iov_count,
 			       GET_KIOV(desc),
-			       &cksum, gctx->hash_func))
+			       &cksum))
 		return GSS_S_FAILURE;
 	LASSERT(cksum.len >= ke->ke_hash_size);
 
-	if (memcmp(plain.data + blocksz + sizeof(*khdr),
-		   cksum.data + cksum.len - ke->ke_hash_size,
-		   ke->ke_hash_size)) {
-		CERROR("checksum mismatch\n");
-		rawobj_free(&cksum);
-		return GSS_S_BAD_SIG;
-	}
+        if (memcmp(plain.data + blocksize + sizeof(*khdr),
+                   cksum.data + cksum.len - ke->ke_hash_size,
+                   ke->ke_hash_size)) {
+                CERROR("checksum mismatch\n");
+                rawobj_free(&cksum);
+                return GSS_S_BAD_SIG;
+        }
 
-	rawobj_free(&cksum);
-	return GSS_S_COMPLETE;
+        rawobj_free(&cksum);
+        return GSS_S_COMPLETE;
 }
 
 int gss_display_kerberos(struct gss_ctx        *ctx,
