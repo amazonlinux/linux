@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -34,10 +34,7 @@
 #define __LIBCFS_LINUX_MISC_H__
 
 #include <linux/fs.h>
-#include <linux/mutex.h>
-#include <linux/user_namespace.h>
 #include <linux/uio.h>
-#include <linux/kallsyms.h>
 
 #ifdef HAVE_SYSCTL_CTLNAME
 #define INIT_CTL_NAME	.ctl_name = CTL_UNNUMBERED,
@@ -63,8 +60,8 @@
 #endif
 #endif /* HAVE_IOV_ITER_TYPE */
 
-#ifndef HAVE_MODULE_PARAM_LOCKING
-static DEFINE_MUTEX(param_lock);
+#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
+bool selinux_is_enabled(void);
 #endif
 
 #ifndef HAVE_UIDGID_HEADER
@@ -131,40 +128,12 @@ static inline bool gid_valid(kgid_t gid)
 
 int cfs_get_environ(const char *key, char *value, int *val_len);
 
+#ifndef HAVE_WAIT_QUEUE_ENTRY
+#define wait_queue_entry_t wait_queue_t
+#endif
+
 int cfs_kernel_write(struct file *filp, const void *buf, size_t count,
 		     loff_t *pos);
-
-/*
- * For RHEL6 struct kernel_parm_ops doesn't exist. Also
- * the arguments for .set and .get take different
- * parameters which is handled below
- */
-#ifdef HAVE_KERNEL_PARAM_OPS
-#define cfs_kernel_param_arg_t const struct kernel_param
-#else
-#define cfs_kernel_param_arg_t struct kernel_param_ops
-#define kernel_param_ops kernel_param
-#endif /* ! HAVE_KERNEL_PARAM_OPS */
-
-#ifndef HAVE_KERNEL_PARAM_LOCK
-static inline void kernel_param_unlock(struct module *mod)
-{
-#ifndef	HAVE_MODULE_PARAM_LOCKING
-	mutex_unlock(&param_lock);
-#else
-	__kernel_param_unlock();
-#endif
-}
-
-static inline void kernel_param_lock(struct module *mod)
-{
-#ifndef	HAVE_MODULE_PARAM_LOCKING
-	mutex_lock(&param_lock);
-#else
-	__kernel_param_lock();
-#endif
-}
-#endif /* ! HAVE_KERNEL_PARAM_LOCK */
 
 #ifndef HAVE_KSTRTOUL
 static inline int kstrtoul(const char *s, unsigned int base, unsigned long *res)
@@ -177,24 +146,5 @@ static inline int kstrtoul(const char *s, unsigned int base, unsigned long *res)
 	return 0;
 }
 #endif /* !HAVE_KSTRTOUL */
-
-#ifndef HAVE_KSTRTOBOOL_FROM_USER
-
-#define kstrtobool strtobool
-
-int kstrtobool_from_user(const char __user *s, size_t count, bool *res);
-#endif
-
-#ifdef HAVE_KALLSYMS_LOOKUP_NAME
-static inline void *cfs_kallsyms_lookup_name(const char *name)
-{
-	return (void *)kallsyms_lookup_name(name);
-}
-#else
-static inline void *cfs_kallsyms_lookup_name(const char *name)
-{
-	return NULL;
-}
-#endif
 
 #endif
