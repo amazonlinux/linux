@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2013, 2017, Intel Corporation.
+ * Copyright (c) 2013, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -37,6 +37,7 @@
 #ifndef VVP_INTERNAL_H
 #define VVP_INTERNAL_H
 
+#include <lustre/lustre_idl.h>
 #include <cl_object.h>
 
 enum obd_notify_event;
@@ -60,13 +61,7 @@ struct vvp_io {
 	/** super class */
 	struct cl_io_slice     vui_cl;
 	struct cl_io_lock_link vui_link;
-	/**
-	 * I/O vector information to or from which read/write is going.
-	 */
-	struct iov_iter *vui_iter;
-	/**
-	 * Total size for the left IO.
-	 */
+	/** Total size for the left IO. */
 	size_t vui_tot_count;
 
 	union {
@@ -93,7 +88,6 @@ struct vvp_io {
 			 * check that flags are from filemap_fault
 			 */
 			bool			 ft_flags_valid;
-			struct cl_page_list	 ft_queue;
 		} fault;
 		struct {
 			struct pipe_inode_info	*vui_pipe;
@@ -117,7 +111,6 @@ struct vvp_io {
 	* File descriptor against which IO is done.
 	*/
 	struct ll_file_data	*vui_fd;
-	struct kiocb		*vui_iocb;
 
 	/* Readahead state. */
 	pgoff_t	vui_ra_start;
@@ -131,6 +124,7 @@ extern struct lu_device_type vvp_device_type;
 extern struct lu_context_key vvp_session_key;
 extern struct lu_context_key vvp_thread_key;
 
+extern struct kmem_cache *vvp_lock_kmem;
 extern struct kmem_cache *vvp_object_kmem;
 
 struct vvp_thread_info {
@@ -138,7 +132,6 @@ struct vvp_thread_info {
 	struct cl_lock_descr	vti_descr;
 	struct cl_io		vti_io;
 	struct cl_attr		vti_attr;
-	struct cl_sync_io	vti_anchor;
 };
 
 static inline struct vvp_thread_info *vvp_env_info(const struct lu_env *env)
@@ -258,6 +251,10 @@ struct vvp_device {
 	struct cl_device   *vdv_next;
 };
 
+struct vvp_lock {
+	struct cl_lock_slice vlk_cl;
+};
+
 static inline struct lu_device *vvp2lu_dev(struct vvp_device *vdv)
 {
 	return &vdv->vdv_cl.cd_lu_dev;
@@ -296,6 +293,11 @@ static inline struct page *cl2vm_page(const struct cl_page_slice *slice)
 	return cl2vvp_page(slice)->vpg_page;
 }
 
+static inline struct vvp_lock *cl2vvp_lock(const struct cl_lock_slice *slice)
+{
+	return container_of(slice, struct vvp_lock, vlk_cl);
+}
+
 #ifdef CONFIG_LUSTRE_DEBUG_EXPENSIVE_CHECK
 # define CLOBINVRNT(env, clob, expr)					\
 	do {								\
@@ -315,6 +317,8 @@ int lov_read_and_clear_async_rc(struct cl_object *clob);
 int vvp_io_init(const struct lu_env *env, struct cl_object *obj,
 		struct cl_io *io);
 int vvp_io_write_commit(const struct lu_env *env, struct cl_io *io);
+int vvp_lock_init(const struct lu_env *env, struct cl_object *obj,
+		  struct cl_lock *lock, const struct cl_io *io);
 int vvp_page_init(const struct lu_env *env, struct cl_object *obj,
 		  struct cl_page *page, pgoff_t index);
 struct lu_object *vvp_object_alloc(const struct lu_env *env,
@@ -324,6 +328,6 @@ struct lu_object *vvp_object_alloc(const struct lu_env *env,
 int vvp_global_init(void);
 void vvp_global_fini(void);
 
-extern const struct file_operations vvp_dump_pgcache_file_ops;
+extern const struct proc_ops vvp_dump_pgcache_file_ops;
 
 #endif /* VVP_INTERNAL_H */
