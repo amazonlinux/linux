@@ -111,6 +111,26 @@ truncate_complete_page(struct address_space *mapping, struct page *page)
 #  define ll_d_count(d)			((d)->d_count)
 #endif /* HAVE_DCACHE_LOCK */
 
+#ifdef ATTR_OPEN
+# define ATTR_FROM_OPEN ATTR_OPEN
+#else
+# ifndef ATTR_FROM_OPEN
+#  define ATTR_FROM_OPEN 0
+# endif
+#endif /* ATTR_OPEN */
+
+#ifndef ATTR_RAW
+#define ATTR_RAW 0
+#endif
+
+#ifndef ATTR_CTIME_SET
+/*
+ * set ATTR_CTIME_SET to a high value to avoid any risk of collision with other
+ * ATTR_* attributes (see bug 13828)
+ */
+#define ATTR_CTIME_SET (1 << 28)
+#endif
+
 #ifndef HAVE_IN_COMPAT_SYSCALL
 #define in_compat_syscall	is_compat_task
 #endif
