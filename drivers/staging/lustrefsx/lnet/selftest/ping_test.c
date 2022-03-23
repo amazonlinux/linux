@@ -44,17 +44,17 @@ static int ping_srv_workitems = SFW_TEST_WI_MAX;
 module_param(ping_srv_workitems, int, 0644);
 MODULE_PARM_DESC(ping_srv_workitems, "# PING server workitems");
 
-struct lst_ping_data {
+typedef struct {
 	spinlock_t	pnd_lock;	/* serialize */
 	int		pnd_counter;	/* sequence counter */
-};
+} lst_ping_data_t;
 
-static struct lst_ping_data lst_ping_data;
+static lst_ping_data_t  lst_ping_data;
 
 static int
-ping_client_init(struct sfw_test_instance *tsi)
+ping_client_init(sfw_test_instance_t *tsi)
 {
-	struct sfw_session *sn = tsi->tsi_batch->bat_session;
+	sfw_session_t *sn = tsi->tsi_batch->bat_session;
 
 	LASSERT(tsi->tsi_is_client);
 	LASSERT(sn != NULL && (sn->sn_features & ~LST_FEATS_MASK) == 0);
@@ -66,9 +66,9 @@ ping_client_init(struct sfw_test_instance *tsi)
 }
 
 static void
-ping_client_fini(struct sfw_test_instance *tsi)
+ping_client_fini (sfw_test_instance_t *tsi)
 {
-	struct sfw_session *sn = tsi->tsi_batch->bat_session;
+        sfw_session_t *sn = tsi->tsi_batch->bat_session;
         int            errors;
 
         LASSERT (sn != NULL);
@@ -82,14 +82,14 @@ ping_client_fini(struct sfw_test_instance *tsi)
 }
 
 static int
-ping_client_prep_rpc(struct sfw_test_unit *tsu, struct lnet_process_id dest,
-		     struct srpc_client_rpc **rpc)
+ping_client_prep_rpc(sfw_test_unit_t *tsu,
+		     struct lnet_process_id dest, srpc_client_rpc_t **rpc)
 {
-	struct srpc_ping_reqst *req;
-	struct sfw_test_instance *tsi = tsu->tsu_instance;
-	struct sfw_session *sn = tsi->tsi_batch->bat_session;
+	srpc_ping_reqst_t   *req;
+	sfw_test_instance_t *tsi = tsu->tsu_instance;
+	sfw_session_t       *sn  = tsi->tsi_batch->bat_session;
 	struct timespec64 ts;
-	int rc;
+	int		     rc;
 
 	LASSERT(sn != NULL);
 	LASSERT((sn->sn_features & ~LST_FEATS_MASK) == 0);
@@ -114,12 +114,12 @@ ping_client_prep_rpc(struct sfw_test_unit *tsu, struct lnet_process_id dest,
 }
 
 static void
-ping_client_done_rpc(struct sfw_test_unit *tsu, struct srpc_client_rpc *rpc)
+ping_client_done_rpc (sfw_test_unit_t *tsu, srpc_client_rpc_t *rpc)
 {
-	struct sfw_test_instance *tsi = tsu->tsu_instance;
-	struct sfw_session *sn = tsi->tsi_batch->bat_session;
-	struct srpc_ping_reqst *reqst = &rpc->crpc_reqstmsg.msg_body.ping_reqst;
-	struct srpc_ping_reply *reply = &rpc->crpc_replymsg.msg_body.ping_reply;
+        sfw_test_instance_t *tsi = tsu->tsu_instance;
+	sfw_session_t *sn = tsi->tsi_batch->bat_session;
+	srpc_ping_reqst_t *reqst = &rpc->crpc_reqstmsg.msg_body.ping_reqst;
+	srpc_ping_reply_t *reply = &rpc->crpc_replymsg.msg_body.ping_reply;
 	struct timespec64 ts;
 
 	LASSERT(sn != NULL);
@@ -167,11 +167,11 @@ ping_client_done_rpc(struct sfw_test_unit *tsu, struct srpc_client_rpc *rpc)
 static int
 ping_server_handle(struct srpc_server_rpc *rpc)
 {
-	struct srpc_service *sv  = rpc->srpc_scd->scd_svc;
-	struct srpc_msg *reqstmsg = &rpc->srpc_reqstbuf->buf_msg;
-	struct srpc_msg *replymsg = &rpc->srpc_replymsg;
-	struct srpc_ping_reqst *req = &reqstmsg->msg_body.ping_reqst;
-	struct srpc_ping_reply *rep = &rpc->srpc_replymsg.msg_body.ping_reply;
+	struct srpc_service	*sv  = rpc->srpc_scd->scd_svc;
+        srpc_msg_t        *reqstmsg = &rpc->srpc_reqstbuf->buf_msg;
+	srpc_msg_t	  *replymsg = &rpc->srpc_replymsg;
+        srpc_ping_reqst_t *req = &reqstmsg->msg_body.ping_reqst;
+        srpc_ping_reply_t *rep = &rpc->srpc_replymsg.msg_body.ping_reply;
 
         LASSERT (sv->sv_id == SRPC_SERVICE_PING);
 
@@ -207,8 +207,7 @@ ping_server_handle(struct srpc_server_rpc *rpc)
 	return 0;
 }
 
-struct sfw_test_client_ops ping_test_client;
-
+sfw_test_client_ops_t ping_test_client;
 void ping_init_test_client(void)
 {
         ping_test_client.tso_init     = ping_client_init;
@@ -217,8 +216,7 @@ void ping_init_test_client(void)
         ping_test_client.tso_done_rpc = ping_client_done_rpc;
 }
 
-struct srpc_service ping_test_service;
-
+srpc_service_t ping_test_service;
 void ping_init_test_service(void)
 {
 	ping_test_service.sv_id       = SRPC_SERVICE_PING;
