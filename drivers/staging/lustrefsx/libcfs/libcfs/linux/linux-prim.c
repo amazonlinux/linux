@@ -36,17 +36,12 @@
 #include <linux/fs.h>
 #include <linux/fs_struct.h>
 #include <linux/sched.h>
-#ifdef HAVE_SCHED_HEADERS
-#include <linux/sched/signal.h>
-#include <linux/sched/mm.h>
-#endif
 #include <linux/uaccess.h>
+#include <libcfs/libcfs.h>
 
 #if defined(CONFIG_KGDB)
 #include <asm/kgdb.h>
 #endif
-
-#include <libcfs/linux/linux-time.h>
 
 #ifndef HAVE_KTIME_GET_TS64
 void ktime_get_ts64(struct timespec64 *ts)
@@ -102,17 +97,17 @@ time64_t ktime_get_seconds(void)
 EXPORT_SYMBOL(ktime_get_seconds);
 #endif /* HAVE_KTIME_GET_SECONDS */
 
-static int (*cfs_apply_workqueue_attrs_t)(struct workqueue_struct *wq,
-					  const struct workqueue_attrs *attrs);
+#ifndef HAVE_LINUX_SELINUX_IS_ENABLED
+static char **cfs_lsm_names;
 
-int cfs_apply_workqueue_attrs(struct workqueue_struct *wq,
-			      const struct workqueue_attrs *attrs)
+bool selinux_is_enabled(void)
 {
-	if (cfs_apply_workqueue_attrs_t)
-		return cfs_apply_workqueue_attrs_t(wq, attrs);
-	return 0;
+	if (cfs_lsm_names)
+		return !!strstr("selinux", *cfs_lsm_names);
+	return false;
 }
-EXPORT_SYMBOL_GPL(cfs_apply_workqueue_attrs);
+EXPORT_SYMBOL(selinux_is_enabled);
+#endif
 
 int cfs_kernel_write(struct file *filp, const void *buf, size_t count,
 		     loff_t *pos)
@@ -131,43 +126,6 @@ int cfs_kernel_write(struct file *filp, const void *buf, size_t count,
 #endif
 }
 EXPORT_SYMBOL(cfs_kernel_write);
-
-#ifndef HAVE_KSET_FIND_OBJ
-struct kobject *kset_find_obj(struct kset *kset, const char *name)
-{
-	struct kobject *ret = NULL;
-	struct kobject *k;
-
-	spin_lock(&kset->list_lock);
-
-	list_for_each_entry(k, &kset->list, entry) {
-		if (kobject_name(k) && !strcmp(kobject_name(k), name)) {
-			if (kref_get_unless_zero(&k->kref))
-				ret = k;
-			break;
-		}
-	}
-
-	spin_unlock(&kset->list_lock);
-	return ret;
-}
-EXPORT_SYMBOL_GPL(kset_find_obj);
-#endif
-
-#ifndef HAVE_KSTRTOBOOL_FROM_USER
-int kstrtobool_from_user(const char __user *s, size_t count, bool *res)
-{
-	/* Longest string needed to differentiate, newline, terminator */
-	char buf[4];
-
-	count = min(count, sizeof(buf) - 1);
-	if (copy_from_user(buf, s, count))
-		return -EFAULT;
-	buf[count] = '\0';
-	return strtobool(buf, res);
-}
-EXPORT_SYMBOL(kstrtobool_from_user);
-#endif /* !HAVE_KSTRTOBOOL_FROM_USER */
 
 sigset_t
 cfs_block_allsigs(void)
