@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2013, 2017, Intel Corporation.
+ * Copyright (c) 2013, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -52,11 +52,14 @@
 #include <linux/smp_lock.h>
 #endif
 
+#include <lustre/lustre_idl.h>
+#include <lustre/lustre_user.h>
+
 #include <llog_swab.h>
 #include <lustre_disk.h>
-#include <uapi/linux/lustre/lustre_ioctl.h>
+#include <uapi/linux/lustre_ioctl.h>
 #include <lustre_log.h>
-#include <uapi/linux/lustre/lustre_param.h>
+#include <uapi/linux/lustre_param.h>
 #include <obd.h>
 #include <obd_class.h>
 
@@ -508,7 +511,7 @@ struct obd_export *lustre_find_lwp_by_index(const char *dev, __u32 idx)
 	}
 
 	snprintf(lwp_name, sizeof(lwp_name), "%s-MDT%04x", fsname, idx);
-	mutex_lock(&lsi->lsi_lwp_mutex);
+	spin_lock(&lsi->lsi_lwp_lock);
 	list_for_each_entry(lwp, &lsi->lsi_lwp_list, obd_lwp_list) {
 		char *ptr = strstr(lwp->obd_name, lwp_name);
 
@@ -517,7 +520,7 @@ struct obd_export *lustre_find_lwp_by_index(const char *dev, __u32 idx)
 			break;
 		}
 	}
-	mutex_unlock(&lsi->lsi_lwp_mutex);
+	spin_unlock(&lsi->lsi_lwp_lock);
 
 err_lmi:
 	server_put_mount(dev, false);
@@ -678,9 +681,9 @@ static int lustre_lwp_setup(struct lustre_cfg *lcfg, struct lustre_sb_info *lsi,
 	rc = lustre_lwp_connect(obd, strstr(lsi->lsi_svname, "-MDT") != NULL);
 	if (rc == 0) {
 		obd->u.cli.cl_max_mds_easize = MAX_MD_SIZE;
-		mutex_lock(&lsi->lsi_lwp_mutex);
+		spin_lock(&lsi->lsi_lwp_lock);
 		list_add_tail(&obd->obd_lwp_list, &lsi->lsi_lwp_list);
-		mutex_unlock(&lsi->lsi_lwp_mutex);
+		spin_unlock(&lsi->lsi_lwp_lock);
 	} else {
 		CERROR("%s: connect failed: rc = %d\n", lwpname, rc);
 	}
@@ -936,7 +939,7 @@ static int lustre_disconnect_lwp(struct super_block *sb)
 			GOTO(out, rc = -ENOMEM);
 
 		/* end log first */
-		cfg->cfg_instance = ll_get_cfg_instance(sb);
+		cfg->cfg_instance = sb;
 		rc = lustre_end_log(sb, logname, cfg);
 		if (rc != 0 && rc != -ENOENT)
 			GOTO(out, rc);
@@ -948,7 +951,6 @@ static int lustre_disconnect_lwp(struct super_block *sb)
 	if (bufs == NULL)
 		GOTO(out, rc = -ENOMEM);
 
-	mutex_lock(&lsi->lsi_lwp_mutex);
 	list_for_each_entry(lwp, &lsi->lsi_lwp_list, obd_lwp_list) {
 		struct lustre_cfg *lcfg;
 
@@ -961,10 +963,8 @@ static int lustre_disconnect_lwp(struct super_block *sb)
 		lustre_cfg_bufs_set_string(bufs, 1, NULL);
 		OBD_ALLOC(lcfg, lustre_cfg_len(bufs->lcfg_bufcount,
 					       bufs->lcfg_buflen));
-		if (!lcfg) {
-			rc = -ENOMEM;
-			break;
-		}
+		if (!lcfg)
+			GOTO(out, rc = -ENOMEM);
 		lustre_cfg_init(lcfg, LCFG_CLEANUP, bufs);
 
 		/* Disconnect import first. NULL is passed for the '@env',
@@ -979,7 +979,6 @@ static int lustre_disconnect_lwp(struct super_block *sb)
 			rc1 = rc;
 		}
 	}
-	mutex_unlock(&lsi->lsi_lwp_mutex);
 
 	GOTO(out, rc);
 
@@ -1005,23 +1004,18 @@ static int lustre_stop_lwp(struct super_block *sb)
 	int			 rc1 = 0;
 	ENTRY;
 
-	mutex_lock(&lsi->lsi_lwp_mutex);
 	while (!list_empty(&lsi->lsi_lwp_list)) {
 		lwp = list_entry(lsi->lsi_lwp_list.next, struct obd_device,
 				 obd_lwp_list);
 		list_del_init(&lwp->obd_lwp_list);
 		lwp->obd_force = 1;
-		mutex_unlock(&lsi->lsi_lwp_mutex);
-
 		rc = class_manual_cleanup(lwp);
 		if (rc != 0) {
 			CERROR("%s: fail to stop LWP: rc = %d\n",
 			       lwp->obd_name, rc);
 			rc1 = rc;
 		}
-		mutex_lock(&lsi->lsi_lwp_mutex);
 	}
-	mutex_unlock(&lsi->lsi_lwp_mutex);
 
 	RETURN(rc1 != 0 ? rc1 : rc);
 }
@@ -1057,7 +1051,7 @@ static int lustre_start_lwp(struct super_block *sb)
 		GOTO(out, rc = -ENOMEM);
 
 	cfg->cfg_callback = client_lwp_config_process;
-	cfg->cfg_instance = ll_get_cfg_instance(sb);
+	cfg->cfg_instance = sb;
 	rc = lustre_process_log(sb, logname, cfg);
 	/* need to remove config llog from mgc */
 	lsi->lsi_lwp_started = 1;
@@ -1139,7 +1133,7 @@ static int server_lsi2mti(struct lustre_sb_info *lsi,
 
 	mti->mti_nid_count = 0;
 	while (LNetGetId(i++, &id) != -ENOENT) {
-		if (id.nid == LNET_NID_LO_0)
+		if (LNET_NETTYP(LNET_NIDNET(id.nid)) == LOLND)
 			continue;
 
 		/* server use --servicenode param, only allow specified
@@ -1688,63 +1682,6 @@ static int server_statfs(struct dentry *dentry, struct kstatfs *buf)
 	RETURN(0);
 }
 
-#ifdef HAVE_SUPEROPS_USE_DENTRY
-int server_show_options(struct seq_file *seq, struct dentry *dentry)
-#else
-int server_show_options(struct seq_file *seq, struct vfsmount *vfs)
-#endif
-{
-	struct lustre_sb_info *lsi;
-	struct lustre_mount_data *lmd;
-
-#ifdef HAVE_SUPEROPS_USE_DENTRY
-	LASSERT(seq != NULL && dentry != NULL);
-	lsi = s2lsi(dentry->d_sb);
-#else
-	LASSERT(seq != NULL && vfs != NULL);
-	lsi = s2lsi(vfs->mnt_sb);
-#endif
-
-	lmd = lsi->lsi_lmd;
-	seq_printf(seq, ",svname=%s", lmd->lmd_profile);
-
-	if  (lmd->lmd_flags & LMD_FLG_ABORT_RECOV)
-		seq_puts(seq, ",abort_recov");
-
-	if (lmd->lmd_flags & LMD_FLG_NOIR)
-		seq_puts(seq, ",noir");
-
-	if (lmd->lmd_flags & LMD_FLG_NOSVC)
-		seq_puts(seq, ",nosvc");
-
-	if (lmd->lmd_flags & LMD_FLG_NOMGS)
-		seq_puts(seq, ",nomgs");
-
-	if (lmd->lmd_flags & LMD_FLG_NOSCRUB)
-		seq_puts(seq, ",noscrub");
-	if (lmd->lmd_flags & LMD_FLG_SKIP_LFSCK)
-		seq_puts(seq, ",skip_lfsck");
-
-	if (lmd->lmd_flags & LMD_FLG_DEV_RDONLY)
-		seq_puts(seq, ",rdonly_dev");
-
-	if (lmd->lmd_flags & LMD_FLG_MGS)
-		seq_puts(seq, ",mgs");
-
-	if (lmd->lmd_mgs != NULL)
-		seq_printf(seq, ",mgsnode=%s", lmd->lmd_mgs);
-
-	if (lmd->lmd_osd_type != NULL)
-		seq_printf(seq, ",osd=%s", lmd->lmd_osd_type);
-
-	if (lmd->lmd_opts != NULL) {
-		seq_putc(seq, ',');
-		seq_puts(seq, lmd->lmd_opts);
-	}
-
-	RETURN(0);
-}
-
 /** The operations we support directly on the superblock:
  * mount, umount, and df.
  */
@@ -1752,7 +1689,6 @@ static struct super_operations server_ops = {
 	.put_super	= server_put_super,
 	.umount_begin	= server_umount_begin, /* umount -f */
 	.statfs		= server_statfs,
-	.show_options	= server_show_options,
 };
 
 /*
@@ -1780,53 +1716,12 @@ static ssize_t lustre_listxattr(struct dentry *d_entry, char *name,
 	return -EOPNOTSUPP;
 }
 
-static bool is_cmd_supported(unsigned int command)
-{
-	switch (command) {
-	case FITRIM:
-		return true;
-	default:
-		return false;
-	}
-
-	return false;
-}
-
-static long server_ioctl(struct file *filp, unsigned int command,
-			 unsigned long arg)
-{
-	struct file active_filp;
-	struct inode *inode = file_inode(filp);
-	struct lustre_sb_info *lsi = s2lsi(inode->i_sb);
-	struct super_block *dd_sb = dt_mnt_sb_get(lsi->lsi_dt_dev);
-	struct inode *active_inode;
-	int err = -EOPNOTSUPP;
-
-	if (IS_ERR(dd_sb) || !is_cmd_supported(command))
-		return err;
-
-	active_inode = igrab(dd_sb->s_root->d_inode);
-	if (!active_inode)
-		return -EACCES;
-
-	active_filp.f_inode = active_inode;
-	if (active_inode->i_fop && active_inode->i_fop->unlocked_ioctl)
-		err = active_inode->i_fop->unlocked_ioctl(&active_filp,
-							  command, arg);
-	iput(active_inode);
-	return err;
-}
-
 static const struct inode_operations server_inode_operations = {
 #ifdef HAVE_IOP_XATTR
 	.setxattr       = lustre_setxattr,
 	.getxattr       = lustre_getxattr,
 #endif
 	.listxattr      = lustre_listxattr,
-};
-
-static const struct file_operations server_file_operations = {
-	.unlocked_ioctl = server_ioctl,
 };
 
 #define log2(n) ffz(~(n))
@@ -1857,7 +1752,6 @@ static int server_fill_super_common(struct super_block *sb)
 	/* apparently we need to be a directory for the mount to finish */
 	root->i_mode = S_IFDIR;
 	root->i_op = &server_inode_operations;
-	root->i_fop = &server_file_operations;
 	sb->s_root = d_make_root(root);
 	if (!sb->s_root) {
 		CERROR("%s: can't make root dentry\n", sb->s_id);
@@ -1870,10 +1764,10 @@ static int server_fill_super_common(struct super_block *sb)
 static int osd_start(struct lustre_sb_info *lsi, unsigned long mflags)
 {
 	struct lustre_mount_data *lmd = lsi->lsi_lmd;
-	struct obd_device *obd;
-	struct dt_device_param p;
-	char flagstr[20 + 1 + 10 + 1];
-	int rc;
+	struct obd_device	 *obd;
+	struct dt_device_param    p;
+	char			  flagstr[16];
+	int			  rc;
 	ENTRY;
 
 	CDEBUG(D_MOUNT,
@@ -1883,7 +1777,7 @@ static int osd_start(struct lustre_sb_info *lsi, unsigned long mflags)
 	sprintf(lsi->lsi_osd_obdname, "%s-osd", lsi->lsi_svname);
 	strcpy(lsi->lsi_osd_uuid, lsi->lsi_osd_obdname);
 	strcat(lsi->lsi_osd_uuid, "_UUID");
-	snprintf(flagstr, sizeof(flagstr), "%lu:%u", mflags, lmd->lmd_flags);
+	sprintf(flagstr, "%lu:%lu", mflags, (unsigned long) lmd->lmd_flags);
 
 	obd = class_name2obd(lsi->lsi_osd_obdname);
 	if (obd == NULL) {
@@ -1946,10 +1840,8 @@ int server_fill_super(struct super_block *sb)
 	OBD_RACE(OBD_FAIL_TGT_MOUNT_RACE);
 
 	rc = lsi_prepare(lsi);
-	if (rc) {
-		lustre_put_lsi(sb);
+	if (rc)
 		RETURN(rc);
-	}
 
 	/* Start low level OSD */
 	rc = osd_start(lsi, sb->s_flags);
