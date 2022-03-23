@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -32,8 +32,6 @@
 
 #define DEBUG_SUBSYSTEM S_LNET
 
-#include <linux/ctype.h>
-#include <linux/rtnetlink.h>
 #include <linux/inetdevice.h>
 #include <linux/nsproxy.h>
 #include <net/net_namespace.h>
@@ -125,10 +123,10 @@ lnet_ni_unique_net(struct list_head *nilist, char *iface)
 /* check that the NI is unique to the interfaces with in the same NI.
  * This is only a consideration if use_tcp_bonding is set */
 static bool
-lnet_ni_unique_ni(char *iface_list[LNET_INTERFACES_NUM], char *iface)
+lnet_ni_unique_ni(char *iface_list[LNET_NUM_INTERFACES], char *iface)
 {
 	int i;
-	for (i = 0; i < LNET_INTERFACES_NUM; i++) {
+	for (i = 0; i < LNET_NUM_INTERFACES; i++) {
 		if (iface_list[i] != NULL &&
 		    strncmp(iface_list[i], iface, strlen(iface)) == 0)
 			return false;
@@ -311,7 +309,7 @@ lnet_ni_free(struct lnet_ni *ni)
 	if (ni->ni_cpts != NULL)
 		cfs_expr_list_values_free(ni->ni_cpts, ni->ni_ncpts);
 
-	for (i = 0; i < LNET_INTERFACES_NUM &&
+	for (i = 0; i < LNET_NUM_INTERFACES &&
 		    ni->ni_interfaces[i] != NULL; i++) {
 		LIBCFS_FREE(ni->ni_interfaces[i],
 			    strlen(ni->ni_interfaces[i]) + 1);
@@ -411,11 +409,11 @@ lnet_ni_add_interface(struct lnet_ni *ni, char *iface)
 	 * can free the tokens at the end of the function.
 	 * The newly allocated ni_interfaces[] can be
 	 * freed when freeing the NI */
-	while (niface < LNET_INTERFACES_NUM &&
+	while (niface < LNET_NUM_INTERFACES &&
 	       ni->ni_interfaces[niface] != NULL)
 		niface++;
 
-	if (niface >= LNET_INTERFACES_NUM) {
+	if (niface >= LNET_NUM_INTERFACES) {
 		LCONSOLE_ERROR_MSG(0x115, "Too many interfaces "
 				   "for net %s\n",
 				   libcfs_net2str(LNET_NIDNET(ni->ni_nid)));
@@ -458,9 +456,8 @@ lnet_ni_alloc_common(struct lnet_net *net, char *iface)
 	}
 
 	spin_lock_init(&ni->ni_lock);
+	INIT_LIST_HEAD(&ni->ni_cptlist);
 	INIT_LIST_HEAD(&ni->ni_netlist);
-	INIT_LIST_HEAD(&ni->ni_recovery);
-	LNetInvalidateMDHandle(&ni->ni_ping_mdh);
 	ni->ni_refs = cfs_percpt_alloc(lnet_cpt_table(),
 				       sizeof(*ni->ni_refs[0]));
 	if (ni->ni_refs == NULL)
@@ -479,12 +476,12 @@ lnet_ni_alloc_common(struct lnet_net *net, char *iface)
 	ni->ni_nid = LNET_MKNID(net->net_id, 0);
 
 	/* Store net namespace in which current ni is being created */
-	if (current->nsproxy && current->nsproxy->net_ns)
+	if (current->nsproxy->net_ns != NULL)
 		ni->ni_net_ns = get_net(current->nsproxy->net_ns);
 	else
-		ni->ni_net_ns = get_net(&init_net);
+		ni->ni_net_ns = NULL;
 
-	ni->ni_last_alive = ktime_get_real_seconds();
+	ni->ni_last_alive = cfs_time_current_sec();
 	ni->ni_state = LNET_NI_STATE_INIT;
 	list_add_tail(&ni->ni_netlist, &net->net_ni_added);
 
@@ -1124,26 +1121,26 @@ lnet_parse_priority(char *str, unsigned int *priority, char **token)
 }
 
 static int
-lnet_parse_route(char *str, int *im_a_router)
+lnet_parse_route (char *str, int *im_a_router)
 {
 	/* static scratch buffer OK (single threaded) */
-	static char cmd[LNET_SINGLE_TEXTBUF_NOB];
+	static char	  cmd[LNET_SINGLE_TEXTBUF_NOB];
 
-	struct list_head nets;
-	struct list_head gateways;
+	struct list_head  nets;
+	struct list_head  gateways;
 	struct list_head *tmp1;
 	struct list_head *tmp2;
-	__u32 net;
-	lnet_nid_t nid;
-	struct lnet_text_buf *ltb;
-	int rc;
-	char *sep;
-	char *token = str;
-	int ntokens = 0;
-	int myrc = -1;
-	__u32 hops;
-	int got_hops = 0;
-	unsigned int priority = 0;
+	__u32		  net;
+	lnet_nid_t	  nid;
+	struct lnet_text_buf  *ltb;
+	int		  rc;
+	char		 *sep;
+	char		 *token = str;
+	int		  ntokens = 0;
+	int		  myrc = -1;
+	__u32		  hops;
+	int		  got_hops = 0;
+	unsigned int	  priority = 0;
 
 	INIT_LIST_HEAD(&gateways);
 	INIT_LIST_HEAD(&nets);
@@ -1217,7 +1214,8 @@ lnet_parse_route(char *str, int *im_a_router)
 					goto token_error;
 
 				nid = libcfs_str2nid(ltb->ltb_text);
-				if (nid == LNET_NID_ANY || nid == LNET_NID_LO_0)
+				if (nid == LNET_NID_ANY ||
+				    LNET_NETTYP(LNET_NIDNET(nid)) == LOLND)
 					goto token_error;
 			}
 		}
@@ -1605,12 +1603,11 @@ lnet_match_networks (char **networksp, char *ip2nets, __u32 *ipaddrs, int nip)
 }
 /*
  * kernel 5.3: commit ef11db3310e272d3d8dbe8739e0770820dd20e52
- * kernel 4.18.0-193.el8:
  * added in_dev_for_each_ifa_rtnl and in_dev_for_each_ifa_rcu
  * and removed for_ifa and endfor_ifa.
  * Use the _rntl variant as the current locking is rtnl.
  */
-#ifdef HAVE_IN_DEV_FOR_EACH_IFA_RTNL
+#ifdef in_dev_for_each_ifa_rtnl
 #define DECLARE_CONST_IN_IFADDR(ifa)		const struct in_ifaddr *ifa
 #define endfor_ifa(in_dev)
 #else
@@ -1656,7 +1653,7 @@ int lnet_inet_enumerate(struct lnet_inetdev **dev_list, struct net *ns)
 			if (nip >= nalloc) {
 				struct lnet_inetdev *tmp;
 
-				nalloc += LNET_INTERFACES_NUM;
+				nalloc += LNET_NUM_INTERFACES;
 				tmp = krealloc(ifaces, nalloc * sizeof(*tmp),
 					       GFP_KERNEL);
 				if (!tmp) {
@@ -1700,10 +1697,7 @@ lnet_parse_ip2nets (char **networksp, char *ip2nets)
 	int	   rc;
 	int i;
 
-	if (current->nsproxy && current->nsproxy->net_ns)
-		nip = lnet_inet_enumerate(&ifaces, current->nsproxy->net_ns);
-	else
-		nip = lnet_inet_enumerate(&ifaces, &init_net);
+	nip = lnet_inet_enumerate(&ifaces, current->nsproxy->net_ns);
 	if (nip < 0) {
 		if (nip != -ENOENT) {
 			LCONSOLE_ERROR_MSG(0x117,
