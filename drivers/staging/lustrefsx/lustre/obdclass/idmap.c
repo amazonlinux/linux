@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -46,6 +46,15 @@
 #include <upcall_cache.h>
 #include <md_object.h>
 #include <obd_support.h>
+
+#define lustre_get_group_info(group_info) do {		\
+	atomic_inc(&(group_info)->usage);		\
+} while (0)
+
+#define lustre_put_group_info(group_info) do {		\
+	if (atomic_dec_and_test(&(group_info)->usage))	\
+		groups_free(group_info);		\
+} while (0)
 
 /*
  * groups_search() is copied from linux kernel!
@@ -101,12 +110,12 @@ EXPORT_SYMBOL(lustre_groups_from_list);
 /* a simple shell-metzner sort */
 void lustre_groups_sort(struct group_info *group_info)
 {
-	int base, max, stride;
-	int gidsetsize = group_info->ngroups;
+        int base, max, stride;
+        int gidsetsize = group_info->ngroups;
 
-	for (stride = 1; stride < gidsetsize; stride = 3 * stride + 1)
-		; /* nothing */
-	stride /= 3;
+        for (stride = 1; stride < gidsetsize; stride = 3 * stride + 1)
+                ; /* nothing */
+        stride /= 3;
 
 	while (stride) {
 		max = gidsetsize - stride;
@@ -153,10 +162,9 @@ int lustre_in_group_p(struct lu_ucred *mu, gid_t grp)
 		if (!group_info)
 			return 0;
 
-		atomic_inc(&group_info->usage);
+		lustre_get_group_info(group_info);
 		rc = lustre_groups_search(group_info, grp);
-		if (atomic_dec_and_test(&group_info->usage))
-			groups_free(group_info);
+		lustre_put_group_info(group_info);
 	}
 	return rc;
 }
