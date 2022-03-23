@@ -21,16 +21,13 @@
  */
 /*
  * Copyright (C) 2013, Trustees of Indiana University
- *
- * Copyright (c) 2017, Intel Corporation.
- *
  * Author: Joshua Walgenbach <jjw@iu.edu>
  */
 
 #ifndef _LUSTRE_NODEMAP_H
 #define _LUSTRE_NODEMAP_H
 
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 
 #define LUSTRE_NODEMAP_NAME "nodemap"
 
@@ -76,8 +73,7 @@ struct lu_nodemap {
 				 nmf_deny_unknown:1,
 				 nmf_allow_root_access:1,
 				 nmf_map_uid_only:1,
-				 nmf_map_gid_only:1,
-				 nmf_enable_audit:1;
+				 nmf_map_gid_only:1;
 	/* unique ID set by MGS */
 	unsigned int		 nm_id;
 	/* nodemap ref counter */
@@ -106,8 +102,6 @@ struct lu_nodemap {
 	struct nodemap_pde	*nm_pde_data;
 	/* fileset the nodes of this nodemap are restricted to */
 	char			 nm_fileset[PATH_MAX+1];
-	/* information about the expected SELinux policy on the nodes */
-	char			 nm_sepol[LUSTRE_NODEMAP_SEPOL_LENGTH + 1];
 
 	/* used when loading/unloading nodemaps */
 	struct list_head	 nm_list;
@@ -138,7 +132,6 @@ int nodemap_set_deny_unknown(const char *name, bool deny_unknown);
 int nodemap_set_mapping_mode(const char *name, enum nodemap_mapping_modes mode);
 int nodemap_set_squash_uid(const char *name, uid_t uid);
 int nodemap_set_squash_gid(const char *name, gid_t gid);
-int nodemap_set_audit_mode(const char *name, bool enable_audit);
 bool nodemap_can_setquota(const struct lu_nodemap *nodemap);
 int nodemap_add_idmap(const char *name, enum nodemap_id_type id_type,
 		      const __u32 map[2]);
@@ -146,8 +139,6 @@ int nodemap_del_idmap(const char *name, enum nodemap_id_type id_type,
 		      const __u32 map[2]);
 int nodemap_set_fileset(const char *name, const char *fileset);
 char *nodemap_get_fileset(const struct lu_nodemap *nodemap);
-int nodemap_set_sepol(const char *name, const char *sepol);
-const char *nodemap_get_sepol(const struct lu_nodemap *nodemap);
 __u32 nodemap_map_id(struct lu_nodemap *nodemap,
 		     enum nodemap_id_type id_type,
 		     enum nodemap_tree_type tree_type, __u32 id);
