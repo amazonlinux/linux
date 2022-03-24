@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -35,7 +35,7 @@
 
 #include <stdarg.h>
 #include <libcfs/libcfs.h>
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 #include <lu_ref.h>
 #include <linux/percpu_counter.h>
 
@@ -426,8 +426,26 @@ struct lu_attr {
         __u32          la_rdev;
 	/** project id */
 	__u32	       la_projid;
-	/** set layout version to OST objects. */
-	__u32		la_layout_version;
+};
+
+/** Bit-mask of valid attributes */
+enum la_valid {
+        LA_ATIME = 1 << 0,
+        LA_MTIME = 1 << 1,
+        LA_CTIME = 1 << 2,
+        LA_SIZE  = 1 << 3,
+        LA_MODE  = 1 << 4,
+        LA_UID   = 1 << 5,
+        LA_GID   = 1 << 6,
+        LA_BLOCKS = 1 << 7,
+        LA_TYPE   = 1 << 8,
+        LA_FLAGS  = 1 << 9,
+        LA_NLINK  = 1 << 10,
+        LA_RDEV   = 1 << 11,
+        LA_BLKSIZE = 1 << 12,
+        LA_KILL_SUID = 1 << 13,
+        LA_KILL_SGID = 1 << 14,
+	LA_PROJID    = 1 << 15,
 };
 
 /**
@@ -466,23 +484,17 @@ enum lu_object_header_flags {
 	/**
 	 * Mark this object has already been taken out of cache.
 	 */
-	LU_OBJECT_UNHASHED	= 1,
-	/**
-	 * Object is initialized, when object is found in cache, it may not be
-	 * intialized yet, the object allocator will initialize it.
-	 */
-	LU_OBJECT_INITED	= 2
+	LU_OBJECT_UNHASHED = 1,
 };
 
 enum lu_object_header_attr {
-	LOHA_EXISTS		= 1 << 0,
-	LOHA_REMOTE		= 1 << 1,
-	LOHA_HAS_AGENT_ENTRY	= 1 << 2,
-	/**
-	 * UNIX file type is stored in S_IFMT bits.
-	 */
-	LOHA_FT_START		= 001 << 12, /**< S_IFIFO */
-	LOHA_FT_END		= 017 << 12, /**< S_IFMT */
+        LOHA_EXISTS   = 1 << 0,
+        LOHA_REMOTE   = 1 << 1,
+        /**
+         * UNIX file type is stored in S_IFMT bits.
+         */
+        LOHA_FT_START = 001 << 12, /**< S_IFIFO */
+        LOHA_FT_END   = 017 << 12, /**< S_IFMT */
 };
 
 /**
@@ -535,6 +547,31 @@ struct lu_object_header {
 };
 
 struct fld;
+
+struct lu_site_bkt_data {
+	/**
+	 * number of object in this bucket on the lsb_lru list.
+	 */
+	long			lsb_lru_len;
+	/**
+	 * LRU list, updated on each access to object. Protected by
+	 * bucket lock of lu_site::ls_obj_hash.
+	 *
+	 * "Cold" end of LRU is lu_site::ls_lru.next. Accessed object are
+	 * moved to the lu_site::ls_lru.prev (this is due to the non-existence
+	 * of list_for_each_entry_safe_reverse()).
+	 */
+	struct list_head	lsb_lru;
+	/**
+	 * Wait-queue signaled when an object in this site is ultimately
+	 * destroyed (lu_object_free()). It is used by lu_object_find() to
+	 * wait before re-trying when object in the process of destruction is
+	 * found in the hash table.
+	 *
+	 * \see htable_lookup().
+	 */
+	wait_queue_head_t	lsb_marche_funebre;
+};
 
 enum {
 	LU_SS_CREATED		= 0,
@@ -606,8 +643,14 @@ struct lu_site {
 	struct percpu_counter   ls_lru_len_counter;
 };
 
-wait_queue_head_t *
-lu_site_wq_from_fid(struct lu_site *site, struct lu_fid *fid);
+static inline struct lu_site_bkt_data *
+lu_site_bkt_from_fid(struct lu_site *site, struct lu_fid *fid)
+{
+	struct cfs_hash_bd bd;
+
+        cfs_hash_bd_get(site->ls_obj_hash, fid, &bd);
+        return cfs_hash_bd_extra_get(site->ls_obj_hash, &bd);
+}
 
 static inline struct seq_server_site *lu_site2seq(const struct lu_site *s)
 {
@@ -670,14 +713,6 @@ static inline void lu_object_get(struct lu_object *o)
 static inline int lu_object_is_dying(const struct lu_object_header *h)
 {
 	return test_bit(LU_OBJECT_HEARD_BANSHEE, &h->loh_flags);
-}
-
-/**
- * Return true if object is initialized.
- */
-static inline int lu_object_is_inited(const struct lu_object_header *h)
-{
-	return test_bit(LU_OBJECT_INITED, &h->loh_flags);
 }
 
 void lu_object_put(const struct lu_env *env, struct lu_object *o);
@@ -809,22 +844,6 @@ int lu_object_invariant(const struct lu_object *o);
  */
 #define lu_object_remote(o) unlikely((o)->lo_header->loh_attr & LOHA_REMOTE)
 
-/**
- * Check whether the object as agent entry on current target
- */
-#define lu_object_has_agent_entry(o) \
-	unlikely((o)->lo_header->loh_attr & LOHA_HAS_AGENT_ENTRY)
-
-static inline void lu_object_set_agent_entry(struct lu_object *o)
-{
-	o->lo_header->loh_attr |= LOHA_HAS_AGENT_ENTRY;
-}
-
-static inline void lu_object_clear_agent_entry(struct lu_object *o)
-{
-	o->lo_header->loh_attr &= ~LOHA_HAS_AGENT_ENTRY;
-}
-
 static inline int lu_object_assert_exists(const struct lu_object *o)
 {
 	return lu_object_exists(o);
@@ -841,8 +860,7 @@ static inline int lu_object_assert_not_exists(const struct lu_object *o)
 static inline __u32 lu_object_attr(const struct lu_object *o)
 {
 	LASSERT(lu_object_exists(o) != 0);
-
-	return o->lo_header->loh_attr & S_IFMT;
+        return o->lo_header->loh_attr;
 }
 
 static inline void lu_object_ref_add(struct lu_object *o,
@@ -889,9 +907,7 @@ struct lu_rdpg {
 
 enum lu_xattr_flags {
 	LU_XATTR_REPLACE = (1 << 0),
-	LU_XATTR_CREATE  = (1 << 1),
-	LU_XATTR_MERGE   = (1 << 2),
-	LU_XATTR_SPLIT   = (1 << 3),
+	LU_XATTR_CREATE  = (1 << 1)
 };
 
 /** @} helpers */
@@ -1113,20 +1129,20 @@ struct lu_context_key {
 };
 
 #define LU_KEY_INIT(mod, type)                                    \
-	static void *mod##_key_init(const struct lu_context *ctx, \
-				    struct lu_context_key *key)   \
-	{                                                         \
-		type *value;                                      \
+        static void* mod##_key_init(const struct lu_context *ctx, \
+                                    struct lu_context_key *key)   \
+        {                                                         \
+                type *value;                                      \
                                                                   \
 		CLASSERT(PAGE_SIZE >= sizeof(*value));		  \
                                                                   \
-		OBD_ALLOC_PTR(value);                             \
-		if (value == NULL)                                \
-			value = ERR_PTR(-ENOMEM);                 \
-								  \
-		return value;                                     \
-	}                                                         \
-	struct __##mod##__dummy_init { ; } /* semicolon catcher */
+                OBD_ALLOC_PTR(value);                             \
+                if (value == NULL)                                \
+                        value = ERR_PTR(-ENOMEM);                 \
+                                                                  \
+                return value;                                     \
+        }                                                         \
+        struct __##mod##__dummy_init {;} /* semicolon catcher */
 
 #define LU_KEY_FINI(mod, type)                                              \
         static void mod##_key_fini(const struct lu_context *ctx,            \
@@ -1262,37 +1278,6 @@ void lu_env_fini  (struct lu_env *env);
 int  lu_env_refill(struct lu_env *env);
 int  lu_env_refill_by_tags(struct lu_env *env, __u32 ctags, __u32 stags);
 
-static inline void* lu_env_info(const struct lu_env *env,
-				const struct lu_context_key *key)
-{
-	void *info;
-	info = lu_context_key_get(&env->le_ctx, key);
-	if (!info) {
-		if (!lu_env_refill((struct lu_env *)env))
-			info = lu_context_key_get(&env->le_ctx, key);
-	}
-	LASSERT(info);
-	return info;
-}
-
-#ifdef HAVE_SERVER_SUPPORT
-struct lu_env *lu_env_find(void);
-int lu_env_add(struct lu_env *env);
-void lu_env_remove(struct lu_env *env);
-#else
-static inline struct lu_env *lu_env_find(void)
-{
-	return NULL;
-}
-static inline int lu_env_add(struct lu_env *env)
-{
-	return 0;
-}
-static inline void lu_env_remove(struct lu_env *env)
-{
-}
-#endif /* HAVE_SERVER_SUPPORT */
-
 /** @} lu_context */
 
 /**
@@ -1309,26 +1294,6 @@ struct lu_name {
         int            ln_namelen;
 };
 
-static inline bool name_is_dot_or_dotdot(const char *name, int namelen)
-{
-	return name[0] == '.' &&
-	       (namelen == 1 || (namelen == 2 && name[1] == '.'));
-}
-
-static inline bool lu_name_is_dot_or_dotdot(const struct lu_name *lname)
-{
-	return name_is_dot_or_dotdot(lname->ln_name, lname->ln_namelen);
-}
-
-static inline bool lu_name_is_valid_len(const char *name, size_t name_len)
-{
-	return name != NULL &&
-	       name_len > 0 &&
-	       name_len < INT_MAX &&
-	       strlen(name) == name_len &&
-	       memchr(name, '/', name_len) == NULL;
-}
-
 /**
  * Validate names (path components)
  *
@@ -1340,7 +1305,12 @@ static inline bool lu_name_is_valid_len(const char *name, size_t name_len)
  */
 static inline bool lu_name_is_valid_2(const char *name, size_t name_len)
 {
-	return lu_name_is_valid_len(name, name_len) && name[name_len] == '\0';
+	return name != NULL &&
+	       name_len > 0 &&
+	       name_len < INT_MAX &&
+	       name[name_len] == '\0' &&
+	       strlen(name) == name_len &&
+	       memchr(name, '/', name_len) == NULL;
 }
 
 static inline bool lu_name_is_valid(const struct lu_name *ln)
