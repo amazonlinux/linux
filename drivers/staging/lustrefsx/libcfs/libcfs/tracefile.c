@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,12 +40,8 @@
 #define LUSTRE_TRACEFILE_PRIVATE
 #include "tracefile.h"
 
-#include <linux/ctype.h>
-#include <linux/fs.h>
 #include <linux/kthread.h>
-#include <linux/pagemap.h>
-#include <linux/uaccess.h>
-#include <libcfs/linux/linux-fs.h>
+#include <libcfs/linux/linux-misc.h>
 #include <libcfs/libcfs.h>
 
 /* XXX move things up to the top, comment */
@@ -394,34 +390,34 @@ console:
                 return 1;
         }
 
-	if (cdls != NULL) {
-		if (libcfs_console_ratelimit &&
-		    cdls->cdls_next != 0 &&	/* not first time ever */
-		    time_before(jiffies, cdls->cdls_next)) {
-			/* skipping a console message */
-			cdls->cdls_count++;
-			if (tcd != NULL)
-				cfs_trace_put_tcd(tcd);
-			return 1;
-		}
+        if (cdls != NULL) {
+                if (libcfs_console_ratelimit &&
+                    cdls->cdls_next != 0 &&     /* not first time ever */
+                    !cfs_time_after(cfs_time_current(), cdls->cdls_next)) {
+                        /* skipping a console message */
+                        cdls->cdls_count++;
+                        if (tcd != NULL)
+                                cfs_trace_put_tcd(tcd);
+                        return 1;
+                }
 
-		if (time_after(jiffies, cdls->cdls_next +
-					libcfs_console_max_delay +
-					cfs_time_seconds(10))) {
-			/* last timeout was a long time ago */
-			cdls->cdls_delay /= libcfs_console_backoff * 4;
-		} else {
-			cdls->cdls_delay *= libcfs_console_backoff;
-		}
+                if (cfs_time_after(cfs_time_current(), cdls->cdls_next +
+                                                       libcfs_console_max_delay
+                                                       + cfs_time_seconds(10))) {
+                        /* last timeout was a long time ago */
+                        cdls->cdls_delay /= libcfs_console_backoff * 4;
+                } else {
+                        cdls->cdls_delay *= libcfs_console_backoff;
+                }
 
 		if (cdls->cdls_delay < libcfs_console_min_delay)
 			cdls->cdls_delay = libcfs_console_min_delay;
 		else if (cdls->cdls_delay > libcfs_console_max_delay)
 			cdls->cdls_delay = libcfs_console_max_delay;
 
-		/* ensure cdls_next is never zero after it's been seen */
-		cdls->cdls_next = (jiffies + cdls->cdls_delay) | 1;
-	}
+                /* ensure cdls_next is never zero after it's been seen */
+                cdls->cdls_next = (cfs_time_current() + cdls->cdls_delay) | 1;
+        }
 
         if (tcd != NULL) {
                 cfs_print_to_console(&header, mask, string_buf, needed, file,
@@ -741,8 +737,12 @@ int cfs_trace_copyin_string(char *knl_buffer, int knl_buffer_nob,
         if (usr_buffer_nob > knl_buffer_nob)
                 return -EOVERFLOW;
 
+#ifdef PROC_HANDLER_USE_USER_ATTR
 	if (copy_from_user(knl_buffer, usr_buffer, usr_buffer_nob))
                 return -EFAULT;
+#else
+	memcpy(knl_buffer, usr_buffer, usr_buffer_nob);
+#endif
 
         nob = strnlen(knl_buffer, usr_buffer_nob);
         while (nob-- >= 0)                      /* strip trailing whitespace */
@@ -771,12 +771,20 @@ int cfs_trace_copyout_string(char __user *usr_buffer, int usr_buffer_nob,
         if (nob > usr_buffer_nob)
                 nob = usr_buffer_nob;
 
+#ifdef PROC_HANDLER_USE_USER_ATTR
 	if (copy_to_user(usr_buffer, knl_buffer, nob))
                 return -EFAULT;
+#else
+	memcpy(usr_buffer, knl_buffer, nob);
+#endif
 
         if (append != NULL && nob < usr_buffer_nob) {
+#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(usr_buffer + nob, append, 1))
                         return -EFAULT;
+#else
+		memcpy(usr_buffer + nob, append, 1);
+#endif
 
                 nob++;
         }
@@ -833,16 +841,13 @@ int cfs_trace_daemon_command(char *str)
                 cfs_tracefile_write_lock();
                 memset(cfs_tracefile, 0, sizeof(cfs_tracefile));
 
-	} else if (strncmp(str, "size=", 5) == 0) {
-		unsigned long tmp;
+        } else if (strncmp(str, "size=", 5) == 0) {
+                cfs_tracefile_size = simple_strtoul(str + 5, NULL, 0);
+                if (cfs_tracefile_size < 10 || cfs_tracefile_size > 20480)
+                        cfs_tracefile_size = CFS_TRACEFILE_SIZE;
+                else
+                        cfs_tracefile_size <<= 20;
 
-		rc = kstrtoul(str + 5, 10, &tmp);
-		if (!rc) {
-			if (tmp < 10 || tmp > 20480)
-				cfs_tracefile_size = CFS_TRACEFILE_SIZE;
-			else
-				cfs_tracefile_size = tmp << 20;
-		}
         } else if (strlen(str) >= sizeof(cfs_tracefile)) {
                 rc = -ENAMETOOLONG;
         } else if (str[0] != '/') {
@@ -913,6 +918,18 @@ int cfs_trace_set_debug_mb(int mb)
 	cfs_tracefile_write_unlock();
 
 	return 0;
+}
+
+int cfs_trace_set_debug_mb_usrstr(void __user *usr_str, int usr_str_nob)
+{
+        char     str[32];
+        int      rc;
+
+        rc = cfs_trace_copyin_string(str, sizeof(str), usr_str, usr_str_nob);
+        if (rc < 0)
+                return rc;
+
+        return cfs_trace_set_debug_mb(simple_strtoul(str, NULL, 0));
 }
 
 int cfs_trace_get_debug_mb(void)
