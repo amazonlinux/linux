@@ -150,7 +150,7 @@ static int ll_page_mkwrite0(struct vm_area_struct *vma, struct page *vmpage,
 	int                      result;
 	__u16			 refcheck;
 	sigset_t		 set;
-	struct inode             *inode = NULL;
+	struct inode             *inode;
 	struct ll_inode_info     *lli;
 	ENTRY;
 
@@ -221,16 +221,6 @@ out:
 	cl_env_put(env, &refcheck);
 	CDEBUG(D_MMAP, "%s mkwrite with %d\n", current->comm, result);
 	LASSERT(ergo(result == 0, PageLocked(vmpage)));
-
-	/* if page has been unmapped, presumably due to lock reclaim for
-	 * concurrent usage, add some delay before retrying to prevent
-	 * entering live-lock situation with competitors
-	 */
-	if (result == -ENODATA && inode != NULL) {
-		CDEBUG(D_MMAP, "delaying new page-fault for inode %p to "
-			       "prevent live-lock\n", inode);
-		msleep(10);
-	}
 
 	return result;
 }
@@ -393,12 +383,6 @@ restart:
                 result |= VM_FAULT_LOCKED;
         }
 	cfs_restore_sigs(set);
-
-	if (vmf->page && result == VM_FAULT_LOCKED)
-		ll_rw_stats_tally(ll_i2sbi(file_inode(vma->vm_file)),
-				  current->pid, LUSTRE_FPRIVATE(vma->vm_file),
-				  cl_offset(NULL, vmf->page->index), PAGE_SIZE,
-				  READ);
         return result;
 }
 
@@ -455,11 +439,6 @@ static vm_fault_t ll_page_mkwrite(struct vm_area_struct *vma,
                 break;
         }
 
-	if (result == VM_FAULT_LOCKED)
-		ll_rw_stats_tally(ll_i2sbi(file_inode(vma->vm_file)),
-				  current->pid, LUSTRE_FPRIVATE(vma->vm_file),
-				  cl_offset(NULL, vmf->page->index), PAGE_SIZE,
-				  WRITE);
         return result;
 }
 

@@ -52,6 +52,7 @@
 #include <obd.h>
 #include <obd_class.h>
 #include <obd_support.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_net.h>
 #include <lustre_import.h>
 #include <lustre_sec.h>
@@ -59,7 +60,6 @@
 #include "gss_err.h"
 #include "gss_internal.h"
 #include "gss_api.h"
-#include "gss_crypto.h"
 
 static struct list_head registered_mechs = LIST_HEAD_INIT(registered_mechs);
 static DEFINE_SPINLOCK(registered_mechs_lock);
@@ -69,7 +69,7 @@ int lgss_mech_register(struct gss_api_mech *gm)
 	spin_lock(&registered_mechs_lock);
 	list_add(&gm->gm_list, &registered_mechs);
 	spin_unlock(&registered_mechs_lock);
-	CDEBUG(D_SEC, "register %s mechanism\n", gm->gm_name);
+	CWARN("Register %s mechanism\n", gm->gm_name);
 	return 0;
 }
 
@@ -78,7 +78,7 @@ void lgss_mech_unregister(struct gss_api_mech *gm)
 	spin_lock(&registered_mechs_lock);
 	list_del(&gm->gm_list);
 	spin_unlock(&registered_mechs_lock);
-	CDEBUG(D_SEC, "Unregister %s mechanism\n", gm->gm_name);
+	CWARN("Unregister %s mechanism\n", gm->gm_name);
 }
 
 
@@ -148,52 +148,50 @@ __u32 lgss_import_sec_context(rawobj_t *input_token,
                               struct gss_api_mech *mech,
                               struct gss_ctx **ctx_id)
 {
-	OBD_ALLOC_PTR(*ctx_id);
-	if (*ctx_id == NULL)
-		return GSS_S_FAILURE;
+        OBD_ALLOC_PTR(*ctx_id);
+        if (*ctx_id == NULL)
+                return GSS_S_FAILURE;
 
-	(*ctx_id)->mech_type = lgss_mech_get(mech);
-	(*ctx_id)->hash_func = gss_digest_hash;
+        (*ctx_id)->mech_type = lgss_mech_get(mech);
 
-	LASSERT(mech);
-	LASSERT(mech->gm_ops);
-	LASSERT(mech->gm_ops->gss_import_sec_context);
-	return mech->gm_ops->gss_import_sec_context(input_token, *ctx_id);
+        LASSERT(mech);
+        LASSERT(mech->gm_ops);
+        LASSERT(mech->gm_ops->gss_import_sec_context);
+        return mech->gm_ops->gss_import_sec_context(input_token, *ctx_id);
 }
 
 __u32 lgss_copy_reverse_context(struct gss_ctx *ctx_id,
-				struct gss_ctx **ctx_id_new)
+                                struct gss_ctx **ctx_id_new)
 {
-	struct gss_api_mech *mech = ctx_id->mech_type;
-	__u32                major;
+        struct gss_api_mech *mech = ctx_id->mech_type;
+        __u32                major;
 
-	LASSERT(mech);
+        LASSERT(mech);
 
-	OBD_ALLOC_PTR(*ctx_id_new);
-	if (*ctx_id_new == NULL)
-		return GSS_S_FAILURE;
+        OBD_ALLOC_PTR(*ctx_id_new);
+        if (*ctx_id_new == NULL)
+                return GSS_S_FAILURE;
 
-	(*ctx_id_new)->mech_type = lgss_mech_get(mech);
-	(*ctx_id_new)->hash_func = ctx_id->hash_func;
+        (*ctx_id_new)->mech_type = lgss_mech_get(mech);
 
-	LASSERT(mech);
-	LASSERT(mech->gm_ops);
-	LASSERT(mech->gm_ops->gss_copy_reverse_context);
+        LASSERT(mech);
+        LASSERT(mech->gm_ops);
+        LASSERT(mech->gm_ops->gss_copy_reverse_context);
 
-	major = mech->gm_ops->gss_copy_reverse_context(ctx_id, *ctx_id_new);
-	if (major != GSS_S_COMPLETE) {
-		lgss_mech_put(mech);
-		OBD_FREE_PTR(*ctx_id_new);
-		*ctx_id_new = NULL;
-	}
-	return major;
+        major = mech->gm_ops->gss_copy_reverse_context(ctx_id, *ctx_id_new);
+        if (major != GSS_S_COMPLETE) {
+                lgss_mech_put(mech);
+                OBD_FREE_PTR(*ctx_id_new);
+                *ctx_id_new = NULL;
+        }
+        return major;
 }
 
 /*
  * this interface is much simplified, currently we only need endtime.
  */
 __u32 lgss_inquire_context(struct gss_ctx *context_handle,
-			   time64_t *endtime)
+                           unsigned long  *endtime)
 {
         LASSERT(context_handle);
         LASSERT(context_handle->mech_type);
