@@ -26,10 +26,9 @@
  */
 
 #include <libcfs/libcfs.h>
-#include <lustre_errno.h>
+#include <lustre/lustre_errno.h>
 
 #ifdef LUSTRE_TRANSLATE_ERRNOS
-#include <lustre_dlm.h>
 
 /*
  * The two translation tables below must define a one-to-one mapping between
@@ -186,20 +185,7 @@ static int lustre_errno_hton_mapping[] = {
 	[ESERVERFAULT]		= LUSTRE_ESERVERFAULT,
 	[EBADTYPE]		= LUSTRE_EBADTYPE,
 	[EJUKEBOX]		= LUSTRE_EJUKEBOX,
-	[EIOCBQUEUED]		= LUSTRE_EIOCBQUEUED,
-
-	/*
-	 * The ELDLM errors are Lustre specific errors whose ranges
-	 * lie in the middle of the above system errors. The ELDLM
-	 * numbers must be preserved to avoid LU-9793.
-	 */
-	[ELDLM_LOCK_CHANGED]	= ELDLM_LOCK_CHANGED,
-	[ELDLM_LOCK_ABORTED]	= ELDLM_LOCK_ABORTED,
-	[ELDLM_LOCK_REPLACED]	= ELDLM_LOCK_REPLACED,
-	[ELDLM_NO_LOCK_DATA]	= ELDLM_NO_LOCK_DATA,
-	[ELDLM_LOCK_WOULDBLOCK]	= ELDLM_LOCK_WOULDBLOCK,
-	[ELDLM_NAMESPACE_EXISTS]= ELDLM_NAMESPACE_EXISTS,
-	[ELDLM_BAD_NAMESPACE]	= ELDLM_BAD_NAMESPACE
+	[EIOCBQUEUED]		= LUSTRE_EIOCBQUEUED
 };
 
 static int lustre_errno_ntoh_mapping[] = {
@@ -345,20 +331,7 @@ static int lustre_errno_ntoh_mapping[] = {
 	[LUSTRE_ESERVERFAULT]		= ESERVERFAULT,
 	[LUSTRE_EBADTYPE]		= EBADTYPE,
 	[LUSTRE_EJUKEBOX]		= EJUKEBOX,
-	[LUSTRE_EIOCBQUEUED]		= EIOCBQUEUED,
-
-	/*
-	 * The ELDLM errors are Lustre specific errors whose ranges
-	 * lie in the middle of the above system errors. The ELDLM
-	 * numbers must be preserved to avoid LU-9793.
-	 */
-	[ELDLM_LOCK_CHANGED]		= ELDLM_LOCK_CHANGED,
-	[ELDLM_LOCK_ABORTED]		= ELDLM_LOCK_ABORTED,
-	[ELDLM_LOCK_REPLACED]		= ELDLM_LOCK_REPLACED,
-	[ELDLM_NO_LOCK_DATA]		= ELDLM_NO_LOCK_DATA,
-	[ELDLM_LOCK_WOULDBLOCK]		= ELDLM_LOCK_WOULDBLOCK,
-	[ELDLM_NAMESPACE_EXISTS]	= ELDLM_NAMESPACE_EXISTS,
-	[ELDLM_BAD_NAMESPACE]		= ELDLM_BAD_NAMESPACE
+	[LUSTRE_EIOCBQUEUED]		= EIOCBQUEUED
 };
 
 unsigned int lustre_errno_hton(unsigned int h)
