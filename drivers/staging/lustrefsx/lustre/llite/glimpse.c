@@ -23,13 +23,14 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
  * Lustre is a trademark of Sun Microsystems, Inc.
  *
- * glimpse code used by vvp (and other Lustre clients in the future).
+ * glimpse code shared between vvp and liblustre (and other Lustre clients in
+ * the future).
  *
  *   Author: Nikita Danilov <nikita.danilov@sun.com>
  *   Author: Oleg Drokin <oleg.drokin@sun.com>
@@ -91,7 +92,7 @@ int cl_glimpse_lock(const struct lu_env *env, struct cl_io *io,
 	CDEBUG(D_DLMTRACE, "Glimpsing inode "DFID"\n", PFID(fid));
 
 	/* NOTE: this looks like DLM lock request, but it may
-	 *       not be one. Due to CEF_GLIMPSE flag (translated
+	 *       not be one. Due to CEF_ASYNC flag (translated
 	 *       to LDLM_FL_HAS_INTENT by osc), this is
 	 *       glimpse request, that won't revoke any
 	 *       conflicting DLM locks held. Instead,
@@ -106,10 +107,14 @@ int cl_glimpse_lock(const struct lu_env *env, struct cl_io *io,
 	*descr = whole_file;
 	descr->cld_obj = clob;
 	descr->cld_mode = CLM_READ;
-	descr->cld_enq_flags = CEF_GLIMPSE | CEF_MUST;
+	descr->cld_enq_flags = CEF_ASYNC | CEF_MUST;
 	if (agl)
-		descr->cld_enq_flags |= CEF_SPECULATIVE | CEF_NONBLOCK;
+		descr->cld_enq_flags |= CEF_AGL;
 	/*
+	 * CEF_ASYNC is used because glimpse sub-locks cannot
+	 * deadlock (because they never conflict with other
+	 * locks) and, hence, can be enqueued out-of-order.
+	 *
 	 * CEF_MUST protects glimpse lock from conversion into
 	 * a lockless mode.
 	 */
@@ -135,20 +140,7 @@ int cl_glimpse_lock(const struct lu_env *env, struct cl_io *io,
 	RETURN(result);
 }
 
-/**
- * Get an IO environment for special operations such as glimpse locks and
- * manually requested locks (ladvise lockahead)
- *
- * \param[in]  inode	inode the operation is being performed on
- * \param[out] envout	thread specific execution environment
- * \param[out] ioout	client io description
- * \param[out] refcheck	reference check
- *
- * \retval 1		on success
- * \retval 0		not a regular file, cannot get environment
- * \retval negative	negative errno on error
- */
-int cl_io_get(struct inode *inode, struct lu_env **envout,
+static int cl_io_get(struct inode *inode, struct lu_env **envout,
 		     struct cl_io **ioout, __u16 *refcheck)
 {
 	struct lu_env		*env;
@@ -186,37 +178,31 @@ int cl_glimpse_size0(struct inode *inode, int agl)
          */
         struct lu_env          *env = NULL;
         struct cl_io           *io  = NULL;
-	__u16			refcheck;
-	int			retried = 0;
-	int                     result;
+	__u16                   refcheck;
+        int                     result;
 
-	ENTRY;
+        ENTRY;
 
-	result = cl_io_get(inode, &env, &io, &refcheck);
-	if (result <= 0)
-		RETURN(result);
-
-	do {
-		io->ci_ndelay_tried = retried++;
-		io->ci_ndelay = io->ci_verify_layout = 1;
-		result = cl_io_init(env, io, CIT_GLIMPSE, io->ci_obj);
-		if (result > 0) {
-			/*
-			 * nothing to do for this io. This currently happens
-			 * when stripe sub-object's are not yet created.
-			 */
-			result = io->ci_result;
-		} else if (result == 0) {
-			result = cl_glimpse_lock(env, io, inode, io->ci_obj,
-						 agl);
-			if (!agl && result == -EWOULDBLOCK)
-				io->ci_need_restart = 1;
-		}
+        result = cl_io_get(inode, &env, &io, &refcheck);
+        if (result > 0) {
+	again:
+		io->ci_verify_layout = 1;
+                result = cl_io_init(env, io, CIT_MISC, io->ci_obj);
+                if (result > 0)
+                        /*
+                         * nothing to do for this io. This currently happens
+                         * when stripe sub-object's are not yet created.
+                         */
+                        result = io->ci_result;
+                else if (result == 0)
+                        result = cl_glimpse_lock(env, io, inode, io->ci_obj,
+                                                 agl);
 
 		OBD_FAIL_TIMEOUT(OBD_FAIL_GLIMPSE_DELAY, 2);
-		cl_io_fini(env, io);
-	} while (unlikely(io->ci_need_restart));
-
-	cl_env_put(env, &refcheck);
+                cl_io_fini(env, io);
+		if (unlikely(io->ci_need_restart))
+			goto again;
+		cl_env_put(env, &refcheck);
+	}
 	RETURN(result);
 }
