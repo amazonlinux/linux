@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2015, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -69,7 +69,7 @@ int ptlrpcd_start(struct ptlrpcd_ctl *pc);
 
 /* client.c */
 void ptlrpc_at_adj_net_latency(struct ptlrpc_request *req,
-			       timeout_t service_timeout);
+			       unsigned int service_time);
 struct ptlrpc_bulk_desc *ptlrpc_new_bulk(unsigned npages, unsigned max_brw,
 					 enum ptlrpc_bulk_op_type type,
 					 unsigned portal,
@@ -83,7 +83,7 @@ void ptlrpc_init_xid(void);
 void ptlrpc_set_add_new_req(struct ptlrpcd_ctl *pc,
 			    struct ptlrpc_request *req);
 int ptlrpc_expired_set(void *data);
-time64_t ptlrpc_set_next_timeout(struct ptlrpc_request_set *);
+int ptlrpc_set_next_timeout(struct ptlrpc_request_set *);
 void ptlrpc_resend_req(struct ptlrpc_request *request);
 void ptlrpc_set_bulk_mbits(struct ptlrpc_request *req);
 void ptlrpc_assign_next_xid_nolock(struct ptlrpc_request *req);
@@ -97,8 +97,7 @@ void ptlrpc_exit_portals(void);
 void ptlrpc_request_handle_notconn(struct ptlrpc_request *);
 void lustre_assert_wire_constants(void);
 int ptlrpc_import_in_recovery(struct obd_import *imp);
-int ptlrpc_set_import_discon(struct obd_import *imp, __u32 conn_cnt,
-			     bool invalid);
+int ptlrpc_set_import_discon(struct obd_import *imp, __u32 conn_cnt);
 void ptlrpc_handle_failed_import(struct obd_import *imp);
 int ptlrpc_replay_next(struct obd_import *imp, int *inflight);
 void ptlrpc_initiate_recovery(struct obd_import *imp);
@@ -106,18 +105,15 @@ void ptlrpc_initiate_recovery(struct obd_import *imp);
 int lustre_unpack_req_ptlrpc_body(struct ptlrpc_request *req, int offset);
 int lustre_unpack_rep_ptlrpc_body(struct ptlrpc_request *req, int offset);
 
-int ptlrpc_sysfs_register_service(struct kset *parent,
-				  struct ptlrpc_service *svc);
-void ptlrpc_sysfs_unregister_service(struct ptlrpc_service *svc);
-
-void ptlrpc_ldebugfs_register_service(struct dentry *debugfs_entry,
-				      struct ptlrpc_service *svc);
 #ifdef CONFIG_PROC_FS
+void ptlrpc_lprocfs_register_service(struct proc_dir_entry *proc_entry,
+                                     struct ptlrpc_service *svc);
 void ptlrpc_lprocfs_unregister_service(struct ptlrpc_service *svc);
 void ptlrpc_lprocfs_rpc_sent(struct ptlrpc_request *req, long amount);
 void ptlrpc_lprocfs_do_request_stat (struct ptlrpc_request *req,
                                      long q_usec, long work_usec);
 #else
+#define ptlrpc_lprocfs_register_service(params...) do{}while(0)
 #define ptlrpc_lprocfs_unregister_service(params...) do{}while(0)
 #define ptlrpc_lprocfs_rpc_sent(params...) do{}while(0)
 #define ptlrpc_lprocfs_do_request_stat(params...) do{}while(0)
