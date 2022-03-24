@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -152,6 +152,7 @@ struct cfs_hash_ops pool_hash_operations = {
 };
 
 #ifdef CONFIG_PROC_FS
+/* ifdef needed for liblustre support */
 /*
  * pool /proc seq_file methods
  */
@@ -181,11 +182,14 @@ static void *pool_proc_next(struct seq_file *s, void *v, loff_t *pos)
 
         /* iterate to find a non empty entry */
         prev_idx = iter->idx;
+	down_read(&pool_tgt_rw_sem(iter->pool));
         iter->idx++;
-	if (iter->idx >= pool_tgt_count(iter->pool)) {
+        if (iter->idx == pool_tgt_count(iter->pool)) {
                 iter->idx = prev_idx; /* we stay on the last entry */
+		up_read(&pool_tgt_rw_sem(iter->pool));
                 return NULL;
         }
+	up_read(&pool_tgt_rw_sem(iter->pool));
         (*pos)++;
         /* return != NULL to continue */
         return iter;
@@ -216,7 +220,6 @@ static void *pool_proc_start(struct seq_file *s, loff_t *pos)
          * we can free it at stop() */
         /* /!\ do not forget to restore it to pool before freeing it */
         s->private = iter;
-	down_read(&pool_tgt_rw_sem(pool));
         if (*pos > 0) {
                 loff_t i;
                 void *ptr;
@@ -238,7 +241,6 @@ static void pool_proc_stop(struct seq_file *s, void *v)
          * calling start() method (see seq_read() from fs/seq_file.c)
          * we have to free only if s->private is an iterator */
         if ((iter) && (iter->magic == POOL_IT_MAGIC)) {
-		up_read(&pool_tgt_rw_sem(iter->pool));
                 /* we restore s->private so next call to pool_proc_start()
                  * will work */
                 s->private = iter->pool;
@@ -257,7 +259,9 @@ static int pool_proc_show(struct seq_file *s, void *v)
 	LASSERT(iter->pool != NULL);
 	LASSERT(iter->idx <= pool_tgt_count(iter->pool));
 
+	down_read(&pool_tgt_rw_sem(iter->pool));
         tgt = pool_tgt(iter->pool, iter->idx);
+	up_read(&pool_tgt_rw_sem(iter->pool));
         if (tgt)
                 seq_printf(s, "%s\n", obd_uuid2str(&(tgt->ltd_uuid)));
 
@@ -283,7 +287,7 @@ static int pool_proc_open(struct inode *inode, struct file *file)
         return rc;
 }
 
-const static struct proc_ops pool_proc_operations = {
+static struct proc_ops pool_proc_operations = {
 	.proc_open	= pool_proc_open,
 	.proc_read	= seq_read,
 	.proc_lseek	= seq_lseek,
@@ -545,7 +549,7 @@ int lov_pool_add(struct obd_device *obd, char *poolname, char *ostname)
 
 
         /* search ost in lov array */
-	lov_tgts_getref(obd);
+        obd_getref(obd);
         for (lov_idx = 0; lov_idx < lov->desc.ld_tgt_count; lov_idx++) {
                 if (!lov->lov_tgts[lov_idx])
                         continue;
@@ -566,10 +570,9 @@ int lov_pool_add(struct obd_device *obd, char *poolname, char *ostname)
 
         EXIT;
 out:
-	lov_tgts_putref(obd);
-	lov_pool_putref(pool);
-
-	return rc;
+        obd_putref(obd);
+        lov_pool_putref(pool);
+        return rc;
 }
 
 int lov_pool_remove(struct obd_device *obd, char *poolname, char *ostname)
@@ -589,7 +592,7 @@ int lov_pool_remove(struct obd_device *obd, char *poolname, char *ostname)
 
         obd_str2uuid(&ost_uuid, ostname);
 
-	lov_tgts_getref(obd);
+        obd_getref(obd);
         /* search ost in lov array, to get index */
         for (lov_idx = 0; lov_idx < lov->desc.ld_tgt_count; lov_idx++) {
                 if (!lov->lov_tgts[lov_idx])
@@ -611,8 +614,7 @@ int lov_pool_remove(struct obd_device *obd, char *poolname, char *ostname)
 
         EXIT;
 out:
-	lov_tgts_putref(obd);
-	lov_pool_putref(pool);
-
-	return rc;
+        obd_putref(obd);
+        lov_pool_putref(pool);
+        return rc;
 }
