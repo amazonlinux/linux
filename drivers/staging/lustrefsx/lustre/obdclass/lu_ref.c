@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -65,14 +65,14 @@
 static struct kmem_cache *lu_ref_link_kmem;
 
 static struct lu_kmem_descr lu_ref_caches[] = {
-	{
-		.ckd_cache = &lu_ref_link_kmem,
-		.ckd_name  = "lu_ref_link_kmem",
-		.ckd_size  = sizeof(struct lu_ref_link)
-	},
-	{
-		.ckd_cache = NULL
-	}
+        {
+                .ckd_cache = &lu_ref_link_kmem,
+                .ckd_name  = "lu_ref_link_kmem",
+                .ckd_size  = sizeof (struct lu_ref_link)
+        },
+        {
+                .ckd_cache = NULL
+        }
 };
 
 /**
@@ -90,18 +90,18 @@ static struct lu_ref lu_ref_marker = {
 
 void lu_ref_print(const struct lu_ref *ref)
 {
-	struct lu_ref_link *link;
+        struct lu_ref_link *link;
 
-	CERROR("lu_ref: %p %d %d %s:%d\n",
-	       ref, ref->lf_refs, ref->lf_failed, ref->lf_func, ref->lf_line);
+        CERROR("lu_ref: %p %d %d %s:%d\n",
+               ref, ref->lf_refs, ref->lf_failed, ref->lf_func, ref->lf_line);
 	list_for_each_entry(link, &ref->lf_list, ll_linkage) {
-		CERROR("     link: %s %p\n", link->ll_scope, link->ll_source);
-	}
+                CERROR("     link: %s %p\n", link->ll_scope, link->ll_source);
+        }
 }
 
 static int lu_ref_is_marker(const struct lu_ref *ref)
 {
-	return ref == &lu_ref_marker;
+        return (ref == &lu_ref_marker);
 }
 
 void lu_ref_print_all(void)
@@ -146,19 +146,19 @@ void lu_ref_fini(struct lu_ref *ref)
 EXPORT_SYMBOL(lu_ref_fini);
 
 static struct lu_ref_link *lu_ref_add_context(struct lu_ref *ref,
-					      int flags,
-					      const char *scope,
-					      const void *source)
+                                              int flags,
+                                              const char *scope,
+                                              const void *source)
 {
-	struct lu_ref_link *link;
+        struct lu_ref_link *link;
 
-	link = NULL;
-	if (lu_ref_link_kmem != NULL) {
-		OBD_SLAB_ALLOC_PTR_GFP(link, lu_ref_link_kmem, flags);
-		if (link != NULL) {
-			link->ll_ref = ref;
-			link->ll_scope = scope;
-			link->ll_source = source;
+        link = NULL;
+        if (lu_ref_link_kmem != NULL) {
+                OBD_SLAB_ALLOC_PTR_GFP(link, lu_ref_link_kmem, flags);
+                if (link != NULL) {
+                        link->ll_ref    = ref;
+                        link->ll_scope  = scope;
+                        link->ll_source = source;
 			spin_lock(&ref->lf_guard);
 			list_add_tail(&link->ll_linkage, &ref->lf_list);
 			ref->lf_refs++;
@@ -207,10 +207,9 @@ void lu_ref_add_atomic(struct lu_ref *ref, const char *scope,
 EXPORT_SYMBOL(lu_ref_add_atomic);
 
 static inline int lu_ref_link_eq(const struct lu_ref_link *link,
-				 const char *scope,
-				 const void *source)
+                                 const char *scope, const void *source)
 {
-	return link->ll_source == source && !strcmp(link->ll_scope, scope);
+        return link->ll_source == source && !strcmp(link->ll_scope, scope);
 }
 
 /**
@@ -224,22 +223,22 @@ static unsigned lu_ref_chain_max_length = 127;
 static struct lu_ref_link *lu_ref_find(struct lu_ref *ref, const char *scope,
                                        const void *source)
 {
-	struct lu_ref_link *link;
-	unsigned int iterations;
+        struct lu_ref_link *link;
+        unsigned            iterations;
 
-	iterations = 0;
+        iterations = 0;
 	list_for_each_entry(link, &ref->lf_list, ll_linkage) {
-		++iterations;
-		if (lu_ref_link_eq(link, scope, source)) {
-			if (iterations > lu_ref_chain_max_length) {
-				CWARN("Long lu_ref chain %d \"%s\":%p\n",
-				      iterations, scope, source);
-				lu_ref_chain_max_length = iterations * 3 / 2;
-			}
-			return link;
-		}
-	}
-	return NULL;
+                ++iterations;
+                if (lu_ref_link_eq(link, scope, source)) {
+                        if (iterations > lu_ref_chain_max_length) {
+                                CWARN("Long lu_ref chain %d \"%s\":%p\n",
+                                      iterations, scope, source);
+                                lu_ref_chain_max_length = iterations * 3 / 2;
+                        }
+                        return link;
+                }
+        }
+        return NULL;
 }
 
 void lu_ref_del(struct lu_ref *ref, const char *scope, const void *source)
@@ -303,10 +302,10 @@ static void *lu_ref_seq_start(struct seq_file *seq, loff_t *pos)
 
 static void *lu_ref_seq_next(struct seq_file *seq, void *p, loff_t *pos)
 {
-	struct lu_ref *ref = p;
-	struct lu_ref *next;
+        struct lu_ref *ref = p;
+        struct lu_ref *next;
 
-	LASSERT(seq->private == p);
+        LASSERT(seq->private == p);
 	LASSERT(!list_empty(&ref->lf_linkage));
 
 	spin_lock(&lu_ref_refs_guard);
@@ -323,7 +322,7 @@ static void *lu_ref_seq_next(struct seq_file *seq, void *p, loff_t *pos)
 
 static void lu_ref_seq_stop(struct seq_file *seq, void *p)
 {
-	/* Nothing to do */
+        /* Nothing to do */
 }
 
 
@@ -341,19 +340,19 @@ static int lu_ref_seq_show(struct seq_file *seq, void *p)
 
 	/* print the entry */
 	spin_lock(&next->lf_guard);
-	seq_printf(seq, "lu_ref: %p %d %d %s:%d\n",
-		   next, next->lf_refs, next->lf_failed,
-		   next->lf_func, next->lf_line);
-	if (next->lf_refs > 64) {
-		seq_puts(seq, "  too many references, skip\n");
-	} else {
-		struct lu_ref_link *link;
-		int i = 0;
+        seq_printf(seq, "lu_ref: %p %d %d %s:%d\n",
+                   next, next->lf_refs, next->lf_failed,
+                   next->lf_func, next->lf_line);
+        if (next->lf_refs > 64) {
+                seq_printf(seq, "  too many references, skip\n");
+        } else {
+                struct lu_ref_link *link;
+                int i = 0;
 
 		list_for_each_entry(link, &next->lf_list, ll_linkage)
-			seq_printf(seq, "  #%d link: %s %p\n",
-				   i++, link->ll_scope, link->ll_source);
-	}
+                        seq_printf(seq, "  #%d link: %s %p\n",
+                                   i++, link->ll_scope, link->ll_source);
+        }
 	spin_unlock(&next->lf_guard);
 	spin_unlock(&lu_ref_refs_guard);
 
@@ -361,10 +360,10 @@ static int lu_ref_seq_show(struct seq_file *seq, void *p)
 }
 
 static struct seq_operations lu_ref_seq_ops = {
-	.start = lu_ref_seq_start,
-	.stop  = lu_ref_seq_stop,
-	.next  = lu_ref_seq_next,
-	.show  = lu_ref_seq_show
+        .start = lu_ref_seq_start,
+        .stop  = lu_ref_seq_stop,
+        .next  = lu_ref_seq_next,
+        .show  = lu_ref_seq_show
 };
 
 static int lu_ref_seq_open(struct inode *inode, struct file *file)
@@ -381,16 +380,15 @@ static int lu_ref_seq_open(struct inode *inode, struct file *file)
 			list_add(&marker->lf_linkage, &lu_ref_refs);
 		spin_unlock(&lu_ref_refs_guard);
 
-		if (result == 0) {
-			struct seq_file *f = file->private_data;
+                if (result == 0) {
+                        struct seq_file *f = file->private_data;
+                        f->private = marker;
+                } else {
+                        seq_release(inode, file);
+                }
+        }
 
-			f->private = marker;
-		} else {
-			seq_release(inode, file);
-		}
-	}
-
-	return result;
+        return result;
 }
 
 static int lu_ref_seq_release(struct inode *inode, struct file *file)
@@ -405,11 +403,11 @@ static int lu_ref_seq_release(struct inode *inode, struct file *file)
 }
 
 static struct file_operations lu_ref_dump_fops = {
-	.owner   = THIS_MODULE,
-	.open    = lu_ref_seq_open,
-	.read    = seq_read,
-	.llseek  = seq_lseek,
-	.release = lu_ref_seq_release
+        .owner   = THIS_MODULE,
+        .open    = lu_ref_seq_open,
+        .read    = seq_read,
+        .llseek  = seq_lseek,
+        .release = lu_ref_seq_release
 };
 
 #endif /* CONFIG_PROC_FS */
@@ -421,26 +419,26 @@ int lu_ref_global_init(void)
 	CDEBUG(D_CONSOLE,
 	       "lu_ref tracking is enabled. Performance isn't.\n");
 
-	result = lu_kmem_init(lu_ref_caches);
+        result = lu_kmem_init(lu_ref_caches);
 
 #ifdef CONFIG_PROC_FS
-	if (result == 0) {
-		result = lprocfs_seq_create(proc_lustre_root, "lu_refs",
-					    0444, &lu_ref_dump_fops, NULL);
-		if (result)
-			lu_kmem_fini(lu_ref_caches);
-	}
+        if (result == 0) {
+                result = lprocfs_seq_create(proc_lustre_root, "lu_refs",
+                                            0444, &lu_ref_dump_fops, NULL);
+                if (result)
+                        lu_kmem_fini(lu_ref_caches);
+        }
 #endif /* CONFIG_PROC_FS */
 
-	return result;
+        return result;
 }
 
 void lu_ref_global_fini(void)
 {
 #ifdef CONFIG_PROC_FS
-	lprocfs_remove_proc_entry("lu_refs", proc_lustre_root);
+        lprocfs_remove_proc_entry("lu_refs", proc_lustre_root);
 #endif /* CONFIG_PROC_FS */
-	lu_kmem_fini(lu_ref_caches);
+        lu_kmem_fini(lu_ref_caches);
 }
 
 #endif /* USE_LU_REF */
