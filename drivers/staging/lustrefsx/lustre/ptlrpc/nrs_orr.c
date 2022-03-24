@@ -20,7 +20,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2013, 2017, Intel Corporation.
+ * Copyright (c) 2013, 2016, Intel Corporation.
  *
  * Copyright 2012 Xyratex Technology Limited
  */
@@ -45,6 +45,7 @@
 #include <obd_support.h>
 #include <obd_class.h>
 #include <lustre_net.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_req_layout.h>
 #include "ptlrpc_internal.h"
 
@@ -1160,8 +1161,10 @@ static void nrs_orr_req_stop(struct ptlrpc_nrs_policy *policy,
 }
 
 /**
- * debugfs interface
+ * lprocfs interface
  */
+
+#ifdef CONFIG_PROC_FS
 
 /**
  * This allows to bundle the policy name into the lprocfs_vars::data pointer
@@ -1294,7 +1297,7 @@ ptlrpc_lprocfs_nrs_orr_quantum_seq_write(struct file *file,
         if (count > (sizeof(kernbuf) - 1))
                 return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 
         kernbuf[count] = '\0';
@@ -1307,9 +1310,8 @@ ptlrpc_lprocfs_nrs_orr_quantum_seq_write(struct file *file,
 	val = lprocfs_find_named_value(kernbuf, NRS_LPROCFS_QUANTUM_NAME_REG,
 				       &count_copy);
 	if (val != kernbuf) {
-		rc = kstrtol(val, 10, &quantum_reg);
-		if (rc)
-			return rc;
+		quantum_reg = simple_strtol(val, NULL, 10);
+
 		queue |= PTLRPC_NRS_QUEUE_REG;
 	}
 
@@ -1324,9 +1326,7 @@ ptlrpc_lprocfs_nrs_orr_quantum_seq_write(struct file *file,
 		if (!nrs_svc_has_hp(svc))
 			return -ENODEV;
 
-		rc = kstrtol(val, 10, &quantum_hp);
-		if (rc)
-			return rc;
+		quantum_hp = simple_strtol(val, NULL, 10);
 
 		queue |= PTLRPC_NRS_QUEUE_HP;
 	}
@@ -1336,9 +1336,10 @@ ptlrpc_lprocfs_nrs_orr_quantum_seq_write(struct file *file,
 	 * value
 	 */
 	if (queue == 0) {
-		rc = kstrtol(kernbuf, 10, &quantum_reg);
-		if (rc)
-			return rc;
+		if (!isdigit(kernbuf[0]))
+			return -EINVAL;
+
+		quantum_reg = simple_strtol(kernbuf, NULL, 10);
 
 		queue = PTLRPC_NRS_QUEUE_REG;
 
@@ -1386,8 +1387,7 @@ ptlrpc_lprocfs_nrs_orr_quantum_seq_write(struct file *file,
 
 	return rc == -ENODEV && rc2 == -ENODEV ? -ENODEV : count;
 }
-
-LDEBUGFS_SEQ_FOPS(ptlrpc_lprocfs_nrs_orr_quantum);
+LPROC_SEQ_FOPS(ptlrpc_lprocfs_nrs_orr_quantum);
 
 #define LPROCFS_NRS_OFF_NAME_REG		"reg_offset_type:"
 #define LPROCFS_NRS_OFF_NAME_HP			"hp_offset_type:"
@@ -1512,7 +1512,7 @@ ptlrpc_lprocfs_nrs_orr_offset_type_seq_write(struct file *file,
         if (count > (sizeof(kernbuf) - 1))
                 return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 
         kernbuf[count] = '\0';
@@ -1607,8 +1607,7 @@ ptlrpc_lprocfs_nrs_orr_offset_type_seq_write(struct file *file,
 
 	return rc == -ENODEV && rc2 == -ENODEV ? -ENODEV : count;
 }
-
-LDEBUGFS_SEQ_FOPS(ptlrpc_lprocfs_nrs_orr_offset_type);
+LPROC_SEQ_FOPS(ptlrpc_lprocfs_nrs_orr_offset_type);
 
 #define NRS_LPROCFS_REQ_SUPP_NAME_REG		"reg_supported:"
 #define NRS_LPROCFS_REQ_SUPP_NAME_HP		"hp_supported:"
@@ -1773,7 +1772,7 @@ ptlrpc_lprocfs_nrs_orr_supported_seq_write(struct file *file,
         if (count > (sizeof(kernbuf) - 1))
                 return -EINVAL;
 
-	if (copy_from_user(kernbuf, buffer, count))
+	if (lprocfs_copy_from_user(file, kernbuf, buffer, count))
 		return -EFAULT;
 
         kernbuf[count] = '\0';
@@ -1859,14 +1858,13 @@ ptlrpc_lprocfs_nrs_orr_supported_seq_write(struct file *file,
 
 	return rc == -ENODEV && rc2 == -ENODEV ? -ENODEV : count;
 }
-
-LDEBUGFS_SEQ_FOPS(ptlrpc_lprocfs_nrs_orr_supported);
+LPROC_SEQ_FOPS(ptlrpc_lprocfs_nrs_orr_supported);
 
 static int nrs_orr_lprocfs_init(struct ptlrpc_service *svc)
 {
 	int	i;
 
-	struct ldebugfs_vars nrs_orr_lprocfs_vars[] = {
+	struct lprocfs_vars nrs_orr_lprocfs_vars[] = {
 		{ .name		= "nrs_orr_quantum",
 		  .fops		= &ptlrpc_lprocfs_nrs_orr_quantum_fops	},
 		{ .name		= "nrs_orr_offset_type",
@@ -1876,7 +1874,7 @@ static int nrs_orr_lprocfs_init(struct ptlrpc_service *svc)
 		{ NULL }
 	};
 
-	if (IS_ERR_OR_NULL(svc->srv_debugfs_entry))
+	if (svc->srv_procroot == NULL)
 		return 0;
 
 	lprocfs_orr_data.svc = svc;
@@ -1884,9 +1882,20 @@ static int nrs_orr_lprocfs_init(struct ptlrpc_service *svc)
 	for (i = 0; i < ARRAY_SIZE(nrs_orr_lprocfs_vars); i++)
 		nrs_orr_lprocfs_vars[i].data = &lprocfs_orr_data;
 
-	return ldebugfs_add_vars(svc->srv_debugfs_entry, nrs_orr_lprocfs_vars,
-				 NULL);
+	return lprocfs_add_vars(svc->srv_procroot, nrs_orr_lprocfs_vars, NULL);
 }
+
+static void nrs_orr_lprocfs_fini(struct ptlrpc_service *svc)
+{
+	if (svc->srv_procroot == NULL)
+		return;
+
+	lprocfs_remove_proc_entry("nrs_orr_quantum", svc->srv_procroot);
+	lprocfs_remove_proc_entry("nrs_orr_offset_type", svc->srv_procroot);
+	lprocfs_remove_proc_entry("nrs_orr_supported", svc->srv_procroot);
+}
+
+#endif /* CONFIG_PROC_FS */
 
 static const struct ptlrpc_nrs_pol_ops nrs_orr_ops = {
 	.op_policy_init		= nrs_orr_init,
@@ -1899,7 +1908,10 @@ static const struct ptlrpc_nrs_pol_ops nrs_orr_ops = {
 	.op_req_enqueue		= nrs_orr_req_add,
 	.op_req_dequeue		= nrs_orr_req_del,
 	.op_req_stop		= nrs_orr_req_stop,
+#ifdef CONFIG_PROC_FS
 	.op_lprocfs_init	= nrs_orr_lprocfs_init,
+	.op_lprocfs_fini	= nrs_orr_lprocfs_fini,
+#endif
 };
 
 struct ptlrpc_nrs_pol_conf nrs_conf_orr = {
@@ -1914,11 +1926,14 @@ struct ptlrpc_nrs_pol_conf nrs_conf_orr = {
  *
  * TRR reuses much of the functions and data structures of ORR
  */
+
+#ifdef CONFIG_PROC_FS
+
 static int nrs_trr_lprocfs_init(struct ptlrpc_service *svc)
 {
 	int	i;
 
-	struct ldebugfs_vars nrs_trr_lprocfs_vars[] = {
+	struct lprocfs_vars nrs_trr_lprocfs_vars[] = {
 		{ .name		= "nrs_trr_quantum",
 		  .fops		= &ptlrpc_lprocfs_nrs_orr_quantum_fops },
 		{ .name		= "nrs_trr_offset_type",
@@ -1928,7 +1943,7 @@ static int nrs_trr_lprocfs_init(struct ptlrpc_service *svc)
 		{ NULL }
 	};
 
-	if (IS_ERR_OR_NULL(svc->srv_debugfs_entry))
+	if (svc->srv_procroot == NULL)
 		return 0;
 
 	lprocfs_trr_data.svc = svc;
@@ -1936,9 +1951,20 @@ static int nrs_trr_lprocfs_init(struct ptlrpc_service *svc)
 	for (i = 0; i < ARRAY_SIZE(nrs_trr_lprocfs_vars); i++)
 		nrs_trr_lprocfs_vars[i].data = &lprocfs_trr_data;
 
-	return ldebugfs_add_vars(svc->srv_debugfs_entry, nrs_trr_lprocfs_vars,
-				 NULL);
+	return lprocfs_add_vars(svc->srv_procroot, nrs_trr_lprocfs_vars, NULL);
 }
+
+static void nrs_trr_lprocfs_fini(struct ptlrpc_service *svc)
+{
+	if (svc->srv_procroot == NULL)
+		return;
+
+	lprocfs_remove_proc_entry("nrs_trr_quantum", svc->srv_procroot);
+	lprocfs_remove_proc_entry("nrs_trr_offset_type", svc->srv_procroot);
+	lprocfs_remove_proc_entry("nrs_trr_supported", svc->srv_procroot);
+}
+
+#endif /* CONFIG_PROC_FS */
 
 /**
  * Reuse much of the ORR functionality for TRR.
@@ -1954,7 +1980,10 @@ static const struct ptlrpc_nrs_pol_ops nrs_trr_ops = {
 	.op_req_enqueue		= nrs_orr_req_add,
 	.op_req_dequeue		= nrs_orr_req_del,
 	.op_req_stop		= nrs_orr_req_stop,
+#ifdef CONFIG_PROC_FS
 	.op_lprocfs_init	= nrs_trr_lprocfs_init,
+	.op_lprocfs_fini	= nrs_trr_lprocfs_fini,
+#endif
 };
 
 struct ptlrpc_nrs_pol_conf nrs_conf_trr = {
