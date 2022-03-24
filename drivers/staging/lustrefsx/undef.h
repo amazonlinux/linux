@@ -23,8 +23,14 @@
 /* extened attributes for ldiskfs */
 #undef CONFIG_LDISKFS_FS_XATTR
 
+/* Max LNET payload */
+#undef CONFIG_LNET_MAX_PAYLOAD
+
 /* enable invariant checking */
 #undef CONFIG_LUSTRE_DEBUG_EXPENSIVE_CHECK
+
+/* IOCTL Buffer Size */
+#undef CONFIG_LUSTRE_OBD_MAX_IOCTL_BUFFER
 
 /* kernel has cpu affinity support */
 #undef CPU_AFFINITY
@@ -50,14 +56,8 @@
 /* do data checksums */
 #undef ENABLE_CHECKSUM
 
-/* enable flock by default */
-#undef ENABLE_FLOCK
-
 /* Use the Pinger */
 #undef ENABLE_PINGER
-
-/* aes-sha2 is supported by krb5 */
-#undef HAVE_AES_SHA2_SUPPORT
 
 /* Define to 1 if you have the <asm/types.h> header file. */
 #undef HAVE_ASM_TYPES_H
@@ -76,12 +76,6 @@
 
 /* 'bio_integrity_enabled' is available */
 #undef HAVE_BIO_INTEGRITY_ENABLED
-
-/* kernel has bio_integrity_prep_fn */
-#undef HAVE_BIO_INTEGRITY_PREP_FN
-
-/* bio_integrity_payload.bip_iter exist */
-#undef HAVE_BIP_ITER_BIO_INTEGRITY_PAYLOAD
 
 /* 'bi_bdev' is available */
 #undef HAVE_BI_BDEV
@@ -107,17 +101,8 @@
 /* blk_queue_max_segments is defined */
 #undef HAVE_BLK_QUEUE_MAX_SEGMENTS
 
-/* kernel hash_64() is broken */
-#undef HAVE_BROKEN_HASH_64
-
 /* kernel has struct bvec_iter */
 #undef HAVE_BVEC_ITER
-
-/* struct cache_detail has writers */
-#undef HAVE_CACHE_DETAIL_WRITERS
-
-/* if cache_detail->hash_lock is a spinlock */
-#undef HAVE_CACHE_HASH_SPINLOCK
 
 /* cache_head has hlist cache_list */
 #undef HAVE_CACHE_HEAD_HLIST
@@ -131,23 +116,23 @@
 /* kernel has clean_bdev_aliases */
 #undef HAVE_CLEAN_BDEV_ALIASES
 
-/* 'clear_and_wake_up_bit' is available */
-#undef HAVE_CLEAR_AND_WAKE_UP_BIT
-
 /* have clear_inode */
 #undef HAVE_CLEAR_INODE
 
 /* compat rdma found */
 #undef HAVE_COMPAT_RDMA
 
+/* cpumap_print_to_pagebuf is available */
+#undef HAVE_CPUMASK_PRINT_TO_PAGEBUF
+
 /* kernel compiled with CRC32 functions */
 #undef HAVE_CRC32
 
+/* struct cred has member tgcred */
+#undef HAVE_CRED_TGCRED
+
 /* crypto hash helper functions are available */
 #undef HAVE_CRYPTO_HASH_HELPERS
-
-/* 'CRYPTO_MAX_ALG_NAME' is 128 */
-#undef HAVE_CRYPTO_MAX_ALG_NAME_128
 
 /* current_time() has replaced CURRENT_TIME */
 #undef HAVE_CURRENT_TIME
@@ -166,9 +151,6 @@
 
 /* dentry_open uses struct path as first argument */
 #undef HAVE_DENTRY_OPEN_USE_PATH
-
-/* DES3 enctype is supported by krb5 */
-#undef HAVE_DES3_SUPPORT
 
 /* direct_IO need 2 arguments */
 #undef HAVE_DIRECTIO_2ARGS
@@ -250,9 +232,6 @@
 
 /* d_delete first parameter declared is not const */
 #undef HAVE_D_DELETE_CONST
-
-/* d_hash_and_lookup is exported by the kernel */
-#undef HAVE_D_HASH_AND_LOOKUP
 
 /* have d_make_root */
 #undef HAVE_D_MAKE_ROOT
@@ -341,14 +320,14 @@
 /* Define to 1 if you have the `gethostbyname' function. */
 #undef HAVE_GETHOSTBYNAME
 
-/* get_request_key_auth() is available */
-#undef HAVE_GET_REQUEST_KEY_AUTH
-
 /* get_user_pages takes 6 arguments */
 #undef HAVE_GET_USER_PAGES_6ARG
 
 /* get_user_pages takes gup_flags in arguments */
 #undef HAVE_GET_USER_PAGES_GUP_FLAGS
+
+/* get_user_pages takes gup_flags in arguments with 7 args */
+#undef HAVE_GET_USER_PAGES_GUP_FLAGS_7ARGS
 
 /* struct group_info has member gid */
 #undef HAVE_GROUP_INFO_GID
@@ -361,9 +340,6 @@
 
 /* Define this if the Kerberos GSS library supports gss_krb5_ccache_name */
 #undef HAVE_GSS_KRB5_CCACHE_NAME
-
-/* '__rhashtable_insert_fast()' returns int */
-#undef HAVE_HASHTABLE_INSERT_FAST_RETURN_INT
 
 /* Define this if you have Heimdal Kerberos libraries */
 #undef HAVE_HEIMDAL
@@ -413,9 +389,6 @@
 /* if ib_sg_dma_address wrapper exists */
 #undef HAVE_IB_SG_DMA_ADDRESS
 
-/* INIT_LIST_HEAD_RCU exists */
-#undef HAVE_INIT_LIST_HEAD_RCU
-
 /* inode_operations .getattr member function can gather advance stats */
 #undef HAVE_INODEOPS_ENHANCED_GETATTR
 
@@ -440,15 +413,6 @@
 /* inode_operations->permission has two args */
 #undef HAVE_INODE_PERMISION_2ARGS
 
-/* inode times are using timespec64 */
-#undef HAVE_INODE_TIMESPEC64
-
-/* blk_integrity.interval exist */
-#undef HAVE_INTERVAL_BLK_INTEGRITY
-
-/* blk_integrity.interval_exp exist */
-#undef HAVE_INTERVAL_EXP_BLK_INTEGRITY
-
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
@@ -457,9 +421,6 @@
 
 /* have in_compat_syscall */
 #undef HAVE_IN_COMPAT_SYSCALL
-
-/* 'in_dev_for_each_ifa_rtnl' is defined */
-#undef HAVE_IN_DEV_FOR_EACH_IFA_RTNL
 
 /* inode_operations->rename need flags as argument */
 #undef HAVE_IOPS_RENAME_WITH_FLAGS
@@ -500,26 +461,17 @@
 /* is_sxid is defined */
 #undef HAVE_IS_SXID
 
-/* 'iterate_shared' is available */
-#undef HAVE_ITERATE_SHARED
-
 /* struct address_space has i_pages */
 #undef HAVE_I_PAGES
 
 /* i_uid_read is present */
 #undef HAVE_I_UID_READ
 
-/* kallsyms_lookup_name is exported by kernel */
-#undef HAVE_KALLSYMS_LOOKUP_NAME
+/* jiffies_to_timespec64() is available */
+#undef HAVE_JIFFIES_TO_TIMESPEC64
 
 /* kernel_locked is defined */
 #undef HAVE_KERNEL_LOCKED
-
-/* 'kernel_param_[un]lock' is available */
-#undef HAVE_KERNEL_PARAM_LOCK
-
-/* 'struct kernel_param_ops' is available */
-#undef HAVE_KERNEL_PARAM_OPS
 
 /* kernel_setsockopt still in use */
 #undef HAVE_KERNEL_SETSOCKOPT
@@ -538,9 +490,6 @@
 
 /* key_type->instantiate has two args */
 #undef HAVE_KEY_TYPE_INSTANTIATE_2ARGS
-
-/* key.usage is of type refcount_t */
-#undef HAVE_KEY_USAGE_REFCOUNT
 
 /* ki_left exist */
 #undef HAVE_KIOCB_KI_LEFT
@@ -570,14 +519,11 @@
    available */
 #undef HAVE_KRB5_GET_INIT_CREDS_OPT_SET_ADDRESSLESS
 
-/* kset_find_obj is exported by the kernel */
-#undef HAVE_KSET_FIND_OBJ
-
-/* kernel has kstrtobool_from_user */
-#undef HAVE_KSTRTOBOOL_FROM_USER
-
 /* kernel has kstrtoul */
 #undef HAVE_KSTRTOUL
+
+/* kernel has ksys_close */
+#undef HAVE_KSYS_CLOSE
 
 /* kthread_worker found */
 #undef HAVE_KTHREAD_WORK
@@ -606,9 +552,6 @@
 /* 'ktime_get_ts64' is available */
 #undef HAVE_KTIME_GET_TS64
 
-/* 'ktime_ms_delta' is available */
-#undef HAVE_KTIME_MS_DELTA
-
 /* 'ktime_to_timespec64' is available */
 #undef HAVE_KTIME_TO_TIMESPEC64
 
@@ -636,11 +579,20 @@
 /* readline library is available */
 #undef HAVE_LIBREADLINE
 
-/* linux/rhashtable.h is present */
-#undef HAVE_LINUX_RHASHTABLE_H
+/* Define to 1 if you have the <linux/random.h> header file. */
+#undef HAVE_LINUX_RANDOM_H
 
 /* if linux/selinux.h exists */
 #undef HAVE_LINUX_SELINUX_IS_ENABLED
+
+/* Define to 1 if you have the <linux/types.h> header file. */
+#undef HAVE_LINUX_TYPES_H
+
+/* Define to 1 if you have the <linux/unistd.h> header file. */
+#undef HAVE_LINUX_UNISTD_H
+
+/* Define to 1 if you have the <linux/version.h> header file. */
+#undef HAVE_LINUX_VERSION_H
 
 /* lock_manager_operations has lm_compare_owner */
 #undef HAVE_LM_COMPARE_OWNER
@@ -650,9 +602,6 @@
 
 /* kernel has locks_lock_file_wait */
 #undef HAVE_LOCKS_LOCK_FILE_WAIT
-
-/* lookup_user_key() is available */
-#undef HAVE_LOOKUP_USER_KEY
 
 /* kernel has LOOP_CTL_GET_FREE */
 #undef HAVE_LOOP_CTL_GET_FREE
@@ -682,9 +631,6 @@
 /* kernel module loading is possible */
 #undef HAVE_MODULE_LOADING_SUPPORT
 
-/* locking module param is supported */
-#undef HAVE_MODULE_PARAM_LOCKING
-
 /* Define to 1 if you have the `name_to_handle_at' function. */
 #undef HAVE_NAME_TO_HANDLE_AT
 
@@ -694,23 +640,14 @@
 /* cancel_dirty_page with one arguement is available */
 #undef HAVE_NEW_CANCEL_DIRTY_PAGE
 
-/* DEFINE_TIMER uses only 2 arguements */
-#undef HAVE_NEW_DEFINE_TIMER
-
 /* 'kernel_write' aligns with read/write helpers */
 #undef HAVE_NEW_KERNEL_WRITE
 
 /* NR_UNSTABLE_NFS is still in use. */
 #undef HAVE_NR_UNSTABLE_NFS
 
-/* ns_to_timespec64() is available */
-#undef HAVE_NS_TO_TIMESPEC64
-
 /* with oldsize */
 #undef HAVE_OLDSIZE_TRUNCATE_PAGECACHE
-
-/* openssl-devel is present */
-#undef HAVE_OPENSSL_GETSEPOL
 
 /* OpenSSL HMAC functions needed for SSK */
 #undef HAVE_OPENSSL_SSK
@@ -736,9 +673,6 @@
 /* posix_acl_valid takes struct user_namespace */
 #undef HAVE_POSIX_ACL_VALID_USER_NS
 
-/* 'prepare_to_wait_event' is available */
-#undef HAVE_PREPARE_TO_WAIT_EVENT
-
 /* struct proc_ops exists */
 #undef HAVE_PROC_OPS
 
@@ -751,17 +685,11 @@
 /* inode->i_nlink is protected from direct modification */
 #undef HAVE_PROTECT_I_NLINK
 
-/* 'PTR_ERR_OR_ZERO' exist */
-#undef HAVE_PTR_ERR_OR_ZERO
-
 /* have quota64 */
 #undef HAVE_QUOTA64
 
 /* radix_tree_exceptional_entry exist */
 #undef HAVE_RADIX_EXCEPTION_ENTRY
-
-/* rdma_connect_locked is defined */
-#undef HAVE_RDMA_CONNECT_LOCKED
 
 /* rdma_create_id wants 4 args */
 #undef HAVE_RDMA_CREATE_ID_4ARG
@@ -772,23 +700,14 @@
 /* rdma_reject has 4 arguments */
 #undef HAVE_RDMA_REJECT_4ARGS
 
+/* reinit_completion is exist */
+#undef HAVE_REINIT_COMPLETION
+
 /* kernel export remove_from_page_cache */
 #undef HAVE_REMOVE_FROM_PAGE_CACHE
 
 /* remove_proc_subtree is defined */
 #undef HAVE_REMOVE_PROC_SUBTREE
-
-/* rhashtable_lookup() is available */
-#undef HAVE_RHASHTABLE_LOOKUP
-
-/* rhashtable_lookup_get_insert_fast() is available */
-#undef HAVE_RHASHTABLE_LOOKUP_GET_INSERT_FAST
-
-/* struct rhltable exist */
-#undef HAVE_RHLTABLE
-
-/* save_stack_trace_tsk is exported */
-#undef HAVE_SAVE_STACK_TRACE_TSK
 
 /* Have sa_spill_alloc in ZFS */
 #undef HAVE_SA_SPILL_ALLOC
@@ -813,9 +732,6 @@
 
 /* security_inode_init_security takes a 'struct qstr' parameter */
 #undef HAVE_SECURITY_IINITSEC_QSTR
-
-/* security_inode_listsecurity() is available/exported */
-#undef HAVE_SECURITY_INODE_LISTSECURITY
 
 /* security_release_secctx has 1 arg. */
 #undef HAVE_SEC_RELEASE_SECCTX_1ARG
@@ -860,11 +776,17 @@
 /* Have spa_maxblocksize in ZFS */
 #undef HAVE_SPA_MAXBLOCKSIZE
 
+/* spinlock_t is defined */
+#undef HAVE_SPINLOCK_T
+
 /* struct stacktrace_ops exists */
 #undef HAVE_STACKTRACE_OPS
 
 /* stacktrace_ops.warning is exist */
 #undef HAVE_STACKTRACE_WARNING
+
+/* stack_trace_print() exists */
+#undef HAVE_STACK_TRACE_PRINT
 
 /* Define to 1 if you have the <stdint.h> header file. */
 #undef HAVE_STDINT_H
@@ -872,14 +794,17 @@
 /* Define to 1 if you have the <stdlib.h> header file. */
 #undef HAVE_STDLIB_H
 
-/* stringhash.h is present */
-#undef HAVE_STRINGHASH
-
 /* Define to 1 if you have the <strings.h> header file. */
 #undef HAVE_STRINGS_H
 
 /* Define to 1 if you have the <string.h> header file. */
 #undef HAVE_STRING_H
+
+/* Define to 1 if you have the `strlcat' function. */
+#undef HAVE_STRLCAT
+
+/* Define to 1 if you have the `strlcpy' function. */
+#undef HAVE_STRLCPY
 
 /* Define to 1 if you have the `strnlen' function. */
 #undef HAVE_STRNLEN
@@ -907,6 +832,9 @@
 
 /* ctl_table has ctl_name field */
 #undef HAVE_SYSCTL_CTLNAME
+
+/* Define to 1 if you have the <sys/ioctl.h> header file. */
+#undef HAVE_SYS_IOCTL_H
 
 /* Define to 1 if you have <sys/quota.h>. */
 #undef HAVE_SYS_QUOTA_H
@@ -937,6 +865,9 @@
 
 /* 'timespec64_to_ktime' is available */
 #undef HAVE_TIMESPEC64_TO_KTIME
+
+/* have_time_t */
+#undef HAVE_TIME_T
 
 /* topology_sibling_cpumask is available */
 #undef HAVE_TOPOLOGY_SIBLING_CPUMASK
@@ -986,17 +917,8 @@
 /* 'struct vm_operations' remove struct vm_area_struct argument */
 #undef HAVE_VM_OPS_USE_VM_FAULT_ONLY
 
-/* wait_bit.h is present */
-#undef HAVE_WAIT_BIT_HEADER_H
-
 /* 'wait_queue_entry_t' is available */
 #undef HAVE_WAIT_QUEUE_ENTRY
-
-/* linux wait_queue_head_t list_head is name head */
-#undef HAVE_WAIT_QUEUE_ENTRY_LIST
-
-/* 'wait_var_event' is available */
-#undef HAVE_WAIT_VAR_EVENT
 
 /* flags field exist */
 #undef HAVE_XATTR_HANDLER_FLAGS
@@ -1022,17 +944,8 @@
 /* Have zap_remove_by_dnode() in ZFS */
 #undef HAVE_ZAP_REMOVE_ADD_BY_DNODE
 
-/* Have inode_timespec_t */
-#undef HAVE_ZFS_INODE_TIMESPEC
-
-/* Have multihost protection in ZFS */
-#undef HAVE_ZFS_MULTIHOST
-
 /* Enable zfs osd */
 #undef HAVE_ZFS_OSD
-
-/* Have zfs_refcount_add */
-#undef HAVE_ZFS_REFCOUNT_ADD
 
 /* __add_wait_queue_exclusive exists */
 #undef HAVE___ADD_WAIT_QUEUE_EXCLUSIVE
@@ -1083,9 +996,6 @@
 /* need pclmulqdq based crc32 */
 #undef NEED_CRC32_ACCEL
 
-/* 'ktime_get_ns' is not available */
-#undef NEED_KTIME_GET_NS
-
 /* 'ktime_get_real_ns' is not available */
 #undef NEED_KTIME_GET_REAL_NS
 
@@ -1115,6 +1025,9 @@
 
 /* name of parallel fsck program */
 #undef PFSCK
+
+/* proc handler methods use __user */
+#undef PROC_HANDLER_USE_USER_ATTR
 
 /* enable randomly alloc failure */
 #undef RANDOM_FAIL_ALLOC
