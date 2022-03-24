@@ -24,7 +24,7 @@
 /*
  * Copyright 2012 Xyratex Technology Limited
  *
- * Copyright (c) 2013, 2017, Intel Corporation.
+ * Copyright (c) 2013, 2016, Intel Corporation.
  *
  * Author: Andrew Perepechko <Andrew_Perepechko@xyratex.com>
  *
@@ -37,6 +37,7 @@
 #include <linux/mm.h>
 #include <obd_support.h>
 #include <lustre_dlm.h>
+#include <lustre_ver.h>
 #include "llite_internal.h"
 
 /* If we ever have hundreds of extended attributes, we might want to consider
