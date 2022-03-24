@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,6 +38,7 @@
 #define DEBUG_SUBSYSTEM S_LLITE
 
 #include <obd_support.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_dlm.h>
 
 #include "llite_internal.h"
