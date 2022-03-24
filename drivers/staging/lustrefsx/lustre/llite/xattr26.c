@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,7 +40,7 @@
 
 #include <obd_support.h>
 #include <lustre_dlm.h>
-#include <uapi/linux/lustre/lustre_ver.h>
+#include <lustre_ver.h>
 #include <lustre_eacl.h>
 
 #include "llite_internal.h"
@@ -152,7 +152,7 @@ int ll_setxattr_common(struct inode *inode, const char *name,
 	}
 
 	rc = md_setxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid, name, pv,
-			 size, flags, ll_i2suppgid(inode), &req);
+			 size, 0, flags, ll_i2suppgid(inode), &req);
 	if (rc) {
 		if (rc == -EOPNOTSUPP && xattr_type == XATTR_USER_T) {
 			LCONSOLE_INFO("Disabling user_xattr feature because "
@@ -329,6 +329,7 @@ int ll_getxattr_common(struct inode *inode, const char *name,
 {
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
 	struct ptlrpc_request *req = NULL;
+	struct mdt_body *body;
 	int xattr_type, rc;
 	void *xdata;
 	struct ll_inode_info *lli = ll_i2info(inode);
@@ -404,25 +405,36 @@ do_getxattr:
 		}
 	} else {
 getxattr_nocache:
-		rc = md_getxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid,
-				 name, size, &req);
+		rc = md_getxattr(sbi->ll_md_exp, ll_inode2fid(inode),
+				valid, name, NULL, 0, size, 0, &req);
+
 		if (rc < 0)
 			GOTO(out_xattr, rc);
 
+		body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
+		LASSERT(body);
+
 		/* only detect the xattr size */
 		if (size == 0)
-			GOTO(out, rc);
+			GOTO(out, rc = body->mbo_eadatasize);
 
-		if (size < rc)
+		if (size < body->mbo_eadatasize) {
+			CERROR("server bug: replied size %u > %u\n",
+				body->mbo_eadatasize, (int)size);
 			GOTO(out, rc = -ERANGE);
+		}
+
+		if (body->mbo_eadatasize == 0)
+			GOTO(out, rc = -ENODATA);
 
 		/* do not need swab xattr data */
 		xdata = req_capsule_server_sized_get(&req->rq_pill, &RMF_EADATA,
-						     rc);
+							body->mbo_eadatasize);
 		if (!xdata)
-			GOTO(out, rc = -EPROTO);
+			GOTO(out, rc = -EFAULT);
 
-		memcpy(buffer, xdata, rc);
+		memcpy(buffer, xdata, body->mbo_eadatasize);
+		rc = body->mbo_eadatasize;
 	}
 
 	EXIT;
