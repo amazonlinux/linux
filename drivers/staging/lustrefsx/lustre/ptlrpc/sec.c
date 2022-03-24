@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -43,10 +43,6 @@
 #include <linux/crypto.h>
 #include <linux/key.h>
 
-#ifdef HAVE_LINUX_SELINUX_IS_ENABLED
-#include <linux/selinux.h>
-#endif
-
 #include <libcfs/libcfs.h>
 #include <obd.h>
 #include <obd_class.h>
@@ -57,10 +53,6 @@
 #include <lustre_sec.h>
 
 #include "ptlrpc_internal.h"
-
-static int send_sepol;
-module_param(send_sepol, int, 0644);
-MODULE_PARM_DESC(send_sepol, "Client sends SELinux policy status");
 
 /***********************************************
  * policy registers                            *
@@ -410,12 +402,11 @@ static int import_sec_validate_get(struct obd_import *imp,
 	}
 
 	*sec = sptlrpc_import_sec_ref(imp);
+	/* Only output an error when the import is still active */
 	if (*sec == NULL) {
-		/* Only output an error when the import is still active */
-		if (!test_bit(WORK_STRUCT_PENDING_BIT,
-			      work_data_bits(&imp->imp_zombie_work)))
+		if (list_empty(&imp->imp_zombie_chain))
 			CERROR("import %p (%s) with no sec\n",
-			       imp, ptlrpc_import_state_name(imp->imp_state));
+				imp, ptlrpc_import_state_name(imp->imp_state));
 		return -EACCES;
 	}
 
@@ -718,12 +709,12 @@ again:
         sptlrpc_sec_put(sec);
 
         if (cli_ctx_is_eternal(ctx))
-		RETURN(0);
+                RETURN(0);
 
 	if (unlikely(test_bit(PTLRPC_CTX_NEW_BIT, &ctx->cc_flags))) {
-		if (ctx->cc_ops->refresh)
-			ctx->cc_ops->refresh(ctx);
-	}
+                LASSERT(ctx->cc_ops->refresh);
+                ctx->cc_ops->refresh(ctx);
+        }
 	LASSERT(test_bit(PTLRPC_CTX_NEW_BIT, &ctx->cc_flags) == 0);
 
         LASSERT(ctx->cc_ops->validate);
@@ -845,30 +836,7 @@ again:
                 RETURN(rc);
         }
 
-	goto again;
-}
-
-/* Bring ptlrpc_sec context up-to-date */
-int sptlrpc_export_update_ctx(struct obd_export *exp)
-{
-	struct obd_import *imp = exp ? exp->exp_imp_reverse : NULL;
-	struct ptlrpc_sec *sec = NULL;
-	struct ptlrpc_cli_ctx *ctx = NULL;
-	int rc = 0;
-
-	if (imp)
-		sec = sptlrpc_import_sec_ref(imp);
-	if (sec) {
-		ctx = get_my_ctx(sec);
-		sptlrpc_sec_put(sec);
-	}
-
-	if (ctx) {
-		if (ctx->cc_ops->refresh)
-			rc = ctx->cc_ops->refresh(ctx);
-		sptlrpc_cli_ctx_put(ctx, 1);
-	}
-	return rc;
+        goto again;
 }
 
 /**
@@ -1758,7 +1726,6 @@ void sptlrpc_cli_free_repbuf(struct ptlrpc_request *req)
         req->rq_repmsg = NULL;
         EXIT;
 }
-EXPORT_SYMBOL(sptlrpc_cli_free_repbuf);
 
 int sptlrpc_cli_install_rvs_ctx(struct obd_import *imp,
                                 struct ptlrpc_cli_ctx *ctx)
@@ -1779,128 +1746,6 @@ int sptlrpc_svc_install_rvs_ctx(struct obd_import *imp,
                 return 0;
         return policy->sp_sops->install_rctx(imp, ctx);
 }
-
-/* Get SELinux policy info from userspace */
-static int sepol_helper(struct obd_import *imp)
-{
-	char mtime_str[21] = { 0 }, mode_str[2] = { 0 };
-	char *argv[] = {
-		[0] = "/usr/sbin/l_getsepol",
-		[1] = "-o",
-		[2] = NULL,	    /* obd type */
-		[3] = "-n",
-		[4] = NULL,	    /* obd name */
-		[5] = "-t",
-		[6] = mtime_str,    /* policy mtime */
-		[7] = "-m",
-		[8] = mode_str,	    /* enforcing mode */
-		[9] = NULL
-	};
-	char *envp[] = {
-		[0] = "HOME=/",
-		[1] = "PATH=/sbin:/usr/sbin",
-		[2] = NULL
-	};
-	signed short ret;
-	int rc = 0;
-
-	if (imp == NULL || imp->imp_obd == NULL ||
-	    imp->imp_obd->obd_type == NULL) {
-		rc = -EINVAL;
-	} else {
-		argv[2] = imp->imp_obd->obd_type->typ_name;
-		argv[4] = imp->imp_obd->obd_name;
-		spin_lock(&imp->imp_sec->ps_lock);
-		if (ktime_to_ns(imp->imp_sec->ps_sepol_mtime) == 0 &&
-		    imp->imp_sec->ps_sepol[0] == '\0') {
-			/* ps_sepol has not been initialized */
-			argv[5] = NULL;
-			argv[7] = NULL;
-		} else {
-			time64_t mtime_ms;
-
-			mtime_ms = ktime_to_ms(imp->imp_sec->ps_sepol_mtime);
-			snprintf(mtime_str, sizeof(mtime_str), "%lld",
-				 mtime_ms / MSEC_PER_SEC);
-			mode_str[0] = imp->imp_sec->ps_sepol[0];
-		}
-		spin_unlock(&imp->imp_sec->ps_lock);
-		ret = call_usermodehelper(argv[0], argv, envp, UMH_WAIT_PROC);
-		rc = ret>>8;
-	}
-
-	return rc;
-}
-
-static inline int sptlrpc_sepol_needs_check(struct ptlrpc_sec *imp_sec)
-{
-	ktime_t checknext;
-
-	if (send_sepol == 0 || !selinux_is_enabled())
-		return 0;
-
-	if (send_sepol == -1)
-		/* send_sepol == -1 means fetch sepol status every time */
-		return 1;
-
-	spin_lock(&imp_sec->ps_lock);
-	checknext = imp_sec->ps_sepol_checknext;
-	spin_unlock(&imp_sec->ps_lock);
-
-	/* next check is too far in time, please update */
-	if (ktime_after(checknext,
-			ktime_add(ktime_get(), ktime_set(send_sepol, 0))))
-		goto setnext;
-
-	if (ktime_before(ktime_get(), checknext))
-		/* too early to fetch sepol status */
-		return 0;
-
-setnext:
-	/* define new sepol_checknext time */
-	spin_lock(&imp_sec->ps_lock);
-	imp_sec->ps_sepol_checknext = ktime_add(ktime_get(),
-						ktime_set(send_sepol, 0));
-	spin_unlock(&imp_sec->ps_lock);
-
-	return 1;
-}
-
-int sptlrpc_get_sepol(struct ptlrpc_request *req)
-{
-	struct ptlrpc_sec *imp_sec = req->rq_import->imp_sec;
-	int rc = 0;
-
-	ENTRY;
-
-	(req->rq_sepol)[0] = '\0';
-
-#ifndef HAVE_SELINUX
-	if (unlikely(send_sepol != 0))
-		CDEBUG(D_SEC, "Client cannot report SELinux status, "
-			      "it was not built against libselinux.\n");
-	RETURN(0);
-#endif
-
-	if (send_sepol == 0 || !selinux_is_enabled())
-		RETURN(0);
-
-	if (imp_sec == NULL)
-		RETURN(-EINVAL);
-
-	/* Retrieve SELinux status info */
-	if (sptlrpc_sepol_needs_check(imp_sec))
-		rc = sepol_helper(req->rq_import);
-	if (likely(rc == 0)) {
-		spin_lock(&imp_sec->ps_lock);
-		memcpy(req->rq_sepol, imp_sec->ps_sepol,
-		       sizeof(req->rq_sepol));
-		spin_unlock(&imp_sec->ps_lock);
-	}
-
-	RETURN(rc);
-}
-EXPORT_SYMBOL(sptlrpc_get_sepol);
 
 /****************************************
  * server side security                 *
