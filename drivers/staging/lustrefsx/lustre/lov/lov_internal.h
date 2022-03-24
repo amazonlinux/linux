@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -34,7 +34,7 @@
 #define LOV_INTERNAL_H
 
 #include <obd_class.h>
-#include <uapi/linux/lustre/lustre_user.h>
+#include <lustre/lustre_user.h>
 
 /* If we are unable to get the maximum object size from the OST in
  * ocd_maxbytes using OBD_CONNECT_MAXBYTES, then we fall back to using
@@ -47,18 +47,12 @@ struct lov_stripe_md_entry {
 	u32			lsme_magic;
 	u32			lsme_flags;
 	u32			lsme_pattern;
-	u64			lsme_timestamp;
 	u32			lsme_stripe_size;
 	u16			lsme_stripe_count;
 	u16			lsme_layout_gen;
 	char			lsme_pool_name[LOV_MAXPOOLNAME + 1];
 	struct lov_oinfo       *lsme_oinfo[];
 };
-
-static inline bool lsme_is_dom(struct lov_stripe_md_entry *lsme)
-{
-	return (lov_pattern(lsme->lsme_pattern) == LOV_PATTERN_MDT);
-}
 
 static inline void copy_lsm_entry(struct lov_stripe_md_entry *dst,
 				  struct lov_stripe_md_entry *src)
@@ -81,10 +75,8 @@ struct lov_stripe_md {
 	struct ost_id	lsm_oi;
 	u32		lsm_magic;
 	u32		lsm_layout_gen;
-	u16		lsm_flags;
+	u32		lsm_entry_count;
 	bool		lsm_is_released;
-	u16		lsm_mirror_count;
-	u16		lsm_entry_count;
 	struct lov_stripe_md_entry *lsm_entries[];
 };
 
@@ -127,7 +119,7 @@ static inline size_t lov_comp_md_size(const struct lov_stripe_md *lsm)
 			stripe_count = 0;
 
 		size += sizeof(*lsme);
-		size += lov_mds_md_size(stripe_count,
+		size += lov_mds_md_size(lsme->lsme_stripe_count,
 					lsme->lsme_magic);
 	}
 
@@ -195,22 +187,19 @@ void lsm_free(struct lov_stripe_md *lsm);
 })
 #elif BITS_PER_LONG == 32
 # define lov_do_div64(n, base) ({					\
-	uint64_t __num = (n);						\
 	uint64_t __rem;							\
 	if ((sizeof(base) > 4) && (((base) & 0xffffffff00000000ULL) != 0)) {  \
-		int __remainder;					\
-		LASSERTF(!((base) & (LOV_MIN_STRIPE_SIZE - 1)),		\
-			 "64 bit lov division %llu / %llu\n",		\
-			 __num, (uint64_t)(base));			\
-		__remainder = __num & (LOV_MIN_STRIPE_SIZE - 1);	\
-		__num >>= LOV_MIN_STRIPE_BITS;				\
-		__rem = do_div(__num, (base) >> LOV_MIN_STRIPE_BITS);	\
+		int __remainder;					      \
+		LASSERTF(!((base) & (LOV_MIN_STRIPE_SIZE - 1)), "64 bit lov " \
+			 "division %llu / %llu\n", (n), (uint64_t)(base));    \
+		__remainder = (n) & (LOV_MIN_STRIPE_SIZE - 1);		\
+		(n) >>= LOV_MIN_STRIPE_BITS;				\
+		__rem = do_div(n, (base) >> LOV_MIN_STRIPE_BITS);	\
 		__rem <<= LOV_MIN_STRIPE_BITS;				\
 		__rem += __remainder;					\
 	} else {							\
-		__rem = do_div(__num, base);				\
+		__rem = do_div(n, base);				\
 	}								\
-	(n) = __num;							\
 	__rem;								\
 })
 #endif
@@ -257,7 +246,6 @@ int lov_merge_lvb_kms(struct lov_stripe_md *lsm, int index,
                       struct ost_lvb *lvb, __u64 *kms_place);
 
 /* lov_offset.c */
-loff_t stripe_width(struct lov_stripe_md *lsm, unsigned int index);
 u64 lov_stripe_size(struct lov_stripe_md *lsm, int index,
 		    u64 ost_size, int stripeno);
 int lov_stripe_offset(struct lov_stripe_md *lsm, int index, loff_t lov_off,
@@ -276,8 +264,6 @@ int lov_prep_statfs_set(struct obd_device *obd, struct obd_info *oinfo,
 int lov_fini_statfs_set(struct lov_request_set *set);
 
 /* lov_obd.c */
-void lov_tgts_getref(struct obd_device *obd);
-void lov_tgts_putref(struct obd_device *obd);
 void lov_stripe_lock(struct lov_stripe_md *md);
 void lov_stripe_unlock(struct lov_stripe_md *md);
 void lov_fix_desc(struct lov_desc *desc);
@@ -287,13 +273,13 @@ void lov_fix_desc_pattern(__u32 *val);
 void lov_fix_desc_qos_maxage(__u32 *val);
 __u16 lov_get_stripe_count(struct lov_obd *lov, __u32 magic,
 			   __u16 stripe_count);
-int lov_connect_obd(struct obd_device *obd, u32 index, int activate,
-		    struct obd_connect_data *data);
+int lov_connect_obd(struct obd_device *obd, __u32 index, int activate,
+                    struct obd_connect_data *data);
 int lov_setup(struct obd_device *obd, struct lustre_cfg *lcfg);
 int lov_process_config_base(struct obd_device *obd, struct lustre_cfg *lcfg,
-			    u32 *indexp, int *genp);
-int lov_del_target(struct obd_device *obd, u32 index,
-		   struct obd_uuid *uuidp, int gen);
+                            __u32 *indexp, int *genp);
+int lov_del_target(struct obd_device *obd, __u32 index,
+                   struct obd_uuid *uuidp, int gen);
 
 /* lov_pack.c */
 ssize_t lov_lsm_pack(const struct lov_stripe_md *lsm, void *buf,
@@ -312,12 +298,13 @@ void lsm_free_plain(struct lov_stripe_md *lsm);
 void dump_lsm(unsigned int level, const struct lov_stripe_md *lsm);
 
 /* lproc_lov.c */
-int lov_tunables_init(struct obd_device *obd);
+extern const struct proc_ops lov_proc_target_fops;
+#ifdef CONFIG_PROC_FS
+extern struct lprocfs_vars lprocfs_lov_obd_vars[];
+#endif
 
 /* lov_cl.c */
 extern struct lu_device_type lov_device_type;
-
-#define LOV_MDC_TGT_MAX 256
 
 /* pools */
 extern struct cfs_hash_ops pool_hash_operations;
