@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -82,6 +82,7 @@ int cfs_trace_dump_debug_buffer_usrstr(void __user *usr_str, int usr_str_nob);
 int cfs_trace_daemon_command(char *str);
 int cfs_trace_daemon_command_usrstr(void __user *usr_str, int usr_str_nob);
 int cfs_trace_set_debug_mb(int mb);
+int cfs_trace_set_debug_mb_usrstr(void __user *usr_str, int usr_str_nob);
 int cfs_trace_get_debug_mb(void);
 
 extern void libcfs_debug_dumplog_internal(void *arg);
