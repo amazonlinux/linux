@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -330,58 +330,6 @@ __sa_make_ready(struct ll_statahead_info *sai, struct sa_entry *entry, int ret)
 	return (index == sai->sai_index_wait);
 }
 
-/* finish async stat RPC arguments */
-static void sa_fini_data(struct md_enqueue_info *minfo)
-{
-	ll_unlock_md_op_lsm(&minfo->mi_data);
-	iput(minfo->mi_dir);
-	OBD_FREE_PTR(minfo);
-}
-
-static int ll_statahead_interpret(struct ptlrpc_request *req,
-				  struct md_enqueue_info *minfo, int rc);
-
-/*
- * prepare arguments for async stat RPC.
- */
-static struct md_enqueue_info *
-sa_prep_data(struct inode *dir, struct inode *child, struct sa_entry *entry)
-{
-	struct md_enqueue_info   *minfo;
-	struct ldlm_enqueue_info *einfo;
-	struct md_op_data        *op_data;
-
-	OBD_ALLOC_PTR(minfo);
-	if (minfo == NULL)
-		return ERR_PTR(-ENOMEM);
-
-	op_data = ll_prep_md_op_data(&minfo->mi_data, dir, child,
-				     entry->se_qstr.name, entry->se_qstr.len, 0,
-				     LUSTRE_OPC_ANY, NULL);
-	if (IS_ERR(op_data)) {
-		OBD_FREE_PTR(minfo);
-		return (struct md_enqueue_info *)op_data;
-	}
-
-	if (child == NULL)
-		op_data->op_fid2 = entry->se_fid;
-
-	minfo->mi_it.it_op = IT_GETATTR;
-	minfo->mi_dir = igrab(dir);
-	minfo->mi_cb = ll_statahead_interpret;
-	minfo->mi_cbdata = entry;
-
-	einfo = &minfo->mi_einfo;
-	einfo->ei_type   = LDLM_IBITS;
-	einfo->ei_mode   = it_to_lock_mode(&minfo->mi_it);
-	einfo->ei_cb_bl  = ll_md_blocking_ast;
-	einfo->ei_cb_cp  = ldlm_completion_ast;
-	einfo->ei_cb_gl  = NULL;
-	einfo->ei_cbdata = NULL;
-
-	return minfo;
-}
-
 /*
  * release resources used in async stat RPC, update entry state and wakeup if
  * scanner process it waiting on this entry.
@@ -398,7 +346,8 @@ sa_make_ready(struct ll_statahead_info *sai, struct sa_entry *entry, int ret)
 	if (minfo) {
 		entry->se_minfo = NULL;
 		ll_intent_release(&minfo->mi_it);
-		sa_fini_data(minfo);
+		iput(minfo->mi_dir);
+		OBD_FREE_PTR(minfo);
 	}
 
 	if (req) {
@@ -544,11 +493,10 @@ static void ll_sai_put(struct ll_statahead_info *sai)
 static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 {
 	struct ll_inode_info *lli = ll_i2info(inode);
-	u64 index = lli->lli_agl_index;
-	ktime_t expire;
+	__u64 index = lli->lli_agl_index;
 	int rc;
-
 	ENTRY;
+
 	LASSERT(list_empty(&lli->lli_agl_list));
 
         /* AGL maybe fall behind statahead with one entry */
@@ -591,9 +539,8 @@ static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
          *    relative rare. AGL can ignore such case, and it will not muchly
          *    affect the performance.
          */
-	expire = ktime_sub_ns(ktime_get(), NSEC_PER_SEC);
-	if (ktime_to_ns(lli->lli_glimpse_time) &&
-	    ktime_before(expire, lli->lli_glimpse_time)) {
+        if (lli->lli_glimpse_time != 0 &&
+            cfs_time_before(cfs_time_shift(-1), lli->lli_glimpse_time)) {
 		up_write(&lli->lli_glimpse_sem);
                 lli->lli_agl_index = 0;
                 iput(inode);
@@ -605,7 +552,7 @@ static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 
         cl_agl(inode);
         lli->lli_agl_index = 0;
-	lli->lli_glimpse_time = ktime_get();
+        lli->lli_glimpse_time = cfs_time_current();
 	up_write(&lli->lli_glimpse_sem);
 
         CDEBUG(D_READA, "Handled (init) async glimpse: inode= "
@@ -633,14 +580,14 @@ static void sa_instantiate(struct ll_statahead_info *sai,
 	int rc = 0;
 	ENTRY;
 
-	LASSERT(entry->se_handle != 0);
+        LASSERT(entry->se_handle != 0);
 
-	minfo = entry->se_minfo;
-	it = &minfo->mi_it;
-	req = entry->se_req;
-	body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
-	if (body == NULL)
-		GOTO(out, rc = -EFAULT);
+        minfo = entry->se_minfo;
+        it = &minfo->mi_it;
+        req = entry->se_req;
+        body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
+        if (body == NULL)
+                GOTO(out, rc = -EFAULT);
 
 	child = entry->se_inode;
 	if (child != NULL) {
@@ -655,25 +602,25 @@ static void sa_instantiate(struct ll_statahead_info *sai,
 
 	it->it_lock_handle = entry->se_handle;
 	rc = md_revalidate_lock(ll_i2mdexp(dir), it, ll_inode2fid(dir), NULL);
-	if (rc != 1)
-		GOTO(out, rc = -EAGAIN);
+        if (rc != 1)
+                GOTO(out, rc = -EAGAIN);
 
-	rc = ll_prep_inode(&child, req, dir->i_sb, it);
-	if (rc)
-		GOTO(out, rc);
+        rc = ll_prep_inode(&child, req, dir->i_sb, it);
+        if (rc)
+                GOTO(out, rc);
 
 	CDEBUG(D_READA, "%s: setting %.*s"DFID" l_data to inode %p\n",
 	       ll_get_fsname(child->i_sb, NULL, 0),
 	       entry->se_qstr.len, entry->se_qstr.name,
 	       PFID(ll_inode2fid(child)), child);
-	ll_set_lock_data(ll_i2sbi(dir)->ll_md_exp, child, it, NULL);
+        ll_set_lock_data(ll_i2sbi(dir)->ll_md_exp, child, it, NULL);
 
-	entry->se_inode = child;
+        entry->se_inode = child;
 
-	if (agl_should_run(sai, child))
-		ll_agl_add(sai, child, entry->se_index);
+        if (agl_should_run(sai, child))
+                ll_agl_add(sai, child, entry->se_index);
 
-	EXIT;
+        EXIT;
 
 out:
 	/* sa_make_ready() will drop ldlm ibits lock refcount by calling
@@ -737,7 +684,8 @@ static int ll_statahead_interpret(struct ptlrpc_request *req,
 
 	if (rc != 0) {
 		ll_intent_release(it);
-		sa_fini_data(minfo);
+		iput(dir);
+		OBD_FREE_PTR(minfo);
 	} else {
 		/* release ibits lock ASAP to avoid deadlock when statahead
 		 * thread enqueues lock on parent in readdir and another
@@ -745,7 +693,6 @@ static int ll_statahead_interpret(struct ptlrpc_request *req,
 		 * unlink. */
 		handle = it->it_lock_handle;
 		ll_intent_drop_lock(it);
-		ll_unlock_md_op_lsm(&minfo->mi_data);
 	}
 
 	spin_lock(&lli->lli_sa_lock);
@@ -773,6 +720,53 @@ static int ll_statahead_interpret(struct ptlrpc_request *req,
 	spin_unlock(&lli->lli_sa_lock);
 
 	RETURN(rc);
+}
+
+/* finish async stat RPC arguments */
+static void sa_fini_data(struct md_enqueue_info *minfo)
+{
+        iput(minfo->mi_dir);
+        OBD_FREE_PTR(minfo);
+}
+
+/*
+ * prepare arguments for async stat RPC.
+ */
+static struct md_enqueue_info *
+sa_prep_data(struct inode *dir, struct inode *child, struct sa_entry *entry)
+{
+	struct md_enqueue_info   *minfo;
+	struct ldlm_enqueue_info *einfo;
+	struct md_op_data        *op_data;
+
+	OBD_ALLOC_PTR(minfo);
+	if (minfo == NULL)
+		return ERR_PTR(-ENOMEM);
+
+	op_data = ll_prep_md_op_data(&minfo->mi_data, dir, child, NULL, 0, 0,
+				     LUSTRE_OPC_ANY, NULL);
+	if (IS_ERR(op_data)) {
+		OBD_FREE_PTR(minfo);
+		return (struct md_enqueue_info *)op_data;
+	}
+
+	if (child == NULL)
+		op_data->op_fid2 = entry->se_fid;
+
+	minfo->mi_it.it_op = IT_GETATTR;
+	minfo->mi_dir = igrab(dir);
+	minfo->mi_cb = ll_statahead_interpret;
+	minfo->mi_cbdata = entry;
+
+	einfo = &minfo->mi_einfo;
+	einfo->ei_type   = LDLM_IBITS;
+	einfo->ei_mode   = it_to_lock_mode(&minfo->mi_it);
+	einfo->ei_cb_bl  = ll_md_blocking_ast;
+	einfo->ei_cb_cp  = ldlm_completion_ast;
+	einfo->ei_cb_gl  = NULL;
+	einfo->ei_cbdata = NULL;
+
+	return minfo;
 }
 
 /* async stat for file not found in dcache */
@@ -816,18 +810,20 @@ static int sa_revalidate(struct inode *dir, struct sa_entry *entry,
 	if (d_mountpoint(dentry))
 		RETURN(1);
 
-	minfo = sa_prep_data(dir, inode, entry);
-	if (IS_ERR(minfo))
-		RETURN(PTR_ERR(minfo));
-
 	entry->se_inode = igrab(inode);
 	rc = md_revalidate_lock(ll_i2mdexp(dir), &it, ll_inode2fid(inode),
 				NULL);
 	if (rc == 1) {
 		entry->se_handle = it.it_lock_handle;
 		ll_intent_release(&it);
-		sa_fini_data(minfo);
 		RETURN(1);
+	}
+
+	minfo = sa_prep_data(dir, inode, entry);
+	if (IS_ERR(minfo)) {
+		entry->se_inode = NULL;
+		iput(inode);
+		RETURN(PTR_ERR(minfo));
 	}
 
 	rc = md_intent_getattr_async(ll_i2mdexp(dir), minfo);
@@ -926,7 +922,6 @@ static int ll_agl_thread(void *arg)
 			list_del_init(&clli->lli_agl_list);
 			spin_unlock(&plli->lli_agl_lock);
 			ll_agl_trigger(&clli->lli_vfs_inode, sai);
-			cond_resched();
 		} else {
 			spin_unlock(&plli->lli_agl_lock);
 		}
@@ -1004,7 +999,8 @@ static int ll_statahead_thread(void *arg)
 	CDEBUG(D_READA, "statahead thread starting: sai %p, parent %.*s\n",
 	       sai, parent->d_name.len, parent->d_name.name);
 
-	OBD_ALLOC_PTR(op_data);
+	op_data = ll_prep_md_op_data(NULL, dir, dir, NULL, 0, 0,
+				     LUSTRE_OPC_ANY, dir);
 	if (IS_ERR(op_data))
 		GOTO(out, rc = PTR_ERR(op_data));
 
@@ -1026,16 +1022,8 @@ static int ll_statahead_thread(void *arg)
 		struct lu_dirpage *dp;
 		struct lu_dirent  *ent;
 
-		op_data = ll_prep_md_op_data(op_data, dir, dir, NULL, 0, 0,
-				     LUSTRE_OPC_ANY, dir);
-		if (IS_ERR(op_data)) {
-			rc = PTR_ERR(op_data);
-			break;
-		}
-
 		sai->sai_in_readpage = 1;
 		page = ll_get_dir_page(dir, op_data, pos, &chain);
-		ll_unlock_md_op_lsm(op_data);
 		sai->sai_in_readpage = 0;
 		if (IS_ERR(page)) {
 			rc = PTR_ERR(page);
@@ -1121,7 +1109,7 @@ static int ll_statahead_thread(void *arg)
 
 					ll_agl_trigger(&clli->lli_vfs_inode,
 							sai);
-					cond_resched();
+
 					spin_lock(&lli->lli_agl_lock);
 				}
 				spin_unlock(&lli->lli_agl_lock);
@@ -1610,6 +1598,7 @@ static int start_statahead_thread(struct inode *dir, struct dentry *dentry)
 		spin_lock(&lli->lli_sa_lock);
 		lli->lli_sai = NULL;
 		spin_unlock(&lli->lli_sa_lock);
+		atomic_dec(&ll_i2sbi(parent->d_inode)->ll_sa_running);
 		rc = PTR_ERR(task);
 		CERROR("can't start ll_sa thread, rc: %d\n", rc);
 		GOTO(out, rc);

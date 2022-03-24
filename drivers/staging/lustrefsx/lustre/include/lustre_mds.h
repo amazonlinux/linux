@@ -45,7 +45,7 @@
 
 #include <lustre_handles.h>
 #include <libcfs/libcfs.h>
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_lib.h>
 #include <lustre_dlm.h>
 #include <lustre_export.h>
@@ -60,34 +60,13 @@ struct mds_capa_info {
         struct lustre_capa_key *capa;
 };
 
-struct md_rejig_data {
-	struct md_object	*mrd_obj;
-	__u16			mrd_mirror_id;
-};
-
 #define MDD_OBD_NAME     "mdd_obd"
 #define MDD_OBD_UUID     "mdd_obd_uuid"
 
-static inline int md_should_create(u64 open_flags)
+static inline int md_should_create(__u64 flags)
 {
-	return !(open_flags & MDS_OPEN_DELAY_CREATE) &&
-		(open_flags & MDS_FMODE_WRITE) &&
-	       !(open_flags & MDS_OPEN_LEASE);
-}
-
-/* do NOT or the MAY_*'s, you'll get the weakest */
-static inline int mds_accmode(u64 open_flags)
-{
-	int res = 0;
-
-	if (open_flags & MDS_FMODE_READ)
-		res |= MAY_READ;
-	if (open_flags & (MDS_FMODE_WRITE | MDS_OPEN_TRUNC | MDS_OPEN_APPEND))
-		res |= MAY_WRITE;
-	if (open_flags & MDS_FMODE_EXEC)
-		res = MAY_EXEC;
-
-	return res;
+	return !(flags & MDS_OPEN_DELAY_CREATE) && (flags & FMODE_WRITE) &&
+               !(flags & MDS_OPEN_LEASE);
 }
 
 /** @} mds */
