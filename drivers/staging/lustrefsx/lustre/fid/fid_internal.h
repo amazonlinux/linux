@@ -36,6 +36,7 @@
 #ifndef __FID_INTERNAL_H
 #define __FID_INTERNAL_H
 
+#include <lustre/lustre_idl.h>
 #include <libcfs/libcfs.h>
 
 #ifdef HAVE_SERVER_SUPPORT
@@ -55,7 +56,9 @@ enum {
 
 extern struct lu_context_key seq_thread_key;
 
-extern struct ldebugfs_vars seq_server_debugfs_list[];
+# ifdef CONFIG_PROC_FS
+extern struct lprocfs_vars seq_server_proc_list[];
+# endif
 
 /* Store API functions. */
 struct dt_device;
@@ -87,8 +90,10 @@ void fid_server_mod_exit(void);
 int seq_client_alloc_super(struct lu_client_seq *seq,
 			   const struct lu_env *env);
 
-extern struct dentry *seq_debugfs_dir;
+# ifdef CONFIG_PROC_FS
+extern struct lprocfs_vars seq_client_proc_list[];
+# endif
 
-extern struct ldebugfs_vars seq_client_debugfs_list[];
+extern struct proc_dir_entry *seq_type_proc_dir;
 
 #endif /* __FID_INTERNAL_H */
