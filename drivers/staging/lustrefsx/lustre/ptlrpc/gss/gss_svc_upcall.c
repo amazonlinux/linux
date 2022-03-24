@@ -60,6 +60,7 @@
 #include <obd.h>
 #include <obd_class.h>
 #include <obd_support.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_import.h>
 #include <lustre_net.h>
 #include <lustre_nodemap.h>
@@ -68,14 +69,11 @@
 #include "gss_err.h"
 #include "gss_internal.h"
 #include "gss_api.h"
-#include "gss_crypto.h"
 
 #define GSS_SVC_UPCALL_TIMEOUT  (20)
 
 static spinlock_t __ctx_index_lock;
 static __u64 __ctx_index;
-
-unsigned int krb5_allow_old_client_csum;
 
 __u64 gss_get_next_ctx_index(void)
 {
@@ -161,18 +159,6 @@ static struct cache_head *rsi_table[RSI_HASHMAX];
 static struct cache_detail rsi_cache;
 static struct rsi *rsi_update(struct rsi *new, struct rsi *old);
 static struct rsi *rsi_lookup(struct rsi *item);
-
-#ifdef HAVE_CACHE_DETAIL_WRITERS
-static inline int channel_users(struct cache_detail *cd)
-{
-	return atomic_read(&cd->writers);
-}
-#else
-static inline int channel_users(struct cache_detail *cd)
-{
-	return atomic_read(&cd->readers);
-}
-#endif
 
 static inline int rsi_hash(struct rsi *item)
 {
@@ -313,9 +299,10 @@ static struct cache_head *rsi_alloc(void)
 static int rsi_parse(struct cache_detail *cd, char *mesg, int mlen)
 {
         char           *buf = mesg;
+        char           *ep;
         int             len;
         struct rsi      rsii, *rsip = NULL;
-	time64_t expiry;
+        time_t          expiry;
         int             status = -EINVAL;
         ENTRY;
 
@@ -354,21 +341,18 @@ static int rsi_parse(struct cache_detail *cd, char *mesg, int mlen)
         if (len <= 0)
                 goto out;
 
-	/* major */
-	status = kstrtoint(buf, 10, &rsii.major_status);
-	if (status)
-		goto out;
+        /* major */
+        rsii.major_status = simple_strtol(buf, &ep, 10);
+        if (*ep)
+                goto out;
 
-	/* minor */
-	len = qword_get(&mesg, buf, mlen);
-	if (len <= 0) {
-		status = -EINVAL;
-		goto out;
-	}
-
-	status = kstrtoint(buf, 10, &rsii.minor_status);
-	if (status)
-		goto out;
+        /* minor */
+        len = qword_get(&mesg, buf, mlen);
+        if (len <= 0)
+                goto out;
+        rsii.minor_status = simple_strtol(buf, &ep, 10);
+        if (*ep)
+                goto out;
 
         /* out_handle */
         len = qword_get(&mesg, buf, mlen);
@@ -560,7 +544,7 @@ static int rsc_parse(struct cache_detail *cd, char *mesg, int mlen)
         char                *buf = mesg;
         int                  len, rv, tmp_int;
         struct rsc           rsci, *rscp = NULL;
-	time64_t expiry;
+        time_t               expiry;
         int                  status = -EINVAL;
         struct gss_api_mech *gm = NULL;
 
@@ -665,7 +649,8 @@ static int rsc_parse(struct cache_detail *cd, char *mesg, int mlen)
 		/* currently the expiry time passed down from user-space
 		 * is invalid, here we retrive it from mech.
 		 */
-		if (lgss_inquire_context(rsci.ctx.gsc_mechctx, &ctx_expiry)) {
+		if (lgss_inquire_context(rsci.ctx.gsc_mechctx,
+					 (unsigned long *)&ctx_expiry)) {
 			CERROR("unable to get expire time, drop it\n");
 			goto out;
 		}
@@ -735,6 +720,85 @@ static struct rsc *rsc_update(struct rsc *new, struct rsc *old)
  * rsc cache flush                      *
  ****************************************/
 
+typedef int rsc_entry_match(struct rsc *rscp, long data);
+
+static void rsc_flush(rsc_entry_match *match, long data)
+{
+#ifdef HAVE_CACHE_HEAD_HLIST
+	struct cache_head *ch = NULL;
+	struct hlist_head *head;
+#else
+	struct cache_head **ch;
+#endif
+        struct rsc *rscp;
+        int n;
+        ENTRY;
+
+	write_lock(&rsc_cache.hash_lock);
+        for (n = 0; n < RSC_HASHMAX; n++) {
+#ifdef HAVE_CACHE_HEAD_HLIST
+		head = &rsc_cache.hash_table[n];
+		hlist_for_each_entry(ch, head, cache_list) {
+			rscp = container_of(ch, struct rsc, h);
+#else
+		for (ch = &rsc_cache.hash_table[n]; *ch;) {
+			rscp = container_of(*ch, struct rsc, h);
+#endif
+
+                        if (!match(rscp, data)) {
+#ifndef HAVE_CACHE_HEAD_HLIST
+				ch = &((*ch)->next);
+#endif
+                                continue;
+                        }
+
+                        /* it seems simply set NEGATIVE doesn't work */
+#ifdef HAVE_CACHE_HEAD_HLIST
+			hlist_del_init(&ch->cache_list);
+#else
+			*ch = (*ch)->next;
+			rscp->h.next = NULL;
+#endif
+                        cache_get(&rscp->h);
+			set_bit(CACHE_NEGATIVE, &rscp->h.flags);
+                        COMPAT_RSC_PUT(&rscp->h, &rsc_cache);
+                        rsc_cache.entries--;
+                }
+        }
+	write_unlock(&rsc_cache.hash_lock);
+        EXIT;
+}
+
+static int match_uid(struct rsc *rscp, long uid)
+{
+        if ((int) uid == -1)
+                return 1;
+        return ((int) rscp->ctx.gsc_uid == (int) uid);
+}
+
+static int match_target(struct rsc *rscp, long target)
+{
+        return (rscp->target == (struct obd_device *) target);
+}
+
+static inline void rsc_flush_uid(int uid)
+{
+        if (uid == -1)
+                CWARN("flush all gss contexts...\n");
+
+        rsc_flush(match_uid, (long) uid);
+}
+
+static inline void rsc_flush_target(struct obd_device *target)
+{
+        rsc_flush(match_target, (long) target);
+}
+
+void gss_secsvc_flush(struct obd_device *target)
+{
+        rsc_flush_target(target);
+}
+
 static struct rsc *gss_svc_searchbyctx(rawobj_t *handle)
 {
         struct rsc  rsci;
@@ -758,7 +822,7 @@ int gss_svc_upcall_install_rvs_ctx(struct obd_import *imp,
                                    struct gss_cli_ctx *gctx)
 {
         struct rsc      rsci, *rscp = NULL;
-	time64_t ctx_expiry;
+        unsigned long   ctx_expiry;
         __u32           major;
         int             rc;
         ENTRY;
@@ -782,7 +846,7 @@ int gss_svc_upcall_install_rvs_ctx(struct obd_import *imp,
                 CERROR("unable to get expire time, drop it\n");
                 GOTO(out, rc = -EINVAL);
         }
-	rsci.h.expiry_time = ctx_expiry;
+        rsci.h.expiry_time = (time_t) ctx_expiry;
 
 	switch (imp->imp_obd->u.cli.cl_sp_to) {
 	case LUSTRE_SP_MDT:
@@ -793,13 +857,6 @@ int gss_svc_upcall_install_rvs_ctx(struct obd_import *imp,
 		break;
 	case LUSTRE_SP_CLI:
 		rsci.ctx.gsc_usr_root = 1;
-		break;
-	case LUSTRE_SP_MGS:
-		/* by convention, all 3 set to 1 means MGS */
-		rsci.ctx.gsc_usr_mds = 1;
-		rsci.ctx.gsc_usr_oss = 1;
-		rsci.ctx.gsc_usr_root = 1;
-		break;
 	default:
 		break;
 	}
@@ -827,15 +884,15 @@ out:
 
 int gss_svc_upcall_expire_rvs_ctx(rawobj_t *handle)
 {
-	const time64_t expire = 20;
-	struct rsc *rscp;
+        const cfs_time_t        expire = 20;
+        struct rsc             *rscp;
 
         rscp = gss_svc_searchbyctx(handle);
         if (rscp) {
                 CDEBUG(D_SEC, "reverse svcctx %p (rsc %p) expire soon\n",
                        &rscp->ctx, rscp);
 
-		rscp->h.expiry_time = ktime_get_real_seconds() + expire;
+                rscp->h.expiry_time = cfs_time_current_sec() + expire;
                 COMPAT_RSC_PUT(&rscp->h, &rsc_cache);
         }
         return 0;
@@ -889,11 +946,7 @@ int gss_svc_upcall_handle_init(struct ptlrpc_request *req,
 
 	memset(&rsikey, 0, sizeof(rsikey));
 	rsikey.lustre_svc = lustre_svc;
-	/* In case of MR, rq_peer is not the NID from which request is received,
-	 * but primary NID of peer.
-	 * So we need rq_source, which contains the NID actually in use.
-	 */
-	rsikey.nid = (__u64) req->rq_source.nid;
+	rsikey.nid = (__u64) req->rq_peer.nid;
 	nodemap_test_nid(req->rq_peer.nid, rsikey.nm_name,
 			 sizeof(rsikey.nm_name));
 
@@ -938,11 +991,11 @@ cache_check:
 		if (first_check) {
 			first_check = 0;
 
-			cache_read_lock(&rsi_cache);
+			read_lock(&rsi_cache.hash_lock);
 			valid = test_bit(CACHE_VALID, &rsip->h.flags);
 			if (valid == 0)
 				set_current_state(TASK_INTERRUPTIBLE);
-			cache_read_unlock(&rsi_cache);
+			read_unlock(&rsi_cache.hash_lock);
 
 			if (valid == 0) {
 				unsigned long jiffies;
@@ -990,20 +1043,6 @@ cache_check:
                 cache_get(&rsci->h);
                 grctx->src_ctx = &rsci->ctx;
         }
-
-	if (gw->gw_flags & LUSTRE_GSS_PACK_KCSUM) {
-		grctx->src_ctx->gsc_mechctx->hash_func = gss_digest_hash;
-	} else if (!strcmp(grctx->src_ctx->gsc_mechctx->mech_type->gm_name,
-			   "krb5") &&
-		   !krb5_allow_old_client_csum) {
-		CWARN("%s: deny connection from '%s' due to missing 'krb_csum' feature, set 'sptlrpc.gss.krb5_allow_old_client_csum=1' to allow, but recommend client upgrade: rc = %d\n",
-		      target->obd_name, libcfs_nid2str(req->rq_peer.nid),
-		      -EPROTO);
-		GOTO(out, rc = SECSVC_DROP);
-	} else {
-		grctx->src_ctx->gsc_mechctx->hash_func =
-			gss_digest_hash_compat;
-	}
 
         if (rawobj_dup(&rsci->ctx.gsc_rvs_hdl, rvs_hdl)) {
                 CERROR("failed duplicate reverse handle\n");
@@ -1133,18 +1172,17 @@ int __init gss_init_svc_upcall(void)
 	/* FIXME this looks stupid. we intend to give lsvcgssd a chance to open
 	 * the init upcall channel, otherwise there's big chance that the first
 	 * upcall issued before the channel be opened thus nfsv4 cache code will
-	 * drop the request directly, thus lead to unnecessary recovery time.
-	 * Here we wait at minimum 1.5 seconds.
-	 */
+	 * drop the request direclty, thus lead to unnecessary recovery time.
+	 * here we wait at miximum 1.5 seconds. */
 	for (i = 0; i < 6; i++) {
-		if (channel_users(&rsi_cache) > 0)
+		if (atomic_read(&rsi_cache.readers) > 0)
 			break;
 		set_current_state(TASK_UNINTERRUPTIBLE);
-		LASSERT(msecs_to_jiffies(MSEC_PER_SEC / 4) > 0);
+		LASSERT(msecs_to_jiffies(MSEC_PER_SEC) >= 4);
 		schedule_timeout(msecs_to_jiffies(MSEC_PER_SEC / 4));
 	}
 
-	if (channel_users(&rsi_cache) == 0)
+	if (atomic_read(&rsi_cache.readers) == 0)
 		CWARN("Init channel is not opened by lsvcgssd, following "
 		      "request might be dropped until lsvcgssd is active\n");
 
