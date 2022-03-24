@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2013, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -36,6 +36,7 @@
 
 #include <linux/errno.h>
 #include <linux/interrupt.h>
+#include <linux/kallsyms.h>
 #include <linux/kmod.h>
 #include <linux/module.h>
 #include <linux/notifier.h>
@@ -114,28 +115,6 @@ EXPORT_SYMBOL(lbug_with_loc);
 
 #ifdef CONFIG_STACKTRACE
 
-#ifndef HAVE_SAVE_STACK_TRACE_TSK
-#define save_stack_trace_tsk(tsk, trace)				       \
-do {									       \
-	if (tsk == current)						       \
-		save_stack_trace(trace);				       \
-	else								       \
-		pr_info("No stack, save_stack_trace_tsk() not exported\n");    \
-} while (0)
-#endif
-
-static void cfs_print_stack_trace(unsigned long *entries, unsigned int nr)
-{
-	unsigned int i;
-
-	/* Prefer %pB for backtraced symbolic names since it was added in:
-	 * Linux v2.6.38-6557-g0f77a8d37825
-	 * vsprintf: Introduce %pB format specifier
-	 */
-	for (i = 0; i < nr; i++)
-		pr_info("[<0>] %pB\n", (void *)entries[i]);
-}
-
 #define MAX_ST_ENTRIES	100
 static DEFINE_SPINLOCK(st_lock);
 
@@ -151,20 +130,11 @@ typedef unsigned int (stack_trace_save_tsk_t)(struct task_struct *task,
 static stack_trace_save_tsk_t *task_dump_stack;
 #endif
 
-void __init cfs_debug_init(void)
-{
-#ifdef CONFIG_ARCH_STACKWALK
-	task_dump_stack = (void *)
-			cfs_kallsyms_lookup_name("stack_trace_save_tsk");
-
-#endif
-}
-
 static void libcfs_call_trace(struct task_struct *tsk)
 {
-	static unsigned long entries[MAX_ST_ENTRIES];
 #ifdef CONFIG_ARCH_STACKWALK
-	unsigned int nr_entries;
+	static unsigned long entries[MAX_ST_ENTRIES];
+	unsigned int i, nr_entries;
 
 	if (!task_dump_stack)
 		task_dump_stack = (stack_trace_save_tsk_t *)
@@ -176,11 +146,13 @@ static void libcfs_call_trace(struct task_struct *tsk)
 	pr_info("Call Trace TBD:\n");
 	if (task_dump_stack) {
 		nr_entries = task_dump_stack(tsk, entries, MAX_ST_ENTRIES, 0);
-		cfs_print_stack_trace(entries, nr_entries);
+		for (i = 0; i < nr_entries; i++)
+			pr_info("[<0>] %pB\n", (void *)entries[i]);
 	}
 	spin_unlock(&st_lock);
 #else
 	struct stack_trace trace;
+	static unsigned long entries[MAX_ST_ENTRIES];
 
 	trace.nr_entries = 0;
 	trace.max_entries = MAX_ST_ENTRIES;
@@ -192,7 +164,11 @@ static void libcfs_call_trace(struct task_struct *tsk)
 	       init_utsname()->release, init_utsname()->version);
 	pr_info("Call Trace:\n");
 	save_stack_trace_tsk(tsk, &trace);
-	cfs_print_stack_trace(trace.entries, trace.nr_entries);
+#ifdef HAVE_STACK_TRACE_PRINT
+	stack_trace_print(trace.entries, trace.nr_entries, 0);
+#else
+	print_stack_trace(&trace, 0);
+#endif
 	spin_unlock(&st_lock);
 #endif
 }
@@ -293,6 +269,12 @@ void libcfs_debug_dumpstack(struct task_struct *tsk)
 	libcfs_call_trace(tsk ?: current);
 }
 EXPORT_SYMBOL(libcfs_debug_dumpstack);
+
+struct task_struct *libcfs_current(void)
+{
+        CWARN("current task struct is %p\n", current);
+        return current;
+}
 
 static int panic_notifier(struct notifier_block *self, unsigned long unused1,
                          void *unused2)
