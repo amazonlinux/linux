@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2017, Intel Corporation.
+ * Copyright (c) 2011, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -36,6 +36,7 @@
 # include <linux/uidgid.h>
 #endif
 #include <lustre_net.h>
+#include <lustre/lustre_idl.h>
 #include <obd_class.h>
 #include <obd.h>
 #include <cl_object.h>
@@ -147,22 +148,6 @@ void mdc_file_secctx_pack(struct ptlrpc_request *req, const char *secctx_name,
 	memcpy(buf, secctx, buf_size);
 }
 
-void mdc_file_sepol_pack(struct ptlrpc_request *req)
-{
-	void *buf;
-	size_t buf_size;
-
-	if (strlen(req->rq_sepol) == 0)
-		return;
-
-	buf = req_capsule_client_get(&req->rq_pill, &RMF_SELINUX_POL);
-	buf_size = req_capsule_get_size(&req->rq_pill, &RMF_SELINUX_POL,
-					RCL_CLIENT);
-
-	LASSERT(buf_size == strlen(req->rq_sepol) + 1);
-	snprintf(buf, strlen(req->rq_sepol) + 1, "%s", req->rq_sepol);
-}
-
 void mdc_readdir_pack(struct ptlrpc_request *req, __u64 pgoff, size_t size,
 		      const struct lu_fid *fid)
 {
@@ -181,9 +166,9 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const void *data, size_t datalen, umode_t mode,
 		     uid_t uid, gid_t gid, cfs_cap_t cap_effective, __u64 rdev)
 {
-	struct mdt_rec_create *rec;
-	char *tmp;
-	__u64 flags;
+	struct mdt_rec_create	*rec;
+	char			*tmp;
+	__u64			 flags;
 
 	CLASSERT(sizeof(struct mdt_rec_reint) == sizeof(struct mdt_rec_create));
 	rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
@@ -216,19 +201,13 @@ void mdc_create_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 	mdc_file_secctx_pack(req, op_data->op_file_secctx_name,
 			     op_data->op_file_secctx,
 			     op_data->op_file_secctx_size);
-
-	/* pack SELinux policy info if any */
-	mdc_file_sepol_pack(req);
 }
 
 static inline __u64 mds_pack_open_flags(__u64 flags)
 {
-	__u64 cr_flags = (flags & MDS_OPEN_FL_INTERNAL);
+	__u64 cr_flags = (flags & (FMODE_READ | FMODE_WRITE |
+				   MDS_OPEN_FL_INTERNAL));
 
-	if (flags & FMODE_READ)
-		cr_flags |= MDS_FMODE_READ;
-	if (flags & FMODE_WRITE)
-		cr_flags |= MDS_FMODE_WRITE;
 	if (flags & O_CREAT)
 		cr_flags |= MDS_OPEN_CREAT;
 	if (flags & O_EXCL)
@@ -282,7 +261,7 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		rec->cr_suppgid1   = op_data->op_suppgids[0];
 		rec->cr_suppgid2   = op_data->op_suppgids[1];
 		rec->cr_bias       = op_data->op_bias;
-		rec->cr_open_handle_old = op_data->op_open_handle;
+		rec->cr_old_handle = op_data->op_handle;
 
 		if (op_data->op_name) {
 			mdc_pack_name(req, &RMF_NAME, op_data->op_name,
@@ -295,9 +274,6 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		mdc_file_secctx_pack(req, op_data->op_file_secctx_name,
 				     op_data->op_file_secctx,
 				     op_data->op_file_secctx_size);
-
-		/* pack SELinux policy info if any */
-		mdc_file_sepol_pack(req);
 	}
 
 	if (lmm) {
@@ -308,9 +284,8 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 	set_mrc_cr_flags(rec, cr_flags);
 }
 
-static inline u64 attr_pack(unsigned int ia_valid, enum op_xvalid ia_xvalid)
-{
-	u64 sa_valid = 0;
+static inline __u64 attr_pack(unsigned int ia_valid) {
+        __u64 sa_valid = 0;
 
         if (ia_valid & ATTR_MODE)
                 sa_valid |= MDS_ATTR_MODE;
@@ -332,27 +307,23 @@ static inline u64 attr_pack(unsigned int ia_valid, enum op_xvalid ia_xvalid)
                 sa_valid |= MDS_ATTR_MTIME_SET;
         if (ia_valid & ATTR_FORCE)
                 sa_valid |= MDS_ATTR_FORCE;
-	if (ia_xvalid & OP_XVALID_FLAGS)
-		sa_valid |= MDS_ATTR_ATTR_FLAG;
-	if (ia_valid & ATTR_KILL_SUID)
-		sa_valid |=  MDS_ATTR_KILL_SUID;
-	if (ia_valid & ATTR_KILL_SGID)
-		sa_valid |= MDS_ATTR_KILL_SGID;
-	if (ia_xvalid & OP_XVALID_CTIME_SET)
-		sa_valid |= MDS_ATTR_CTIME_SET;
-	if (ia_valid & ATTR_OPEN)
-		sa_valid |= MDS_ATTR_FROM_OPEN;
-	if (ia_xvalid & OP_XVALID_BLOCKS)
-		sa_valid |= MDS_ATTR_BLOCKS;
-	if (ia_xvalid & OP_XVALID_OWNEROVERRIDE)
-		/* NFSD hack (see bug 5781) */
-		sa_valid |= MDS_OPEN_OWNEROVERRIDE;
-	if (ia_xvalid & OP_XVALID_PROJID)
+        if (ia_valid & ATTR_ATTR_FLAG)
+                sa_valid |= MDS_ATTR_ATTR_FLAG;
+        if (ia_valid & ATTR_KILL_SUID)
+                sa_valid |=  MDS_ATTR_KILL_SUID;
+        if (ia_valid & ATTR_KILL_SGID)
+                sa_valid |= MDS_ATTR_KILL_SGID;
+        if (ia_valid & ATTR_CTIME_SET)
+                sa_valid |= MDS_ATTR_CTIME_SET;
+        if (ia_valid & ATTR_FROM_OPEN)
+                sa_valid |= MDS_ATTR_FROM_OPEN;
+        if (ia_valid & ATTR_BLOCKS)
+                sa_valid |= MDS_ATTR_BLOCKS;
+        if (ia_valid & MDS_OPEN_OWNEROVERRIDE)
+                /* NFSD hack (see bug 5781) */
+                sa_valid |= MDS_OPEN_OWNEROVERRIDE;
+	if (ia_valid & MDS_ATTR_PROJID)
 		sa_valid |= MDS_ATTR_PROJID;
-	if (ia_xvalid & OP_XVALID_LAZYSIZE)
-		sa_valid |= MDS_ATTR_LSIZE;
-	if (ia_xvalid & OP_XVALID_LAZYBLOCKS)
-		sa_valid |= MDS_ATTR_LBLOCKS;
         return sa_valid;
 }
 
@@ -366,8 +337,7 @@ static void mdc_setattr_pack_rec(struct mdt_rec_setattr *rec,
 	rec->sa_suppgid = -1;
 
 	rec->sa_fid    = op_data->op_fid1;
-	rec->sa_valid  = attr_pack(op_data->op_attr.ia_valid,
-				   op_data->op_xvalid);
+	rec->sa_valid  = attr_pack(op_data->op_attr.ia_valid);
 	rec->sa_mode   = op_data->op_attr.ia_mode;
 	rec->sa_uid    = from_kuid(&init_user_ns, op_data->op_attr.ia_uid);
 	rec->sa_gid    = from_kgid(&init_user_ns, op_data->op_attr.ia_gid);
@@ -391,7 +361,7 @@ static void mdc_setattr_pack_rec(struct mdt_rec_setattr *rec,
 static void mdc_ioepoch_pack(struct mdt_ioepoch *epoch,
 			     struct md_op_data *op_data)
 {
-	epoch->mio_open_handle = op_data->op_open_handle;
+	epoch->mio_handle = op_data->op_handle;
 	epoch->mio_unused1 = 0;
 	epoch->mio_unused2 = 0;
 	epoch->mio_padding = 0;
@@ -444,9 +414,6 @@ void mdc_unlink_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         rec->ul_bias    = op_data->op_bias;
 
 	mdc_pack_name(req, &RMF_NAME, op_data->op_name, op_data->op_namelen);
-
-	/* pack SELinux policy info if any */
-	mdc_file_sepol_pack(req);
 }
 
 void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
@@ -469,19 +436,17 @@ void mdc_link_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
         rec->lk_bias     = op_data->op_bias;
 
 	mdc_pack_name(req, &RMF_NAME, op_data->op_name, op_data->op_namelen);
-
-	/* pack SELinux policy info if any */
-	mdc_file_sepol_pack(req);
 }
 
-static void mdc_close_intent_pack(struct ptlrpc_request *req,
+static void mdc_intent_close_pack(struct ptlrpc_request *req,
 				  struct md_op_data *op_data)
 {
 	struct close_data	*data;
 	struct ldlm_lock	*lock;
 	enum mds_op_bias	 bias = op_data->op_bias;
 
-	if (!(bias & (MDS_CLOSE_INTENT | MDS_CLOSE_MIGRATE)))
+	if (!(bias & (MDS_HSM_RELEASE | MDS_CLOSE_LAYOUT_SWAP |
+		      MDS_RENAME_MIGRATE)))
 		return;
 
 	data = req_capsule_client_get(&req->rq_pill, &RMF_CLOSE_DATA);
@@ -496,90 +461,44 @@ static void mdc_close_intent_pack(struct ptlrpc_request *req,
 
 	data->cd_data_version = op_data->op_data_version;
 	data->cd_fid = op_data->op_fid2;
-
-	if (bias & MDS_CLOSE_LAYOUT_SPLIT) {
-		data->cd_mirror_id = op_data->op_mirror_id;
-	} else if (bias & MDS_CLOSE_RESYNC_DONE) {
-		struct close_data_resync_done *sync = &data->cd_resync;
-
-		CLASSERT(sizeof(data->cd_resync) <= sizeof(data->cd_reserved));
-		sync->resync_count = op_data->op_data_size / sizeof(__u32);
-		if (sync->resync_count <= INLINE_RESYNC_ARRAY_SIZE) {
-			memcpy(sync->resync_ids_inline, op_data->op_data,
-			       op_data->op_data_size);
-		} else {
-			size_t count = sync->resync_count;
-
-			memcpy(req_capsule_client_get(&req->rq_pill, &RMF_U32),
-				op_data->op_data, count * sizeof(__u32));
-		}
-	}
 }
 
 void mdc_rename_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		     const char *old, size_t oldlen,
 		     const char *new, size_t newlen)
 {
-	struct mdt_rec_rename *rec;
+        struct mdt_rec_rename *rec;
 
-	CLASSERT(sizeof(struct mdt_rec_reint) == sizeof(struct mdt_rec_rename));
-	rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
+        CLASSERT(sizeof(struct mdt_rec_reint) == sizeof(struct mdt_rec_rename));
+        rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
 
-	/* XXX do something about time, uid, gid */
-	rec->rn_opcode	 = REINT_RENAME;
-	rec->rn_fsuid    = op_data->op_fsuid;
-	rec->rn_fsgid    = op_data->op_fsgid;
-	rec->rn_cap      = op_data->op_cap;
-	rec->rn_suppgid1 = op_data->op_suppgids[0];
-	rec->rn_suppgid2 = op_data->op_suppgids[1];
-	rec->rn_fid1     = op_data->op_fid1;
-	rec->rn_fid2     = op_data->op_fid2;
-	rec->rn_time     = op_data->op_mod_time;
-	rec->rn_mode     = op_data->op_mode;
-	rec->rn_bias     = op_data->op_bias;
+        /* XXX do something about time, uid, gid */
+	rec->rn_opcode  = op_data->op_cli_flags & CLI_MIGRATE ?
+					REINT_MIGRATE : REINT_RENAME;
+        rec->rn_fsuid    = op_data->op_fsuid;
+        rec->rn_fsgid    = op_data->op_fsgid;
+        rec->rn_cap      = op_data->op_cap;
+        rec->rn_suppgid1 = op_data->op_suppgids[0];
+        rec->rn_suppgid2 = op_data->op_suppgids[1];
+        rec->rn_fid1     = op_data->op_fid1;
+        rec->rn_fid2     = op_data->op_fid2;
+        rec->rn_time     = op_data->op_mod_time;
+        rec->rn_mode     = op_data->op_mode;
+        rec->rn_bias     = op_data->op_bias;
 
 	mdc_pack_name(req, &RMF_NAME, old, oldlen);
 
 	if (new != NULL)
 		mdc_pack_name(req, &RMF_SYMTGT, new, newlen);
 
-	/* pack SELinux policy info if any */
-	mdc_file_sepol_pack(req);
-}
-
-void mdc_migrate_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
-		      const char *name, size_t namelen)
-{
-	struct mdt_rec_rename *rec;
-	char *ea;
-
-	CLASSERT(sizeof(struct mdt_rec_reint) == sizeof(struct mdt_rec_rename));
-	rec = req_capsule_client_get(&req->rq_pill, &RMF_REC_REINT);
-
-	rec->rn_opcode	 = REINT_MIGRATE;
-	rec->rn_fsuid    = op_data->op_fsuid;
-	rec->rn_fsgid    = op_data->op_fsgid;
-	rec->rn_cap      = op_data->op_cap;
-	rec->rn_suppgid1 = op_data->op_suppgids[0];
-	rec->rn_suppgid2 = op_data->op_suppgids[1];
-	rec->rn_fid1     = op_data->op_fid1;
-	rec->rn_fid2	 = op_data->op_fid4;
-	rec->rn_time     = op_data->op_mod_time;
-	rec->rn_mode     = op_data->op_mode;
-	rec->rn_bias     = op_data->op_bias;
-
-	mdc_pack_name(req, &RMF_NAME, name, namelen);
-
-	if (op_data->op_bias & MDS_CLOSE_MIGRATE) {
+	if (op_data->op_cli_flags & CLI_MIGRATE &&
+	    op_data->op_bias & MDS_RENAME_MIGRATE) {
 		struct mdt_ioepoch *epoch;
 
-		mdc_close_intent_pack(req, op_data);
+		mdc_intent_close_pack(req, op_data);
 		epoch = req_capsule_client_get(&req->rq_pill, &RMF_MDT_EPOCH);
 		mdc_ioepoch_pack(epoch, op_data);
 	}
-
-	ea = req_capsule_client_get(&req->rq_pill, &RMF_EADATA);
-	memcpy(ea, op_data->op_data, op_data->op_data_size);
 }
 
 void mdc_getattr_pack(struct ptlrpc_request *req, __u64 valid, __u32 flags,
@@ -589,6 +508,8 @@ void mdc_getattr_pack(struct ptlrpc_request *req, __u64 valid, __u32 flags,
                                                     &RMF_MDT_BODY);
 
 	b->mbo_valid = valid;
+	if (op_data->op_bias & MDS_CHECK_SPLIT)
+		b->mbo_valid |= OBD_MD_FLCKSPLIT;
 	if (op_data->op_bias & MDS_CROSS_REF)
 		b->mbo_valid |= OBD_MD_FLCROSSREF;
 	b->mbo_eadatasize = ea_size;
@@ -626,5 +547,5 @@ void mdc_close_pack(struct ptlrpc_request *req, struct md_op_data *op_data)
 		rec->sa_valid &= ~MDS_ATTR_ATIME;
 
 	mdc_ioepoch_pack(epoch, op_data);
-	mdc_close_intent_pack(req, op_data);
+	mdc_intent_close_pack(req, op_data);
 }
