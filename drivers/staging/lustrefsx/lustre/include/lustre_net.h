@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2010, 2017, Intel Corporation.
+ * Copyright (c) 2010, 2016, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -50,13 +50,12 @@
  *
  * @{
  */
-#include <linux/kobject.h>
+
 #include <linux/uio.h>
 #include <libcfs/libcfs.h>
+#include <lnet/nidstr.h>
 #include <lnet/api.h>
-#include <lnet/lib-types.h>
-#include <uapi/linux/lnet/nidstr.h>
-#include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre/lustre_idl.h>
 #include <lustre_ha.h>
 #include <lustre_sec.h>
 #include <lustre_import.h>
@@ -64,7 +63,7 @@
 #include <lu_object.h>
 #include <lustre_req_layout.h>
 #include <obd_support.h>
-#include <uapi/linux/lustre/lustre_ver.h>
+#include <lustre_ver.h>
 
 /* MD flags we _always_ use */
 #define PTLRPC_MD_OPTIONS  0
@@ -76,7 +75,7 @@
  * value.  The client is free to limit the actual RPC size for any bulk
  * transfer via cl_max_pages_per_rpc to some non-power-of-two value.
  * NOTE: This is limited to 16 (=64GB RPCs) by IOOBJ_MAX_BRW_BITS. */
-#define PTLRPC_BULK_OPS_BITS	6
+#define PTLRPC_BULK_OPS_BITS	4
 #if PTLRPC_BULK_OPS_BITS > 16
 #error "More than 65536 BRW RPCs not allowed by IOOBJ_MAX_BRW_BITS."
 #endif
@@ -473,31 +472,19 @@
  * - single object with 16 pages is 512 bytes
  * - OST_IO_MAXREQSIZE must be at least 1 page of cookies plus some spillover
  * - Must be a multiple of 1024
+ * - actual size is about 18K
  */
-#define _OST_MAXREQSIZE_BASE ((unsigned long)(sizeof(struct lustre_msg) + \
-				    sizeof(struct ptlrpc_body) +	  \
-				    sizeof(struct obdo) +		  \
-				    sizeof(struct obd_ioobj) +		  \
-				    sizeof(struct niobuf_remote)))
-#define _OST_MAXREQSIZE_SUM ((unsigned long)(_OST_MAXREQSIZE_BASE +	  \
-				   sizeof(struct niobuf_remote) *	  \
-				   (DT_MAX_BRW_PAGES - 1)))
+#define _OST_MAXREQSIZE_SUM (sizeof(struct lustre_msg) + \
+			     sizeof(struct ptlrpc_body) + \
+			     sizeof(struct obdo) + \
+			     sizeof(struct obd_ioobj) + \
+			     sizeof(struct niobuf_remote) * DT_MAX_BRW_PAGES)
 /**
  * FIEMAP request can be 4K+ for now
  */
-#define OST_MAXREQSIZE		(16UL * 1024UL)
-#define OST_IO_MAXREQSIZE	max(OST_MAXREQSIZE,			\
-				   ((_OST_MAXREQSIZE_SUM - 1) |		\
-				    (1024UL - 1)) + 1)
-/* Safe estimate of free space in standard RPC, provides upper limit for # of
- * bytes of i/o to pack in RPC (skipping bulk transfer). */
-#define OST_SHORT_IO_SPACE	(OST_IO_MAXREQSIZE - _OST_MAXREQSIZE_BASE)
-
-/* Actual size used for short i/o buffer.  Calculation means this:
- * At least one page (for large PAGE_SIZE), or 16 KiB, but not more
- * than the available space aligned to a page boundary. */
-#define OBD_MAX_SHORT_IO_BYTES	min(max(PAGE_SIZE, 16UL * 1024UL), \
-				    OST_SHORT_IO_SPACE & PAGE_MASK)
+#define OST_MAXREQSIZE		(16 * 1024)
+#define OST_IO_MAXREQSIZE	max_t(int, OST_MAXREQSIZE, \
+				(((_OST_MAXREQSIZE_SUM - 1) | (1024 - 1)) + 1))
 
 #define OST_MAXREPSIZE		(9 * 1024)
 #define OST_IO_MAXREPSIZE	OST_MAXREPSIZE
@@ -510,7 +497,6 @@
  * rate of request buffer, please check comment of MDS_LOV_BUFSIZE for details.
  */
 #define OST_IO_BUFSIZE		max_t(int, OST_IO_MAXREQSIZE + 1024, 64 * 1024)
-
 
 /* Macro to hide a typecast. */
 #define ptlrpc_req_async_args(req) ((void *)&req->rq_async_args)
@@ -566,6 +552,7 @@ union ptlrpc_async_args {
 };
 
 struct ptlrpc_request_set;
+typedef int (*set_interpreter_func)(struct ptlrpc_request_set *, void *, int);
 typedef int (*set_producer_func)(struct ptlrpc_request_set *, void *);
 
 /**
@@ -587,8 +574,19 @@ struct ptlrpc_request_set {
 	atomic_t		set_remaining;
 	/** wait queue to wait on for request events */
 	wait_queue_head_t	set_waitq;
+	wait_queue_head_t      *set_wakeup_ptr;
 	/** List of requests in the set */
 	struct list_head	set_requests;
+	/**
+	 * List of completion callbacks to be called when the set is completed
+	 * This is only used if \a set_interpret is NULL.
+	 * Links struct ptlrpc_set_cbdata.
+	 */
+	struct list_head	set_cblist;
+	/** Completion callback, if only one. */
+	set_interpreter_func	set_interpret;
+	/** opaq argument passed to completion \a set_interpret callback. */
+	void			*set_arg;
 	/**
 	 * Lock for \a set_new_requests manipulations
 	 * locked so that any old caller can communicate requests to
@@ -608,6 +606,18 @@ struct ptlrpc_request_set {
 	/** opaq argument passed to the producer callback */
 	void			*set_producer_arg;
 	unsigned int		 set_allow_intr:1;
+};
+
+/**
+ * Description of a single ptrlrpc_set callback
+ */
+struct ptlrpc_set_cbdata {
+	/** List linkage item */
+	struct list_head	psc_item;
+	/** Pointer to interpreting function */
+	set_interpreter_func	psc_interpret;
+	/** Opaq argument to pass to the callback */
+	void			*psc_data;
 };
 
 struct ptlrpc_bulk_desc;
@@ -774,9 +784,9 @@ struct ptlrpc_cli_req {
 	/** For bulk requests on client only: bulk descriptor */
 	struct ptlrpc_bulk_desc		*cr_bulk;
 	/** optional time limit for send attempts */
-	time64_t			 cr_delay_limit;
+	cfs_duration_t			 cr_delay_limit;
 	/** time request was first queued */
-	time64_t			 cr_queued_time;
+	cfs_time_t			 cr_queued_time;
 	/** request sent in nanoseconds */
 	ktime_t				 cr_sent_ns;
 	/** time for request really sent out */
@@ -1049,13 +1059,6 @@ struct ptlrpc_request {
 	/** description of flavors for client & server */
 	struct sptlrpc_flavor		 rq_flvr;
 
-	/**
-	 * SELinux policy info at the time of the request
-	 * sepol string format is:
-	 * <mode>:<policy name>:<policy version>:<policy hash>
-	 */
-	char rq_sepol[LUSTRE_NODEMAP_SEPOL_LENGTH + 1];
-
 	/* client/server security flags */
 	unsigned int
                                  rq_ctx_init:1,      /* context initiation */
@@ -1112,17 +1115,8 @@ struct ptlrpc_request {
 	/**
 	 * service time estimate (secs)
 	 * If the request is not served by this time, it is marked as timed out.
-	 * Do not change to time64_t since this is transmitted over the wire.
-	 *
-	 * The linux kernel handles timestamps with time64_t and timeouts
-	 * are normally done with jiffies. Lustre shares the rq_timeout between
-	 * nodes. Since jiffies can vary from node to node Lustre instead
-	 * will express the timeout value in seconds. To avoid confusion with
-	 * timestamps (time64_t) and jiffy timeouts (long) Lustre timeouts
-	 * are expressed in s32 (timeout_t). Also what is transmitted over
-	 * the wire is 32 bits.
 	 */
-	timeout_t			 rq_timeout;
+	int				 rq_timeout;
 	/**
 	 * when request/reply sent (secs), or time when request should be sent
 	 */
@@ -1179,37 +1173,37 @@ static inline bool ptlrpc_nrs_req_can_move(struct ptlrpc_request *req)
 /** @} nrs */
 
 /**
- * Returns true if request buffer at offset \a index was already swabbed
+ * Returns 1 if request buffer at offset \a index was already swabbed
  */
-static inline bool lustre_req_swabbed(struct ptlrpc_request *req, size_t index)
+static inline int lustre_req_swabbed(struct ptlrpc_request *req, size_t index)
 {
-	LASSERT(index < sizeof(req->rq_req_swab_mask) * 8);
-	return req->rq_req_swab_mask & (1 << index);
+        LASSERT(index < sizeof(req->rq_req_swab_mask) * 8);
+        return req->rq_req_swab_mask & (1 << index);
 }
 
 /**
- * Returns true if request reply buffer at offset \a index was already swabbed
+ * Returns 1 if request reply buffer at offset \a index was already swabbed
  */
-static inline bool lustre_rep_swabbed(struct ptlrpc_request *req, size_t index)
+static inline int lustre_rep_swabbed(struct ptlrpc_request *req, size_t index)
 {
-	LASSERT(index < sizeof(req->rq_rep_swab_mask) * 8);
-	return req->rq_rep_swab_mask & (1 << index);
+        LASSERT(index < sizeof(req->rq_rep_swab_mask) * 8);
+        return req->rq_rep_swab_mask & (1 << index);
 }
 
 /**
- * Returns true if request needs to be swabbed into local cpu byteorder
+ * Returns 1 if request needs to be swabbed into local cpu byteorder
  */
-static inline bool ptlrpc_req_need_swab(struct ptlrpc_request *req)
+static inline int ptlrpc_req_need_swab(struct ptlrpc_request *req)
 {
-	return lustre_req_swabbed(req, MSG_PTLRPC_HEADER_OFF);
+        return lustre_req_swabbed(req, MSG_PTLRPC_HEADER_OFF);
 }
 
 /**
- * Returns true if request reply needs to be swabbed into local cpu byteorder
+ * Returns 1 if request reply needs to be swabbed into local cpu byteorder
  */
-static inline bool ptlrpc_rep_need_swab(struct ptlrpc_request *req)
+static inline int ptlrpc_rep_need_swab(struct ptlrpc_request *req)
 {
-	return lustre_rep_swabbed(req, MSG_PTLRPC_HEADER_OFF);
+        return lustre_rep_swabbed(req, MSG_PTLRPC_HEADER_OFF);
 }
 
 /**
@@ -1444,8 +1438,6 @@ extern const struct ptlrpc_bulk_frag_ops ptlrpc_bulk_kvec_ops;
  *  Another user is readpage for MDT.
  */
 struct ptlrpc_bulk_desc {
-	/** number MD's assigned including zero-sends */
-	unsigned int bd_refs;
 	/** completed with failure */
 	unsigned long bd_failure:1;
 	/** client side */
@@ -1470,7 +1462,6 @@ struct ptlrpc_bulk_desc {
 	int                    bd_max_iov;      /* allocated size of bd_iov */
 	int                    bd_nob;          /* # bytes covered */
 	int                    bd_nob_transferred; /* # bytes GOT/PUT */
-	unsigned int	       bd_nob_last;	/* # bytes in last MD */
 
 	__u64                  bd_last_mbits;
 
@@ -1478,8 +1469,6 @@ struct ptlrpc_bulk_desc {
 	lnet_nid_t             bd_sender;       /* stash event::sender */
 	int			bd_md_count;	/* # valid entries in bd_mds */
 	int			bd_md_max_brw;	/* max entries in bd_mds */
-	/** array of offsets for each MD */
-	unsigned int		bd_mds_off[PTLRPC_BULK_OPS_COUNT];
 	/** array of associated MDs */
 	struct lnet_handle_md	bd_mds[PTLRPC_BULK_OPS_COUNT];
 
@@ -1704,8 +1693,8 @@ struct ptlrpc_service {
 	int				srv_nthrs_cpt_init;
 	/** limit of threads number for each partition */
 	int				srv_nthrs_cpt_limit;
-	/** Root of debugfs dir tree for this service */
-	struct dentry		       *srv_debugfs_entry;
+        /** Root of /proc dir tree for this service */
+	struct proc_dir_entry           *srv_procroot;
         /** Pointer to statistic data for this service */
         struct lprocfs_stats           *srv_stats;
         /** # hp per lp reqs to handle */
@@ -1731,25 +1720,17 @@ struct ptlrpc_service {
         int                             srv_watchdog_factor;
         /** under unregister_service */
         unsigned                        srv_is_stopping:1;
-	/** Whether or not to restrict service threads to CPUs in this CPT */
-	unsigned			srv_cpt_bind:1;
 
-	/** max # request buffers */
-	int				srv_nrqbds_max;
 	/** max # request buffers in history per partition */
 	int				srv_hist_nrqbds_cpt_max;
-	/** number of CPTs this service associated with */
+	/** number of CPTs this service bound on */
 	int				srv_ncpts;
-	/** CPTs array this service associated with */
+	/** CPTs array this service bound on */
 	__u32				*srv_cpts;
 	/** 2^srv_cptab_bits >= cfs_cpt_numbert(srv_cptable) */
 	int				srv_cpt_bits;
 	/** CPT table this service is running over */
 	struct cfs_cpt_table		*srv_cptable;
-
-	/* sysfs object */
-	struct kobject			srv_kobj;
-	struct completion		srv_kobj_unregister;
 	/**
 	 * partition data for ptlrpc service
 	 */
@@ -1796,8 +1777,6 @@ struct ptlrpc_service_part {
 	 * threads starting & stopping are also protected by this lock.
 	 */
 	spinlock_t			scp_lock  __cfs_cacheline_aligned;
-	/** userland serialization */
-	struct mutex			scp_mutex;
 	/** total # req buffer descs allocated */
 	int				scp_nrqbds_total;
 	/** # posted request buffers for receiving */
@@ -1812,8 +1791,8 @@ struct ptlrpc_service_part {
 	struct list_head		scp_rqbd_posted;
 	/** incoming reqs */
 	struct list_head		scp_req_incoming;
-	/** timeout before re-posting reqs, in jiffies */
-	long				scp_rqbd_timeout;
+	/** timeout before re-posting reqs, in tick */
+	cfs_duration_t			scp_rqbd_timeout;
 	/**
 	 * all threads sleep on this. This wait-queue is signalled when new
 	 * incoming request arrives and when difficult reply has to be handled.
@@ -1864,7 +1843,7 @@ struct ptlrpc_service_part {
 	/** early reply timer */
 	struct timer_list		scp_at_timer;
 	/** debug */
-	ktime_t				scp_at_checktime;
+	cfs_time_t			scp_at_checktime;
 	/** check early replies */
 	unsigned			scp_at_check;
 	/** @} */
@@ -2082,7 +2061,7 @@ static inline int ptlrpc_server_bulk_active(struct ptlrpc_bulk_desc *desc)
 	LASSERT(desc != NULL);
 
 	spin_lock(&desc->bd_lock);
-	rc = desc->bd_refs;
+	rc = desc->bd_md_count;
 	spin_unlock(&desc->bd_lock);
 	return rc;
 }
@@ -2099,15 +2078,14 @@ static inline int ptlrpc_client_bulk_active(struct ptlrpc_request *req)
 	LASSERT(req != NULL);
 	desc = req->rq_bulk;
 
-	if (!desc)
-		return 0;
-
 	if (req->rq_bulk_deadline > ktime_get_real_seconds())
 		return 1;
 
+	if (!desc)
+		return 0;
 
 	spin_lock(&desc->bd_lock);
-	rc = desc->bd_refs;
+	rc = desc->bd_md_count;
 	spin_unlock(&desc->bd_lock);
 	return rc;
 }
@@ -2147,8 +2125,10 @@ void ptlrpc_abort_set(struct ptlrpc_request_set *set);
 struct ptlrpc_request_set *ptlrpc_prep_set(void);
 struct ptlrpc_request_set *ptlrpc_prep_fcset(int max, set_producer_func func,
 					     void *arg);
+int ptlrpc_set_add_cb(struct ptlrpc_request_set *set,
+                      set_interpreter_func fn, void *data);
 int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set);
-int ptlrpc_set_wait(const struct lu_env *env, struct ptlrpc_request_set *);
+int ptlrpc_set_wait(struct ptlrpc_request_set *);
 void ptlrpc_mark_interrupted(struct ptlrpc_request *req);
 void ptlrpc_set_destroy(struct ptlrpc_request_set *);
 void ptlrpc_set_add_req(struct ptlrpc_request_set *, struct ptlrpc_request *);
@@ -2265,8 +2245,8 @@ struct ptlrpc_service_thr_conf {
 	/* user specified threads number, it will be validated due to
 	 * other members of this structure. */
 	unsigned int			tc_nthrs_user;
-	/* bind service threads to only CPUs in their associated CPT */
-	unsigned int			tc_cpu_bind;
+	/* set NUMA node affinity for service threads */
+	unsigned int			tc_cpu_affinity;
 	/* Tags for lu_context associated with service thread */
 	__u32				tc_ctx_tags;
 };
@@ -2275,8 +2255,6 @@ struct ptlrpc_service_cpt_conf {
 	struct cfs_cpt_table		*cc_cptable;
 	/* string pattern to describe CPTs for a service */
 	char				*cc_pattern;
-	/* whether or not to have per-CPT service partitions */
-	bool				cc_affinity;
 };
 
 struct ptlrpc_service_conf {
@@ -2309,18 +2287,18 @@ void ptlrpc_schedule_difficult_reply(struct ptlrpc_reply_state *rs);
 int ptlrpc_hpreq_handler(struct ptlrpc_request *req);
 struct ptlrpc_service *ptlrpc_register_service(
 				struct ptlrpc_service_conf *conf,
-				struct kset *parent,
-				struct dentry *debugfs_entry);
+				struct proc_dir_entry *proc_entry);
 void ptlrpc_stop_all_threads(struct ptlrpc_service *svc);
 
 int ptlrpc_start_threads(struct ptlrpc_service *svc);
 int ptlrpc_unregister_service(struct ptlrpc_service *service);
+int liblustre_check_services(void *arg);
+void ptlrpc_daemonize(char *name);
 int ptlrpc_service_health_check(struct ptlrpc_service *);
 void ptlrpc_server_drop_request(struct ptlrpc_request *req);
 void ptlrpc_request_change_export(struct ptlrpc_request *req,
 				  struct obd_export *export);
-void ptlrpc_update_export_timer(struct obd_export *exp,
-				time64_t extra_delay);
+void ptlrpc_update_export_timer(struct obd_export *exp, long extra_delay);
 
 int ptlrpc_hr_init(void);
 void ptlrpc_hr_fini(void);
@@ -2333,10 +2311,8 @@ void ptlrpc_hr_fini(void);
  * @{
  */
 int ptlrpc_connect_import(struct obd_import *imp);
-int ptlrpc_connect_import_locked(struct obd_import *imp);
 int ptlrpc_init_import(struct obd_import *imp);
 int ptlrpc_disconnect_import(struct obd_import *imp, int noclose);
-int ptlrpc_disconnect_and_idle_import(struct obd_import *imp);
 int ptlrpc_import_recovery_state_machine(struct obd_import *imp);
 void deuuidify(char *uuid, const char *prefix, char **uuid_start,
 	       int *uuid_len);
@@ -2350,14 +2326,8 @@ int ptlrpc_reconnect_import(struct obd_import *imp);
  *
  * @{
  */
-#define PTLRPC_MAX_BUFCOUNT \
-	(sizeof(((struct ptlrpc_request *)0)->rq_req_swab_mask) * 8)
-#define MD_MAX_BUFLEN		(MDS_REG_MAXREQSIZE > OUT_MAXREQSIZE ? \
-				 MDS_REG_MAXREQSIZE : OUT_MAXREQSIZE)
-#define PTLRPC_MAX_BUFLEN	(OST_IO_MAXREQSIZE > MD_MAX_BUFLEN ? \
-				 OST_IO_MAXREQSIZE : MD_MAX_BUFLEN)
-bool ptlrpc_buf_need_swab(struct ptlrpc_request *req, const int inout,
-			  __u32 index);
+int ptlrpc_buf_need_swab(struct ptlrpc_request *req, const int inout,
+			 __u32 index);
 void ptlrpc_buf_set_swabbed(struct ptlrpc_request *req, const int inout,
 			    __u32 index);
 int ptlrpc_unpack_rep_msg(struct ptlrpc_request *req, int len);
@@ -2400,7 +2370,7 @@ __u32 lustre_msg_get_op_flags(struct lustre_msg *msg);
 void lustre_msg_add_op_flags(struct lustre_msg *msg, __u32 flags);
 struct lustre_handle *lustre_msg_get_handle(struct lustre_msg *msg);
 __u32 lustre_msg_get_type(struct lustre_msg *msg);
-enum lustre_msg_version lustre_msg_get_version(struct lustre_msg *msg);
+__u32 lustre_msg_get_version(struct lustre_msg *msg);
 void lustre_msg_add_version(struct lustre_msg *msg, __u32 version);
 __u32 lustre_msg_get_opc(struct lustre_msg *msg);
 __u64 lustre_msg_get_last_xid(struct lustre_msg *msg);
@@ -2415,8 +2385,8 @@ void lustre_msg_set_limit(struct lustre_msg *msg, __u64 limit);
 int lustre_msg_get_status(struct lustre_msg *msg);
 __u32 lustre_msg_get_conn_cnt(struct lustre_msg *msg);
 __u32 lustre_msg_get_magic(struct lustre_msg *msg);
-timeout_t lustre_msg_get_timeout(struct lustre_msg *msg);
-timeout_t lustre_msg_get_service_timeout(struct lustre_msg *msg);
+__u32 lustre_msg_get_timeout(struct lustre_msg *msg);
+__u32 lustre_msg_get_service_time(struct lustre_msg *msg);
 char *lustre_msg_get_jobid(struct lustre_msg *msg);
 __u32 lustre_msg_get_cksum(struct lustre_msg *msg);
 __u64 lustre_msg_get_mbits(struct lustre_msg *msg);
@@ -2433,9 +2403,8 @@ void lustre_msg_set_status(struct lustre_msg *msg, __u32 status);
 void lustre_msg_set_conn_cnt(struct lustre_msg *msg, __u32 conn_cnt);
 void ptlrpc_req_set_repsize(struct ptlrpc_request *req, int count, __u32 *sizes);
 void ptlrpc_request_set_replen(struct ptlrpc_request *req);
-void lustre_msg_set_timeout(struct lustre_msg *msg, timeout_t timeout);
-void lustre_msg_set_service_timeout(struct lustre_msg *msg,
-				    timeout_t service_timeout);
+void lustre_msg_set_timeout(struct lustre_msg *msg, __u32 timeout);
+void lustre_msg_set_service_time(struct lustre_msg *msg, __u32 service_time);
 void lustre_msg_set_jobid(struct lustre_msg *msg, char *jobid);
 void lustre_msg_set_cksum(struct lustre_msg *msg, __u32 cksum);
 void lustre_msg_set_mbits(struct lustre_msg *msg, __u64 mbits);
@@ -2619,8 +2588,11 @@ static inline int ptlrpc_req_get_repsize(struct ptlrpc_request *req)
 static inline int ptlrpc_send_limit_expired(struct ptlrpc_request *req)
 {
         if (req->rq_delay_limit != 0 &&
-	    req->rq_queued_time + req->rq_delay_limit < ktime_get_seconds())
+            cfs_time_before(cfs_time_add(req->rq_queued_time,
+                                         cfs_time_seconds(req->rq_delay_limit)),
+                            cfs_time_current())) {
                 return 1;
+        }
         return 0;
 }
 
@@ -2687,6 +2659,11 @@ struct timeout_item;
 typedef int (*timeout_cb_t)(struct timeout_item *, void *);
 int ptlrpc_pinger_add_import(struct obd_import *imp);
 int ptlrpc_pinger_del_import(struct obd_import *imp);
+int ptlrpc_add_timeout_client(int time, enum timeout_event event,
+			      timeout_cb_t cb, void *data,
+			      struct list_head *obd_list);
+int ptlrpc_del_timeout_client(struct list_head *obd_list,
+                              enum timeout_event event);
 struct ptlrpc_request * ptlrpc_prep_ping(struct obd_import *imp);
 int ptlrpc_obd_ping(struct obd_device *obd);
 void ping_evictor_start(void);
@@ -2725,9 +2702,11 @@ static inline void ptlrpc_lprocfs_brw(struct ptlrpc_request *req, int bytes) {}
 
 /* ptlrpc/llog_server.c */
 int llog_origin_handle_open(struct ptlrpc_request *req);
+int llog_origin_handle_destroy(struct ptlrpc_request *req);
 int llog_origin_handle_prev_block(struct ptlrpc_request *req);
 int llog_origin_handle_next_block(struct ptlrpc_request *req);
 int llog_origin_handle_read_header(struct ptlrpc_request *req);
+int llog_origin_handle_close(struct ptlrpc_request *req);
 
 /* ptlrpc/llog_client.c */
 extern struct llog_operations llog_client_ops;
