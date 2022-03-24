@@ -27,7 +27,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2010, 2017, Intel Corporation.
+ * Copyright (c) 2010, 2014, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -289,8 +289,6 @@ ldlm_process_flock_lock(struct ldlm_lock *req, __u64 *flags,
 	int overlaps = 0;
 	int splitted = 0;
 	const struct ldlm_callback_suite null_cbs = { NULL };
-	struct list_head *grant_work = intention == LDLM_PROCESS_ENQUEUE ?
-							NULL : work_list;
 	ENTRY;
 
 	CDEBUG(D_DLMTRACE, "flags %#llx owner %llu pid %u mode %u start "
@@ -350,7 +348,7 @@ reprocess:
 				reprocess_failed = 1;
 				if (ldlm_flock_deadlock(req, lock)) {
 					ldlm_flock_cancel_on_deadlock(req,
-							grant_work);
+							work_list);
 					RETURN(LDLM_ITER_CONTINUE);
 				}
 				continue;
@@ -581,7 +579,7 @@ reprocess:
 restart:
 				ldlm_reprocess_queue(res, &res->lr_waiting,
 						     &rpc_list,
-						     LDLM_PROCESS_RESCAN, NULL);
+						     LDLM_PROCESS_RESCAN);
 
                                 unlock_res_and_lock(req);
                                 rc = ldlm_run_ast_work(ns, &rpc_list,
@@ -592,7 +590,7 @@ restart:
                        }
                 } else {
                         LASSERT(req->l_completion_ast);
-			ldlm_add_ast_work_item(req, NULL, grant_work);
+                        ldlm_add_ast_work_item(req, NULL, work_list);
                 }
 #else /* !HAVE_SERVER_SUPPORT */
                 /* The only one possible case for client-side calls flock
@@ -744,7 +742,7 @@ granted:
 		RETURN(-EIO);
 	}
 
-	/* ldlm_lock_enqueue() has already placed lock on the granted list. */
+        /* ldlm_lock_enqueue() has already placed lock on the granted list. */
 	ldlm_resource_unlink_lock(lock);
 
 	/* Import invalidation. We need to actually release the lock
@@ -759,7 +757,7 @@ granted:
 			LASSERT(ldlm_is_test_lock(lock));
 
 		if (ldlm_is_test_lock(lock) || ldlm_is_flock_deadlock(lock))
-			mode = getlk->fl_type;
+			mode = flock_type(getlk);
 		else
 			mode = lock->l_granted_mode;
 
@@ -782,26 +780,27 @@ granted:
 	LDLM_DEBUG(lock, "client-side enqueue granted");
 
 	if (flags & LDLM_FL_TEST_LOCK) {
-		/*
-		 * fcntl(F_GETLK) request
-		 * The old mode was saved in getlk->fl_type so that if the mode
-		 * in the lock changes we can decref the appropriate refcount.
-		 */
+                /* fcntl(F_GETLK) request */
+                /* The old mode was saved in getlk->fl_type so that if the mode
+                 * in the lock changes we can decref the appropriate refcount.*/
 		LASSERT(ldlm_is_test_lock(lock));
-		ldlm_flock_destroy(lock, getlk->fl_type, LDLM_FL_WAIT_NOREPROC);
+		ldlm_flock_destroy(lock, flock_type(getlk),
+				   LDLM_FL_WAIT_NOREPROC);
 		switch (lock->l_granted_mode) {
 		case LCK_PR:
-			getlk->fl_type = F_RDLCK;
+			flock_set_type(getlk, F_RDLCK);
 			break;
 		case LCK_PW:
-			getlk->fl_type = F_WRLCK;
+			flock_set_type(getlk, F_WRLCK);
 			break;
 		default:
-			getlk->fl_type = F_UNLCK;
+			flock_set_type(getlk, F_UNLCK);
 		}
-		getlk->fl_pid = (pid_t)lock->l_policy_data.l_flock.pid;
-		getlk->fl_start = (loff_t)lock->l_policy_data.l_flock.start;
-		getlk->fl_end = (loff_t)lock->l_policy_data.l_flock.end;
+		flock_set_pid(getlk, (pid_t)lock->l_policy_data.l_flock.pid);
+		flock_set_start(getlk,
+				(loff_t)lock->l_policy_data.l_flock.start);
+		flock_set_end(getlk,
+			      (loff_t)lock->l_policy_data.l_flock.end);
 	} else {
 		__u64 noreproc = LDLM_FL_WAIT_NOREPROC;
 
