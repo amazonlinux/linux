@@ -23,14 +23,12 @@
 /*
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2012, 2017, Intel Corporation.
+ * Copyright (c) 2012, 2015, Intel Corporation.
  *
  * Code originally extracted from quota directory
  */
 
 #include <obd.h>
-#include <lustre_osc.h>
-
 #include "osc_internal.h"
 
 static inline struct osc_quota_info *osc_oqi_alloc(u32 id)
@@ -96,7 +94,7 @@ static inline u32 fl_quota_flag(int qtype)
 	}
 }
 
-int osc_quota_setdq(struct client_obd *cli, __u64 xid, const unsigned int qid[],
+int osc_quota_setdq(struct client_obd *cli, const unsigned int qid[],
 		    u64 valid, u32 flags)
 {
 	int type;
@@ -106,17 +104,6 @@ int osc_quota_setdq(struct client_obd *cli, __u64 xid, const unsigned int qid[],
 
 	if ((valid & (OBD_MD_FLALLQUOTA)) == 0)
 		RETURN(0);
-
-	mutex_lock(&cli->cl_quota_mutex);
-	/* still mark the quots is running out for the old request, because it
-	 * could be processed after the new request at OST, the side effect is
-	 * the following request will be processed synchronously, but it will
-	 * not break the quota enforcement. */
-	if (cli->cl_quota_last_xid > xid && !(flags & OBD_FL_NO_QUOTA_ALL))
-		GOTO(out_unlock, rc);
-
-	if (cli->cl_quota_last_xid < xid)
-		cli->cl_quota_last_xid = xid;
 
 	for (type = 0; type < LL_MAXQUOTAS; type++) {
 		struct osc_quota_info *oqi;
@@ -164,8 +151,6 @@ int osc_quota_setdq(struct client_obd *cli, __u64 xid, const unsigned int qid[],
 		}
 	}
 
-out_unlock:
-	mutex_unlock(&cli->cl_quota_mutex);
 	RETURN(rc);
 }
 
@@ -244,8 +229,6 @@ int osc_quota_setup(struct obd_device *obd)
 	struct client_obd *cli = &obd->u.cli;
 	int i, type;
 	ENTRY;
-
-	mutex_init(&cli->cl_quota_mutex);
 
 	for (type = 0; type < LL_MAXQUOTAS; type++) {
 		cli->cl_quota_hash[type] = cfs_hash_create("QUOTA_HASH",
