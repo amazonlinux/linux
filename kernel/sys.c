@@ -71,8 +71,6 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
-#include "../../lib/kstrtox.h"
-
 #ifndef SET_UNALIGN_CTL
 # define SET_UNALIGN_CTL(a, b)	(-EINVAL)
 #endif
@@ -1154,23 +1152,11 @@ static int override_release(char __user *release, size_t len)
 {
 	int ret = 0;
 
-#ifdef CONFIG_MICROVM
-	{
-		/*
-		 * Some userspace software can't handle version numbers >255
-		 * e.g. 4.14.256
-		 * Handle this by modifying the version string as follows
-		 * x.y.z-s -> x.y.255-z-s
-		 * When z >= 256
-		 */
-		unsigned long long stable_version = 0;
-#else
 	if (current->personality & UNAME26) {
-		unsigned v;
-#endif /* CONFIG_MICROVM */
 		const char *rest = UTS_RELEASE;
 		char buf[65] = { 0 };
 		int ndots = 0;
+		unsigned v;
 		size_t copy;
 
 		while (*rest) {
@@ -1178,27 +1164,11 @@ static int override_release(char __user *release, size_t len)
 				break;
 			if (!isdigit(*rest) && *rest != '.')
 				break;
-#ifdef CONFIG_MICROVM
-			if (*rest == '.' && ndots == 2 && isdigit(*(rest + 1)))
-				if (_parse_integer(rest + 1, 10,
-						   &stable_version) &
-				    KSTRTOX_OVERFLOW)
-					return 0;
-#endif /* CONFIG_MICROVM */
 			rest++;
 		}
-		copy = clamp_t(size_t, len, 1, sizeof(buf));
-#ifdef CONFIG_MICROVM
-		if (stable_version <= 255)
-			return 0;	/* Don't modify release version */
-		copy = scnprintf(buf, copy, "%d.%d.255-%llu%s",
-				 (LINUX_VERSION_CODE >> 16) & 0xff,
-				 (LINUX_VERSION_CODE >> 8) & 0xff,
-				 stable_version, rest);
-#else
 		v = ((LINUX_VERSION_CODE >> 8) & 0xff) + 60;
+		copy = clamp_t(size_t, len, 1, sizeof(buf));
 		copy = scnprintf(buf, copy, "2.6.%u%s", v, rest);
-#endif /* CONFIG_MICROVM */
 		ret = copy_to_user(release, buf, copy + 1);
 	}
 	return ret;
