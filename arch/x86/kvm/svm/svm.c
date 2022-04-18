@@ -1077,7 +1077,10 @@ static void svm_write_tsc_offset(struct kvm_vcpu *vcpu, u64 offset)
 {
 	struct vcpu_svm *svm = to_svm(vcpu);
 
-	svm->nested.hsave->control.tsc_offset = vcpu->arch.l1_tsc_offset;
+	if (is_guest_mode(&svm->vcpu)) {
+		svm->nested.hsave->control.tsc_offset =
+		    vcpu->arch.l1_tsc_offset;
+	}
 	svm->vmcb->control.tsc_offset = offset;
 	vmcb_mark_dirty(svm->vmcb, VMCB_INTERCEPTS);
 }
