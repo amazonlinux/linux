@@ -7,6 +7,7 @@
 #include <linux/pci.h>
 
 #include "ena_netdev.h"
+#include "ena_xdp.h"
 
 struct ena_stats {
 	char name[ETH_GSTRING_LEN];
@@ -74,6 +75,10 @@ static const struct ena_stats ena_stats_tx_strings[] = {
 	ENA_STAT_TX_ENTRY(llq_buffer_copy),
 	ENA_STAT_TX_ENTRY(missed_tx),
 	ENA_STAT_TX_ENTRY(unmask_interrupt),
+#ifdef ENA_AF_XDP_SUPPORT
+	ENA_STAT_TX_ENTRY(xsk_need_wakeup_set),
+	ENA_STAT_TX_ENTRY(xsk_wakeup_request),
+#endif /* ENA_AF_XDP_SUPPORT */
 };
 
 static const struct ena_stats ena_stats_rx_strings[] = {
@@ -82,7 +87,7 @@ static const struct ena_stats ena_stats_rx_strings[] = {
 	ENA_STAT_RX_ENTRY(rx_copybreak_pkt),
 	ENA_STAT_RX_ENTRY(csum_good),
 	ENA_STAT_RX_ENTRY(refil_partial),
-	ENA_STAT_RX_ENTRY(bad_csum),
+	ENA_STAT_RX_ENTRY(csum_bad),
 	ENA_STAT_RX_ENTRY(page_alloc_fail),
 	ENA_STAT_RX_ENTRY(skb_alloc_fail),
 	ENA_STAT_RX_ENTRY(dma_mapping_err),
@@ -106,6 +111,10 @@ static const struct ena_stats ena_stats_rx_strings[] = {
 	ENA_STAT_RX_ENTRY(lpc_warm_up),
 	ENA_STAT_RX_ENTRY(lpc_full),
 	ENA_STAT_RX_ENTRY(lpc_wrong_numa),
+#ifdef ENA_AF_XDP_SUPPORT
+	ENA_STAT_RX_ENTRY(xsk_need_wakeup_set),
+	ENA_STAT_RX_ENTRY(zc_queue_pkt_copy),
+#endif /* ENA_AF_XDP_SUPPORT */
 };
 
 static const struct ena_stats ena_stats_ena_com_strings[] = {
@@ -415,7 +424,13 @@ static int ena_get_settings(struct net_device *netdev,
 
 #endif
 static int ena_get_coalesce(struct net_device *net_dev,
+#ifdef ENA_EXTENDED_COALESCE_UAPI_WITH_CQE_SUPPORTED
+			    struct ethtool_coalesce *coalesce,
+			    struct kernel_ethtool_coalesce *kernel_coal,
+			    struct netlink_ext_ack *extack)
+#else
 			    struct ethtool_coalesce *coalesce)
+#endif
 {
 	struct ena_adapter *adapter = netdev_priv(net_dev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
@@ -460,7 +475,13 @@ static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 }
 
 static int ena_set_coalesce(struct net_device *net_dev,
+#ifdef ENA_EXTENDED_COALESCE_UAPI_WITH_CQE_SUPPORTED
+			    struct ethtool_coalesce *coalesce,
+			    struct kernel_ethtool_coalesce *kernel_coal,
+			    struct netlink_ext_ack *extack)
+#else
 			    struct ethtool_coalesce *coalesce)
+#endif
 {
 	struct ena_adapter *adapter = netdev_priv(net_dev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
@@ -522,7 +543,13 @@ static void ena_get_drvinfo(struct net_device *dev,
 }
 
 static void ena_get_ringparam(struct net_device *netdev,
+#ifdef ENA_ETHTOOL_RX_BUFF_SIZE_CHANGE
+			      struct ethtool_ringparam *ring,
+			      struct kernel_ethtool_ringparam *kernel_ring,
+			      struct netlink_ext_ack *extack)
+#else
 			      struct ethtool_ringparam *ring)
+#endif
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
@@ -533,7 +560,13 @@ static void ena_get_ringparam(struct net_device *netdev,
 }
 
 static int ena_set_ringparam(struct net_device *netdev,
+#ifdef ENA_ETHTOOL_RX_BUFF_SIZE_CHANGE
+			     struct ethtool_ringparam *ring,
+			     struct kernel_ethtool_ringparam *kernel_ring,
+			     struct netlink_ext_ack *extack)
+#else
 			     struct ethtool_ringparam *ring)
+#endif
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	u32 new_tx_size, new_rx_size;
@@ -859,6 +892,7 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
+	enum ena_admin_hash_functions ena_func;
 	int rc;
 
 	rc = ena_indirection_table_get(adapter, indir);
@@ -985,6 +1019,11 @@ static int ena_set_channels(struct net_device *netdev,
 
 	if (count > adapter->max_num_io_queues)
 		return -EINVAL;
+	if (count != adapter->num_io_queues && ena_is_zc_q_exist(adapter)) {
+		netdev_err(adapter->netdev,
+			   "Changing channel count not supported with xsk pool loaded\n");
+		return -EOPNOTSUPP;
+	}
 
 	return ena_update_queue_count(adapter, count);
 }
