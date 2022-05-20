@@ -892,6 +892,9 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
 
+/* 'inode_operations' members have user namespace argument */
+/* #undef HAVE_USER_NAMESPACE_ARG */
+
 /* kernel has vfs_rename with 5 args */
 /* #undef HAVE_VFS_RENAME_5ARGS */
 
@@ -981,7 +984,7 @@
 #define LUSTRE_PATCH 8
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.10.8-10"
+#define LUSTRE_VERSION_STRING "2.10.8-11"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1014,7 +1017,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.10.8-10"
+#define PACKAGE_STRING "Lustre 2.10.8-11"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1023,7 +1026,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.10.8-10"
+#define PACKAGE_VERSION "2.10.8-11"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1067,7 +1070,7 @@
 /* #undef USE_LU_REF */
 
 /* Version number of package */
-#define VERSION "2.10.8-10"
+#define VERSION "2.10.8-11"
 
 /* zfs fix version */
 /* #undef ZFS_FIX */
