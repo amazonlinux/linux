@@ -236,6 +236,17 @@ struct ll_inode_info {
 	struct list_head		lli_xattrs; /* ll_xattr_entry->xe_list */
 };
 
+#ifndef HAVE_USER_NAMESPACE_ARG
+#define inode_permission(ns, inode, mask)	inode_permission(inode, mask)
+#define generic_permission(ns, inode, mask)	generic_permission(inode, mask)
+#define simple_setattr(ns, de, iattr)		simple_setattr(de, iattr)
+#define ll_inode_permission(ns, inode, mask)	ll_inode_permission(inode, mask)
+#ifdef HAVE_INODEOPS_ENHANCED_GETATTR
+#define ll_getattr(ns, path, stat, mask, fl)	ll_getattr(path, stat, mask, fl)
+#endif /* HAVE_INODEOPS_ENHANCED_GETATTR */
+#define ll_setattr(ns, de, attr)		ll_setattr(de, attr)
+#endif
+
 static inline __u32 ll_layout_version_get(struct ll_inode_info *lli)
 {
 	__u32 gen;
@@ -824,16 +835,17 @@ int ll_md_real_close(struct inode *inode, fmode_t fmode);
 extern void ll_rw_stats_tally(struct ll_sb_info *sbi, pid_t pid,
                               struct ll_file_data *file, loff_t pos,
                               size_t count, int rw);
-#ifdef HAVE_INODEOPS_ENHANCED_GETATTR
-int ll_getattr(const struct path *path, struct kstat *stat,
-	       u32 request_mask, unsigned int flags);
+#if defined(HAVE_USER_NAMESPACE_ARG) || defined(HAVE_INODEOPS_ENHANCED_GETATTR)
+int ll_getattr(struct user_namespace *mnt_userns, const struct path *path,
+	       struct kstat *stat, u32 request_mask, unsigned int flags);
 #else
 int ll_getattr(struct vfsmount *mnt, struct dentry *de, struct kstat *stat);
-#endif
+#endif /* HAVE_USER_NAMESPACE_ARG */
 struct posix_acl *ll_get_acl(struct inode *inode, int type);
 #ifdef HAVE_IOP_SET_ACL
 #ifdef CONFIG_FS_POSIX_ACL
-int ll_set_acl(struct inode *inode, struct posix_acl *acl, int type);
+int ll_set_acl(struct user_namespace *mnt_userns, struct inode *inode,
+	       struct posix_acl *acl, int type);
 #else  /* !CONFIG_FS_POSIX_ACL */
 #define ll_set_acl NULL
 #endif /* CONFIG_FS_POSIX_ACL */
@@ -843,15 +855,7 @@ int ll_migrate(struct inode *parent, struct file *file, int mdtidx,
 	       const char *name, int namelen);
 int ll_get_fid_by_name(struct inode *parent, const char *name,
 		       int namelen, struct lu_fid *fid, struct inode **inode);
-#ifdef HAVE_GENERIC_PERMISSION_4ARGS
-int ll_inode_permission(struct inode *inode, int mask, unsigned int flags);
-#else
-# ifndef HAVE_INODE_PERMISION_2ARGS
-int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd);
-# else
-int ll_inode_permission(struct inode *inode, int mask);
-# endif
-#endif
+int ll_inode_permission(struct user_namespace *mnt_userns, struct inode *inode, int mask);
 int ll_ioctl_fsgetxattr(struct inode *inode, unsigned int cmd,
 			unsigned long arg);
 int ll_ioctl_fssetxattr(struct inode *inode, unsigned int cmd,
@@ -903,7 +907,8 @@ struct inode *ll_inode_from_resource_lock(struct ldlm_lock *lock);
 void ll_dir_clear_lsm_md(struct inode *inode);
 void ll_clear_inode(struct inode *inode);
 int ll_setattr_raw(struct dentry *dentry, struct iattr *attr, bool hsm_import);
-int ll_setattr(struct dentry *de, struct iattr *attr);
+int ll_setattr(struct user_namespace *mnt_userns, struct dentry *de,
+	       struct iattr *attr);
 int ll_statfs(struct dentry *de, struct kstatfs *sfs);
 int ll_statfs_internal(struct super_block *sb, struct obd_statfs *osfs,
                        __u64 max_age, __u32 flags);
