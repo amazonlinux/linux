@@ -978,13 +978,16 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 	char	*profilenm = get_profile_name(sb);
 	struct config_llog_instance *cfg;
 	/* %p for void* in printf needs 16+2 characters: 0xffffffffffffffff */
-	const int instlen = sizeof(cfg->cfg_instance) * 2 + 2;
+	const int instlen = 16 + 2;
+	unsigned long cfg_instance = ll_get_cfg_instance(sb);
 	int	md_len = 0;
 	int	dt_len = 0;
 	int	err;
 	ENTRY;
 
-	CDEBUG(D_VFSTRACE, "VFS Op: sb %p\n", sb);
+	/* for ASLR, to map between cfg_instance and hashed ptr */
+	CDEBUG(D_VFSTRACE, "VFS Op: cfg_instance %s-%016lx (sb %p)\n",
+	       profilenm, cfg_instance, sb);
 
 	OBD_ALLOC_PTR(cfg);
 	if (cfg == NULL)
@@ -1004,7 +1007,7 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 	if (err)
 		GOTO(out_free, err);
 
-	err = super_setup_bdi_name(sb, "lustre-%p", sb);
+	err = super_setup_bdi_name(sb, "lustre-%016lx", cfg_instance);
 	if (err)
 		GOTO(out_free, err);
 
@@ -1024,10 +1027,10 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 		}
 	}
 
-	/* Generate a string unique to this super, in case some joker tries
-	   to mount the same fs at two mount points.
-	   Use the address of the super itself.*/
-	cfg->cfg_instance = sb;
+	/* The cfg_instance is a value unique to this super, in case some
+	 * joker tries to mount the same fs at two mount points.
+	 */
+	cfg->cfg_instance = cfg_instance;
 	cfg->cfg_uuid = lsi->lsi_llsbi->ll_sb_uuid;
 	cfg->cfg_callback = class_config_llog_handler;
 	cfg->cfg_sub_clds = CONFIG_SUB_CLIENT;
@@ -1051,13 +1054,13 @@ int ll_fill_super(struct super_block *sb, struct vfsmount *mnt)
 	OBD_ALLOC(dt, dt_len);
 	if (!dt)
 		GOTO(out_proc, err = -ENOMEM);
-	snprintf(dt, dt_len - 1, "%s-%p", lprof->lp_dt, cfg->cfg_instance);
+	snprintf(dt, dt_len - 1, "%s-%016lx", lprof->lp_dt, cfg_instance);
 
 	md_len = strlen(lprof->lp_md) + instlen + 2;
 	OBD_ALLOC(md, md_len);
 	if (!md)
 		GOTO(out_proc, err = -ENOMEM);
-	snprintf(md, md_len - 1, "%s-%p", lprof->lp_md, cfg->cfg_instance);
+	snprintf(md, md_len - 1, "%s-%016lx", lprof->lp_md, cfg_instance);
 
 	/* connections, registrations, sb setup */
 	err = client_common_fill_super(sb, md, dt, mnt);
@@ -1088,20 +1091,24 @@ out_free:
 void ll_put_super(struct super_block *sb)
 {
 	struct config_llog_instance cfg, params_cfg;
-        struct obd_device *obd;
-        struct lustre_sb_info *lsi = s2lsi(sb);
-        struct ll_sb_info *sbi = ll_s2sbi(sb);
-        char *profilenm = get_profile_name(sb);
+	struct obd_device *obd;
+	struct lustre_sb_info *lsi = s2lsi(sb);
+	struct ll_sb_info *sbi = ll_s2sbi(sb);
+	char *profilenm = get_profile_name(sb);
+	unsigned long cfg_instance = ll_get_cfg_instance(sb);
 	long ccc_count;
 	int next, force = 1, rc = 0;
-        ENTRY;
+	ENTRY;
 
-        CDEBUG(D_VFSTRACE, "VFS Op: sb %p - %s\n", sb, profilenm);
 
-        cfg.cfg_instance = sb;
-        lustre_end_log(sb, profilenm, &cfg);
+	/* Should replace instance_id with something better for ASLR */
+	CDEBUG(D_VFSTRACE, "VFS Op: cfg_instance %s-%016lx (sb %p)\n",
+	       profilenm, cfg_instance, sb);
 
-	params_cfg.cfg_instance = sb;
+	cfg.cfg_instance = cfg_instance;
+	lustre_end_log(sb, profilenm, &cfg);
+
+	params_cfg.cfg_instance = cfg_instance;
 	lustre_end_log(sb, PARAMS_FILENAME, &params_cfg);
 
         if (sbi->ll_md_exp) {
@@ -1121,7 +1128,6 @@ void ll_put_super(struct super_block *sb)
 	ccc_count = atomic_long_read(&sbi->ll_cache->ccc_unstable_nr);
 	if (force == 0 && rc != -EINTR)
 		LASSERTF(ccc_count == 0, "count: %li\n", ccc_count);
-
 
         /* We need to set force before the lov_disconnect in
            lustre_common_put_super, since l_d cleans up osc's as well. */
@@ -1506,7 +1512,8 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 			    !S_ISDIR(inode->i_mode)) {
 				ia_valid = op_data->op_attr.ia_valid;
 				op_data->op_attr.ia_valid &= ~TIMES_SET_FLAGS;
-				rc = simple_setattr(dentry, &op_data->op_attr);
+				rc = simple_setattr(&init_user_ns, dentry,
+						    &op_data->op_attr);
 				op_data->op_attr.ia_valid = ia_valid;
 			}
 		} else if (rc != -EPERM && rc != -EACCES && rc != -ETXTBSY) {
@@ -1528,7 +1535,7 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 	op_data->op_attr.ia_valid &= ~(TIMES_SET_FLAGS | ATTR_SIZE);
 	if (S_ISREG(inode->i_mode))
 		inode_lock(inode);
-	rc = simple_setattr(dentry, &op_data->op_attr);
+	rc = simple_setattr(&init_user_ns, dentry, &op_data->op_attr);
 	if (S_ISREG(inode->i_mode))
 		inode_unlock(inode);
 	op_data->op_attr.ia_valid = ia_valid;
@@ -1713,7 +1720,8 @@ out:
 	return rc;
 }
 
-int ll_setattr(struct dentry *de, struct iattr *attr)
+int ll_setattr(struct user_namespace *mnt_userns, struct dentry *de,
+	       struct iattr *attr)
 {
 	int mode = de->d_inode->i_mode;
 
