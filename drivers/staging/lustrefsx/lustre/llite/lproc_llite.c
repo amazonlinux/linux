@@ -1289,6 +1289,7 @@ int lprocfs_ll_register_mountpoint(struct proc_dir_entry *parent,
 	struct lprocfs_vars lvars[2];
 	struct lustre_sb_info *lsi = s2lsi(sb);
 	struct ll_sb_info *sbi = ll_s2sbi(sb);
+	unsigned long cfg_instance = ll_get_cfg_instance(sb);
 	char name[MAX_STRING_SIZE + 1], *ptr;
 	int err, id, len, rc;
 	ENTRY;
@@ -1307,8 +1308,8 @@ int lprocfs_ll_register_mountpoint(struct proc_dir_entry *parent,
 		len -= 7;
 
 	/* Mount info */
-	snprintf(name, MAX_STRING_SIZE, "%.*s-%p", len,
-		 lsi->lsi_lmd->lmd_profile, sb);
+	snprintf(name, MAX_STRING_SIZE, "%.*s-%016lx", len,
+		 lsi->lsi_lmd->lmd_profile, cfg_instance);
 
 	sbi->ll_proc_root = lprocfs_register(name, parent, NULL, NULL);
 	if (IS_ERR(sbi->ll_proc_root)) {
