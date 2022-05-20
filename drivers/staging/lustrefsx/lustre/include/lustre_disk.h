@@ -353,8 +353,11 @@ int server_mti_print(const char *title, struct mgs_target_info *mti);
 void server_calc_timeout(struct lustre_sb_info *lsi, struct obd_device *obd);
 # endif
 
-int mgc_fsname2resid(char *fsname, struct ldlm_res_id *res_id, int type);
-int mgc_logname2resid(char *fsname, struct ldlm_res_id *res_id, int type);
+/* mgc_request.c */
+int mgc_fsname2resid(char *fsname, struct ldlm_res_id *res_id,
+		     enum mgs_cfg_type type);
+int mgc_logname2resid(char *fsname, struct ldlm_res_id *res_id,
+		      enum mgs_cfg_type type);
 
 /** @} disk */
 
