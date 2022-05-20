@@ -890,6 +890,9 @@
 /* Define to 1 if you have the <unistd.h> header file. */
 #undef HAVE_UNISTD_H
 
+/* 'inode_operations' members have user namespace argument */
+#undef HAVE_USER_NAMESPACE_ARG
+
 /* kernel has vfs_rename with 5 args */
 #undef HAVE_VFS_RENAME_5ARGS
 
