@@ -904,8 +904,8 @@ static int ll_check_swap_layouts_validity(struct inode *inode1,
 	if (!S_ISREG(inode1->i_mode) || !S_ISREG(inode2->i_mode))
 		return -EINVAL;
 
-	if (inode_permission(inode1, MAY_WRITE) ||
-	    inode_permission(inode2, MAY_WRITE))
+	if (inode_permission(&init_user_ns, inode1, MAY_WRITE) ||
+	    inode_permission(&init_user_ns, inode2, MAY_WRITE))
 		return -EPERM;
 
 	if (inode1->i_sb != inode2->i_sb)
@@ -3815,8 +3815,8 @@ static inline dev_t ll_compat_encode_dev(dev_t dev)
 	return MKDEV(MAJOR(dev) & 0xff, MINOR(dev) & 0xff);
 }
 
-#ifdef HAVE_INODEOPS_ENHANCED_GETATTR
-int ll_getattr(const struct path *path, struct kstat *stat,
+#if defined(HAVE_USER_NAMESPACE_ARG) || defined(HAVE_INODEOPS_ENHANCED_GETATTR)
+int ll_getattr(struct user_namespace *mnt_userns, const struct path *path, struct kstat *stat,
 	       u32 request_mask, unsigned int flags)
 
 {
@@ -3918,7 +3918,7 @@ struct posix_acl *ll_get_acl(struct inode *inode, int type)
 
 #ifdef HAVE_IOP_SET_ACL
 #ifdef CONFIG_FS_POSIX_ACL
-int ll_set_acl(struct inode *inode, struct posix_acl *acl, int type)
+int ll_set_acl(struct user_namespace *mnt_userns, struct inode *inode, struct posix_acl *acl, int type)
 {
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
 	struct ptlrpc_request *req = NULL;
@@ -3932,7 +3932,7 @@ int ll_set_acl(struct inode *inode, struct posix_acl *acl, int type)
 	case ACL_TYPE_ACCESS:
 		name = XATTR_NAME_POSIX_ACL_ACCESS;
 		if (acl) {
-			rc = posix_acl_update_mode(inode, &inode->i_mode, &acl);
+			rc = posix_acl_update_mode(mnt_userns, inode, &inode->i_mode, &acl);
 			if (rc)
 				GOTO(out, rc);
 		}
@@ -3976,6 +3976,7 @@ out:
 #endif /* CONFIG_FS_POSIX_ACL */
 #endif /* HAVE_IOP_SET_ACL */
 
+#ifndef HAVE_USER_NAMESPACE_ARG
 #ifndef HAVE_GENERIC_PERMISSION_2ARGS
 static int
 # ifdef HAVE_GENERIC_PERMISSION_4ARGS
@@ -4007,16 +4008,9 @@ ll_check_acl(struct inode *inode, int mask)
 # endif /* CONFIG_FS_POSIX_ACL */
 }
 #endif /* HAVE_GENERIC_PERMISSION_2ARGS */
+#endif /* HAVE_USER_NAMESPACE_ARG */
 
-#ifdef HAVE_GENERIC_PERMISSION_4ARGS
-int ll_inode_permission(struct inode *inode, int mask, unsigned int flags)
-#else
-# ifdef HAVE_INODE_PERMISION_2ARGS
-int ll_inode_permission(struct inode *inode, int mask)
-# else
-int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
-# endif
-#endif
+int ll_inode_permission(struct user_namespace *mnt_userns, struct inode *inode, int mask)
 {
 	int rc = 0;
 	struct ll_sb_info *sbi;
@@ -4077,7 +4071,7 @@ int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
 	}
 
 	ll_stats_ops_tally(sbi, LPROC_LL_INODE_PERM, 1);
-	rc = ll_generic_permission(inode, mask, flags, ll_check_acl);
+	rc = generic_permission(mnt_userns, inode, mask);
 	/* restore current process's credentials and FS capability */
 	if (squash_id) {
 		revert_creds(old_cred);
