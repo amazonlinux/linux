@@ -4164,12 +4164,12 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)offsetof(struct mgs_config_body, mcb_units));
 	LASSERTF((int)sizeof(((struct mgs_config_body *)0)->mcb_units) == 4, "found %lld\n",
 		 (long long)(int)sizeof(((struct mgs_config_body *)0)->mcb_units));
-	CLASSERT(CONFIG_T_CONFIG == 0);
-	CLASSERT(CONFIG_T_SPTLRPC == 1);
-	CLASSERT(CONFIG_T_RECOVER == 2);
-	CLASSERT(CONFIG_T_PARAMS == 3);
-	CLASSERT(CONFIG_T_NODEMAP == 4);
-	CLASSERT(CONFIG_T_BARRIER == 5);
+	CLASSERT(MGS_CFG_T_CONFIG == 0);
+	CLASSERT(MGS_CFG_T_SPTLRPC == 1);
+	CLASSERT(MGS_CFG_T_RECOVER == 2);
+	CLASSERT(MGS_CFG_T_PARAMS == 3);
+	CLASSERT(MGS_CFG_T_NODEMAP == 4);
+	CLASSERT(MGS_CFG_T_BARRIER == 5);
 
 	/* Checks for struct mgs_config_res */
 	LASSERTF((int)sizeof(struct mgs_config_res) == 16, "found %lld\n",
