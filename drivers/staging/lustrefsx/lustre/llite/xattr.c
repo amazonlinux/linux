@@ -92,7 +92,13 @@ static int xattr_type_filter(struct ll_sb_info *sbi,
 	return 0;
 }
 
+#ifndef HAVE_USER_NAMESPACE_ARG
+#define ll_xattr_set_common(hd, ns, de, inode, name, value, size, flags) \
+	ll_xattr_set_common(hd, de, inode, name, value, size, flags)
+#endif
+
 static int ll_xattr_set_common(const struct xattr_handler *handler,
+			       struct user_namespace *mnt_userns,
 			       struct dentry *dentry, struct inode *inode,
 			       const char *name, const void *value, size_t size,
 			       int flags)
@@ -124,8 +130,9 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 
 	if ((handler->flags == XATTR_ACL_ACCESS_T ||
 	     handler->flags == XATTR_ACL_DEFAULT_T) &&
-#ifdef HAVE_INODE_OWNER_OR_CAPABLE
-	    !inode_owner_or_capable(inode))
+/* Test for older kernels that was cleaned up in LU-12477 and LU-10092 */
+#if defined(HAVE_USER_NAMESPACE_ARG) || defined(HAVE_INODE_OWNER_OR_CAPABLE)
+	    !inode_owner_or_capable(mnt_userns, inode))
 #else
 	    !is_owner_or_cap(inode))
 #endif
@@ -305,7 +312,13 @@ static int ll_setstripe_ea(struct dentry *dentry, struct lov_user_md *lump,
 	return rc;
 }
 
+#ifndef HAVE_USER_NAMESPACE_ARG
+#define ll_xattr_set(hd, ns, de, inode, name, value, size, flags) \
+	ll_xattr_set(hd, de, inode, name, value, size, flags)
+#endif
+
 static int ll_xattr_set(const struct xattr_handler *handler,
+			struct user_namespace *mnt_userns,
 			struct dentry *dentry, struct inode *inode,
 			const char *name, const void *value, size_t size,
 			int flags)
@@ -333,8 +346,8 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 		return 0;
 	}
 
-	return ll_xattr_set_common(handler, dentry, inode, name, value, size,
-				   flags);
+    return ll_xattr_set_common(handler, mnt_userns, dentry, inode, name,
+    				   value, size, flags);
 }
 
 int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
@@ -662,7 +675,8 @@ static int ll_xattr_set_4_3(const struct xattr_handler *handler,
 			    size, flags);
 }
 
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 const struct xattr_handler *get_xattr_handler(int handler_flag)
 {
 	int i = 0;
@@ -708,7 +722,7 @@ static int ll_xattr_set_common_3_11(struct dentry *dentry, const char *name,
 	if (!handler)
 		return -ENXIO;
 
-	return ll_xattr_set_common(handler, dentry, dentry->d_inode, name,
+	return ll_xattr_set_common(handler, NULL, dentry, dentry->d_inode, name,
 				   value, size, flags);
 }
 
@@ -721,7 +735,7 @@ static int ll_xattr_set_3_11(struct dentry *dentry, const char *name,
 	if (!handler)
 		return -ENXIO;
 
-	return ll_xattr_set(handler, dentry, dentry->d_inode, name, value,
+	return ll_xattr_set(handler, NULL, dentry, dentry->d_inode, name, value,
 			    size, flags);
 }
 #endif
@@ -732,7 +746,8 @@ static const struct xattr_handler ll_user_xattr_handler = {
 #if defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
 	.get = ll_xattr_get_common_4_3,
 	.set = ll_xattr_set_common_4_3,
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 	.get = ll_xattr_get_common_3_11,
 	.set = ll_xattr_set_common_3_11,
 #else
@@ -747,7 +762,8 @@ static const struct xattr_handler ll_trusted_xattr_handler = {
 #if defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
 	.get = ll_xattr_get_4_3,
 	.set = ll_xattr_set_4_3,
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 	.get = ll_xattr_get_3_11,
 	.set = ll_xattr_set_3_11,
 #else
@@ -762,7 +778,8 @@ static const struct xattr_handler ll_security_xattr_handler = {
 #if defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
 	.get = ll_xattr_get_common_4_3,
 	.set = ll_xattr_set_common_4_3,
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 	.get = ll_xattr_get_common_3_11,
 	.set = ll_xattr_set_common_3_11,
 #else
@@ -781,7 +798,8 @@ static const struct xattr_handler ll_acl_access_xattr_handler = {
 #if defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
 	.get = ll_xattr_get_common_4_3,
 	.set = ll_xattr_set_common_4_3,
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 	.get = ll_xattr_get_common_3_11,
 	.set = ll_xattr_set_common_3_11,
 #else
@@ -800,7 +818,8 @@ static const struct xattr_handler ll_acl_default_xattr_handler = {
 #if defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
 	.get = ll_xattr_get_common_4_3,
 	.set = ll_xattr_set_common_4_3,
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 	.get = ll_xattr_get_common_3_11,
 	.set = ll_xattr_set_common_3_11,
 #else
@@ -815,7 +834,8 @@ static const struct xattr_handler ll_lustre_xattr_handler = {
 #if defined(HAVE_XATTR_HANDLER_SIMPLIFIED)
 	.get = ll_xattr_get_4_3,
 	.set = ll_xattr_set_4_3,
-#elif !defined(HAVE_XATTR_HANDLER_INODE_PARAM)
+#elif !defined(HAVE_USER_NAMESPACE_ARG) && \
+!defined(HAVE_XATTR_HANDLER_INODE_PARAM)
 	.get = ll_xattr_get_3_11,
 	.set = ll_xattr_set_3_11,
 #else
