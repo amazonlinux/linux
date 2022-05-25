@@ -1282,6 +1282,7 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 {
 	int rc = -EAGAIN;
 	int page_was_mapped = 0;
+	bool mapping_locked = false;
 	struct page *new_hpage;
 	struct anon_vma *anon_vma = NULL;
 	struct address_space *mapping = NULL;
@@ -1332,7 +1333,6 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 		goto put_anon;
 
 	if (page_mapped(hpage)) {
-		bool mapping_locked = false;
 		enum ttu_flags ttu = TTU_MIGRATION|TTU_IGNORE_MLOCK;
 
 		if (!PageAnon(hpage)) {
@@ -1352,17 +1352,17 @@ static int unmap_and_move_huge_page(new_page_t get_new_page,
 
 		try_to_unmap(hpage, ttu);
 		page_was_mapped = 1;
-
-		if (mapping_locked)
-			i_mmap_unlock_write(mapping);
 	}
 
 	if (!page_mapped(hpage))
 		rc = move_to_new_page(new_hpage, hpage, mode);
 
-	if (page_was_mapped)
+	if (page_was_mapped) {
 		remove_migration_ptes(hpage,
-			rc == MIGRATEPAGE_SUCCESS ? new_hpage : hpage, false);
+			rc == MIGRATEPAGE_SUCCESS ? new_hpage : hpage, mapping_locked);
+		if (mapping_locked)
+			i_mmap_unlock_write(mapping);
+	}
 
 unlock_put_anon:
 	unlock_page(new_hpage);
