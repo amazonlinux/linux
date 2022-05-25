@@ -36,7 +36,7 @@
 #include <linux/moduleparam.h>
 
 /*
- * A wrapper around dma_direct which does a readl on the memory being mapped
+ * A wrapper around dma_direct which does a readb on the memory being mapped
  * for DMA to ensure that it becomes resident.
  * Useful when running in a memory overcommit environment with lazy allocation
  * and free page reporting.
@@ -56,7 +56,7 @@ static void touch_each_page(void *start_addr, size_t size)
 	int addr_offset;
 
 	for (addr_offset = 0; addr_offset < size; addr_offset += PAGE_SIZE)
-		__raw_readl((char *)start_addr + addr_offset);
+		__raw_readb((char *)start_addr + addr_offset);
 }
 
 static void *page_touching_dma_alloc(struct device *dev, size_t size,
