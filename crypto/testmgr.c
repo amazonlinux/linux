@@ -4840,6 +4840,7 @@ static const struct alg_test_desc alg_test_descs[] = {
 		.alg = "rfc4106(gcm(aes))",
 		.generic_driver = "rfc4106(gcm_base(ctr(aes-generic),ghash-generic))",
 		.test = alg_test_aead,
+		.fips_allowed = 1,
 		.suite = {
 			.aead = __VECS(aes_gcm_rfc4106_tv_template)
 		}
