@@ -844,17 +844,20 @@ static enum spectre_v2_mitigation spectre_v2_enabled __ro_after_init =
 
 enum retbleed_mitigation {
 	RETBLEED_MITIGATION_NONE,
+	RETBLEED_MITIGATION_IBPB,
 	RETBLEED_MITIGATION_IBRS,
 	RETBLEED_MITIGATION_EIBRS,
 };
 
 enum retbleed_mitigation_cmd {
 	RETBLEED_CMD_OFF,
-	RETBLEED_CMD_AUTO
+	RETBLEED_CMD_AUTO,
+	RETBLEED_CMD_IBPB,
 };
 
 const char * const retbleed_strings[] = {
 	[RETBLEED_MITIGATION_NONE]	= "Vulnerable",
+	[RETBLEED_MITIGATION_IBPB]	= "Mitigation: IBPB",
 	[RETBLEED_MITIGATION_IBRS]	= "Mitigation: IBRS",
 	[RETBLEED_MITIGATION_EIBRS]	= "Mitigation: Enhanced IBRS",
 };
@@ -882,6 +885,8 @@ static int __init retbleed_parse_cmdline(char *str)
 			retbleed_cmd = RETBLEED_CMD_OFF;
 		} else if (!strcmp(str, "auto")) {
 			retbleed_cmd = RETBLEED_CMD_AUTO;
+		} else if (!strcmp(str, "ibpb")) {
+			retbleed_cmd = RETBLEED_CMD_IBPB;
 		} else if (!strcmp(str, "nosmt")) {
 			retbleed_nosmt = true;
 		} else {
@@ -896,9 +901,12 @@ static int __init retbleed_parse_cmdline(char *str)
 early_param("retbleed", retbleed_parse_cmdline);
 
 #define RETBLEED_INTEL_MSG "WARNING: Spectre v2 mitigation leaves CPU vulnerable to RETBleed attacks, data leaks possible!\n"
+#define RETBLEED_IBPB_MSG "WARNING: not automatically selecting IBPB as RETBLEED mitigation. Use 'retbleed=ibpb' to explicitly enable\n"
 
 static void __init retbleed_select_mitigation(void)
 {
+	bool mitigate_smt = false;
+
 	if (!boot_cpu_has_bug(X86_BUG_RETBLEED) || cpu_mitigations_off())
 		return;
 
@@ -906,8 +914,20 @@ static void __init retbleed_select_mitigation(void)
 	case RETBLEED_CMD_OFF:
 		return;
 
+	case RETBLEED_CMD_IBPB:
+		retbleed_mitigation = RETBLEED_MITIGATION_IBPB;
+		break;
+
 	case RETBLEED_CMD_AUTO:
 	default:
+		if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
+			/*
+			 * If no RETBLEED option is specified, don't default to
+			 * the heavyweight IBPB option.
+			 */
+			pr_err(RETBLEED_IBPB_MSG);
+		}
+
 		/*
 		 * The Intel mitigation (IBRS) was already selected in
 		 * spectre_v2_select_mitigation().
@@ -917,9 +937,18 @@ static void __init retbleed_select_mitigation(void)
 	}
 
 	switch (retbleed_mitigation) {
+	case RETBLEED_MITIGATION_IBPB:
+		setup_force_cpu_cap(X86_FEATURE_ENTRY_IBPB);
+		mitigate_smt = true;
+		break;
+
 	default:
 		break;
 	}
+
+	if (mitigate_smt && !boot_cpu_has(X86_FEATURE_STIBP) &&
+	    (retbleed_nosmt || cpu_mitigations_auto_nosmt()))
+		cpu_smt_disable(false);
 
 	/*
 	 * Let IBRS trump all on Intel without affecting the effects of the
