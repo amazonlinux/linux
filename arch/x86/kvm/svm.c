@@ -5265,6 +5265,10 @@ static void svm_vcpu_run(struct kvm_vcpu *vcpu)
 	/* Eliminate branch target predictions from guest mode */
 	vmexit_fill_RSB();
 
+	/* entry_ibpb() has a ret in it so call it after vmexit_fill_RSB() */
+	if (boot_cpu_has(X86_FEATURE_ENTRY_IBPB))
+		entry_ibpb();
+
 #ifdef CONFIG_X86_64
 	wrmsrl(MSR_GS_BASE, svm->host.gs_base);
 #else
