@@ -4007,6 +4007,9 @@
 				      disabling SMT if necessary for
 				      the full mitigation (only on Zen1
 				      and older without STIBP).
+			ibpb	    - mitigate short speculation windows on
+				      basic block boundaries too. Safe, highest
+				      perf impact.
 
 			Selecting 'auto' will choose a mitigation method at run
 			time according to the CPU.
