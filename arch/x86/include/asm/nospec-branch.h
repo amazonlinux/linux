@@ -172,6 +172,26 @@
 .Lskip_rsb_\@:
 .endm
 
+/*
+ * NOTE: This is a modified version of UNTRAIN_RET that **only** uses
+ * the IBPB mitigation.
+ *
+ * Mitigate RETBleed for AMD/Hygon Zen uarch. Requires KERNEL CR3 because the
+ * return thunk isn't mapped into the userspace tables (then again, AMD
+ * typically has NO_MELTDOWN).
+ *
+ * While zen_untrain_ret() doesn't clobber anything but requires stack,
+ * entry_ibpb() will clobber AX, CX, DX.
+ *
+ * As such, this must be placed after every *SWITCH_TO_KERNEL_CR3 at a point
+ * where we have a stack but before any RET instruction.
+ */
+.macro UNTRAIN_RET
+#ifdef CONFIG_RETPOLINE
+	ALTERNATIVE "", "call entry_ibpb", X86_FEATURE_ENTRY_IBPB
+#endif
+.endm
+
 #else /* __ASSEMBLY__ */
 
 #define ANNOTATE_NOSPEC_ALTERNATIVE				\
@@ -185,6 +205,8 @@
 	".pushsection .discard.retpoline_safe\n\t"		\
 	_ASM_PTR " 999b\n\t"					\
 	".popsection\n\t"
+
+extern void entry_ibpb(void);
 
 #ifdef CONFIG_RETPOLINE
 #ifdef CONFIG_X86_64
