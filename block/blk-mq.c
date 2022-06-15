@@ -465,6 +465,8 @@ struct request *blk_mq_alloc_request_hctx(struct request_queue *q,
 		return ERR_PTR(-EXDEV);
 	}
 	cpu = cpumask_first_and(alloc_data.hctx->cpumask, cpu_online_mask);
+	if (cpu >= nr_cpu_ids)
+		return ERR_PTR(-EXDEV);
 	alloc_data.ctx = __blk_mq_get_ctx(q, cpu);
 
 	rq = blk_mq_get_request(q, NULL, op, &alloc_data);
