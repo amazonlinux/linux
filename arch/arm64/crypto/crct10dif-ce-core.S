@@ -63,6 +63,7 @@
 //
 
 #include <linux/linkage.h>
+#include <linux/objtool.h>
 #include <asm/assembler.h>
 
 	.text
@@ -132,6 +133,8 @@
 	.endm
 
 SYM_FUNC_START_LOCAL(__pmull_p8_core)
+	stp		x29, x30, [sp, #-16]!
+	mov		x29, sp
 .L__pmull_p8_core:
 	ext		t4.8b, ad.8b, ad.8b, #1			// A1
 	ext		t5.8b, ad.8b, ad.8b, #2			// A2
@@ -193,6 +196,7 @@ SYM_FUNC_START_LOCAL(__pmull_p8_core)
 
 	eor		t4.16b, t4.16b, t5.16b
 	eor		t6.16b, t6.16b, t3.16b
+	ldp		x29, x30, [sp], #16
 	ret
 SYM_FUNC_END(__pmull_p8_core)
 
@@ -207,6 +211,7 @@ SYM_FUNC_END(__pmull_p8_core)
 	pmull2		\rq\().8h, \ad\().16b, \bd\().16b	// D = A*B
 	.endif
 
+	ANNOTATE_INTRA_FUNCTION_CALL
 	bl		.L__pmull_p8_core\i
 
 	eor		\rq\().16b, \rq\().16b, t4.16b
