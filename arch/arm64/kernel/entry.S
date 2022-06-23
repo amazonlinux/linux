@@ -430,7 +430,11 @@ alternative_if_not ARM64_UNMAP_KERNEL_AT_EL0
 	ldr	lr, [sp, #S_LR]
 	add	sp, sp, #PT_REGS_SIZE		// restore sp
 	eret
-alternative_else_nop_endif
+alternative_else
+	nop
+	add sp, sp, #PT_REGS_SIZE       // restore sp
+	nop
+alternative_endif
 #ifdef CONFIG_UNMAP_KERNEL_AT_EL0
 	bne	4f
 	msr	far_el1, x29
@@ -739,6 +743,7 @@ alternative_else_nop_endif
 
 	.macro tramp_exit, regsize = 64
 	UNWIND_HINT_EMPTY
+	sub sp, sp, #PT_REGS_SIZE       // revert sp
 	tramp_data_read_var	x30, this_cpu_vector
 	get_this_cpu_offset x29
 	ldr	x30, [x30, x29]
