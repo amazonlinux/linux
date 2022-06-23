@@ -5,6 +5,7 @@
 #include <stdint.h>
 
 #include <asm/insn.h>
+#include <asm/unwind_hints.h>
 
 #include <objtool/check.h>
 #include <objtool/arch.h>
@@ -176,7 +177,18 @@ static int is_arm64(const struct elf *elf)
 
 int arch_decode_hint_reg(u8 sp_reg, int *base)
 {
-	return -1;
+	switch (sp_reg) {
+	case UNWIND_HINT_REG_UNDEFINED:
+		*base = CFI_UNDEFINED;
+		break;
+	case UNWIND_HINT_REG_SP:
+		*base = CFI_SP;
+		break;
+	default:
+		return -1;
+	}
+
+	return 0;
 }
 
 static inline void make_add_op(enum aarch64_insn_register dest,
