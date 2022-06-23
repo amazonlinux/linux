@@ -19,7 +19,11 @@
 	unreachable();					\
 } while (0)
 
-#define __WARN_FLAGS(flags) __BUG_FLAGS(BUGFLAG_WARNING|(flags))
+#define __WARN_FLAGS(flags)			\
+do {						\
+	__BUG_FLAGS(BUGFLAG_WARNING|(flags));	\
+	annotate_reachable();			\
+} while (0)
 
 #define HAVE_ARCH_BUG
 
