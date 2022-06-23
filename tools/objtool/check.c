@@ -363,7 +363,7 @@ static int decode_instructions(struct objtool_file *file)
 {
 	struct section *sec;
 	struct symbol *func;
-	unsigned long offset;
+	unsigned long offset, next_offset;
 	struct instruction *insn;
 	int ret;
 
@@ -382,7 +382,15 @@ static int decode_instructions(struct objtool_file *file)
 		    !strncmp(sec->name, ".text.__x86.", 12))
 			sec->noinstr = true;
 
-		for (offset = 0; offset < sec->sh.sh_size; offset += insn->len) {
+		for (offset = 0; offset < sec->sh.sh_size; offset = next_offset) {
+			struct symbol *obj_sym = find_object_containing(sec, offset);
+
+			if (obj_sym) {
+				/* This is data in the middle of text section, skip it */
+				next_offset = obj_sym->offset + obj_sym->len;
+				continue;
+			}
+
 			insn = malloc(sizeof(*insn));
 			if (!insn) {
 				WARN("malloc failed");
@@ -415,6 +423,8 @@ static int decode_instructions(struct objtool_file *file)
 			hash_add(file->insn_hash, &insn->hash, sec_offset_hash(sec, insn->offset));
 			list_add_tail(&insn->list, &file->insn_list);
 			nr_insns++;
+
+			next_offset = offset + insn->len;
 		}
 
 		list_for_each_entry(func, &sec->symbol_list, list) {
