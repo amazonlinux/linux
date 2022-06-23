@@ -347,8 +347,14 @@ int arch_decode_instruction(struct objtool_file *file, const struct section *sec
 
 	switch (aarch64_get_insn_class(insn)) {
 	case AARCH64_INSN_CLS_UNKNOWN:
-		WARN("can't decode instruction at %s:0x%lx", sec->name, offset);
-		return -1;
+		if (insn == 0x0) {
+			*type = INSN_NOP;
+		} else {
+			WARN("undecoded insn at %s:0x%lx", sec->name, offset);
+			return record_invalid_insn(sec, offset);
+		}
+
+		break;
 	case AARCH64_INSN_CLS_DP_IMM:
 		/* Mov register to and from SP are aliases of add_imm */
 		if (aarch64_insn_is_add_imm(insn) ||
