@@ -460,10 +460,14 @@ SYM_CODE_START_LOCAL(__swpan_entry_el1)
 	orr	x23, x23, #PSR_PAN_BIT		// Set the emulated PAN in the saved SPSR
 	b.eq	1f				// TTBR0 access already disabled
 	and	x23, x23, #~PSR_PAN_BIT		// Clear the emulated PAN in the saved SPSR
-SYM_INNER_LABEL(__swpan_entry_el0, SYM_L_LOCAL)
 	__uaccess_ttbr0_disable x21
 1:	ret
 SYM_CODE_END(__swpan_entry_el1)
+
+SYM_CODE_START_LOCAL(__swpan_entry_el0)
+	__uaccess_ttbr0_disable x21
+1:	ret
+SYM_CODE_END(__swpan_entry_el0)
 
 	/*
 	 * Restore access to TTBR0_EL1. If returning to EL0, no need for SPSR
@@ -767,11 +771,11 @@ SYM_CODE_START_NOALIGN(tramp_vectors)
 	generate_tramp_vector	kpti=1, bhb=BHB_MITIGATION_NONE
 SYM_CODE_END(tramp_vectors)
 
-SYM_CODE_START(tramp_exit_native)
+SYM_CODE_START_LOCAL(tramp_exit_native)
 	tramp_exit
 SYM_CODE_END(tramp_exit_native)
 
-SYM_CODE_START(tramp_exit_compat)
+SYM_CODE_START_LOCAL(tramp_exit_compat)
 	tramp_exit	32
 SYM_CODE_END(tramp_exit_compat)
 	.popsection				// .entry.tramp.text
