@@ -648,8 +648,6 @@ $code.=<<___;
 .align	4
 sha256_block_neon:
 .Lneon_entry:
-	stp	x29, x30, [sp, #-16]!
-	mov	x29, sp
 	sub	sp,sp,#16*4
 
 	adr	$Ktbl,K256
@@ -736,8 +734,7 @@ $code.=<<___;
 	 mov	$Xfer,sp
 	b.ne	.L_00_48
 
-	ldr	x29,[x29]
-	add	sp,sp,#16*4+16
+	add	sp,sp,#16*4
 	ret
 .size	sha256_block_neon,.-sha256_block_neon
 ___
