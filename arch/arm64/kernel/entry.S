@@ -28,6 +28,7 @@
 #include <asm/thread_info.h>
 #include <asm/asm-uaccess.h>
 #include <asm/unistd.h>
+#include <asm/unwind_hints.h>
 
 	.macro	clear_gp_regs
 	.irp	n,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29
@@ -37,6 +38,7 @@
 
 	.macro kernel_ventry, el:req, ht:req, regsize:req, label:req
 	.align 7
+	UNWIND_HINT_EMPTY
 .Lventry_start\@:
 	.if	\el == 0
 	/*
@@ -44,6 +46,7 @@
 	 * skipped by the trampoline vectors, to trigger the cleanup.
 	 */
 	b	.Lskip_tramp_vectors_cleanup\@
+	UNWIND_HINT_EMPTY
 	.if	\regsize == 64
 	mrs	x30, tpidrro_el0
 	msr	tpidrro_el0, xzr
@@ -417,6 +420,7 @@ alternative_else_nop_endif
 	ldp	x24, x25, [sp, #16 * 12]
 	ldp	x26, x27, [sp, #16 * 13]
 	ldp	x28, x29, [sp, #16 * 14]
+	UNWIND_HINT_EMPTY
 
 	.if	\el == 0
 alternative_if_not ARM64_UNMAP_KERNEL_AT_EL0
@@ -672,6 +676,7 @@ alternative_else_nop_endif
 
 	.macro tramp_ventry, vector_start, regsize, kpti, bhb
 	.align	7
+	UNWIND_HINT_EMPTY
 1:
 	.if	\regsize == 64
 	msr	tpidrro_el0, x30	// Restored in kernel_ventry
@@ -697,6 +702,7 @@ alternative_else_nop_endif
 	 * enter the full-fat kernel vectors.
 	 */
 	bl	2f
+	UNWIND_HINT_EMPTY
 	b	.
 2:
 	tramp_map_kernel	x30
@@ -727,6 +733,7 @@ alternative_else_nop_endif
 	.endm
 
 	.macro tramp_exit, regsize = 64
+	UNWIND_HINT_EMPTY
 	tramp_data_read_var	x30, this_cpu_vector
 	get_this_cpu_offset x29
 	ldr	x30, [x30, x29]
