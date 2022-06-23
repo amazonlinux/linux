@@ -20,4 +20,25 @@ config ARM64_RELOC_TEST
 	depends on m
 	tristate "Relocation testing module"
 
+choice
+    prompt "Choose kernel unwinder"
+    default UNWINDER_FRAME_POINTER
+    help
+      This determines which method will be used for unwinding kernel stack
+      traces for panics, oopses, bugs, warnings, perf, /proc/<pid>/stack,
+      livepatch, lockdep, and more.
+
+config UNWINDER_FRAME_POINTER
+    bool "Frame pointer unwinder"
+    select FRAME_POINTER
+    help
+      This option enables the frame pointer unwinder for unwinding kernel
+      stack traces.
+
+      The unwinder itself is fast and it uses less RAM than the ORC
+      unwinder, but the kernel text size will grow by ~3% and the kernel's
+      overall performance will degrade by roughly 5-10%.
+
+endchoice
+
 source "drivers/hwtracing/coresight/Kconfig"
