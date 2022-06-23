@@ -9,10 +9,12 @@
 #include <linux/init.h>
 
 #include <asm/assembler.h>
+#include <asm/unwind_hints.h>
 
 	__INIT
 
 SYM_CODE_START(efi_enter_kernel)
+	UNWIND_HINT_EMPTY
 	/*
 	 * efi_pe_entry() will have copied the kernel image if necessary and we
 	 * end up here with device tree address in x1 and the kernel entry
