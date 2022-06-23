@@ -11,6 +11,7 @@
 #include <linux/cfi_types.h>
 #include <asm/assembler.h>
 #include <asm/sysreg.h>
+#include <asm/unwind_hints.h>
 #include <asm/virt.h>
 
 .text
@@ -29,7 +30,8 @@
  * branch to what would be the reset vector. It must be executed with the
  * flat identity mapping.
  */
-SYM_TYPED_FUNC_START(cpu_soft_restart)
+SYM_CODE_START(cpu_soft_restart)
+	UNWIND_HINT_EMPTY
 	mov_q	x12, INIT_SCTLR_EL1_MMU_OFF
 	pre_disable_mmu_workaround
 	/*
