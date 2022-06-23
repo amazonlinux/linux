@@ -15,6 +15,7 @@
 #include <asm/kvm_mmu.h>
 #include <asm/kvm_mte.h>
 #include <asm/kvm_ptrauth.h>
+#include <asm/unwind_hints.h>
 
 	.text
 
@@ -22,6 +23,7 @@
  * u64 __guest_enter(struct kvm_vcpu *vcpu);
  */
 SYM_CODE_START(__guest_enter)
+	UNWIND_HINT_FUNC
 	// x0: vcpu
 	// x1-x17: clobbered by macros
 	// x29: guest context
@@ -88,6 +90,7 @@ SYM_INNER_LABEL(__guest_exit_panic, SYM_L_GLOBAL)
 	// vcpu x0-x1 on the stack
 
 	// If the hyp context is loaded, go straight to hyp_panic
+	UNWIND_HINT_FUNC
 	get_loaded_vcpu x0, x1
 	cbnz	x0, 1f
 	b	hyp_panic
@@ -110,6 +113,7 @@ SYM_INNER_LABEL(__guest_exit, SYM_L_GLOBAL)
 	// x1: vcpu
 	// x2-x29,lr: vcpu regs
 	// vcpu x0-x1 on the stack
+	UNWIND_HINT_FUNC sp_offset=16
 
 	add	x1, x1, #VCPU_CONTEXT
 
@@ -199,6 +203,7 @@ abort_guest_exit_end:
 	msr	daifset, #4	// Mask aborts
 	ret
 
+	UNWIND_HINT_FUNC
 	_kvm_extable	abort_guest_exit_start, 9997f
 	_kvm_extable	abort_guest_exit_end, 9997f
 9997:
