@@ -8,10 +8,12 @@
 #include <linux/linkage.h>
 #include <asm/assembler.h>
 #include <asm/kvm_asm.h>
+#include <asm/unwind_hints.h>
 
 .macro invalid_vector	label
 SYM_CODE_START_LOCAL(\label)
 	.align 7
+	UNWIND_HINT_EMPTY
 	b	\label
 SYM_CODE_END(\label)
 .endm
@@ -19,6 +21,7 @@ SYM_CODE_END(\label)
 .macro el1_sync_vector
 SYM_CODE_START_LOCAL(el1_sync)
 	.align 7
+	UNWIND_HINT_EMPTY
 	cmp	x0, #HVC_SET_VECTORS	/* Called from hibernate */
 	b.ne	1f
 	msr	vbar_el2, x1
