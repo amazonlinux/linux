@@ -26,7 +26,7 @@ static ssize_t ena_store_rx_copybreak(struct device *dev,
 	if (err < 0)
 		return err;
 
-	if (len > adapter->netdev->mtu)
+	if (rx_copybreak > min_t(u16, adapter->netdev->mtu, ENA_PAGE_SIZE))
 		return -EINVAL;
 
 	rtnl_lock();
@@ -41,12 +41,15 @@ static ssize_t ena_store_rx_copybreak(struct device *dev,
 	return len;
 }
 
+#define ENA_RX_COPYBREAK_STR_MAX_LEN 7
+
 static ssize_t ena_show_rx_copybreak(struct device *dev,
 				     struct device_attribute *attr, char *buf)
 {
 	struct ena_adapter *adapter = dev_get_drvdata(dev);
 
-	return sprintf(buf, "%d\n", adapter->rx_copybreak);
+	return snprintf(buf, ENA_RX_COPYBREAK_STR_MAX_LEN, "%d\n",
+			adapter->rx_copybreak);
 }
 
 static DEVICE_ATTR(rx_copybreak, S_IRUGO | S_IWUSR, ena_show_rx_copybreak,
