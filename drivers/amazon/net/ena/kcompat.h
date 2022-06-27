@@ -680,7 +680,8 @@ do {									\
 
 #if defined(CONFIG_BPF) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
 #define ENA_XDP_SUPPORT
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)) || \
+	(SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 3)
 #define XDP_HAS_FRAME_SZ
 #define XDP_CONVERT_TO_FRAME_NAME_CHANGED
 #endif
@@ -692,7 +693,9 @@ do {									\
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5,6,0) || \
-    (defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 3)))
+	(defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 3))) || \
+	(SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 3)
+
 #define HAVE_NDO_TX_TIMEOUT_STUCK_QUEUE_PARAMETER
 #endif
 
@@ -884,16 +887,16 @@ xdp_prepare_buff(struct xdp_buff *xdp, unsigned char *hard_start,
 #define ENA_XDP_XMIT_FREES_FAILED_DESCS_INTERNALLY
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
-
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) && \
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6))
 static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 {
 	memcpy(dev->dev_addr, addr, ETH_ALEN);
 }
+#endif
 
-#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) */
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) || \
+	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6))
 #define ENA_EXTENDED_COALESCE_UAPI_WITH_CQE_SUPPORTED
 #endif
 
@@ -903,5 +906,19 @@ static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 
 #if defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
 #define ENA_AF_XDP_SUPPORT
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(3, 3, 0)
+/* kernels older than 3.3.0 didn't have this function and
+ * used netif_tx_queue_stopped() for the same purpose
+ */
+static inline int netif_xmit_stopped(const struct netdev_queue *dev_queue)
+{
+	return netif_tx_queue_stopped(dev_queue);
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 10, 0)
+#define NAPIF_STATE_SCHED BIT(NAPI_STATE_SCHED)
 #endif
 #endif /* _KCOMPAT_H_ */
