@@ -1283,9 +1283,6 @@ static int ena_com_create_io_sq(struct ena_com_dev *ena_dev,
 		(uintptr_t)cmd_completion.sq_doorbell_offset);
 
 	if (io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
-		io_sq->header_addr = (u8 __iomem *)((uintptr_t)ena_dev->mem_bar
-				+ cmd_completion.llq_headers_offset);
-
 		io_sq->desc_addr.pbuf_dev_addr =
 			(u8 __iomem *)((uintptr_t)ena_dev->mem_bar +
 			cmd_completion.llq_descriptors_offset);
@@ -1428,11 +1425,6 @@ int ena_com_create_io_cq(struct ena_com_dev *ena_dev,
 
 	io_cq->unmask_reg = (u32 __iomem *)((uintptr_t)ena_dev->reg_bar +
 		cmd_completion.cq_interrupt_unmask_register_offset);
-
-	if (cmd_completion.cq_head_db_register_offset)
-		io_cq->cq_head_db_reg =
-			(u32 __iomem *)((uintptr_t)ena_dev->reg_bar +
-			cmd_completion.cq_head_db_register_offset);
 
 	if (cmd_completion.numa_node_register_offset)
 		io_cq->numa_node_cfg_reg =
@@ -2411,29 +2403,18 @@ int ena_com_fill_hash_function(struct ena_com_dev *ena_dev,
 		return -EOPNOTSUPP;
 	}
 
-	switch (func) {
-	case ENA_ADMIN_TOEPLITZ:
-		if (key) {
-			if (key_len != sizeof(hash_key->key)) {
-				netdev_err(ena_dev->net_device,
-					   "key len (%u) doesn't equal the supported size (%zu)\n",
-					   key_len, sizeof(hash_key->key));
-				return -EINVAL;
-			}
-			memcpy(hash_key->key, key, key_len);
-			rss->hash_init_val = init_val;
-			hash_key->key_parts = key_len / sizeof(hash_key->key[0]);
+	if ((func == ENA_ADMIN_TOEPLITZ) && key) {
+		if (key_len != sizeof(hash_key->key)) {
+			netdev_err(ena_dev->net_device,
+				   "key len (%u) doesn't equal the supported size (%zu)\n",
+				   key_len, sizeof(hash_key->key));
+			return -EINVAL;
 		}
-		break;
-	case ENA_ADMIN_CRC32:
-		rss->hash_init_val = init_val;
-		break;
-	default:
-		netdev_err(ena_dev->net_device, "Invalid hash function (%d)\n",
-			   func);
-		return -EINVAL;
+		memcpy(hash_key->key, key, key_len);
+		hash_key->key_parts = key_len / sizeof(hash_key->key[0]);
 	}
 
+	rss->hash_init_val = init_val;
 	old_func = rss->hash_func;
 	rss->hash_func = func;
 	rc = ena_com_set_hash_function(ena_dev);
