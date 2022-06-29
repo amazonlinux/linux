@@ -25,8 +25,8 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	6
-#define DRV_MODULE_GEN_SUBMINOR 1
+#define DRV_MODULE_GEN_MINOR	7
+#define DRV_MODULE_GEN_SUBMINOR 3
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -61,6 +61,8 @@
 
 #define ENA_DEFAULT_RING_SIZE	(1024)
 #define ENA_MIN_RING_SIZE	(256)
+
+#define ENA_MIN_RX_BUF_SIZE (2048)
 
 #define ENA_MIN_NUM_IO_QUEUES	(1)
 
@@ -118,28 +120,6 @@
 
 #define ENA_MMIO_DISABLE_REG_READ	BIT(0)
 
-/* The max MTU size is configured to be the ethernet frame size without
- * the overhead of the ethernet header, which can have a VLAN header, and
- * a frame check sequence (FCS).
- * The buffer size we share with the device is defined to be ENA_PAGE_SIZE
- */
-
-#ifdef ENA_XDP_SUPPORT
-#ifdef XDP_HAS_FRAME_SZ
-#define ENA_XDP_MAX_MTU (ENA_PAGE_SIZE - ETH_HLEN - ETH_FCS_LEN -	\
-			 VLAN_HLEN - XDP_PACKET_HEADROOM -		\
-			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
-#else
-#define ENA_XDP_MAX_MTU (ENA_PAGE_SIZE - ETH_HLEN - ETH_FCS_LEN - \
-				VLAN_HLEN - XDP_PACKET_HEADROOM)
-#endif
-
-#define ENA_IS_XDP_INDEX(adapter, index) (((index) >= (adapter)->xdp_first_ring) && \
-	((index) < (adapter)->xdp_first_ring + (adapter)->xdp_num_queues))
-#else
-#define ENA_IS_XDP_INDEX(adapter, index) (false)
-#endif /* ENA_XDP_SUPPORT */
-
 struct ena_page_cache;
 
 struct ena_irq {
@@ -157,15 +137,20 @@ struct ena_napi {
 	struct napi_struct napi;
 	struct ena_ring *tx_ring;
 	struct ena_ring *rx_ring;
-#ifdef ENA_XDP_SUPPORT
-	struct ena_ring *xdp_ring;
-#endif /* ENA_XDP_SUPPORT */
 	u32 qid;
 	struct dim dim;
 };
 
 struct ena_tx_buffer {
-	struct sk_buff *skb;
+	union {
+		struct sk_buff *skb;
+#ifdef ENA_XDP_SUPPORT
+		/* XDP buffer structure which is used for sending packets in
+		 * the xdp queues
+		 */
+		struct xdp_frame *xdpf;
+#endif /* ENA_XDP_SUPPORT */
+	};
 	/* num of ena desc for this specific skb
 	 * (includes data desc and metadata desc)
 	 */
@@ -173,18 +158,14 @@ struct ena_tx_buffer {
 	/* num of buffers used by this skb */
 	u32 num_of_bufs;
 
-#ifdef ENA_XDP_SUPPORT
-	/* XDP buffer structure which is used for sending packets in
-	 * the xdp queues
-	 */
-	struct xdp_frame *xdpf;
-#endif /* ENA_XDP_SUPPORT */
+	/* Total size of all buffers */
+	u32 total_tx_size;
 
 	/* Indicate if bufs[0] map the linear data of the skb. */
 	u8 map_linear_data;
 
 	/* Used for detect missing tx packets to limit the number of prints */
-	u32 print_once;
+	u8 print_once;
 	/* Save the last jiffies to detect missing tx packets
 	 *
 	 * sets to non zero value on ena_start_xmit and set to zero on
@@ -200,9 +181,18 @@ struct ena_tx_buffer {
 
 struct ena_rx_buffer {
 	struct sk_buff *skb;
-	struct page *page;
-	dma_addr_t dma_addr;
+	union {
+		struct {
+			struct page *page;
+			dma_addr_t dma_addr;
+		};
+#ifdef ENA_XDP_SUPPORT
+		/* XSK pool buffer */
+		struct xdp_buff *xdp;
+#endif
+	};
 	u32 page_offset;
+	u32 buf_offset;
 	struct ena_com_buf ena_buf;
 	bool is_lpc_page;
 } ____cacheline_aligned;
@@ -224,6 +214,10 @@ struct ena_stats_tx {
 	u64 missed_tx;
 	u64 unmask_interrupt;
 	u64 last_napi_jiffies;
+#ifdef ENA_AF_XDP_SUPPORT
+	u64 xsk_need_wakeup_set;
+	u64 xsk_wakeup_request;
+#endif /* ENA_AF_XDP_SUPPORT */
 };
 
 struct ena_stats_rx {
@@ -232,7 +226,7 @@ struct ena_stats_rx {
 	u64 rx_copybreak_pkt;
 	u64 csum_good;
 	u64 refil_partial;
-	u64 bad_csum;
+	u64 csum_bad;
 	u64 page_alloc_fail;
 	u64 skb_alloc_fail;
 	u64 dma_mapping_err;
@@ -256,6 +250,10 @@ struct ena_stats_rx {
 	u64 lpc_warm_up;
 	u64 lpc_full;
 	u64 lpc_wrong_numa;
+#ifdef ENA_AF_XDP_SUPPORT
+	u64 xsk_need_wakeup_set;
+	u64 zc_queue_pkt_copy;
+#endif /* ENA_AF_XDP_SUPPORT */
 };
 
 struct ena_ring {
@@ -287,7 +285,10 @@ struct ena_ring {
 	 * which traffic should be redirected from this rx ring.
 	 */
 	struct ena_ring *xdp_ring;
-#endif
+#ifdef ENA_AF_XDP_SUPPORT
+	struct xsk_buff_pool *xsk_pool;
+#endif /* ENA_AF_XDP_SUPPORT */
+#endif /* ENA_XDP_SUPPORT */
 
 	u16 next_to_use;
 	u16 next_to_clean;
@@ -304,9 +305,11 @@ struct ena_ring {
 	bool disable_meta_caching;
 	u16 no_interrupt_event_cnt;
 
-	/* cpu for TPH */
+	/* cpu and NUMA for TPH */
 	int cpu;
-	 /* number of tx/rx_buffer_info's entries */
+	int numa_node;
+
+	/* number of tx/rx_buffer_info's entries */
 	int ring_size;
 
 	enum ena_admin_placement_policy_type tx_mem_queue_type;
@@ -364,7 +367,9 @@ struct ena_adapter {
 	struct net_device *netdev;
 	struct pci_dev *pdev;
 
-	/* rx packets that shorter that this len will be copied to the skb
+	struct devlink *devlink;
+
+	/* rx packets that are shorter than this len will be copied to the skb
 	 * header
 	 */
 	u32 rx_copybreak;
@@ -391,7 +396,13 @@ struct ena_adapter {
 
 	u32 msg_enable;
 
-	bool large_llq_header;
+	/* The flag is used for two purposes:
+	 * 1. Indicates that large LLQ has been requested.
+	 * 2. Indicates whether large LLQ is set or not after device
+	 *    initialization / configuration.
+	 */
+	bool large_llq_header_enabled;
+	bool large_llq_header_supported;
 
 	u16 max_tx_sgl_size;
 	u16 max_rx_sgl_size;
@@ -528,41 +539,14 @@ static inline bool ena_bp_disable(struct ena_ring *rx_ring)
 }
 #endif /* ENA_BUSY_POLL_SUPPORT */
 
-#ifdef ENA_XDP_SUPPORT
-enum ena_xdp_errors_t {
-	ENA_XDP_ALLOWED = 0,
-	ENA_XDP_CURRENT_MTU_TOO_LARGE,
-	ENA_XDP_NO_ENOUGH_QUEUES,
-};
-
-static inline bool ena_xdp_present(struct ena_adapter *adapter)
+static inline void ena_reset_device(struct ena_adapter *adapter,
+				    enum ena_regs_reset_reason_types reset_reason)
 {
-	return !!adapter->xdp_bpf_prog;
+	adapter->reset_reason = reset_reason;
+	/* Make sure reset reason is set before triggering the reset */
+	smp_mb__before_atomic();
+	set_bit(ENA_FLAG_TRIGGER_RESET, &adapter->flags);
 }
-
-static inline bool ena_xdp_present_ring(struct ena_ring *ring)
-{
-	return !!ring->xdp_bpf_prog;
-}
-
-static inline bool ena_xdp_legal_queue_count(struct ena_adapter *adapter,
-					     u32 queues)
-{
-	return 2 * queues <= adapter->max_num_io_queues;
-}
-
-static inline enum ena_xdp_errors_t ena_xdp_allowed(struct ena_adapter *adapter)
-{
-	enum ena_xdp_errors_t rc = ENA_XDP_ALLOWED;
-
-	if (adapter->netdev->mtu > ENA_XDP_MAX_MTU)
-		rc = ENA_XDP_CURRENT_MTU_TOO_LARGE;
-	else if (!ena_xdp_legal_queue_count(adapter, adapter->num_io_queues))
-		rc = ENA_XDP_NO_ENOUGH_QUEUES;
-
-	return rc;
-}
-#endif /* ENA_XDP_SUPPORT */
 
 /* Allocate a page and DMA map it
  * @rx_ring: The IO queue pair which requests the allocation
@@ -572,4 +556,51 @@ static inline enum ena_xdp_errors_t ena_xdp_allowed(struct ena_adapter *adapter)
  */
 struct page *ena_alloc_map_page(struct ena_ring *rx_ring, dma_addr_t *dma);
 
+void ena_destroy_device(struct ena_adapter *adapter, bool graceful);
+int ena_restore_device(struct ena_adapter *adapter);
+int handle_invalid_req_id(struct ena_ring *ring, u16 req_id,
+			  struct ena_tx_buffer *tx_info, bool is_xdp);
+
+/* Increase a stat by cnt while holding syncp seqlock on 32bit machines */
+static inline void ena_increase_stat(u64 *statp, u64 cnt,
+			      struct u64_stats_sync *syncp)
+{
+	u64_stats_update_begin(syncp);
+	(*statp) += cnt;
+	u64_stats_update_end(syncp);
+}
+
+static inline void ena_ring_tx_doorbell(struct ena_ring *tx_ring)
+{
+	ena_com_write_sq_doorbell(tx_ring->ena_com_io_sq);
+	ena_increase_stat(&tx_ring->tx_stats.doorbells, 1, &tx_ring->syncp);
+}
+
+int ena_xmit_common(struct ena_adapter *adapter,
+		    struct ena_ring *ring,
+		    struct ena_tx_buffer *tx_info,
+		    struct ena_com_tx_ctx *ena_tx_ctx,
+		    u16 next_to_use,
+		    u32 bytes);
+void ena_unmap_tx_buff(struct ena_ring *tx_ring,
+		       struct ena_tx_buffer *tx_info);
+void ena_init_io_rings(struct ena_adapter *adapter,
+		       int first_index, int count);
+int ena_create_io_tx_queues_in_range(struct ena_adapter *adapter,
+				     int first_index, int count);
+int ena_setup_tx_resources_in_range(struct ena_adapter *adapter,
+				    int first_index, int count);
+void ena_free_all_io_tx_resources(struct ena_adapter *adapter);
+void ena_down(struct ena_adapter *adapter);
+int ena_up(struct ena_adapter *adapter);
+void ena_unmask_interrupt(struct ena_ring *tx_ring, struct ena_ring *rx_ring);
+void ena_update_ring_numa_node(struct ena_ring *tx_ring,
+			       struct ena_ring *rx_ring);
+void ena_rx_checksum(struct ena_ring *rx_ring,
+		     struct ena_com_rx_ctx *ena_rx_ctx,
+		     struct sk_buff *skb);
+void ena_set_rx_hash(struct ena_ring *rx_ring,
+		     struct ena_com_rx_ctx *ena_rx_ctx,
+		     struct sk_buff *skb);
+int ena_refill_rx_bufs(struct ena_ring *rx_ring, u32 num);
 #endif /* !(ENA_H) */
