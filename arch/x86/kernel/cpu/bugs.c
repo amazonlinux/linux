@@ -915,9 +915,15 @@ static void __init retbleed_select_mitigation(void)
 		return;
 
 	case RETBLEED_CMD_IBPB:
-		retbleed_mitigation = RETBLEED_MITIGATION_IBPB;
+		if (!boot_cpu_has(X86_FEATURE_IBPB)) {
+			pr_err("WARNING: CPU does not support IBPB.\n");
+			goto do_cmd_auto;
+		} else {
+			retbleed_mitigation = RETBLEED_MITIGATION_IBPB;
+		}
 		break;
 
+do_cmd_auto:
 	case RETBLEED_CMD_AUTO:
 	default:
 		if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD) {
