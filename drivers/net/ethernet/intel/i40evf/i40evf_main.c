@@ -1979,8 +1979,13 @@ continue_reset:
 
 	return;
 reset_err:
+	if (running) {
+		set_bit(__I40E_VSI_DOWN, adapter->vsi.state);
+		i40evf_free_traffic_irqs(adapter);
+	}
+	i40evf_disable_vf(adapter);
+
 	dev_err(&adapter->pdev->dev, "failed to allocate resources during reinit\n");
-	i40evf_close(netdev);
 }
 
 /**
