@@ -357,6 +357,7 @@ static i40e_status i40e_config_arq_regs(struct i40e_hw *hw)
 static i40e_status i40e_init_asq(struct i40e_hw *hw)
 {
 	i40e_status ret_code = 0;
+	int i;
 
 	if (hw->aq.asq.count > 0) {
 		/* queue already initialized */
@@ -387,11 +388,16 @@ static i40e_status i40e_init_asq(struct i40e_hw *hw)
 	/* initialize base registers */
 	ret_code = i40e_config_asq_regs(hw);
 	if (ret_code)
-		goto init_adminq_free_rings;
+		goto init_free_asq_bufs;
 
 	/* success! */
 	hw->aq.asq.count = hw->aq.num_asq_entries;
 	goto init_adminq_exit;
+
+init_free_asq_bufs:
+	for (i = 0; i < hw->aq.num_asq_entries; i++)
+		i40e_free_dma_mem(hw, &hw->aq.asq.r.asq_bi[i]);
+	i40e_free_virt_mem(hw, &hw->aq.asq.dma_head);
 
 init_adminq_free_rings:
 	i40e_free_adminq_asq(hw);
@@ -416,6 +422,7 @@ init_adminq_exit:
 static i40e_status i40e_init_arq(struct i40e_hw *hw)
 {
 	i40e_status ret_code = 0;
+	int i;
 
 	if (hw->aq.arq.count > 0) {
 		/* queue already initialized */
@@ -446,12 +453,16 @@ static i40e_status i40e_init_arq(struct i40e_hw *hw)
 	/* initialize base registers */
 	ret_code = i40e_config_arq_regs(hw);
 	if (ret_code)
-		goto init_adminq_free_rings;
+		goto init_free_arq_bufs;
 
 	/* success! */
 	hw->aq.arq.count = hw->aq.num_arq_entries;
 	goto init_adminq_exit;
 
+init_free_arq_bufs:
+	for (i = 0; i < hw->aq.num_arq_entries; i++)
+		i40e_free_dma_mem(hw, &hw->aq.arq.r.arq_bi[i]);
+	i40e_free_virt_mem(hw, &hw->aq.arq.dma_head);
 init_adminq_free_rings:
 	i40e_free_adminq_arq(hw);
 
