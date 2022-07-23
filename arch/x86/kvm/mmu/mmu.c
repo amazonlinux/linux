@@ -4199,7 +4199,7 @@ reset_tdp_shadow_zero_bits_mask(struct kvm_vcpu *vcpu,
 	if (boot_cpu_is_amd())
 		__reset_rsvds_bits_mask(vcpu, shadow_zero_check,
 					shadow_phys_bits,
-					context->shadow_root_level, false,
+					context->shadow_root_level, true,
 					boot_cpu_has(X86_FEATURE_GBPAGES),
 					true, true);
 	else
