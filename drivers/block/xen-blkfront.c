@@ -1170,6 +1170,7 @@ static int xlvbd_alloc_gendisk(blkif_sector_t capacity,
 	gd->major = XENVBD_MAJOR;
 	gd->first_minor = minor;
 	gd->minors = nr_minors;
+	gd->flags |= GENHD_FL_EXT_DEVT;
 	gd->fops = &xlvbd_block_fops;
 	gd->private_data = info;
 	set_capacity(gd, capacity);
