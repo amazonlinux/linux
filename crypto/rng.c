@@ -116,31 +116,37 @@ struct crypto_rng *crypto_alloc_rng(const char *alg_name, u32 type, u32 mask)
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_rng);
 
-int crypto_get_default_rng(void)
+static int __crypto_get_default_rng(void)
 {
 	struct crypto_rng *rng;
 	int err;
 
-	mutex_lock(&crypto_default_rng_lock);
 	if (!crypto_default_rng) {
 		rng = crypto_alloc_rng("stdrng", 0, 0);
 		err = PTR_ERR(rng);
 		if (IS_ERR(rng))
-			goto unlock;
+			return err;
 
 		err = crypto_rng_reset(rng, NULL, crypto_rng_seedsize(rng));
 		if (err) {
 			crypto_free_rng(rng);
-			goto unlock;
+			return err;
 		}
 
 		crypto_default_rng = rng;
 	}
 
 	crypto_default_rng_refcnt++;
-	err = 0;
 
-unlock:
+	return 0;
+}
+
+int crypto_get_default_rng(void)
+{
+	int err;
+
+	mutex_lock(&crypto_default_rng_lock);
+	err = __crypto_get_default_rng();
 	mutex_unlock(&crypto_default_rng_lock);
 
 	return err;
@@ -227,7 +233,8 @@ void crypto_unregister_rngs(struct rng_alg *algs, int count)
 }
 EXPORT_SYMBOL_GPL(crypto_unregister_rngs);
 
-static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen)
+static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen,
+				     bool reseed)
 {
 	u8 tmp[256];
 	ssize_t ret;
@@ -235,9 +242,65 @@ static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen)
 	if (!buflen)
 		return 0;
 
-	ret = crypto_get_default_rng();
-	if (ret)
-		return ret;
+	if (reseed) {
+		int err;
+		int i;
+		u32 flags = 0;
+
+		/* If reseeding is requested, acquire a lock on
+		 * crypto_default_rng so it is not swapped out until
+		 * the initial random bytes are generated.
+		 *
+		 * The algorithm implementation is also protected with
+		 * a separate mutex (drbg->drbg_mutex) around the
+		 * reseed-and-generate operation.
+		 */
+		mutex_lock(&crypto_default_rng_lock);
+
+		/* If crypto_default_rng is not set, it will be seeded
+		 * at creation in __crypto_get_default_rng and thus no
+		 * reseeding is needed.
+		 */
+		if (crypto_default_rng)
+			flags |= CRYPTO_TFM_REQ_NEED_RESEED;
+
+		ret = __crypto_get_default_rng();
+		if (ret) {
+			mutex_unlock(&crypto_default_rng_lock);
+			return ret;
+		}
+
+		crypto_tfm_set_flags(crypto_rng_tfm(crypto_default_rng),
+				     flags);
+
+		i = min_t(int, buflen, sizeof(tmp));
+		err = crypto_rng_get_bytes(crypto_default_rng, tmp, i);
+
+		crypto_tfm_clear_flags(crypto_rng_tfm(crypto_default_rng),
+				       flags);
+
+		mutex_unlock(&crypto_default_rng_lock);
+		if (err) {
+			ret = err;
+			goto out;
+		}
+
+		if (copy_to_user(buf, tmp, i)) {
+			ret = -EFAULT;
+			goto out;
+		}
+
+		buflen -= i;
+		buf += i;
+		ret += i;
+
+		if (!buflen)
+			goto out;
+	} else {
+		ret = crypto_get_default_rng();
+		if (ret)
+			return ret;
+	}
 
 	for (;;) {
 		int err;
@@ -269,6 +332,7 @@ static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen)
 		}
 	}
 
+ out:
 	crypto_put_default_rng();
 	memzero_explicit(tmp, sizeof(tmp));
 
