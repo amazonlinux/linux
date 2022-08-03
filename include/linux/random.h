@@ -10,7 +10,7 @@
 #include <uapi/linux/random.h>
 
 struct random_extrng {
-	ssize_t (*extrng_read)(void __user *buf, size_t buflen);
+	ssize_t (*extrng_read)(void __user *buf, size_t buflen, bool reseed);
 	struct module *owner;
 };
 
