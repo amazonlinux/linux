@@ -933,6 +933,9 @@ static int mptcp_sendmsg_frag(struct sock *sk, struct sock *ssk,
 		page = dfrag->page;
 	}
 
+	if (unlikely(!__tcp_can_send(ssk)))
+		return -EAGAIN;
+
 	/* compute copy limit */
 	mss_now = tcp_send_mss(ssk, &size_goal, msg->msg_flags);
 	*pmss_now = mss_now;
@@ -1107,7 +1110,8 @@ static struct sock *mptcp_subflow_get_send(struct mptcp_sock *msk,
 		if (!msk->first)
 			return NULL;
 		*sndbuf = msk->first->sk_sndbuf;
-		return sk_stream_memory_free(msk->first) ? msk->first : NULL;
+		return __tcp_can_send(msk->first) &&
+		       sk_stream_memory_free(msk->first) ? msk->first : NULL;
 	}
 
 	/* re-use last subflow, if the burst allow that */
