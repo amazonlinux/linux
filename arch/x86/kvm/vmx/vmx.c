@@ -6729,9 +6729,12 @@ void noinstr vmx_spec_ctrl_restore_host(struct vcpu_vmx *vmx,
 	 * For legacy IBRS, the IBRS bit always needs to be written after
 	 * transitioning from a less privileged predictor mode, regardless of
 	 * whether the guest/host values differ.
+	 *
+	 * For eIBRS affected by Post Barrier RSB Predictions a serialising
+	 * instruction (wrmsr) must be executed.
 	 */
 	if (cpu_feature_enabled(X86_FEATURE_KERNEL_IBRS) ||
-	    vmx->spec_ctrl != hostval)
+	    vmx->spec_ctrl != hostval || (hostval & SPEC_CTRL_IBRS))
 		native_wrmsrl(MSR_IA32_SPEC_CTRL, hostval);
 
 	barrier_nospec();
