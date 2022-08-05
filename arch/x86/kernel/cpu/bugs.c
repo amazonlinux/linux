@@ -782,6 +782,7 @@ static void __init retbleed_select_mitigation(void)
 
 	case RETBLEED_CMD_AUTO:
 	default:
+
 		/*
 		 * The Intel mitigation (IBRS) was already selected in
 		 * spectre_v2_select_mitigation().
