@@ -143,7 +143,7 @@ void __init cpu_select_mitigations(void)
 	/*
 	 * spectre_v2_user_select_mitigation() relies on the state set by
 	 * retbleed_select_mitigation(); specifically the STIBP selection is
-	 * forced for UNRET.
+	 * forced for UNRET or IBPB.
 	 */
 	spectre_v2_user_select_mitigation();
 	ssb_select_mitigation();
@@ -1226,6 +1226,13 @@ spectre_v2_user_select_mitigation(void)
 	if (mode != SPECTRE_V2_USER_STRICT &&
 	    boot_cpu_has(X86_FEATURE_AMD_STIBP_ALWAYS_ON))
 		mode = SPECTRE_V2_USER_STRICT_PREFERRED;
+
+	if (retbleed_mitigation == RETBLEED_MITIGATION_IBPB) {
+		if (mode != SPECTRE_V2_USER_STRICT &&
+		    mode != SPECTRE_V2_USER_STRICT_PREFERRED)
+			pr_info("Selecting STIBP always-on mode to complement retbleed mitigation'\n");
+		mode = SPECTRE_V2_USER_STRICT_PREFERRED;
+	}
 
 	spectre_v2_user_stibp = mode;
 
@@ -2344,6 +2351,18 @@ static ssize_t srbds_show_state(char *buf)
 
 static ssize_t retbleed_show_state(char *buf)
 {
+	if (retbleed_mitigation == RETBLEED_MITIGATION_IBPB) {
+	    if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
+		    return sprintf(buf, "Vulnerable: IBPB on non-AMD based uarch\n");
+
+	    return sysfs_emit(buf, "%s; SMT %s\n",
+			   retbleed_strings[retbleed_mitigation],
+			   !sched_smt_active() ? "disabled" :
+			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT ||
+			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT_PREFERRED ?
+			   "enabled with STIBP protection" : "vulnerable");
+	}
+
 	return sysfs_emit(buf, "%s\n", retbleed_strings[retbleed_mitigation]);
 }
 
