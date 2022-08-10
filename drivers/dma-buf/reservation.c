@@ -117,7 +117,8 @@ reservation_object_add_shared_inplace(struct reservation_object *obj,
 		old_fence = rcu_dereference_protected(fobj->shared[i],
 						reservation_object_held(obj));
 
-		if (old_fence->context == fence->context) {
+		if (old_fence->context == fence->context &&
+		   dma_fence_is_later(fence, old_fence)) {
 			/* memory barrier is added by write_seqcount_begin */
 			RCU_INIT_POINTER(fobj->shared[i], fence);
 			write_seqcount_end(&obj->seq);
