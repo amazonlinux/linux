@@ -256,7 +256,8 @@ void dma_resv_add_shared_fence(struct dma_resv *obj, struct dma_fence *fence)
 
 		old = rcu_dereference_protected(fobj->shared[i],
 						dma_resv_held(obj));
-		if (old->context == fence->context ||
+		if ((old->context == fence->context &&
+		    dma_fence_is_later(fence, old)) ||
 		    dma_fence_is_signaled(old))
 			goto replace;
 	}
