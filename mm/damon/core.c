@@ -133,6 +133,12 @@ struct damon_region *damon_new_region(unsigned long start, unsigned long end)
 	if (!region)
 		return NULL;
 
+	if (start >= end) {
+		pr_err("%s called with start %lu and end %lu!\n", __func__,
+				start, end);
+		BUG();
+	}
+
 	region->ar.start = start;
 	region->ar.end = end;
 	region->nr_accesses = 0;
@@ -154,6 +160,10 @@ void damon_add_region(struct damon_region *r, struct damon_target *t)
 
 static void damon_del_region(struct damon_region *r, struct damon_target *t)
 {
+	if (t->nr_regions == 0) {
+		pr_err("nr_regions 0 but damon_del_region called\n");
+		BUG();
+	}
 	list_del(&r->list);
 	t->nr_regions--;
 }
@@ -521,8 +531,27 @@ void damon_destroy_target(struct damon_target *t, struct damon_ctx *ctx)
 	damon_free_target(t);
 }
 
+static void damon_nr_regions_verify(struct damon_target *t)
+{
+	struct damon_region *r;
+	unsigned int count = 0;
+	static unsigned called;
+
+	if (called++ % 100)
+		return;
+
+	damon_for_each_region(r, t)
+		count++;
+
+	if (count != t->nr_regions)
+		pr_err("%s expected %u but %u\n", __func__, count, t->nr_regions);
+	BUG_ON(count != t->nr_regions);
+}
+
 unsigned int damon_nr_regions(struct damon_target *t)
 {
+	damon_nr_regions_verify(t);
+
 	return t->nr_regions;
 }
 
@@ -1933,6 +1962,15 @@ static void damos_apply_scheme(struct damon_ctx *c, struct damon_target *t,
 					c->min_sz_region);
 			if (!sz)
 				goto update_stat;
+			if (sz >= damon_sz_region(r)) {
+				pr_err("sz: %lu, region: %lu-%lu (%lu), quota: %lu, charged: %lu\n",
+						sz, r->ar.start,
+						r->ar.end, r->ar.end -
+						r->ar.start,
+						quota->esz,
+						quota->charged_sz);
+				BUG();
+			}
 			damon_split_region_at(t, r, sz);
 		}
 		if (damos_filter_out(c, t, r, s))
@@ -2285,6 +2323,14 @@ static void damon_merge_two_regions(struct damon_target *t,
 	l->nr_accesses_bp = l->nr_accesses * 10000;
 	l->age = (l->age * sz_l + r->age * sz_r) / (sz_l + sz_r);
 	l->ar.end = r->ar.end;
+
+	if (l->ar.start >= l->ar.end) {
+		pr_err("%s made %lu-%lu region\n", __func__, l->ar.start,
+				r->ar.end);
+		pr_err("r: %lu-%lu\n", r->ar.start, r->ar.end);
+		BUG();
+	}
+
 	damon_destroy_region(r, t);
 }
 
@@ -2307,6 +2353,12 @@ static void damon_merge_regions_of(struct damon_target *t, unsigned int thres,
 			r->age = 0;
 		else
 			r->age++;
+
+		if (r->nr_accesses != r->nr_accesses_bp / 10000) {
+			pr_err("nr_accesses (%u) != nr_accesses_bp (%u)\n",
+					r->nr_accesses, r->nr_accesses_bp);
+			BUG();
+		}
 
 		if (prev && prev->ar.end == r->ar.start &&
 		    abs(prev->nr_accesses - r->nr_accesses) <= thres &&
@@ -2364,6 +2416,12 @@ static void damon_split_region_at(struct damon_target *t,
 				  struct damon_region *r, unsigned long sz_r)
 {
 	struct damon_region *new;
+
+	if (sz_r == 0 || sz_r >= r->ar.end - r->ar.start) {
+		pr_err("%s called with region of %lu-%lu and sz_r %lu!\n",
+				__func__, r->ar.start, r->ar.end, sz_r);
+		BUG();
+	}
 
 	new = damon_new_region(r->ar.start + sz_r, r->ar.end);
 	if (!new)
