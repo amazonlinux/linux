@@ -1962,13 +1962,12 @@ again:
 		message = "writing protocol";
 		goto abort_transaction;
 	}
-	if (xen_blkif_feature_persistent) {
-		err = xenbus_printf(xbt, dev->nodename,
-				    "feature-persistent", "%u", 1);
-		if (err)
-			dev_warn(&dev->dev,
-				 "writing persistent grants feature to xenbus");
-	}
+	err = xenbus_printf(xbt, dev->nodename,
+			    "feature-persistent", "%u",
+			    info->feature_persistent);
+	if (err)
+		dev_warn(&dev->dev,
+			 "writing persistent grants feature to xenbus");
 
 	err = xenbus_transaction_end(xbt, 0);
 	if (err) {
@@ -2107,6 +2106,8 @@ static int blkfront_probe(struct xenbus_device *dev,
 	mutex_init(&info->mutex);
 	info->vdevice = vdevice;
 	info->connected = BLKIF_STATE_DISCONNECTED;
+
+	info->feature_persistent = xen_blkif_feature_persistent;
 
 	/* Front end dir is a number, which is used as the id. */
 	info->handle = simple_strtoul(strrchr(dev->nodename, '/')+1, NULL, 0);
@@ -2419,7 +2420,7 @@ static void blkfront_gather_backend_features(struct blkfront_info *info)
 	if (xenbus_read_unsigned(info->xbdev->otherend, "feature-discard", 0))
 		blkfront_setup_discard(info);
 
-	if (xen_blkif_feature_persistent)
+	if (info->feature_persistent)
 		info->feature_persistent =
 			!!xenbus_read_unsigned(info->xbdev->otherend,
 					       "feature-persistent", 0);
