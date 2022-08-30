@@ -153,10 +153,6 @@
 						 * are restricted to targets in
 						 * kernel.
 						 */
-#define ARCH_CAP_PBRSB_NO		BIT(24)	/*
-						 * Not susceptible to Post-Barrier
-						 * Return Stack Buffer Predictions.
-						 */
 #define ARCH_CAP_GDS_CTRL		BIT(25)	/*
 						 * CPU is vulnerable to Gather
 						 * Data Sampling (GDS) and

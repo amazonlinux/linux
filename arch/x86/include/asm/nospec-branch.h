@@ -147,10 +147,9 @@
   * A simpler FILL_RETURN_BUFFER macro. Don't make people use the CPP
   * monstrosity above, manually.
   */
-.macro FILL_RETURN_BUFFER reg:req nr:req ftr:req ftr2=ALT_NOT(X86_FEATURE_ALWAYS)
-	ALTERNATIVE_2 "jmp .Lskip_rsb_\@", \
-		__stringify(__FILL_RETURN_BUFFER(\reg,\nr)), \ftr, \
-		__stringify(__FILL_ONE_RETURN), \ftr2
+.macro FILL_RETURN_BUFFER reg:req nr:req ftr:req
+	ALTERNATIVE "jmp .Lskip_rsb_\@", \
+		__stringify(__FILL_RETURN_BUFFER(\reg,\nr)), \ftr
 
 .Lskip_rsb_\@:
 .endm
