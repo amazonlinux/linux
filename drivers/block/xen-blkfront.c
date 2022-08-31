@@ -1965,6 +1965,7 @@ again:
 		message = "writing protocol";
 		goto abort_transaction;
 	}
+	info->feature_persistent_parm = xen_blkif_feature_persistent;
 	err = xenbus_printf(xbt, dev->nodename,
 			    "feature-persistent", "%u",
 			    info->feature_persistent_parm);
@@ -2421,7 +2422,6 @@ static void blkfront_gather_backend_features(struct blkfront_info *info)
 	if (xenbus_read_unsigned(info->xbdev->otherend, "feature-discard", 0))
 		blkfront_setup_discard(info);
 
-	info->feature_persistent_parm = xen_blkif_feature_persistent;
 	if (info->feature_persistent_parm)
 		info->feature_persistent =
 			!!xenbus_read_unsigned(info->xbdev->otherend,
