@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2014, Intel Corporation.
+ * Copyright (c) 2014, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -107,7 +107,7 @@ char *Parser_strarg(char *inp, const char *prompt, const char *deft,
 int Parser_arg2int(const char *inp, long *result, int base);
 
 /* Convert human readable size string to and int; "1k" -> 1000 */
-int Parser_size(int *sizep, char *str);
+int Parser_size(unsigned long *sizep, char *str);
 
 /* Convert a string boolean to an int; "enable" -> 1 */
 int Parser_bool(int *b, char *str);
