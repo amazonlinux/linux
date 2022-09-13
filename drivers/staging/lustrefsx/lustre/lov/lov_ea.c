@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -41,9 +41,6 @@
 #include <libcfs/libcfs.h>
 
 #include <obd_class.h>
-#include <lustre/lustre_idl.h>
-#include <lustre/lustre_user.h>
-
 #include "lov_internal.h"
 
 static inline void
@@ -53,8 +50,10 @@ lu_extent_le_to_cpu(struct lu_extent *dst, const struct lu_extent *src)
 	dst->e_end = le64_to_cpu(src->e_end);
 }
 
-/* Find minimum stripe maxbytes value.  For inactive or
- * reconnecting targets use LUSTRE_EXT3_STRIPE_MAXBYTES. */
+/*
+ * Find minimum stripe maxbytes value.  For inactive or
+ * reconnecting targets use LUSTRE_EXT3_STRIPE_MAXBYTES.
+ */
 static loff_t lov_tgt_maxbytes(struct lov_tgt_desc *tgt)
 {
 	struct obd_import *imp;
@@ -64,11 +63,12 @@ static loff_t lov_tgt_maxbytes(struct lov_tgt_desc *tgt)
 		return maxbytes;
 
 	imp = tgt->ltd_obd->u.cli.cl_import;
-	if (imp == NULL)
+	if (!imp)
 		return maxbytes;
 
 	spin_lock(&imp->imp_lock);
-	if (imp->imp_state == LUSTRE_IMP_FULL &&
+	if ((imp->imp_state == LUSTRE_IMP_FULL ||
+	    imp->imp_state == LUSTRE_IMP_IDLE) &&
 	    (imp->imp_connect_data.ocd_connect_flags & OBD_CONNECT_MAXBYTES) &&
 	    imp->imp_connect_data.ocd_maxbytes > 0)
 		maxbytes = imp->imp_connect_data.ocd_maxbytes;
@@ -93,7 +93,8 @@ static int lsm_lmm_verify_v1v3(struct lov_mds_md *lmm, size_t lmm_size,
 		return -EINVAL;
 	}
 
-	if (lov_pattern(le32_to_cpu(lmm->lmm_pattern)) != LOV_PATTERN_RAID0) {
+	if (lov_pattern(le32_to_cpu(lmm->lmm_pattern)) != LOV_PATTERN_MDT &&
+	    lov_pattern(le32_to_cpu(lmm->lmm_pattern)) != LOV_PATTERN_RAID0) {
 		CERROR("bad striping pattern\n");
 		lov_dump_lmm_common(D_WARNING, lmm);
 		return -EINVAL;
@@ -184,7 +185,7 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 
 	lsme_size = offsetof(typeof(*lsme), lsme_oinfo[stripe_count]);
 	OBD_ALLOC_LARGE(lsme, lsme_size);
-	if (lsme == NULL)
+	if (!lsme)
 		RETURN(ERR_PTR(-ENOMEM));
 
 	lsme->lsme_magic = magic;
@@ -195,7 +196,7 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 	lsme->lsme_stripe_count = le16_to_cpu(lmm->lmm_stripe_count);
 	lsme->lsme_layout_gen = le16_to_cpu(lmm->lmm_layout_gen);
 
-	if (pool_name != NULL) {
+	if (pool_name) {
 		size_t pool_name_len;
 
 		pool_name_len = strlcpy(lsme->lsme_pool_name, pool_name,
@@ -204,12 +205,22 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 			GOTO(out_lsme, rc = -E2BIG);
 	}
 
+	/* with Data-on-MDT set maxbytes to stripe size */
+	if (lsme_is_dom(lsme)) {
+		if (maxbytes) {
+			lov_bytes = lsme->lsme_stripe_size;
+			goto out_dom1;
+		} else {
+			goto out_dom2;
+		}
+	}
+
 	for (i = 0; i < stripe_count; i++) {
 		struct lov_oinfo *loi;
 		struct lov_tgt_desc *ltd;
 
 		OBD_SLAB_ALLOC_PTR_GFP(loi, lov_oinfo_slab, GFP_NOFS);
-		if (loi == NULL)
+		if (!loi)
 			GOTO(out_lsme, rc = -ENOMEM);
 
 		lsme->lsme_oinfo[i] = loi;
@@ -230,7 +241,7 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 		}
 
 		ltd = lov->lov_tgts[loi->loi_ost_idx];
-		if (ltd == NULL) {
+		if (!ltd) {
 			CERROR("%s: OST index %d missing\n",
 			       (char*)lov->desc.ld_uuid.uuid, loi->loi_ost_idx);
 			lov_dump_lmm_v1(D_WARNING, lmm);
@@ -242,17 +253,21 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 			min_stripe_maxbytes = lov_bytes;
 	}
 
-	if (min_stripe_maxbytes == 0)
-		min_stripe_maxbytes = LUSTRE_EXT3_STRIPE_MAXBYTES;
+	if (maxbytes) {
+		if (min_stripe_maxbytes == 0)
+			min_stripe_maxbytes = LUSTRE_EXT3_STRIPE_MAXBYTES;
 
-	lov_bytes = min_stripe_maxbytes * stripe_count;
+		if (stripe_count == 0)
+			stripe_count = lov->desc.ld_tgt_count;
 
-	if (maxbytes != NULL) {
-		if (lov_bytes < min_stripe_maxbytes) /* handle overflow */
-			*maxbytes = MAX_LFS_FILESIZE;
+		if (min_stripe_maxbytes <= LLONG_MAX / stripe_count)
+			lov_bytes = min_stripe_maxbytes * stripe_count;
 		else
-			*maxbytes = lov_bytes;
+			lov_bytes = MAX_LFS_FILESIZE;
+out_dom1:
+		*maxbytes = min_t(loff_t, lov_bytes, MAX_LFS_FILESIZE);
 	}
+out_dom2:
 
 	return lsme;
 
@@ -260,7 +275,7 @@ out_lsme:
 	for (i = 0; i < stripe_count; i++) {
 		struct lov_oinfo *loi = lsme->lsme_oinfo[i];
 
-		if (loi != NULL)
+		if (loi)
 			OBD_SLAB_FREE_PTR(lsme->lsme_oinfo[i], lov_oinfo_slab);
 	}
 	OBD_FREE_LARGE(lsme, lsme_size);
@@ -293,7 +308,7 @@ lov_stripe_md *lsm_unpackmd_v1v3(struct lov_obd *lov, struct lov_mds_md *lmm,
 
 	lsm_size = offsetof(typeof(*lsm), lsm_entries[1]);
 	OBD_ALLOC(lsm, lsm_size);
-	if (lsm == NULL)
+	if (!lsm)
 		GOTO(out_lsme, rc = -ENOMEM);
 
 	atomic_set(&lsm->lsm_refc, 1);
@@ -384,7 +399,8 @@ lsme_unpack_comp(struct lov_obd *lov, struct lov_mds_md *lmm,
 	unsigned int stripe_count;
 
 	stripe_count = le16_to_cpu(lmm->lmm_stripe_count);
-	if (stripe_count == 0)
+	if (stripe_count == 0 &&
+	    lov_pattern(le32_to_cpu(lmm->lmm_pattern)) != LOV_PATTERN_MDT)
 		RETURN(ERR_PTR(-EINVAL));
 	/* un-instantiated lmm contains no ost id info, i.e. lov_ost_data_v1 */
 	if (!inited)
@@ -427,7 +443,7 @@ lsm_unpackmd_comp_md_v1(struct lov_obd *lov, void *buf, size_t buf_size)
 
 	lsm_size = offsetof(typeof(*lsm), lsm_entries[entry_count]);
 	OBD_ALLOC(lsm, lsm_size);
-	if (lsm == NULL)
+	if (!lsm)
 		return ERR_PTR(-ENOMEM);
 
 	atomic_set(&lsm->lsm_refc, 1);
@@ -435,6 +451,8 @@ lsm_unpackmd_comp_md_v1(struct lov_obd *lov, void *buf, size_t buf_size)
 	lsm->lsm_magic = le32_to_cpu(lcm->lcm_magic);
 	lsm->lsm_layout_gen = le32_to_cpu(lcm->lcm_layout_gen);
 	lsm->lsm_entry_count = entry_count;
+	lsm->lsm_mirror_count = le16_to_cpu(lcm->lcm_mirror_count);
+	lsm->lsm_flags = le16_to_cpu(lcm->lcm_flags);
 	lsm->lsm_is_released = true;
 	lsm->lsm_maxbytes = LLONG_MIN;
 
@@ -463,16 +481,22 @@ lsm_unpackmd_comp_md_v1(struct lov_obd *lov, void *buf, size_t buf_size)
 		lsm->lsm_entries[i] = lsme;
 		lsme->lsme_id = le32_to_cpu(lcme->lcme_id);
 		lsme->lsme_flags = le32_to_cpu(lcme->lcme_flags);
+		if (lsme->lsme_flags & LCME_FL_NOSYNC)
+			lsme->lsme_timestamp =
+				le64_to_cpu(lcme->lcme_timestamp);
 		lu_extent_le_to_cpu(&lsme->lsme_extent, &lcme->lcme_extent);
 
 		if (i == entry_count - 1) {
 			lsm->lsm_maxbytes = (loff_t)lsme->lsme_extent.e_start +
 					    maxbytes;
-			/* the last component hasn't been defined, or
-			 * lsm_maxbytes overflowed. */
-			if (lsme->lsme_extent.e_end != LUSTRE_EOF ||
-			    lsm->lsm_maxbytes <
-			    (loff_t)lsme->lsme_extent.e_start)
+			/*
+			 * the last component hasn't been defined, or
+			 * lsm_maxbytes overflowed.
+			 */
+			if (!lsme_is_dom(lsme) &&
+			    (lsme->lsme_extent.e_end != LUSTRE_EOF ||
+			     lsm->lsm_maxbytes <
+			     (loff_t)lsme->lsme_extent.e_start))
 				lsm->lsm_maxbytes = MAX_LFS_FILESIZE;
 		}
 	}
@@ -481,7 +505,7 @@ lsm_unpackmd_comp_md_v1(struct lov_obd *lov, void *buf, size_t buf_size)
 
 out_lsm:
 	for (i = 0; i < entry_count; i++)
-		if (lsm->lsm_entries[i] != NULL)
+		if (lsm->lsm_entries[i])
 			lsme_free(lsm->lsm_entries[i]);
 
 	OBD_FREE(lsm, lsm_size);
