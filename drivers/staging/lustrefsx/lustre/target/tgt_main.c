@@ -21,7 +21,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * lustre/target/tgt_main.c
@@ -36,6 +36,243 @@
 #include <obd.h>
 #include "tgt_internal.h"
 #include "../ptlrpc/ptlrpc_internal.h"
+
+/* This must be longer than the longest string below */
+#define SYNC_STATES_MAXLEN 16
+static char *sync_lock_cancel_states[] = {
+	[SYNC_LOCK_CANCEL_NEVER]	= "never",
+	[SYNC_LOCK_CANCEL_BLOCKING]	= "blocking",
+	[SYNC_LOCK_CANCEL_ALWAYS]	= "always",
+};
+
+/**
+ * Show policy for handling dirty data under a lock being cancelled.
+ *
+ * \param[in] kobj	sysfs kobject
+ * \param[in] attr	sysfs attribute
+ * \param[in] buf	buffer for data
+ *
+ * \retval		0 and buffer filled with data on success
+ * \retval		negative value on error
+ */
+ssize_t sync_lock_cancel_show(struct kobject *kobj,
+			      struct attribute *attr, char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lu_target *tgt = obd->u.obt.obt_lut;
+
+	return sprintf(buf, "%s\n",
+		       sync_lock_cancel_states[tgt->lut_sync_lock_cancel]);
+}
+EXPORT_SYMBOL(sync_lock_cancel_show);
+
+/**
+ * Change policy for handling dirty data under a lock being cancelled.
+ *
+ * This variable defines what action target takes upon lock cancel
+ * There are three possible modes:
+ * 1) never - never do sync upon lock cancel. This can lead to data
+ *    inconsistencies if both the OST and client crash while writing a file
+ *    that is also concurrently being read by another client. In these cases,
+ *    this may allow the file data to "rewind" to an earlier state.
+ * 2) blocking - do sync only if there is blocking lock, e.g. if another
+ *    client is trying to access this same object
+ * 3) always - do sync always
+ *
+ * \param[in] kobj	kobject
+ * \param[in] attr	attribute to show
+ * \param[in] buf	buffer for data
+ * \param[in] count	buffer size
+ *
+ * \retval		\a count on success
+ * \retval		negative value on error
+ */
+ssize_t sync_lock_cancel_store(struct kobject *kobj, struct attribute *attr,
+			       const char *buffer, size_t count)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lu_target *tgt = obd->u.obt.obt_lut;
+	int val = -1;
+	enum tgt_sync_lock_cancel slc;
+
+	if (count == 0 || count >= SYNC_STATES_MAXLEN)
+		return -EINVAL;
+
+	for (slc = 0; slc < ARRAY_SIZE(sync_lock_cancel_states); slc++) {
+		if (strcmp(buffer, sync_lock_cancel_states[slc]) == 0) {
+			val = slc;
+			break;
+		}
+	}
+
+	/* Legacy numeric codes */
+	if (val == -1) {
+		int rc = kstrtoint(buffer, 0, &val);
+		if (rc)
+			return rc;
+	}
+
+	if (val < 0 || val > 2)
+		return -EINVAL;
+
+	spin_lock(&tgt->lut_flags_lock);
+	tgt->lut_sync_lock_cancel = val;
+	spin_unlock(&tgt->lut_flags_lock);
+	return count;
+}
+EXPORT_SYMBOL(sync_lock_cancel_store);
+LUSTRE_RW_ATTR(sync_lock_cancel);
+
+/**
+ * Show maximum number of Filter Modification Data (FMD) maintained.
+ *
+ * \param[in] kobj	kobject
+ * \param[in] attr	attribute to show
+ * \param[in] buf	buffer for data
+ *
+ * \retval		0 and buffer filled with data on success
+ * \retval		negative value on error
+ */
+ssize_t tgt_fmd_count_show(struct kobject *kobj, struct attribute *attr,
+			   char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lu_target *lut = obd->u.obt.obt_lut;
+
+	return sprintf(buf, "%u\n", lut->lut_fmd_max_num);
+}
+
+/**
+ * Change number of FMDs maintained by target.
+ *
+ * This defines how large the list of FMDs can be.
+ *
+ * \param[in] kobj	kobject
+ * \param[in] attr	attribute to show
+ * \param[in] buf	buffer for data
+ * \param[in] count	buffer size
+ *
+ * \retval		\a count on success
+ * \retval		negative value on error
+ */
+ssize_t tgt_fmd_count_store(struct kobject *kobj, struct attribute *attr,
+			    const char *buffer, size_t count)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lu_target *lut = obd->u.obt.obt_lut;
+	int val, rc;
+
+	rc = kstrtoint(buffer, 0, &val);
+	if (rc)
+		return rc;
+
+	if (val < 1 || val > 65536)
+		return -EINVAL;
+
+	lut->lut_fmd_max_num = val;
+
+	return count;
+}
+LUSTRE_RW_ATTR(tgt_fmd_count);
+
+/**
+ * Show the maximum age of FMD data in seconds.
+ *
+ * \param[in] kobj	kobject
+ * \param[in] attr	attribute to show
+ * \param[in] buf	buffer for data
+ *
+ * \retval		0 and buffer filled with data on success
+ * \retval		negative value on error
+ */
+ssize_t tgt_fmd_seconds_show(struct kobject *kobj, struct attribute *attr,
+			     char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lu_target *lut = obd->u.obt.obt_lut;
+
+	return sprintf(buf, "%lld\n", lut->lut_fmd_max_age);
+}
+
+/**
+ * Set the maximum age of FMD data in seconds.
+ *
+ * This defines how long FMD data stays in the FMD list.
+ *
+ * \param[in] kobj	kobject
+ * \param[in] attr	attribute to show
+ * \param[in] buf	buffer for data
+ * \param[in] count	buffer size
+ *
+ * \retval		\a count on success
+ * \retval		negative number on error
+ */
+ssize_t tgt_fmd_seconds_store(struct kobject *kobj, struct attribute *attr,
+			      const char *buffer, size_t count)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lu_target *lut = obd->u.obt.obt_lut;
+	time64_t val;
+	int rc;
+
+	rc = kstrtoll(buffer, 0, &val);
+	if (rc)
+		return rc;
+
+	if (val < 1 || val > 65536) /* ~ 18 hour max */
+		return -EINVAL;
+
+	lut->lut_fmd_max_age = val;
+
+	return count;
+}
+LUSTRE_RW_ATTR(tgt_fmd_seconds);
+
+/* These two aliases are old names and kept for compatibility, they were
+ * changed to 'tgt_fmd_count' and 'tgt_fmd_seconds'.
+ * This change was made in Lustre 2.13, so these aliases can be removed
+ * when back compatibility is not needed with any Lustre version prior 2.13
+ */
+static struct lustre_attr tgt_fmd_count_compat = __ATTR(client_cache_count,
+			0644, tgt_fmd_count_show, tgt_fmd_count_store);
+static struct lustre_attr tgt_fmd_seconds_compat = __ATTR(client_cache_seconds,
+			0644, tgt_fmd_seconds_show, tgt_fmd_seconds_store);
+
+static const struct attribute *tgt_attrs[] = {
+	&lustre_attr_sync_lock_cancel.attr,
+	&lustre_attr_tgt_fmd_count.attr,
+	&lustre_attr_tgt_fmd_seconds.attr,
+	&tgt_fmd_count_compat.attr,
+	&tgt_fmd_seconds_compat.attr,
+	NULL,
+};
+
+int tgt_tunables_init(struct lu_target *lut)
+{
+	int rc;
+
+	rc = sysfs_create_files(&lut->lut_obd->obd_kset.kobj, tgt_attrs);
+	if (!rc)
+		lut->lut_attrs = tgt_attrs;
+	return rc;
+}
+EXPORT_SYMBOL(tgt_tunables_init);
+
+void tgt_tunables_fini(struct lu_target *lut)
+{
+	if (lut->lut_attrs) {
+		sysfs_remove_files(&lut->lut_obd->obd_kset.kobj,
+				   lut->lut_attrs);
+		lut->lut_attrs = NULL;
+	}
+}
+EXPORT_SYMBOL(tgt_tunables_fini);
 
 /*
  * Save cross-MDT lock in lut_slc_locks.
@@ -152,6 +389,8 @@ int tgt_init(const struct lu_env *env, struct lu_target *lut,
 	struct lu_attr		 attr;
 	struct lu_fid		 fid;
 	struct dt_object	*o;
+	struct tg_grants_data	*tgd = &lut->lut_tgd;
+	struct obd_statfs	*osfs;
 	int i, rc = 0;
 
 	ENTRY;
@@ -179,7 +418,7 @@ int tgt_init(const struct lu_env *env, struct lu_target *lut,
 	sptlrpc_rule_set_init(&lut->lut_sptlrpc_rset);
 
 	spin_lock_init(&lut->lut_flags_lock);
-	lut->lut_sync_lock_cancel = NEVER_SYNC_ON_CANCEL;
+	lut->lut_sync_lock_cancel = SYNC_LOCK_CANCEL_NEVER;
 
 	spin_lock_init(&lut->lut_slc_locks_guard);
 	INIT_LIST_HEAD(&lut->lut_slc_locks);
@@ -187,6 +426,38 @@ int tgt_init(const struct lu_env *env, struct lu_target *lut,
 	/* last_rcvd initialization is needed by replayable targets only */
 	if (!obd->obd_replayable)
 		RETURN(0);
+
+	/* initialize grant and statfs data in target */
+	dt_conf_get(env, lut->lut_bottom, &lut->lut_dt_conf);
+
+	/* statfs data */
+	spin_lock_init(&tgd->tgd_osfs_lock);
+	tgd->tgd_osfs_age = ktime_get_seconds() - 1000;
+	tgd->tgd_osfs_unstable = 0;
+	tgd->tgd_statfs_inflight = 0;
+	tgd->tgd_osfs_inflight = 0;
+
+	/* grant data */
+	spin_lock_init(&tgd->tgd_grant_lock);
+	tgd->tgd_tot_dirty = 0;
+	tgd->tgd_tot_granted = 0;
+	tgd->tgd_tot_pending = 0;
+	tgd->tgd_grant_compat_disable = 0;
+
+	/* populate cached statfs data */
+	osfs = &tgt_th_info(env)->tti_u.osfs;
+	rc = tgt_statfs_internal(env, lut, osfs, 0, NULL);
+	if (rc != 0) {
+		CERROR("%s: can't get statfs data, rc %d\n", tgt_name(lut),
+			rc);
+		GOTO(out, rc);
+	}
+	if (!is_power_of_2(osfs->os_bsize)) {
+		CERROR("%s: blocksize (%d) is not a power of 2\n",
+			tgt_name(lut), osfs->os_bsize);
+		GOTO(out, rc = -EPROTO);
+	}
+	tgd->tgd_blockbits = fls(osfs->os_bsize) - 1;
 
 	spin_lock_init(&lut->lut_translock);
 	spin_lock_init(&lut->lut_client_bitmap_lock);
@@ -225,6 +496,11 @@ int tgt_init(const struct lu_env *env, struct lu_target *lut,
 	dt_txn_callback_add(lut->lut_bottom, &lut->lut_txn_cb);
 	lut->lut_bottom->dd_lu_dev.ld_site->ls_tgt = lut;
 
+	lut->lut_fmd_max_num = LUT_FMD_MAX_NUM_DEFAULT;
+	lut->lut_fmd_max_age = LUT_FMD_MAX_AGE_DEFAULT;
+
+	atomic_set(&lut->lut_sync_count, 0);
+
 	/* reply_data is supported by MDT targets only for now */
 	if (strncmp(obd->obd_type->typ_name, LUSTRE_MDT_NAME, 3) != 0)
 		RETURN(0);
@@ -253,8 +529,6 @@ int tgt_init(const struct lu_env *env, struct lu_target *lut,
 	rc = tgt_reply_data_init(env, lut);
 	if (rc < 0)
 		GOTO(out, rc);
-
-	atomic_set(&lut->lut_sync_count, 0);
 
 	RETURN(0);
 
@@ -337,8 +611,44 @@ void tgt_fini(const struct lu_env *env, struct lu_target *lut)
 }
 EXPORT_SYMBOL(tgt_fini);
 
+static struct kmem_cache *tgt_thread_kmem;
+static struct kmem_cache *tgt_session_kmem;
+struct kmem_cache *tgt_fmd_kmem;
+
+static struct lu_kmem_descr tgt_caches[] = {
+	{
+		.ckd_cache = &tgt_thread_kmem,
+		.ckd_name  = "tgt_thread_kmem",
+		.ckd_size  = sizeof(struct tgt_thread_info),
+	},
+	{
+		.ckd_cache = &tgt_session_kmem,
+		.ckd_name  = "tgt_session_kmem",
+		.ckd_size  = sizeof(struct tgt_session_info)
+	},
+	{
+		.ckd_cache = &tgt_fmd_kmem,
+		.ckd_name  = "tgt_fmd_cache",
+		.ckd_size  = sizeof(struct tgt_fmd_data)
+	},
+	{
+		.ckd_cache = NULL
+	}
+};
+
+
 /* context key constructor/destructor: tg_key_init, tg_key_fini */
-LU_KEY_INIT(tgt, struct tgt_thread_info);
+static void *tgt_key_init(const struct lu_context *ctx,
+				  struct lu_context_key *key)
+{
+	struct tgt_thread_info *thread;
+
+	OBD_SLAB_ALLOC_PTR_GFP(thread, tgt_thread_kmem, GFP_NOFS);
+	if (thread == NULL)
+		return ERR_PTR(-ENOMEM);
+
+	return thread;
+}
 
 static void tgt_key_fini(const struct lu_context *ctx,
 			 struct lu_context_key *key, void *data)
@@ -355,7 +665,7 @@ static void tgt_key_fini(const struct lu_context *ctx,
 	if (args->ta_args != NULL)
 		OBD_FREE(args->ta_args, sizeof(args->ta_args[0]) *
 					args->ta_alloc_args);
-	OBD_FREE_PTR(info);
+	OBD_SLAB_FREE_PTR(info, tgt_thread_kmem);
 }
 
 static void tgt_key_exit(const struct lu_context *ctx,
@@ -377,8 +687,25 @@ struct lu_context_key tgt_thread_key = {
 
 LU_KEY_INIT_GENERIC(tgt);
 
-/* context key constructor/destructor: tgt_ses_key_init, tgt_ses_key_fini */
-LU_KEY_INIT_FINI(tgt_ses, struct tgt_session_info);
+static void *tgt_ses_key_init(const struct lu_context *ctx,
+			      struct lu_context_key *key)
+{
+	struct tgt_session_info *session;
+
+	OBD_SLAB_ALLOC_PTR_GFP(session, tgt_session_kmem, GFP_NOFS);
+	if (session == NULL)
+		return ERR_PTR(-ENOMEM);
+
+	return session;
+}
+
+static void tgt_ses_key_fini(const struct lu_context *ctx,
+			     struct lu_context_key *key, void *data)
+{
+	struct tgt_session_info *session = data;
+
+	OBD_SLAB_FREE_PTR(session, tgt_session_kmem);
+}
 
 /* context key: tgt_session_key */
 struct lu_context_key tgt_session_key = {
@@ -401,7 +728,12 @@ struct page *tgt_page_to_corrupt;
 
 int tgt_mod_init(void)
 {
+	int	result;
 	ENTRY;
+
+	result = lu_kmem_init(tgt_caches);
+	if (result != 0)
+		RETURN(result);
 
 	tgt_page_to_corrupt = alloc_page(GFP_KERNEL);
 
@@ -426,5 +758,7 @@ void tgt_mod_exit(void)
 	lu_context_key_degister(&tgt_thread_key);
 	lu_context_key_degister(&tgt_session_key);
 	update_info_fini();
+
+	lu_kmem_fini(tgt_caches);
 }
 
