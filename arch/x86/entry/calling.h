@@ -351,7 +351,7 @@ For 32-bit we have the following conventions - kernel is built with
 	shl	$32, %rdx
 	or	%rdx, %rax
 	mov	%rax, \save_reg
-	test	$SPEC_CTRL_IBRS, %eax
+	test	$(1 << (0)), %eax	/* test $SPEC_CTRL_IBRS, $eax */
 	jz	.Ldo_wrmsr_\@
 	lfence
 	jmp	.Lend_\@
@@ -377,7 +377,7 @@ For 32-bit we have the following conventions - kernel is built with
 	mov	\save_reg, %rdx
 .else
 	movq	PER_CPU_VAR(x86_spec_ctrl_current), %rdx
-	andl	$(~SPEC_CTRL_IBRS), %edx
+	andl	$(~(1 << (0))), %edx	/* andl $(~SPEC_CTRL_IBRS), %edx */
 .endif
 
 	movl	%edx, %eax
