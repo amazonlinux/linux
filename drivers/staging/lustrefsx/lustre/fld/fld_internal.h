@@ -56,7 +56,6 @@
 #define __FLD_INTERNAL_H
 
 #include <obd.h>
-#include <lustre/lustre_idl.h>
 #include <libcfs/libcfs.h>
 #include <lustre_fld.h>
 
@@ -139,12 +138,6 @@ enum {
 
 extern struct lu_fld_hash fld_hash[];
 
-
-#ifdef CONFIG_PROC_FS
-extern struct proc_dir_entry *fld_type_proc_dir;
-extern struct lprocfs_vars fld_client_proc_list[];
-#endif
-
 # ifdef HAVE_SERVER_SUPPORT
 struct fld_thread_info {
 	struct lu_seq_range fti_rec;
@@ -172,22 +165,23 @@ int fld_index_lookup(const struct lu_env *env, struct lu_server_fld *fld,
 		     u64 seq, struct lu_seq_range *range);
 
 int fld_name_to_index(const char *name, __u32 *index);
-int fld_server_mod_init(void);
 
+int fld_server_mod_init(void);
 void fld_server_mod_exit(void);
 
 int fld_server_read(const struct lu_env *env, struct lu_server_fld *fld,
 		    struct lu_seq_range *range, void *data, int data_len);
-#ifdef CONFIG_PROC_FS
-extern const struct file_operations fld_proc_seq_fops;
-extern struct lprocfs_vars fld_server_proc_list[];
-#endif
+
+extern const struct file_operations fld_debugfs_seq_fops;
+extern struct dentry *fld_debugfs_dir;
 
 # endif /* HAVE_SERVER_SUPPORT */
 
 int fld_client_rpc(struct obd_export *exp,
                    struct lu_seq_range *range, __u32 fld_op,
 		   struct ptlrpc_request **reqp);
+
+extern struct ldebugfs_vars fld_client_debugfs_list[];
 
 struct fld_cache *fld_cache_init(const char *name,
                                  int cache_size, int cache_threshold);
