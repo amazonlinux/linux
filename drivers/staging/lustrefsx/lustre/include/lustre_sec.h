@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -549,7 +549,7 @@ struct ptlrpc_cli_ctx {
 	atomic_t		cc_refcount;
 	struct ptlrpc_sec      *cc_sec;
 	struct ptlrpc_ctx_ops  *cc_ops;
-	cfs_time_t		cc_expire;	/* in seconds */
+	time64_t		cc_expire;	/* in seconds */
 	unsigned int		cc_early_expire:1;
 	unsigned long		cc_flags;
 	struct vfs_cred		cc_vcred;
@@ -869,6 +869,17 @@ struct ptlrpc_sec {
         /** owning import */
         struct obd_import              *ps_import;
 	spinlock_t			ps_lock;
+	/** mtime of SELinux policy file */
+	ktime_t				ps_sepol_mtime;
+	/** next check time of SELinux policy file */
+	ktime_t				ps_sepol_checknext;
+	/**
+	 * SELinux policy info
+	 * sepol string format is:
+	 * <mode>:<policy name>:<policy version>:<policy hash>
+	 */
+	char				ps_sepol[LUSTRE_NODEMAP_SEPOL_LENGTH
+						 + 1];
 
 	/*
 	 * garbage collection
@@ -1092,6 +1103,7 @@ int  sptlrpc_cli_unwrap_early_reply(struct ptlrpc_request *req,
 void sptlrpc_cli_finish_early_reply(struct ptlrpc_request *early_req);
 
 void sptlrpc_request_out_callback(struct ptlrpc_request *req);
+int sptlrpc_get_sepol(struct ptlrpc_request *req);
 
 /*
  * exported higher interface of import & request
@@ -1109,6 +1121,7 @@ void sptlrpc_import_flush_all_ctx(struct obd_import *imp);
 int  sptlrpc_req_get_ctx(struct ptlrpc_request *req);
 void sptlrpc_req_put_ctx(struct ptlrpc_request *req, int sync);
 int  sptlrpc_req_refresh_ctx(struct ptlrpc_request *req, long timeout);
+int  sptlrpc_export_update_ctx(struct obd_export *exp);
 int  sptlrpc_req_replace_dead_ctx(struct ptlrpc_request *req);
 void sptlrpc_req_set_flavor(struct ptlrpc_request *req, int opcode);
 
@@ -1192,10 +1205,6 @@ static inline int sptlrpc_user_desc_size(int ngroups)
 int sptlrpc_current_user_desc_size(void);
 int sptlrpc_pack_user_desc(struct lustre_msg *msg, int offset);
 int sptlrpc_unpack_user_desc(struct lustre_msg *req, int offset, int swabbed);
-
-
-#define CFS_CAP_CHOWN_MASK (1 << CFS_CAP_CHOWN)
-#define CFS_CAP_SYS_RESOURCE_MASK (1 << CFS_CAP_SYS_RESOURCE)
 
 /** @} sptlrpc */
 
