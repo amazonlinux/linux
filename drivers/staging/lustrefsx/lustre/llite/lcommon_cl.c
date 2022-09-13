@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +47,6 @@
 #include <obd_support.h>
 #include <lustre_fid.h>
 #include <lustre_dlm.h>
-#include <lustre_ver.h>
 #include <lustre_mdc.h>
 #include <cl_object.h>
 
@@ -69,7 +68,7 @@ __u16 cl_inode_fini_refcheck;
 static DEFINE_MUTEX(cl_inode_fini_guard);
 
 int cl_setattr_ost(struct cl_object *obj, const struct iattr *attr,
-		   unsigned int attr_flags)
+		   enum op_xvalid xvalid, unsigned int attr_flags)
 {
         struct lu_env *env;
         struct cl_io  *io;
@@ -91,10 +90,14 @@ int cl_setattr_ost(struct cl_object *obj, const struct iattr *attr,
 	io->u.ci_setattr.sa_attr.lvb_ctime = attr->ia_ctime.tv_sec;
 	io->u.ci_setattr.sa_attr.lvb_size = attr->ia_size;
 	io->u.ci_setattr.sa_attr_flags = attr_flags;
-	io->u.ci_setattr.sa_valid = attr->ia_valid;
+	io->u.ci_setattr.sa_avalid = attr->ia_valid;
+	io->u.ci_setattr.sa_xvalid = xvalid;
 	io->u.ci_setattr.sa_parent_fid = lu_object_fid(&obj->co_lu);
 
 again:
+	if (attr->ia_valid & ATTR_FILE)
+		ll_io_set_mirror(io, attr->ia_file);
+
         if (cl_io_init(env, io, CIT_SETATTR, io->ci_obj) == 0) {
 		struct vvp_io *vio = vvp_env_io(env);
 
@@ -213,12 +216,12 @@ static void cl_object_put_last(struct lu_env *env, struct cl_object *obj)
 
 	if (unlikely(atomic_read(&header->loh_ref) != 1)) {
 		struct lu_site *site = obj->co_lu.lo_dev->ld_site;
-		struct lu_site_bkt_data *bkt;
+		wait_queue_head_t *wq;
 
-		bkt = lu_site_bkt_from_fid(site, &header->loh_fid);
+		wq = lu_site_wq_from_fid(site, &header->loh_fid);
 
 		init_waitqueue_entry(&waiter, current);
-		add_wait_queue(&bkt->lsb_marche_funebre, &waiter);
+		add_wait_queue(wq, &waiter);
 
 		while (1) {
 			set_current_state(TASK_UNINTERRUPTIBLE);
@@ -228,7 +231,7 @@ static void cl_object_put_last(struct lu_env *env, struct cl_object *obj)
 		}
 
 		set_current_state(TASK_RUNNING);
-		remove_wait_queue(&bkt->lsb_marche_funebre, &waiter);
+		remove_wait_queue(wq, &waiter);
 	}
 
 	cl_object_put(env, obj);
