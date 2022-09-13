@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -422,6 +422,24 @@ loff_t cl_object_maxbytes(struct cl_object *obj)
 }
 EXPORT_SYMBOL(cl_object_maxbytes);
 
+int cl_object_flush(const struct lu_env *env, struct cl_object *obj,
+			 struct ldlm_lock *lock)
+{
+	struct lu_object_header *top = obj->co_lu.lo_header;
+	int rc = 0;
+	ENTRY;
+
+	list_for_each_entry(obj, &top->loh_layers, co_lu.lo_linkage) {
+		if (obj->co_ops->coo_object_flush) {
+			rc = obj->co_ops->coo_object_flush(env, obj, lock);
+			if (rc)
+				break;
+		}
+	}
+	RETURN(rc);
+}
+EXPORT_SYMBOL(cl_object_flush);
+
 /**
  * Helper function removing all object locks, and marking object for
  * deletion. All object pages must have been deleted at this point.
@@ -550,19 +568,16 @@ EXPORT_SYMBOL(cl_site_stats_print);
 
 /**
  * The most efficient way is to store cl_env pointer in task specific
- * structures. On Linux, it wont' be easy to use task_struct->journal_info
- * because Lustre code may call into other fs which has certain assumptions
- * about journal_info. Currently following fields in task_struct are identified
- * can be used for this purpose:
- *  - cl_env: for liblustre.
- *  - tux_info: ony on RedHat kernel.
- *  - ...
+ * structures. On Linux, it isn't easy to use task_struct->journal_info
+ * because Lustre code may call into other fs during memory reclaim, which
+ * has certain assumptions about journal_info. There are not currently any
+ * fields in task_struct that can be used for this purpose.
  * \note As long as we use task_struct to store cl_env, we assume that once
  * called into Lustre, we'll never call into the other part of the kernel
  * which will use those fields in task_struct without explicitly exiting
  * Lustre.
  *
- * If there's no space in task_struct is available, hash will be used.
+ * Since there's no space in task_struct is available, hash will be used.
  * bz20044, bz22683.
  */
 
@@ -595,17 +610,20 @@ struct cl_env {
         void             *ce_debug;
 };
 
+static void cl_env_inc(enum cache_stats_item item)
+{
 #ifdef CONFIG_DEBUG_PAGESTATE_TRACKING
-#define CL_ENV_INC(counter) atomic_inc(&cl_env_stats.cs_stats[CS_##counter])
-
-#define CL_ENV_DEC(counter) do {                                              \
-	LASSERT(atomic_read(&cl_env_stats.cs_stats[CS_##counter]) > 0);   \
-	atomic_dec(&cl_env_stats.cs_stats[CS_##counter]);                 \
-} while (0)
-#else
-#define CL_ENV_INC(counter)
-#define CL_ENV_DEC(counter)
+	atomic_inc(&cl_env_stats.cs_stats[item]);
 #endif
+}
+
+static void cl_env_dec(enum cache_stats_item item)
+{
+#ifdef CONFIG_DEBUG_PAGESTATE_TRACKING
+	LASSERT(atomic_read(&cl_env_stats.cs_stats[item]) > 0);
+	atomic_dec(&cl_env_stats.cs_stats[item]);
+#endif
+}
 
 static void cl_env_init0(struct cl_env *cle, void *debug)
 {
@@ -615,7 +633,7 @@ static void cl_env_init0(struct cl_env *cle, void *debug)
 
 	cle->ce_ref = 1;
 	cle->ce_debug = debug;
-	CL_ENV_INC(busy);
+	cl_env_inc(CS_busy);
 }
 
 static struct lu_env *cl_env_new(__u32 ctx_tags, __u32 ses_tags, void *debug)
@@ -645,8 +663,8 @@ static struct lu_env *cl_env_new(__u32 ctx_tags, __u32 ses_tags, void *debug)
 			OBD_SLAB_FREE_PTR(cle, cl_env_kmem);
 			env = ERR_PTR(rc);
 		} else {
-			CL_ENV_INC(create);
-			CL_ENV_INC(total);
+			cl_env_inc(CS_create);
+			cl_env_inc(CS_total);
 		}
 	} else
 		env = ERR_PTR(-ENOMEM);
@@ -655,10 +673,10 @@ static struct lu_env *cl_env_new(__u32 ctx_tags, __u32 ses_tags, void *debug)
 
 static void cl_env_fini(struct cl_env *cle)
 {
-        CL_ENV_DEC(total);
-        lu_context_fini(&cle->ce_lu.le_ctx);
-        lu_context_fini(&cle->ce_ses);
-        OBD_SLAB_FREE_PTR(cle, cl_env_kmem);
+	cl_env_dec(CS_total);
+	lu_context_fini(&cle->ce_lu.le_ctx);
+	lu_context_fini(&cle->ce_ses);
+	OBD_SLAB_FREE_PTR(cle, cl_env_kmem);
 }
 
 static struct lu_env *cl_env_obtain(void *debug)
@@ -814,15 +832,15 @@ void cl_env_put(struct lu_env *env, __u16 *refcheck)
         if (--cle->ce_ref == 0) {
 		int cpu = get_cpu();
 
-                CL_ENV_DEC(busy);
-                cle->ce_debug = NULL;
-                cl_env_exit(cle);
-                /*
-                 * Don't bother to take a lock here.
-                 *
-                 * Return environment to the cache only when it was allocated
-                 * with the standard tags.
-                 */
+		cl_env_dec(CS_busy);
+		cle->ce_debug = NULL;
+		cl_env_exit(cle);
+		/*
+		 * Don't bother to take a lock here.
+		 *
+		 * Return environment to the cache only when it was allocated
+		 * with the standard tags.
+		 */
 		if (cl_envs[cpu].cec_count < cl_envs_cached_max &&
 		    (env->le_ctx.lc_tags & ~LCT_HAS_EXIT) == LCT_CL_THREAD &&
 		    (env->le_ses->lc_tags & ~LCT_HAS_EXIT) == LCT_SESSION) {
@@ -844,13 +862,11 @@ EXPORT_SYMBOL(cl_env_put);
  */
 void cl_attr2lvb(struct ost_lvb *lvb, const struct cl_attr *attr)
 {
-        ENTRY;
         lvb->lvb_size   = attr->cat_size;
         lvb->lvb_mtime  = attr->cat_mtime;
         lvb->lvb_atime  = attr->cat_atime;
         lvb->lvb_ctime  = attr->cat_ctime;
         lvb->lvb_blocks = attr->cat_blocks;
-        EXIT;
 }
 
 /**
@@ -860,13 +876,11 @@ void cl_attr2lvb(struct ost_lvb *lvb, const struct cl_attr *attr)
  */
 void cl_lvb2attr(struct cl_attr *attr, const struct ost_lvb *lvb)
 {
-        ENTRY;
         attr->cat_size   = lvb->lvb_size;
         attr->cat_mtime  = lvb->lvb_mtime;
         attr->cat_atime  = lvb->lvb_atime;
         attr->cat_ctime  = lvb->lvb_ctime;
         attr->cat_blocks = lvb->lvb_blocks;
-        EXIT;
 }
 EXPORT_SYMBOL(cl_lvb2attr);
 
@@ -951,7 +965,7 @@ void cl_env_percpu_put(struct lu_env *env)
 	cle->ce_ref--;
 	LASSERT(cle->ce_ref == 0);
 
-	CL_ENV_DEC(busy);
+	cl_env_dec(CS_busy);
 	cle->ce_debug = NULL;
 
 	put_cpu();
@@ -1043,8 +1057,6 @@ static struct lu_kmem_descr cl_object_caches[] = {
         }
 };
 
-struct cfs_ptask_engine *cl_io_engine;
-
 /**
  * Global initialization of cl-data. Create kmem caches, register
  * lu_context_key's, etc.
@@ -1072,17 +1084,8 @@ int cl_global_init(void)
 	if (result) /* no cl_env_percpu_fini on error */
 		GOTO(out_keys, result);
 
-	cl_io_engine = cfs_ptengine_init("clio", cpu_online_mask);
-	if (IS_ERR(cl_io_engine)) {
-		result = PTR_ERR(cl_io_engine);
-		cl_io_engine = NULL;
-		GOTO(out_percpu, result);
-	}
-
 	return 0;
 
-out_percpu:
-	cl_env_percpu_fini();
 out_keys:
 	lu_context_key_degister(&cl_key);
 out_kmem:
@@ -1098,8 +1101,6 @@ out:
  */
 void cl_global_fini(void)
 {
-	cfs_ptengine_fini(cl_io_engine);
-	cl_io_engine = NULL;
 	cl_env_percpu_fini();
 	lu_context_key_degister(&cl_key);
 	lu_kmem_fini(cl_object_caches);
