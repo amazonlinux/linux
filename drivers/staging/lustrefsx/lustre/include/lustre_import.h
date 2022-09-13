@@ -42,10 +42,15 @@
  *
  * @{
  */
-
-#include <lustre_handles.h>
-#include <lustre/lustre_idl.h>
-
+#include <linux/atomic.h>
+#include <linux/list.h>
+#include <linux/mutex.h>
+#include <linux/spinlock.h>
+#include <linux/time.h>
+#include <linux/types.h>
+#include <linux/workqueue.h>
+#include <libcfs/libcfs.h>
+#include <uapi/linux/lustre/lustre_idl.h>
 
 /**
  * Adaptive Timeout stuff
@@ -101,19 +106,21 @@ enum lustre_imp_state {
         LUSTRE_IMP_RECOVER    = 8,
         LUSTRE_IMP_FULL       = 9,
         LUSTRE_IMP_EVICTED    = 10,
+	LUSTRE_IMP_IDLE	      = 11,
+	LUSTRE_IMP_LAST
 };
 
 /** Returns test string representation of numeric import state \a state */
 static inline char * ptlrpc_import_state_name(enum lustre_imp_state state)
 {
-        static char* import_state_names[] = {
-                "<UNKNOWN>", "CLOSED",  "NEW", "DISCONN",
-                "CONNECTING", "REPLAY", "REPLAY_LOCKS", "REPLAY_WAIT",
-                "RECOVER", "FULL", "EVICTED",
-        };
+	static char *import_state_names[] = {
+		"<UNKNOWN>", "CLOSED",  "NEW", "DISCONN",
+		"CONNECTING", "REPLAY", "REPLAY_LOCKS", "REPLAY_WAIT",
+		"RECOVER", "FULL", "EVICTED", "IDLE",
+	};
 
-        LASSERT (state <= LUSTRE_IMP_EVICTED);
-        return import_state_names[state];
+	LASSERT(state < LUSTRE_IMP_LAST);
+	return import_state_names[state];
 }
 
 /**
@@ -140,9 +147,9 @@ struct obd_import_conn {
         /** uuid of remote side */
         struct obd_uuid           oic_uuid;
         /**
-         * Time (64 bit jiffies) of last connection attempt on this connection
+	 * Time (64 bit seconds) of last connection attempt on this connection
          */
-        __u64                     oic_last_attempt;
+	time64_t		  oic_last_attempt;
 };
 
 /* state history */
@@ -157,8 +164,6 @@ struct import_state_hist {
  * Imports are representing client-side view to remote target.
  */
 struct obd_import {
-	/** Local handle (== id) for this import. */
-	struct portals_handle     imp_handle;
 	/** Reference counter */
 	atomic_t                  imp_refcount;
 	struct lustre_handle      imp_dlm_handle; /* client's ldlm export */
@@ -168,8 +173,8 @@ struct obd_import {
         struct ptlrpc_client     *imp_client;
 	/** List element for linking into pinger chain */
 	struct list_head	  imp_pinger_chain;
-	/** List element for linking into chain for destruction */
-	struct list_head	  imp_zombie_chain;
+	/** work struct for destruction of import */
+	struct work_struct	  imp_zombie_work;
 
         /**
          * Lists of requests that are retained for replay, waiting for a reply,
@@ -213,12 +218,17 @@ struct obd_import {
 	/** Wait queue for those who need to wait for recovery completion */
 	wait_queue_head_t         imp_recovery_waitq;
 
+	/** Number of requests allocated */
+	atomic_t                  imp_reqs;
 	/** Number of requests currently in-flight */
 	atomic_t                  imp_inflight;
 	/** Number of requests currently unregistering */
 	atomic_t                  imp_unregistering;
 	/** Number of replay requests inflight */
 	atomic_t                  imp_replay_inflight;
+	/** In-flight replays rate control */
+	wait_queue_head_t	  imp_replay_waitq;
+
 	/** Number of currently happening import invalidations */
 	atomic_t                  imp_inval_count;
 	/** Numbner of request timeouts */
@@ -232,6 +242,8 @@ struct obd_import {
         int                       imp_state_hist_idx;
         /** Current import generation. Incremented on every reconnect */
         int                       imp_generation;
+	/** Idle connection initiated at this generation */
+	int			  imp_initiated_at;
         /** Incremented every time we send reconnection request */
         __u32                     imp_conn_cnt;
        /** 
@@ -256,9 +268,9 @@ struct obd_import {
          */
         struct lustre_handle      imp_remote_handle;
         /** When to perform next ping. time in jiffies. */
-        cfs_time_t                imp_next_ping;
+	time64_t		imp_next_ping;
 	/** When we last successfully connected. time in 64bit jiffies */
-        __u64                     imp_last_success_conn;
+	time64_t		imp_last_success_conn;
 
         /** List of all possible connection for import. */
 	struct list_head	imp_conn_list;
@@ -283,9 +295,6 @@ struct obd_import {
 				  imp_server_timeout:1,
 				  /* VBR: imp in delayed recovery */
 				  imp_delayed_recovery:1,
-				  /* VBR: if gap was found then no lock replays
-				   */
-				  imp_no_lock_replay:1,
 				  /* recovery by versions was failed */
 				  imp_vbr_failed:1,
 				  /* force an immidiate ping */
@@ -298,30 +307,32 @@ struct obd_import {
 				  imp_resend_replay:1,
 				  /* disable normal recovery, for test only. */
 				  imp_no_pinger_recover:1,
-#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(3, 0, 53, 0)
-				  /* need IR MNE swab */
-				  imp_need_mne_swab:1,
-#endif
 				  /* import must be reconnected instead of
 				   * chouse new connection */
 				  imp_force_reconnect:1,
 				  /* import has tried to connect with server */
 				  imp_connect_tried:1,
 				  /* connected but not FULL yet */
-				  imp_connected:1;
-	__u32                     imp_connect_op;
-	struct obd_connect_data   imp_connect_data;
-	__u64                     imp_connect_flags_orig;
-	__u64                     imp_connect_flags2_orig;
-	int                       imp_connect_error;
+				  imp_connected:1,
+				  /* grant shrink disabled */
+				  imp_grant_shrink_disabled:1,
+				  /* to supress LCONSOLE() at conn.restore */
+				  imp_was_idle:1;
+	u32			  imp_connect_op;
+	u32			  imp_idle_timeout;
+	u32			  imp_idle_debug;
+	struct obd_connect_data	  imp_connect_data;
+	__u64			  imp_connect_flags_orig;
+	__u64			  imp_connect_flags2_orig;
+	int			  imp_connect_error;
 
-	__u32                     imp_msg_magic;
-				  /* adjusted based on server capability */
-	__u32                     imp_msghdr_flags;
+	enum lustre_msg_magic	imp_msg_magic;
+				/* adjusted based on server capability */
+	enum lustre_msghdr	imp_msghdr_flags;
 
-				  /* adaptive timeout data */
-	struct imp_at             imp_at;
-	time64_t		  imp_last_reply_time;	/* for health check */
+				/* adaptive timeout data */
+	struct imp_at		imp_at;
+	time64_t		imp_last_reply_time;	/* for health check */
 };
 
 /* import.c */
@@ -331,11 +342,11 @@ static inline unsigned int at_est2timeout(unsigned int val)
         return (val + (val >> 2) + 5);
 }
 
-static inline unsigned int at_timeout2est(unsigned int val)
+static inline timeout_t at_timeout2est(timeout_t timeout)
 {
-        /* restore estimate value from timeout: e=4/5(t-5) */
-        LASSERT(val);
-        return (max((val << 2) / 5, 5U) - 4);
+	/* restore estimate value from timeout: e=4/5(t-5) */
+	LASSERT(timeout > 0);
+	return max((timeout << 2) / 5, 5) - 4;
 }
 
 static inline void at_reset_nolock(struct adaptive_timeout *at, int val)
@@ -381,7 +392,6 @@ extern unsigned int at_max;
 /* genops.c */
 struct obd_export;
 extern struct obd_import *class_exp2cliimp(struct obd_export *);
-extern struct obd_import *class_conn2cliimp(struct lustre_handle *);
 
 /** @} import */
 
