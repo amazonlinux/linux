@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2015, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -74,21 +74,37 @@ static void cl_page_delete0(const struct lu_env *env, struct cl_page *pg);
 #endif /* !CONFIG_LUSTRE_DEBUG_EXPENSIVE_CHECK */
 
 /* Disable page statistic by default due to huge performance penalty. */
+static void cs_page_inc(const struct cl_object *obj,
+			enum cache_stats_item item)
+{
 #ifdef CONFIG_DEBUG_PAGESTATE_TRACKING
-#define CS_PAGE_INC(o, item) \
-	atomic_inc(&cl_object_site(o)->cs_pages.cs_stats[CS_##item])
-#define CS_PAGE_DEC(o, item) \
-	atomic_dec(&cl_object_site(o)->cs_pages.cs_stats[CS_##item])
-#define CS_PAGESTATE_INC(o, state) \
-	atomic_inc(&cl_object_site(o)->cs_pages_state[state])
-#define CS_PAGESTATE_DEC(o, state) \
-	atomic_dec(&cl_object_site(o)->cs_pages_state[state])
-#else
-#define CS_PAGE_INC(o, item)
-#define CS_PAGE_DEC(o, item)
-#define CS_PAGESTATE_INC(o, state)
-#define CS_PAGESTATE_DEC(o, state)
+	atomic_inc(&cl_object_site(obj)->cs_pages.cs_stats[item]);
 #endif
+}
+
+static void cs_page_dec(const struct cl_object *obj,
+			enum cache_stats_item item)
+{
+#ifdef CONFIG_DEBUG_PAGESTATE_TRACKING
+	atomic_dec(&cl_object_site(obj)->cs_pages.cs_stats[item]);
+#endif
+}
+
+static void cs_pagestate_inc(const struct cl_object *obj,
+			     enum cl_page_state state)
+{
+#ifdef CONFIG_DEBUG_PAGESTATE_TRACKING
+	atomic_inc(&cl_object_site(obj)->cs_pages_state[state]);
+#endif
+}
+
+static void cs_pagestate_dec(const struct cl_object *obj,
+			      enum cl_page_state state)
+{
+#ifdef CONFIG_DEBUG_PAGESTATE_TRACKING
+	atomic_dec(&cl_object_site(obj)->cs_pages_state[state]);
+#endif
+}
 
 /**
  * Internal version of cl_page_get().
@@ -126,7 +142,8 @@ cl_page_at_trusted(const struct cl_page *page,
 	RETURN(NULL);
 }
 
-static void cl_page_free(const struct lu_env *env, struct cl_page *page)
+static void cl_page_free(const struct lu_env *env, struct cl_page *page,
+			 struct pagevec *pvec)
 {
 	struct cl_object *obj  = page->cp_obj;
 	int pagesize = cl_object_header(obj)->coh_page_bufsize;
@@ -143,10 +160,10 @@ static void cl_page_free(const struct lu_env *env, struct cl_page *page)
 				   struct cl_page_slice, cpl_linkage);
 		list_del_init(page->cp_layers.next);
 		if (unlikely(slice->cpl_ops->cpo_fini != NULL))
-			slice->cpl_ops->cpo_fini(env, slice);
+			slice->cpl_ops->cpo_fini(env, slice, pvec);
 	}
-	CS_PAGE_DEC(obj, total);
-	CS_PAGESTATE_DEC(obj, page->cp_state);
+	cs_page_dec(obj, CS_total);
+	cs_pagestate_dec(obj, page->cp_state);
 	lu_object_ref_del_at(&obj->co_lu, &page->cp_obj_ref, "cl_page", page);
 	cl_object_put(env, obj);
 	lu_ref_fini(&page->cp_reference);
@@ -196,16 +213,16 @@ struct cl_page *cl_page_alloc(const struct lu_env *env,
 								  ind);
 				if (result != 0) {
 					cl_page_delete0(env, page);
-					cl_page_free(env, page);
+					cl_page_free(env, page, NULL);
 					page = ERR_PTR(result);
 					break;
 				}
 			}
 		}
 		if (result == 0) {
-			CS_PAGE_INC(o, total);
-			CS_PAGE_INC(o, create);
-			CS_PAGESTATE_DEC(o, CPS_CACHED);
+			cs_page_inc(o, CS_total);
+			cs_page_inc(o, CS_create);
+			cs_pagestate_dec(o, CPS_CACHED);
 		}
 	} else {
 		page = ERR_PTR(-ENOMEM);
@@ -238,7 +255,7 @@ struct cl_page *cl_page_find(const struct lu_env *env,
 	ENTRY;
 
 	hdr = cl_object_header(o);
-	CS_PAGE_INC(o, lookup);
+	cs_page_inc(o, CS_lookup);
 
         CDEBUG(D_PAGE, "%lu@"DFID" %p %lx %d\n",
                idx, PFID(&hdr->coh_lu.loh_fid), vmpage, vmpage->private, type);
@@ -258,7 +275,7 @@ struct cl_page *cl_page_find(const struct lu_env *env,
                  */
                 page = cl_vmpage_page(vmpage, o);
 		if (page != NULL) {
-			CS_PAGE_INC(o, hit);
+			cs_page_inc(o, CS_hit);
 			RETURN(page);
 		}
         }
@@ -328,8 +345,8 @@ static void cl_page_state_set0(const struct lu_env *env,
 	PASSERT(env, page, page->cp_state == old);
 	PASSERT(env, page, equi(state == CPS_OWNED, page->cp_owner != NULL));
 
-	CS_PAGESTATE_DEC(page->cp_obj, page->cp_state);
-	CS_PAGESTATE_INC(page->cp_obj, state);
+	cs_pagestate_dec(page->cp_obj, page->cp_state);
+	cs_pagestate_inc(page->cp_obj, state);
 	cl_page_state_set_trust(page, state);
 	EXIT;
 }
@@ -357,15 +374,13 @@ void cl_page_get(struct cl_page *page)
 EXPORT_SYMBOL(cl_page_get);
 
 /**
- * Releases a reference to a page.
+ * Releases a reference to a page, use the pagevec to release the pages
+ * in batch if provided.
  *
- * When last reference is released, page is returned to the cache, unless it
- * is in cl_page_state::CPS_FREEING state, in which case it is immediately
- * destroyed.
- *
- * \see cl_object_put(), cl_lock_put().
+ * Users need to do a final pagevec_release() to release any trailing pages.
  */
-void cl_page_put(const struct lu_env *env, struct cl_page *page)
+void cl_pagevec_put(const struct lu_env *env, struct cl_page *page,
+		  struct pagevec *pvec)
 {
         ENTRY;
         CL_PAGE_HEADER(D_TRACE, env, page, "%d\n",
@@ -381,10 +396,25 @@ void cl_page_put(const struct lu_env *env, struct cl_page *page)
 		 * Page is no longer reachable by other threads. Tear
 		 * it down.
 		 */
-		cl_page_free(env, page);
+		cl_page_free(env, page, pvec);
 	}
 
 	EXIT;
+}
+EXPORT_SYMBOL(cl_pagevec_put);
+
+/**
+ * Releases a reference to a page, wrapper to cl_pagevec_put
+ *
+ * When last reference is released, page is returned to the cache, unless it
+ * is in cl_page_state::CPS_FREEING state, in which case it is immediately
+ * destroyed.
+ *
+ * \see cl_object_put(), cl_lock_put().
+ */
+void cl_page_put(const struct lu_env *env, struct cl_page *page)
+{
+	cl_pagevec_put(env, page, NULL);
 }
 EXPORT_SYMBOL(cl_page_put);
 
@@ -787,6 +817,22 @@ int cl_page_is_vmlocked(const struct lu_env *env, const struct cl_page *pg)
         RETURN(result == -EBUSY);
 }
 EXPORT_SYMBOL(cl_page_is_vmlocked);
+
+void cl_page_touch(const struct lu_env *env, const struct cl_page *pg,
+		  size_t to)
+{
+	const struct cl_page_slice *slice;
+
+	ENTRY;
+
+	list_for_each_entry(slice, &pg->cp_layers, cpl_linkage) {
+		if (slice->cpl_ops->cpo_page_touch != NULL)
+			(*slice->cpl_ops->cpo_page_touch)(env, slice, to);
+	}
+
+	EXIT;
+}
+EXPORT_SYMBOL(cl_page_touch);
 
 static enum cl_page_state cl_req_type_state(enum cl_req_type crt)
 {
