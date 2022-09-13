@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2016, Intel Corporation.
+ * Copyright (c) 2016, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +47,7 @@
 # error This include is only for kernel use.
 #endif
 
-#include <lnet/types.h>
+#include <uapi/linux/lnet/lnet-types.h>
 
 /** \defgroup lnet_init_fini Initialization and cleanup
  * The LNet must be properly initialized before any LNet calls can be made.
@@ -198,7 +198,8 @@ int LNetGet(lnet_nid_t	      self,
 	    struct lnet_process_id target_in,
 	    unsigned int      portal_in,
 	    __u64	      match_bits_in,
-	    unsigned int      offset_in);
+	    unsigned int      offset_in,
+	    bool	      recovery);
 /** @} lnet_data */
 
 
@@ -210,6 +211,7 @@ int LNetSetLazyPortal(int portal);
 int LNetClearLazyPortal(int portal);
 int LNetCtl(unsigned int cmd, void *arg);
 void LNetDebugPeer(struct lnet_process_id id);
+int LNetGetPeerDiscoveryStatus(void);
 
 /** @} lnet_misc */
 
