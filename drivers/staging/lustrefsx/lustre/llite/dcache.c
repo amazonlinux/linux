@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -38,7 +38,6 @@
 #define DEBUG_SUBSYSTEM S_LLITE
 
 #include <obd_support.h>
-#include <lustre/lustre_idl.h>
 #include <lustre_dlm.h>
 
 #include "llite_internal.h"
@@ -304,6 +303,8 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 				unsigned int lookup_flags)
 {
 	struct inode *dir = dentry->d_parent->d_inode;
+	struct ll_dentry_data *lld = dentry->d_fsdata;
+	struct ll_sb_info *sbi;
 
 	/* If this is intermediate component path lookup and we were able to get
 	 * to this dentry, then its lock has not been revoked and the
@@ -332,6 +333,28 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 	if (lookup_flags & LOOKUP_RCU)
 		return -ECHILD;
 #endif
+
+	/*
+	 * To support metadata lazy load, we want to bypass negative lookup cache
+	 * on the client. A negative dentry cache is a dentry node that does not
+	 * have an inode associated with it. In these cases, return 0 here
+	 * to force a lookup call to the server.
+	 */
+	sbi = ll_s2sbi(dentry->d_sb);
+	if (d_is_negative(dentry) &&
+		sbi->ll_neg_dentry_timeout != OBD_NEG_CACHE_TIMEOUT_DEFAULT_SECS) {
+		LASSERT(lld != NULL);
+		if (!lld->lld_neg_cache_timeout)
+			lld->lld_neg_cache_timeout = jiffies + sbi->ll_neg_dentry_timeout * HZ;
+
+		if (time_after(jiffies, lld->lld_neg_cache_timeout)) {
+			CDEBUG(D_VFSTRACE,
+				   "negative dentry past timeout - flags: %u\n", lookup_flags);
+			return 0;
+		}
+		CDEBUG(D_VFSTRACE,
+		       "negative dentry within timeout - flags: %u\n", lookup_flags);
+	}
 
 	if (dentry_may_statahead(dir, dentry))
 		ll_statahead(dir, &dentry, dentry->d_inode == NULL);
