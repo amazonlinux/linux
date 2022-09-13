@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -369,7 +369,7 @@ ll_read_ahead_pages(const struct lu_env *env, struct cl_io *io,
 					 io->ci_obj, ra.cra_end, page_idx);
 				/* update read ahead RPC size.
 				 * NB: it's racy but doesn't matter */
-				if (ras->ras_rpc_size > ra.cra_rpc_size &&
+				if (ras->ras_rpc_size != ra.cra_rpc_size &&
 				    ra.cra_rpc_size > 0)
 					ras->ras_rpc_size = ra.cra_rpc_size;
 				/* trim it to align with optimal RPC size */
@@ -714,7 +714,10 @@ static void ras_increase_window(struct inode *inode,
 
 		wlen = min(ras->ras_window_len + ras->ras_rpc_size,
 			   ra->ra_max_pages_per_file);
-		ras->ras_window_len = ras_align(ras, wlen, NULL);
+		if (wlen < ras->ras_rpc_size)
+			ras->ras_window_len = wlen;
+		else
+			ras->ras_window_len = ras_align(ras, wlen, NULL);
 	}
 }
 
@@ -1074,7 +1077,7 @@ void ll_cl_remove(struct file *file, const struct lu_env *env)
 	write_unlock(&fd->fd_lock);
 }
 
-static int ll_io_read_page(const struct lu_env *env, struct cl_io *io,
+int ll_io_read_page(const struct lu_env *env, struct cl_io *io,
 			   struct cl_page *page, struct file *file)
 {
 	struct inode              *inode  = vvp_object_inode(page->cp_obj);
@@ -1082,6 +1085,7 @@ static int ll_io_read_page(const struct lu_env *env, struct cl_io *io,
 	struct ll_file_data       *fd     = LUSTRE_FPRIVATE(file);
 	struct ll_readahead_state *ras    = &fd->fd_ras;
 	struct cl_2queue          *queue  = &io->ci_queue;
+	struct cl_sync_io	  *anchor = NULL;
 	struct vvp_page           *vpg;
 	int			   rc = 0;
 	bool			   uptodate;
@@ -1109,6 +1113,10 @@ static int ll_io_read_page(const struct lu_env *env, struct cl_io *io,
 		cl_page_export(env, page, 1);
 		cl_page_disown(env, io, page);
 	} else {
+		anchor = &vvp_env_info(env)->vti_anchor;
+		cl_sync_io_init(anchor, 1, &cl_sync_io_end);
+		page->cp_sync_io = anchor;
+
 		cl_2queue_add(queue, page);
 	}
 
@@ -1129,10 +1137,30 @@ static int ll_io_read_page(const struct lu_env *env, struct cl_io *io,
 			task_io_account_read(PAGE_SIZE * count);
 	}
 
-	/*
-	 * Unlock unsent pages in case of error.
-	 */
+
+	if (anchor != NULL && !cl_page_is_owned(page, io)) { /* have sent */
+		rc = cl_sync_io_wait(env, anchor, 0);
+
+		cl_page_assume(env, io, page);
+		cl_page_list_del(env, &queue->c2_qout, page);
+
+		if (!PageUptodate(cl_page_vmpage(page))) {
+			/* Failed to read a mirror, discard this page so that
+			 * new page can be created with new mirror.
+			 *
+			 * TODO: this is not needed after page reinit
+			 * route is implemented */
+			cl_page_discard(env, io, page);
+		}
+		cl_page_disown(env, io, page);
+	}
+
+	/* TODO: discard all pages until page reinit route is implemented */
+	cl_page_list_discard(env, io, &queue->c2_qin);
+
+	/* Unlock unsent read pages in case of error. */
 	cl_page_list_disown(env, io, &queue->c2_qin);
+
 	cl_2queue_fini(env, queue);
 
 	RETURN(rc);
@@ -1143,24 +1171,25 @@ int ll_readpage(struct file *file, struct page *vmpage)
 	struct inode *inode = file_inode(file);
 	struct cl_object *clob = ll_i2info(inode)->lli_clob;
 	struct ll_cl_context *lcc;
-	const struct lu_env  *env;
-	struct cl_io   *io;
+	const struct lu_env  *env = NULL;
+	struct cl_io   *io = NULL;
 	struct cl_page *page;
 	int result;
 	ENTRY;
 
 	lcc = ll_cl_find(file);
-	if (lcc == NULL) {
-		unlock_page(vmpage);
-		RETURN(-EIO);
+	if (lcc != NULL) {
+		env = lcc->lcc_env;
+		io  = lcc->lcc_io;
 	}
 
-	env = lcc->lcc_env;
-	io  = lcc->lcc_io;
 	if (io == NULL) { /* fast read */
 		struct inode *inode = file_inode(file);
 		struct ll_file_data *fd = LUSTRE_FPRIVATE(file);
 		struct ll_readahead_state *ras = &fd->fd_ras;
+		struct lu_env  *local_env = NULL;
+		unsigned long fast_read_pages =
+			max(RA_REMAIN_WINDOW_MIN, ras->ras_rpc_size);
 		struct vvp_page *vpg;
 
 		result = -ENODATA;
@@ -1173,11 +1202,16 @@ int ll_readpage(struct file *file, struct page *vmpage)
 			RETURN(result);
 		}
 
+		if (!env) {
+			local_env = cl_env_percpu_get();
+			env = local_env;
+		}
+
 		vpg = cl2vvp_page(cl_object_page_slice(page->cp_obj, page));
 		if (vpg->vpg_defer_uptodate) {
 			enum ras_update_flags flags = LL_RAS_HIT;
 
-			if (lcc->lcc_type == LCC_MMAP)
+			if (lcc && lcc->lcc_type == LCC_MMAP)
 				flags |= LL_RAS_MMAP;
 
 			/* For fast read, it updates read ahead state only
@@ -1192,7 +1226,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
 			 * the case, we can't do fast IO because we will need
 			 * a cl_io to issue the RPC. */
 			if (ras->ras_window_start + ras->ras_window_len <
-			    ras->ras_next_readahead + PTLRPC_MAX_BRW_PAGES) {
+			    ras->ras_next_readahead + fast_read_pages) {
 				/* export the page and skip io stack */
 				vpg->vpg_ra_used = 1;
 				cl_page_export(env, page, 1);
@@ -1200,8 +1234,14 @@ int ll_readpage(struct file *file, struct page *vmpage)
 			}
 		}
 
-		unlock_page(vmpage);
+		/* release page refcount before unlocking the page to ensure
+		 * the object won't be destroyed in the calling path of
+		 * cl_page_put(). Please see comment in ll_releasepage(). */
 		cl_page_put(env, page);
+		unlock_page(vmpage);
+		if (local_env)
+			cl_env_percpu_put(local_env);
+
 		RETURN(result);
 	}
 
@@ -1211,6 +1251,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
 		LASSERT(page->cp_type == CPT_CACHEABLE);
 		if (likely(!PageUptodate(vmpage))) {
 			cl_page_assume(env, io, page);
+
 			result = ll_io_read_page(env, io, page, file);
 		} else {
 			/* Page from a non-object file. */
@@ -1223,29 +1264,4 @@ int ll_readpage(struct file *file, struct page *vmpage)
 		result = PTR_ERR(page);
         }
 	RETURN(result);
-}
-
-int ll_page_sync_io(const struct lu_env *env, struct cl_io *io,
-		    struct cl_page *page, enum cl_req_type crt)
-{
-	struct cl_2queue  *queue;
-	int result;
-
-	LASSERT(io->ci_type == CIT_READ || io->ci_type == CIT_WRITE);
-
-	queue = &io->ci_queue;
-	cl_2queue_init_page(queue, page);
-
-	result = cl_io_submit_sync(env, io, crt, queue, 0);
-	LASSERT(cl_page_is_owned(page, io));
-
-	if (crt == CRT_READ)
-		/*
-		 * in CRT_WRITE case page is left locked even in case of
-		 * error.
-		 */
-		cl_page_list_disown(env, io, &queue->c2_qin);
-	cl_2queue_fini(env, queue);
-
-	return result;
 }
