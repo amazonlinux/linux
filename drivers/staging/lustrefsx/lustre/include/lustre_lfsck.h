@@ -20,7 +20,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2013, 2016, Intel Corporation.
+ * Copyright (c) 2013, 2017, Intel Corporation.
  */
 /*
  * lustre/include/lustre_lfsck.h
@@ -33,7 +33,7 @@
 #ifndef _LUSTRE_LFSCK_H
 # define _LUSTRE_LFSCK_H
 
-#include <lustre/lustre_lfsck_user.h>
+#include <uapi/linux/lustre/lustre_lfsck_user.h>
 #include <lustre_dlm.h>
 #include <lu_object.h>
 #include <dt_object.h>
@@ -101,10 +101,10 @@ int lfsck_query(const struct lu_env *env, struct dt_device *key,
 		struct lfsck_request *req, struct lfsck_reply *rep,
 		struct lfsck_query *que);
 
-int lfsck_get_speed(struct seq_file *m, struct dt_device *key);
+int lfsck_get_speed(struct seq_file *m, char *buf, struct dt_device *key);
 int lfsck_set_speed(struct dt_device *key, __u32 val);
-int lfsck_get_windows(struct seq_file *m, struct dt_device *key);
-int lfsck_set_windows(struct dt_device *key, int val);
+int lfsck_get_windows(char *buf, struct dt_device *key);
+int lfsck_set_windows(struct dt_device *key, unsigned int val);
 
 int lfsck_dump(struct seq_file *m, struct dt_device *key, enum lfsck_type type);
 
