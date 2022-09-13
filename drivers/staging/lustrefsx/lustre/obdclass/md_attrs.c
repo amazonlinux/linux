@@ -21,14 +21,11 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  * Use is subject to license terms.
  *
  * Author: Johann Lombardi <johann.lombardi@intel.com>
  */
-
-#include <lustre/lustre_idl.h>
-
 #include <llog_swab.h>
 #include <lustre_swab.h>
 #include <obd.h>
@@ -50,9 +47,9 @@ void lustre_lma_init(struct lustre_mdt_attrs *lma, const struct lu_fid *fid,
 
 	/* If a field is added in struct lustre_mdt_attrs, zero it explicitly
 	 * and change the test below. */
-	LASSERT(sizeof(*lma) ==
-		(offsetof(struct lustre_mdt_attrs, lma_self_fid) +
-		 sizeof(lma->lma_self_fid)));
+	CLASSERT(sizeof(*lma) ==
+		 (offsetof(struct lustre_mdt_attrs, lma_self_fid) +
+		  sizeof(lma->lma_self_fid)));
 }
 EXPORT_SYMBOL(lustre_lma_init);
 
@@ -113,6 +110,22 @@ void lustre_loa_swab(struct lustre_ost_attrs *loa, bool to_cpu)
 #endif
 }
 EXPORT_SYMBOL(lustre_loa_swab);
+
+/**
+ * Swab, if needed, SOM structure which is stored on-disk in little-endian
+ * order.
+ *
+ * \param attrs - is a pointer to the SOM structure to be swabbed.
+ */
+void lustre_som_swab(struct lustre_som_attrs *attrs)
+{
+#ifdef __BIG_ENDIAN
+	__swab16s(&attrs->lsa_valid);
+	__swab64s(&attrs->lsa_size);
+	__swab64s(&attrs->lsa_blocks);
+#endif
+}
+EXPORT_SYMBOL(lustre_som_swab);
 
 /**
  * Swab, if needed, HSM structure which is stored on-disk in little-endian
