@@ -190,7 +190,8 @@ int ena_setup_and_create_all_xdp_queues(struct ena_adapter *adapter)
 	return 0;
 
 create_err:
-	ena_free_all_io_tx_resources(adapter);
+	ena_free_all_io_tx_resources_in_range(adapter, adapter->xdp_first_ring,
+					      adapter->xdp_num_queues);
 setup_err:
 	return rc;
 }
@@ -806,10 +807,11 @@ static int ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 		xdp->data_end = xdp->data + ena_rx_ctx.ena_bufs[0].len;
 		xsk_buff_dma_sync_for_cpu(xdp, rx_ring->xsk_pool);
 
-		/* Don't process several descriptors, not blocked by HW
-		 * (regardless of MTU)
-		 */
+		/* XDP multi-buffer packets not supported */
 		if (unlikely(ena_rx_ctx.descs > 1)) {
+			netdev_err_once(rx_ring->adapter->netdev,
+					"xdp: dropped multi-buffer packets. RX packets must be < %lu\n",
+					ENA_XDP_MAX_MTU);
 			ena_increase_stat(&rx_ring->rx_stats.xdp_drop, 1, &rx_ring->syncp);
 			xdp_verdict = ENA_XDP_DROP;
 			goto skip_xdp_prog;
