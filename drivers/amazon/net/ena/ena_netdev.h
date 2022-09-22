@@ -19,14 +19,17 @@
 #include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#ifdef HAS_BPF_HEADER
+#include <uapi/linux/bpf.h>
+#endif
 #include <linux/u64_stats_sync.h>
 
 #include "ena_com.h"
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	7
-#define DRV_MODULE_GEN_SUBMINOR 4
+#define DRV_MODULE_GEN_MINOR	8
+#define DRV_MODULE_GEN_SUBMINOR 0
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -121,6 +124,8 @@
 #define ENA_MMIO_DISABLE_REG_READ	BIT(0)
 
 struct ena_page_cache;
+
+struct ena_phc_info;
 
 struct ena_irq {
 	irq_handler_t handler;
@@ -349,6 +354,7 @@ struct ena_stats_dev {
 	u64 admin_q_pause;
 	u64 rx_drops;
 	u64 tx_drops;
+	u64 reset_fail;
 };
 
 enum ena_flags_t {
@@ -439,6 +445,7 @@ struct ena_adapter {
 	struct u64_stats_sync syncp;
 	struct ena_stats_dev dev_stats;
 	struct ena_admin_eni_stats eni_stats;
+	struct ena_admin_ena_srd_info ena_srd_info;
 
 	/* last queue index that was checked for uncompleted tx packets */
 	u32 last_monitored_tx_qid;
@@ -450,6 +457,8 @@ struct ena_adapter {
 #endif
 	u32 xdp_first_ring;
 	u32 xdp_num_queues;
+
+	struct ena_phc_info *phc_info;
 };
 
 void ena_set_ethtool_ops(struct net_device *netdev);
@@ -458,7 +467,6 @@ void ena_dump_stats_to_dmesg(struct ena_adapter *adapter);
 
 void ena_dump_stats_to_buf(struct ena_adapter *adapter, u8 *buf);
 
-int ena_update_hw_stats(struct ena_adapter *adapter);
 
 int ena_set_lpc_state(struct ena_adapter *adapter, bool enabled);
 
@@ -467,6 +475,8 @@ int ena_update_queue_sizes(struct ena_adapter *adapter,
 			   u32 new_rx_size);
 
 int ena_update_queue_count(struct ena_adapter *adapter, u32 new_channel_count);
+
+int ena_set_rx_copybreak(struct ena_adapter *adapter, u32 rx_copybreak);
 
 int ena_get_sset_count(struct net_device *netdev, int sset);
 #ifdef ENA_BUSY_POLL_SUPPORT
@@ -556,7 +566,7 @@ static inline void ena_reset_device(struct ena_adapter *adapter,
  */
 struct page *ena_alloc_map_page(struct ena_ring *rx_ring, dma_addr_t *dma);
 
-void ena_destroy_device(struct ena_adapter *adapter, bool graceful);
+int ena_destroy_device(struct ena_adapter *adapter, bool graceful);
 int ena_restore_device(struct ena_adapter *adapter);
 int handle_invalid_req_id(struct ena_ring *ring, u16 req_id,
 			  struct ena_tx_buffer *tx_info, bool is_xdp);
@@ -590,6 +600,8 @@ int ena_create_io_tx_queues_in_range(struct ena_adapter *adapter,
 				     int first_index, int count);
 int ena_setup_tx_resources_in_range(struct ena_adapter *adapter,
 				    int first_index, int count);
+void ena_free_all_io_tx_resources_in_range(struct ena_adapter *adapter,
+					int first_index, int count);
 void ena_free_all_io_tx_resources(struct ena_adapter *adapter);
 void ena_down(struct ena_adapter *adapter);
 int ena_up(struct ena_adapter *adapter);
