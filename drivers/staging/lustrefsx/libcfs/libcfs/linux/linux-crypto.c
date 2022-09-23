@@ -29,6 +29,7 @@
 
 #include <crypto/hash.h>
 #include <linux/scatterlist.h>
+#include <linux/pagemap.h>
 #include <libcfs/libcfs.h>
 #include <libcfs/libcfs_crypto.h>
 #include <libcfs/linux/linux-crypto.h>
@@ -77,13 +78,27 @@ static int cfs_crypto_hash_alloc(enum cfs_crypto_hash_alg hash_alg,
 	int err = 0;
 
 	*type = cfs_crypto_hash_type(hash_alg);
-
-	if (*type == NULL) {
+	if (!*type) {
 		CWARN("Unsupported hash algorithm id = %d, max id is %d\n",
 		      hash_alg, CFS_HASH_ALG_MAX);
 		return -EINVAL;
 	}
-	tfm = crypto_alloc_ahash((*type)->cht_name, 0, CRYPTO_ALG_ASYNC);
+
+	/* Keys are only supported for the hmac version */
+	if (key && key_len > 0) {
+		char *algo_name;
+
+		algo_name = kasprintf(GFP_KERNEL, "hmac(%s)",
+				      (*type)->cht_name);
+		if (!algo_name)
+			return -ENOMEM;
+
+		tfm = crypto_alloc_ahash(algo_name, 0, CRYPTO_ALG_ASYNC);
+		kfree(algo_name);
+	} else {
+		tfm = crypto_alloc_ahash((*type)->cht_name, 0,
+					 CRYPTO_ALG_ASYNC);
+	}
 	if (IS_ERR(tfm)) {
 		CDEBUG(D_INFO, "Failed to alloc crypto hash %s\n",
 		       (*type)->cht_name);
@@ -94,8 +109,7 @@ static int cfs_crypto_hash_alloc(enum cfs_crypto_hash_alg hash_alg,
 	if (!*req) {
 		CDEBUG(D_INFO, "Failed to alloc ahash_request for %s\n",
 		       (*type)->cht_name);
-		crypto_free_ahash(tfm);
-		return -ENOMEM;
+		GOTO(out_free_tfm, err = -ENOMEM);
 	}
 
 	ahash_request_set_callback(*req, 0, NULL, NULL);
@@ -106,12 +120,8 @@ static int cfs_crypto_hash_alloc(enum cfs_crypto_hash_alg hash_alg,
 		err = crypto_ahash_setkey(tfm,
 					 (unsigned char *)&((*type)->cht_key),
 					 (*type)->cht_size);
-
-	if (err != 0) {
-		ahash_request_free(*req);
-		crypto_free_ahash(tfm);
-		return err;
-	}
+	if (err)
+		GOTO(out_free_req, err);
 
 	CDEBUG(D_INFO, "Using crypto hash: %s (%s) speed %d MB/s\n",
 	       crypto_ahash_alg_name(tfm), crypto_ahash_driver_name(tfm),
@@ -119,7 +129,9 @@ static int cfs_crypto_hash_alloc(enum cfs_crypto_hash_alg hash_alg,
 
 	err = crypto_ahash_init(*req);
 	if (err) {
+out_free_req:
 		ahash_request_free(*req);
+out_free_tfm:
 		crypto_free_ahash(tfm);
 	}
 	return err;
@@ -195,10 +207,10 @@ EXPORT_SYMBOL(cfs_crypto_hash_digest);
  *			use default initial value
  * \param[in] key_len	length of \a key in bytes
  *
- * \retval		pointer to descriptor of hash instance
+ * \retval		pointer to ahash request
  * \retval		ERR_PTR(errno) in case of error
  */
-struct cfs_crypto_hash_desc *
+struct ahash_request *
 	cfs_crypto_hash_init(enum cfs_crypto_hash_alg hash_alg,
 			     unsigned char *key, unsigned int key_len)
 {
@@ -209,14 +221,14 @@ struct cfs_crypto_hash_desc *
 	err = cfs_crypto_hash_alloc(hash_alg, &type, &req, key, key_len);
 	if (err)
 		return ERR_PTR(err);
-	return (struct cfs_crypto_hash_desc *)req;
+	return req;
 }
 EXPORT_SYMBOL(cfs_crypto_hash_init);
 
 /**
  * Update hash digest computed on data within the given \a page
  *
- * \param[in] hdesc	hash state descriptor
+ * \param[in] req	ahash request
  * \param[in] page	data page on which to compute the hash
  * \param[in] offset	offset within \a page at which to start hash
  * \param[in] len	length of data on which to compute hash
@@ -224,11 +236,10 @@ EXPORT_SYMBOL(cfs_crypto_hash_init);
  * \retval		0 for success
  * \retval		negative errno on failure
  */
-int cfs_crypto_hash_update_page(struct cfs_crypto_hash_desc *hdesc,
+int cfs_crypto_hash_update_page(struct ahash_request *req,
 				struct page *page, unsigned int offset,
 				unsigned int len)
 {
-	struct ahash_request *req = (void *)hdesc;
 	struct scatterlist sl;
 
 	sg_init_table(&sl, 1);
@@ -242,17 +253,16 @@ EXPORT_SYMBOL(cfs_crypto_hash_update_page);
 /**
  * Update hash digest computed on the specified data
  *
- * \param[in] hdesc	hash state descriptor
+ * \param[in] req	ahash request
  * \param[in] buf	data buffer on which to compute the hash
  * \param[in] buf_len	length of \buf on which to compute hash
  *
  * \retval		0 for success
  * \retval		negative errno on failure
  */
-int cfs_crypto_hash_update(struct cfs_crypto_hash_desc *hdesc,
+int cfs_crypto_hash_update(struct ahash_request *req,
 			   const void *buf, unsigned int buf_len)
 {
-	struct ahash_request *req = (void *)hdesc;
 	struct scatterlist sl;
 
 	sg_init_one(&sl, (void *)buf, buf_len);
@@ -265,7 +275,7 @@ EXPORT_SYMBOL(cfs_crypto_hash_update);
 /**
  * Finish hash calculation, copy hash digest to buffer, clean up hash descriptor
  *
- * \param[in]	hdesc		hash descriptor
+ * \param[in]	req		ahash request
  * \param[out]	hash		pointer to hash buffer to store hash digest
  * \param[in,out] hash_len	pointer to hash buffer size, if \a hash == NULL
  *				or hash_len == NULL only free \a hdesc instead
@@ -275,10 +285,9 @@ EXPORT_SYMBOL(cfs_crypto_hash_update);
  * \retval		-EOVERFLOW if hash_len is too small for the hash digest
  * \retval		negative errno for other errors from lower layers
  */
-int cfs_crypto_hash_final(struct cfs_crypto_hash_desc *hdesc,
+int cfs_crypto_hash_final(struct ahash_request *req,
 			  unsigned char *hash, unsigned int *hash_len)
 {
-	struct ahash_request *req = (void *)hdesc;
 	int size = crypto_ahash_digestsize(crypto_ahash_reqtfm(req));
 	int err;
 
@@ -313,6 +322,9 @@ EXPORT_SYMBOL(cfs_crypto_hash_final);
  * The speed is stored internally in the cfs_crypto_hash_speeds[] array, and
  * is available through the cfs_crypto_hash_speed() function.
  *
+ * This function needs to stay the same as obd_t10_performance_test() so that
+ * the speeds are comparable.
+ *
  * \param[in] hash_alg	hash algorithm id (CFS_HASH_ALG_*)
  * \param[in] buf	data buffer on which to compute the hash
  * \param[in] buf_len	length of \buf on which to compute hash
@@ -340,23 +352,23 @@ static void cfs_crypto_performance_test(enum cfs_crypto_hash_alg hash_alg)
 
 	for (start = jiffies, end = start + msecs_to_jiffies(MSEC_PER_SEC / 4),
 	     bcount = 0; time_before(jiffies, end) && err == 0; bcount++) {
-		struct cfs_crypto_hash_desc *hdesc;
+		struct ahash_request *req;
 		int i;
 
-		hdesc = cfs_crypto_hash_init(hash_alg, NULL, 0);
-		if (IS_ERR(hdesc)) {
-			err = PTR_ERR(hdesc);
+		req = cfs_crypto_hash_init(hash_alg, NULL, 0);
+		if (IS_ERR(req)) {
+			err = PTR_ERR(req);
 			break;
 		}
 
 		for (i = 0; i < buf_len / PAGE_SIZE; i++) {
-			err = cfs_crypto_hash_update_page(hdesc, page, 0,
+			err = cfs_crypto_hash_update_page(req, page, 0,
 							  PAGE_SIZE);
 			if (err != 0)
 				break;
 		}
 
-		err = cfs_crypto_hash_final(hdesc, hash, &hash_len);
+		err = cfs_crypto_hash_final(req, hash, &hash_len);
 		if (err != 0)
 			break;
 	}
