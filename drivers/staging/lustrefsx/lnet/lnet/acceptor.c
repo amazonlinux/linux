@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -32,7 +32,6 @@
 
 #define DEBUG_SUBSYSTEM S_LNET
 
-#include <linux/nsproxy.h>
 #include <linux/completion.h>
 #include <net/sock.h>
 #include <lnet/lib-lnet.h>
@@ -481,14 +480,15 @@ lnet_acceptor_start(void)
 
 	if (lnet_count_acceptor_nets() == 0)  /* not required */
 		return 0;
-
-	lnet_acceptor_state.pta_ns = current->nsproxy->net_ns;
+	if (current->nsproxy && current->nsproxy->net_ns)
+		lnet_acceptor_state.pta_ns = current->nsproxy->net_ns;
+	else
+		lnet_acceptor_state.pta_ns = &init_net;
 	task = kthread_run(lnet_acceptor, (void *)(uintptr_t)secure,
 			   "acceptor_%03ld", secure);
 	if (IS_ERR(task)) {
 		rc2 = PTR_ERR(task);
 		CERROR("Can't start acceptor thread: %ld\n", rc2);
-
 		return -ESRCH;
 	}
 
