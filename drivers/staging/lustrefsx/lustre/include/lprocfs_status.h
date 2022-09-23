@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +47,7 @@
 
 #include <libcfs/libcfs.h>
 #include <libcfs/linux/linux-fs.h>
-#include <lustre/lustre_idl.h>
+#include <uapi/linux/lustre/lustre_idl.h>
 
 /*
  * Liuux 5.6 introduces proc_ops with v5.5-8862-gd56c0d45f0e2
@@ -58,17 +58,42 @@ struct lprocfs_vars {
 	const char			*name;
 	const struct proc_ops		*fops;
 	void				*data;
-	/* /proc file mode. */
+	/** /proc file mode. */
 	mode_t				 proc_mode;
 };
 
+/** Provide a debugfs container */
 struct ldebugfs_vars {
 	const char			*name;
 	const struct file_operations	*fops;
 	void				*data;
-	/* debugfs file mode. */
+	/** debugfs file mode. */
 	mode_t				 proc_mode;
 };
+
+static inline unsigned int pct(unsigned long a, unsigned long b)
+{
+	return b ? a * 100 / b : 0;
+}
+
+#define PAGES_TO_MiB(pages)	((pages) >> (20 - PAGE_SHIFT))
+#define MiB_TO_PAGES(mb)	((mb) << (20 - PAGE_SHIFT))
+
+/**
+ * Append a space separated list of current set flags to str.
+ */
+#define flag2str(port, flag)						\
+	do {								\
+		if ((port)->port##_##flag) {				\
+			seq_printf(m, "%s" #flag, first ? "" : ", ");	\
+			first = false;					\
+		}							\
+	} while (0)
+
+void obd_connect_seq_flags2str(struct seq_file *m, __u64 flags, __u64 flags2,
+			       const char *sep);
+void obd_connect_data_seqprint(struct seq_file *m,
+			       struct obd_connect_data *ocd);
 
 /* if we find more consumers this could be generalized */
 #define OBD_HIST_MAX 32
@@ -349,28 +374,29 @@ enum {
 #define PTLRPC_FIRST_CNTR PTLRPC_REQWAIT_CNTR
 
 enum lprocfs_extra_opc {
-        LDLM_GLIMPSE_ENQUEUE = 0,
-        LDLM_PLAIN_ENQUEUE,
-        LDLM_EXTENT_ENQUEUE,
-        LDLM_FLOCK_ENQUEUE,
-        LDLM_IBITS_ENQUEUE,
-        MDS_REINT_SETATTR,
-        MDS_REINT_CREATE,
-        MDS_REINT_LINK,
-        MDS_REINT_UNLINK,
-        MDS_REINT_RENAME,
-        MDS_REINT_OPEN,
-        MDS_REINT_SETXATTR,
-        BRW_READ_BYTES,
-        BRW_WRITE_BYTES,
-        EXTRA_LAST_OPC
+	LDLM_GLIMPSE_ENQUEUE = 0,
+	LDLM_PLAIN_ENQUEUE,
+	LDLM_EXTENT_ENQUEUE,
+	LDLM_FLOCK_ENQUEUE,
+	LDLM_IBITS_ENQUEUE,
+	MDS_REINT_SETATTR,
+	MDS_REINT_CREATE,
+	MDS_REINT_LINK,
+	MDS_REINT_UNLINK,
+	MDS_REINT_RENAME,
+	MDS_REINT_OPEN,
+	MDS_REINT_SETXATTR,
+	MDS_REINT_RESYNC,
+	BRW_READ_BYTES,
+	BRW_WRITE_BYTES,
+	EXTRA_LAST_OPC
 };
 
 #define EXTRA_FIRST_OPC LDLM_GLIMPSE_ENQUEUE
 /* class_obd.c */
 extern struct proc_dir_entry *proc_lustre_root;
 extern struct dentry *debugfs_lustre_root;
-extern struct kobject *lustre_kobj;
+extern struct kset *lustre_kset;
 
 struct obd_device;
 struct obd_histogram;
@@ -387,7 +413,7 @@ struct obd_job_stats {
 	struct list_head	ojs_list;	/* list of job_stat structs */
 	rwlock_t		ojs_lock;	/* protect ojs_list/js_list */
 	unsigned int		ojs_cleanup_interval;/* seconds before expiry */
-	time_t			ojs_last_cleanup; /* previous cleanup time */
+	time64_t		ojs_last_cleanup; /* previous cleanup time */
 	cntr_init_callback	ojs_cntr_init_fn;/* lprocfs_stats initializer */
 	unsigned short		ojs_cntr_num;	/* number of stats in struct */
 	bool			ojs_cleaning;	/* currently expiring stats */
@@ -463,13 +489,9 @@ extern struct lprocfs_stats *
 lprocfs_alloc_stats(unsigned int num, enum lprocfs_stats_flags flags);
 extern void lprocfs_clear_stats(struct lprocfs_stats *stats);
 extern void lprocfs_free_stats(struct lprocfs_stats **stats);
-extern void lprocfs_init_ops_stats(int num_private_stats,
-                                   struct lprocfs_stats *stats);
-extern void lprocfs_init_mps_stats(int num_private_stats,
-                                   struct lprocfs_stats *stats);
 extern void lprocfs_init_ldlm_stats(struct lprocfs_stats *ldlm_stats);
 extern int lprocfs_alloc_obd_stats(struct obd_device *obddev,
-                                   unsigned int num_private_stats);
+				   unsigned int num_stats);
 extern int lprocfs_alloc_md_stats(struct obd_device *obddev,
                                   unsigned int num_private_stats);
 extern void lprocfs_counter_init(struct lprocfs_stats *stats, int index,
@@ -484,10 +506,14 @@ extern int lprocfs_add_clear_entry(struct obd_device * obd,
 #ifdef HAVE_SERVER_SUPPORT
 extern int lprocfs_exp_setup(struct obd_export *exp, lnet_nid_t *peer_nid);
 extern int lprocfs_exp_cleanup(struct obd_export *exp);
+struct dentry *ldebugfs_add_symlink(const char *name, const char *target,
+				    const char *format, ...);
 #else
 static inline int lprocfs_exp_cleanup(struct obd_export *exp)
 { return 0; }
 #endif
+struct dentry *ldebugfs_add_simple(struct dentry *root, char *name, void *data,
+				   const struct file_operations *fops);
 extern struct proc_dir_entry *
 lprocfs_add_simple(struct proc_dir_entry *root, char *name,
 		   void *data, const struct proc_ops *ops);
@@ -504,11 +530,12 @@ extern int lprocfs_nid_stats_clear_seq_show(struct seq_file *file, void *data);
 extern int ldebugfs_register_stats(struct dentry *parent, const char *name,
 				   struct lprocfs_stats *stats);
 extern int lprocfs_register_stats(struct proc_dir_entry *root, const char *name,
-                                  struct lprocfs_stats *stats);
+				  struct lprocfs_stats *stats);
+extern const struct file_operations ldebugfs_stats_seq_fops;
 
 /* lprocfs_status.c */
 extern int ldebugfs_add_vars(struct dentry *parent, struct ldebugfs_vars *var,
-			     void *data);
+			      void *data);
 extern int lprocfs_add_vars(struct proc_dir_entry *root,
 			    struct lprocfs_vars *var, void *data);
 
@@ -546,44 +573,32 @@ static inline int LPROCFS_ENTRY_CHECK(struct inode *inode)
 static inline int LPROCFS_ENTRY_CHECK(struct inode *inode)
 { return 0; }
 #endif
-extern int lprocfs_obd_setup(struct obd_device *dev);
+
+extern int lprocfs_obd_setup(struct obd_device *obd, bool uuid_only);
 extern int lprocfs_obd_cleanup(struct obd_device *obd);
 #ifdef HAVE_SERVER_SUPPORT
 extern const struct file_operations lprocfs_evict_client_fops;
 #endif
 
-extern int ldebugfs_seq_create(struct dentry *parent, const char *name,
-			       umode_t mode,
-			       const struct file_operations *seq_fops,
-			       void *data);
+int ldebugfs_seq_create(struct dentry *parent, const char *name, umode_t mode,
+			const struct file_operations *seq_fops, void *data);
 extern int lprocfs_seq_create(struct proc_dir_entry *parent, const char *name,
 			      mode_t mode, const struct proc_ops *seq_fops,
 			      void *data);
-extern int lprocfs_obd_seq_create(struct obd_device *dev, const char *name,
+extern int lprocfs_obd_seq_create(struct obd_device *obd, const char *name,
 				  mode_t mode, const struct proc_ops *seq_fops,
 				  void *data);
 
 /* Generic callbacks */
-extern int lprocfs_u64_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_atomic_seq_show(struct seq_file *m, void *data);
-extern ssize_t lprocfs_atomic_seq_write(struct file *file,
-					const char __user *buffer,
-					size_t count, loff_t *off);
-extern int lprocfs_uint_seq_show(struct seq_file *m, void *data);
-extern ssize_t lprocfs_uint_seq_write(struct file *file,
-				      const char __user *buffer,
-				      size_t count, loff_t *off);
-extern int lprocfs_wr_uint(struct file *file, const char __user *buffer,
-			   unsigned long count, void *data);
 extern int lprocfs_uuid_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_name_seq_show(struct seq_file *m, void *data);
 extern int lprocfs_server_uuid_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_conn_uuid_seq_show(struct seq_file *m, void *data);
+ssize_t conn_uuid_show(struct kobject *kobj, struct attribute *attr, char *buf);
 extern int lprocfs_import_seq_show(struct seq_file *m, void *data);
 extern int lprocfs_state_seq_show(struct seq_file *m, void *data);
 extern int lprocfs_connect_flags_seq_show(struct seq_file *m, void *data);
 #ifdef HAVE_SERVER_SUPPORT
-extern int lprocfs_num_exports_seq_show(struct seq_file *m, void *data);
+ssize_t num_exports_show(struct kobject *kobj, struct attribute *attr,
+			 char *buf);
 #endif
 struct adaptive_timeout;
 extern int lprocfs_at_hist_helper(struct seq_file *m,
@@ -597,32 +612,27 @@ extern ssize_t
 lprocfs_evict_client_seq_write(struct file *file, const char __user *buffer,
 				size_t count, loff_t *off);
 #endif
+ssize_t ping_store(struct kobject *kobj, struct attribute *attr,
+		   const char *buffer, size_t count);
+ssize_t ping_show(struct kobject *kobj, struct attribute *attr,
+		  char *buffer);
+
 extern ssize_t
-lprocfs_ping_seq_write(struct file *file, const char __user *buffer,
-		       size_t count, loff_t *off);
-extern ssize_t
+ldebugfs_import_seq_write(struct file *file, const char __user *buffer,
+			  size_t count, loff_t *off);
+static inline ssize_t
 lprocfs_import_seq_write(struct file *file, const char __user *buffer,
-			 size_t count, loff_t *off);
+			 size_t count, loff_t *off)
+{
+	return ldebugfs_import_seq_write(file, buffer, count, off);
+}
+
 extern int lprocfs_pinger_recov_seq_show(struct seq_file *m, void *data);
 extern ssize_t
 lprocfs_pinger_recov_seq_write(struct file *file, const char __user *buffer,
 			       size_t count, loff_t *off);
 
-/* Statfs helpers */
-extern int lprocfs_blksize_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_kbytestotal_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_kbytesfree_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_kbytesavail_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_filestotal_seq_show(struct seq_file *m, void *data);
-extern int lprocfs_filesfree_seq_show(struct seq_file *m, void *data);
-
-extern int lprocfs_seq_read_frac_helper(struct seq_file *m, long val, int mult);
-extern int lprocfs_read_frac_helper(char *buffer, unsigned long count,
-                                    long val, int mult);
-extern int lprocfs_str_to_s64(struct file *, const char __user *buffer,
-			      unsigned long count, __s64 *val);
-extern int lprocfs_str_with_units_to_s64(struct file *,
-					 const char __user *buffer,
+extern int lprocfs_str_with_units_to_s64(const char __user *buffer,
 					 unsigned long count, __s64 *val,
 					 char defunit);
 
@@ -645,10 +655,10 @@ int lprocfs_recovery_status_seq_show(struct seq_file *m, void *data);
 int lprocfs_hash_seq_show(struct seq_file *m, void *data);
 
 /* lprocfs_status.c: IR factor */
-int lprocfs_ir_factor_seq_show(struct seq_file *m, void *data);
-ssize_t
-lprocfs_ir_factor_seq_write(struct file *file, const char __user *buffer,
-				size_t count, loff_t *off);
+ssize_t ir_factor_show(struct kobject *kobj, struct attribute *attr,
+		       char *buf);
+ssize_t ir_factor_store(struct kobject *kobj, struct attribute *attr,
+			const char *buffer, size_t count);
 #endif
 
 /* lprocfs_status.c: dump pages on cksum error */
@@ -673,10 +683,75 @@ extern int lprocfs_seq_release(struct inode *, struct file *);
 #define LPROCFS_CLIMP_EXIT(obd)                 \
 	up_read(&(obd)->u.cli.cl_sem);
 
+/* write the name##_seq_show function, call LDEBUGFS_SEQ_FOPS_RO for read-only
+ * debugfs entries; otherwise, you will define name##_seq_write function also
+ * for a read-write debugfs entry, and then call LDEBUGFS_SEQ_FOPS instead.
+ * Finally, call ldebugfs_seq_create(obd, filename, 0444, &name#_fops, data);
+ */
+#define __LDEBUGFS_SEQ_FOPS(name, custom_seq_write)			\
+static int name##_single_open(struct inode *inode, struct file *file)	\
+{									\
+	return single_open(file, name##_seq_show, inode->i_private);	\
+}									\
+static const struct file_operations name##_fops = {			\
+	.owner	 = THIS_MODULE,						\
+	.open	 = name##_single_open,					\
+	.read	 = seq_read,						\
+	.write	 = custom_seq_write,					\
+	.llseek	 = seq_lseek,						\
+	.release = single_release,					\
+}
+
+#define LDEBUGFS_SEQ_FOPS_RO(name)	__LDEBUGFS_SEQ_FOPS(name, NULL)
+#define LDEBUGFS_SEQ_FOPS(name)		__LDEBUGFS_SEQ_FOPS(name, \
+							    name##_seq_write)
+
+#define LDEBUGFS_SEQ_FOPS_RO_TYPE(name, type)				\
+	static int name##_##type##_seq_show(struct seq_file *m, void *v)\
+	{								\
+		return lprocfs_##type##_seq_show(m, m->private);	\
+	}								\
+	LDEBUGFS_SEQ_FOPS_RO(name##_##type)
+
+#define LDEBUGFS_SEQ_FOPS_RW_TYPE(name, type)				\
+	static int name##_##type##_seq_show(struct seq_file *m, void *v)\
+	{								\
+		return lprocfs_##type##_seq_show(m, m->private);	\
+	}								\
+	static ssize_t name##_##type##_seq_write(struct file *file,	\
+			const char __user *buffer, size_t count,	\
+			loff_t *off)					\
+	{								\
+		struct seq_file *seq = file->private_data;		\
+		return ldebugfs_##type##_seq_write(file, buffer, count,	\
+						   seq->private);	\
+	}								\
+	LDEBUGFS_SEQ_FOPS(name##_##type);
+
+#define LDEBUGFS_FOPS_WR_ONLY(name, type)				\
+	static ssize_t name##_##type##_write(struct file *file,		\
+			const char __user *buffer, size_t count,	\
+			loff_t *off)					\
+	{								\
+		return ldebugfs_##type##_seq_write(file, buffer, count,	\
+						   off);		\
+	}								\
+	static int name##_##type##_open(struct inode *inode,		\
+					struct file *file)		\
+	{								\
+		return single_open(file, NULL, inode->i_private);	\
+	}								\
+	static const struct file_operations name##_##type##_fops = {	\
+		.open	 = name##_##type##_open,			\
+		.write	 = name##_##type##_write,			\
+		.release = single_release,				\
+	};
+
 /* write the name##_seq_show function, call LPROC_SEQ_FOPS_RO for read-only
-  proc entries; otherwise, you will define name##_seq_write function also for
-  a read-write proc entry, and then call LPROC_SEQ_SEQ instead. Finally,
-  call lprocfs_obd_seq_create(obd, filename, 0444, &name#_fops, data); */
+ * proc entries; otherwise, you will define name##_seq_write function also for
+ * a read-write proc entry, and then call LPROC_SEQ_FOPS instead. Finally,
+ * call ldebugfs_obd_seq_create(obd, filename, 0444, &name#_fops, data);
+ */
 #define __LPROC_SEQ_FOPS(name, custom_seq_write)			\
 static int name##_single_open(struct inode *inode, struct file *file)	\
 {									\
@@ -687,7 +762,8 @@ static int name##_single_open(struct inode *inode, struct file *file)	\
 		return rc;						\
 									\
 	return single_open(file, name##_seq_show,			\
-			   inode->i_private ? : PDE_DATA(inode));	\
+			   inode->i_private ? inode->i_private :	\
+					      PDE_DATA(inode));		\
 }									\
 static const struct proc_ops name##_fops = {				\
 	PROC_OWNER(THIS_MODULE)						\
@@ -719,11 +795,11 @@ static const struct proc_ops name##_fops = {				\
 	{								\
 		struct seq_file *seq = file->private_data;		\
 		return lprocfs_##type##_seq_write(file, buffer,		\
-						count, seq->private);	\
+						  count, seq->private);	\
 	}								\
 	LPROC_SEQ_FOPS(name##_##type);
 
-#define LPROC_SEQ_FOPS_WO_TYPE(name, type)				\
+#define LPROC_SEQ_FOPS_WR_ONLY(name, type)				\
 	static ssize_t name##_##type##_write(struct file *file,		\
 			const char __user *buffer, size_t count,	\
 			loff_t *off)					\
@@ -733,7 +809,8 @@ static const struct proc_ops name##_fops = {				\
 	static int name##_##type##_open(struct inode *inode, struct file *file)\
 	{								\
 		return single_open(file, NULL,				\
-				   inode->i_private ? : PDE_DATA(inode));\
+				   inode->i_private ? inode->i_private : \
+				   PDE_DATA(inode));			\
 	}								\
 	static const struct proc_ops name##_##type##_fops = {		\
 		.proc_open	= name##_##type##_open,			\
@@ -749,22 +826,10 @@ struct lustre_attr {
 			 const char *buf, size_t len);
 };
 
-/*
- * Hacks to get around set_fs removal.
- */
-void lprocfs_file_set_kernel(struct file *file);
-bool lprocfs_file_is_kernel(struct file *file);
-
-/*
- * Version of copy_from_user() that uses the above hacks to determine
- * whether it's dealing with user or kernel space.
- */
-unsigned long lprocfs_copy_from_user(struct file *file, void *to,
-				     const void __user *from, unsigned long n);
-
 #define LUSTRE_ATTR(name, mode, show, store) \
 static struct lustre_attr lustre_attr_##name = __ATTR(name, mode, show, store)
 
+#define LUSTRE_WO_ATTR(name) LUSTRE_ATTR(name, 0200, NULL, name##_store)
 #define LUSTRE_RO_ATTR(name) LUSTRE_ATTR(name, 0444, name##_show, NULL)
 #define LUSTRE_RW_ATTR(name) LUSTRE_ATTR(name, 0644, name##_show, name##_store)
 
@@ -786,33 +851,43 @@ int lprocfs_job_stats_log(struct obd_device *obd, char *jobid,
 void lprocfs_job_stats_fini(struct obd_device *obd);
 int lprocfs_job_stats_init(struct obd_device *obd, int cntr_num,
 			   cntr_init_callback fn);
-int lprocfs_job_interval_seq_show(struct seq_file *m, void *data);
-ssize_t
-lprocfs_job_interval_seq_write(struct file *file, const char __user *buffer,
-				size_t count, loff_t *off);
-/* lproc_status.c */
-int lprocfs_recovery_time_soft_seq_show(struct seq_file *m, void *data);
-ssize_t lprocfs_recovery_time_soft_seq_write(struct file *file,
-						const char __user *buffer,
-						size_t count, loff_t *off);
-int lprocfs_recovery_time_hard_seq_show(struct seq_file *m, void *data);
-ssize_t
-lprocfs_recovery_time_hard_seq_write(struct file *file,
-				     const char __user *buffer,
-				     size_t count, loff_t *off);
-int lprocfs_target_instance_seq_show(struct seq_file *m, void *data);
+ssize_t job_cleanup_interval_show(struct kobject *kobj, struct attribute *attr,
+				  char *buf);
+ssize_t job_cleanup_interval_store(struct kobject *kobj,
+				   struct attribute *attr,
+				   const char *buffer, size_t count);
+/* lproc_status_server.c */
+ssize_t recovery_time_soft_show(struct kobject *kobj, struct attribute *attr,
+				char *buf);
+ssize_t recovery_time_soft_store(struct kobject *kobj,
+				 struct attribute *attr,
+				 const char *buffer, size_t count);
+ssize_t recovery_time_hard_show(struct kobject *kobj, struct attribute *attr,
+				char *buf);
+ssize_t recovery_time_hard_store(struct kobject *kobj,
+				 struct attribute *attr,
+				 const char *buffer, size_t count);
+ssize_t instance_show(struct kobject *kobj, struct attribute *attr,
+		      char *buf);
 #endif
+/* lproc_status.c */
 int lprocfs_obd_max_pages_per_rpc_seq_show(struct seq_file *m, void *data);
 ssize_t lprocfs_obd_max_pages_per_rpc_seq_write(struct file *file,
 						const char __user *buffer,
 						size_t count, loff_t *off);
+int lprocfs_obd_short_io_bytes_seq_show(struct seq_file *m, void *data);
+ssize_t lprocfs_obd_short_io_bytes_seq_write(struct file *file,
+					     const char __user *buffer,
+					     size_t count, loff_t *off);
+ssize_t short_io_bytes_show(struct kobject *kobj, struct attribute *attr,
+			    char *buf);
+ssize_t short_io_bytes_store(struct kobject *kobj, struct attribute *attr,
+			     const char *buffer, size_t count);
 
 struct root_squash_info;
-int lprocfs_wr_root_squash(struct file *file, const char __user *buffer,
-			   unsigned long count,
+int lprocfs_wr_root_squash(const char __user *buffer, unsigned long count,
 			   struct root_squash_info *squash, char *name);
-int lprocfs_wr_nosquash_nids(struct file *file, const char __user *buffer,
-			     unsigned long count,
+int lprocfs_wr_nosquash_nids(const char __user *buffer, unsigned long count,
 			     struct root_squash_info *squash, char *name);
 
 #else /* !CONFIG_PROC_FS */
@@ -852,16 +927,10 @@ static inline int lprocfs_register_stats(struct proc_dir_entry *root,
                                          const char *name,
                                          struct lprocfs_stats *stats)
 { return 0; }
-static inline void lprocfs_init_ops_stats(int num_private_stats,
-                                          struct lprocfs_stats *stats)
-{ return; }
-static inline void lprocfs_init_mps_stats(int num_private_stats,
-                                          struct lprocfs_stats *stats)
-{ return; }
 static inline void lprocfs_init_ldlm_stats(struct lprocfs_stats *ldlm_stats)
 { return; }
 static inline int lprocfs_alloc_obd_stats(struct obd_device *obddev,
-                                          unsigned int num_private_stats)
+					  unsigned int num_stats)
 { return 0; }
 static inline int lprocfs_alloc_md_stats(struct obd_device *obddev,
                                          unsigned int num_private_stats)
@@ -910,17 +979,13 @@ static inline void lprocfs_remove(struct proc_dir_entry **root)
 static inline void lprocfs_remove_proc_entry(const char *name,
                                              struct proc_dir_entry *parent)
 { return; }
-static inline int lprocfs_obd_setup(struct obd_device *dev)
+static inline int lprocfs_obd_setup(struct obd_device *dev, bool uuid_only)
 { return 0; }
 static inline int lprocfs_obd_cleanup(struct obd_device *dev)
 { return 0; }
 static inline int lprocfs_uuid_seq_show(struct seq_file *m, void *data)
 { return 0; }
-static inline int lprocfs_name_seq_show(struct seq_file *m, void *data)
-{ return 0; }
 static inline int lprocfs_server_seq_show(struct seq_file *m, void *data)
-{ return 0; }
-static inline int lprocfs_conn_uuid_seq_show(struct seq_file *m, void *data)
 { return 0; }
 static inline int lprocfs_import_seq_show(struct seq_file *m, void *data)
 { return 0; }
@@ -951,6 +1016,10 @@ lprocfs_evict_client_seq_write(struct file *file, const char __user *buffer,
 static inline ssize_t
 lprocfs_ping_seq_write(struct file *file, const char __user *buffer,
 		       size_t count, loff_t *off)
+{ return 0; }
+static inline ssize_t
+ldebugfs_import_seq_write(struct file *file, const char __user *buffer,
+			  size_t count, loff_t *off)
 { return 0; }
 static inline ssize_t
 lprocfs_import_seq_write(struct file *file, const char __user *buffer,
@@ -1008,7 +1077,7 @@ u64 lprocfs_stats_collector(struct lprocfs_stats *stats, int idx,
 #define LPROC_SEQ_FOPS(name)
 #define LPROC_SEQ_FOPS_RO_TYPE(name, type)
 #define LPROC_SEQ_FOPS_RW_TYPE(name, type)
-#define LPROC_SEQ_FOPS_WO_TYPE(name, type)
+#define LPROC_SEQ_FOPS_WR_ONLY(name, type)
 
 /* lprocfs_jobstats.c */
 static inline
