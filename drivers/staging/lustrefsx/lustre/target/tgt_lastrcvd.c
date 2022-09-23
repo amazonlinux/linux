@@ -23,7 +23,7 @@
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -148,6 +148,13 @@ static int tgt_clear_reply_slot(struct lu_target *lut, int idx)
 	int chunk;
 	int b;
 
+	if (lut->lut_obd->obd_stopping)
+		/*
+		 * in case of failover keep the bit set in order to
+		 * avoid overwriting slots in reply_data which might
+		 * be required by resent rpcs
+		 */
+		return 0;
 	chunk = idx / LUT_REPLY_SLOTS_PER_CHUNK;
 	b = idx % LUT_REPLY_SLOTS_PER_CHUNK;
 
@@ -388,6 +395,8 @@ int tgt_client_alloc(struct obd_export *exp)
 
 	spin_lock_init(&exp->exp_target_data.ted_nodemap_lock);
 	INIT_LIST_HEAD(&exp->exp_target_data.ted_nodemap_member);
+	spin_lock_init(&exp->exp_target_data.ted_fmd_lock);
+	INIT_LIST_HEAD(&exp->exp_target_data.ted_fmd_list);
 
 	OBD_ALLOC_PTR(exp->exp_target_data.ted_lcd);
 	if (exp->exp_target_data.ted_lcd == NULL)
@@ -410,6 +419,8 @@ void tgt_client_free(struct obd_export *exp)
 	struct tg_reply_data	*trd, *tmp;
 
 	LASSERT(exp != exp->exp_obd->obd_self_export);
+
+	tgt_fmd_cleanup(exp);
 
 	/* free reply data */
 	mutex_lock(&ted->ted_lcd_lock);
@@ -833,7 +844,7 @@ void tgt_boot_epoch_update(struct lu_target *tgt)
 	 * - there is no client to recover or the recovery was aborted
 	 */
 	if (!strncmp(tgt->lut_obd->obd_type->typ_name, LUSTRE_MDT_NAME, 3) &&
-	    (tgt->lut_obd->obd_max_recoverable_clients == 0 ||
+	    (atomic_read(&tgt->lut_obd->obd_max_recoverable_clients) == 0 ||
 	    tgt->lut_obd->obd_abort_recovery))
 		tgt->lut_lsd.lsd_feature_incompat &= ~OBD_INCOMPAT_MULTI_RPCS;
 
@@ -1517,7 +1528,7 @@ static int tgt_clients_data_init(const struct lu_env *env,
 		exp->exp_connecting = 0;
 		exp->exp_in_recovery = 0;
 		spin_unlock(&exp->exp_lock);
-		obd->obd_max_recoverable_clients++;
+		atomic_inc(&obd->obd_max_recoverable_clients);
 
 		if (tgt->lut_lsd.lsd_feature_incompat &
 		    OBD_INCOMPAT_MULTI_RPCS &&
@@ -1889,7 +1900,6 @@ int tgt_reply_data_init(const struct lu_env *env, struct lu_target *tgt)
 	unsigned long		 reply_data_size;
 	int			 rc;
 	struct lsd_reply_header	*lrh = NULL;
-	struct lsd_client_data  *lcd = NULL;
 	struct tg_reply_data	*trd = NULL;
 	int                      idx;
 	loff_t			 off;
@@ -1937,10 +1947,6 @@ int tgt_reply_data_init(const struct lu_env *env, struct lu_target *tgt)
 		hash = cfs_hash_getref(tgt->lut_obd->obd_gen_hash);
 		if (hash == NULL)
 			GOTO(out, rc = -ENODEV);
-
-		OBD_ALLOC_PTR(lcd);
-		if (lcd == NULL)
-			GOTO(out, rc = -ENOMEM);
 
 		OBD_ALLOC_PTR(trd);
 		if (trd == NULL)
@@ -1993,6 +1999,13 @@ int tgt_reply_data_init(const struct lu_env *env, struct lu_target *tgt)
 			/* update export last committed transation */
 			exp->exp_last_committed = max(exp->exp_last_committed,
 						      lrd->lrd_transno);
+			/* Update lcd_last_transno as well for check in
+			 * tgt_release_reply_data() or the latest client
+			 * transno can be lost.
+			 */
+			ted->ted_lcd->lcd_last_transno =
+				max(ted->ted_lcd->lcd_last_transno,
+				    exp->exp_last_committed);
 
 			mutex_unlock(&ted->ted_lcd_lock);
 			class_export_put(exp);
@@ -2024,8 +2037,6 @@ int tgt_reply_data_init(const struct lu_env *env, struct lu_target *tgt)
 out:
 	if (hash != NULL)
 		cfs_hash_putref(hash);
-	if (lcd != NULL)
-		OBD_FREE_PTR(lcd);
 	if (trd != NULL)
 		OBD_FREE_PTR(trd);
 	if (lrh != NULL)
