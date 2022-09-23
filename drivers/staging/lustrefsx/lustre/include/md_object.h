@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -74,6 +74,7 @@ enum ma_valid {
 	MA_HSM       = 1 << 6,
 	MA_PFID      = 1 << 7,
 	MA_LMV_DEF   = 1 << 8,
+	MA_SOM	     = 1 << 9,
 };
 
 typedef enum {
@@ -108,34 +109,47 @@ struct md_hsm {
 	__u64	mh_arch_ver;
 };
 
+
+/* memory structure for SOM attributes
+ * for fields description see the on disk structure som_attrs
+ * which is defined in lustre_idl.h
+ */
+struct md_som {
+	__u16	ms_valid;
+	__u64	ms_size;
+	__u64	ms_blocks;
+};
+
 struct md_attr {
-        __u64                   ma_valid;
-        __u64                   ma_need;
-        __u64                   ma_attr_flags;
-        struct lu_attr          ma_attr;
-        struct lu_fid           ma_pfid;
-        struct md_hsm           ma_hsm;
-        struct lov_mds_md      *ma_lmm;
-	union lmv_mds_md       *ma_lmv;
-        void                   *ma_acl;
-        int                     ma_lmm_size;
-        int                     ma_lmv_size;
-        int                     ma_acl_size;
+	__u64			 ma_valid;
+	__u64			 ma_need;
+	__u64			 ma_attr_flags;
+	struct lu_attr		 ma_attr;
+	struct lu_fid		 ma_pfid;
+	struct md_hsm		 ma_hsm;
+	struct md_som		 ma_som;
+	struct lov_mds_md	*ma_lmm;
+	union lmv_mds_md	*ma_lmv;
+	void			*ma_acl;
+	int			 ma_lmm_size;
+	int			 ma_lmv_size;
+	int			 ma_acl_size;
+	int			 ma_enable_chprojid_gid;
 };
 
 /** Additional parameters for create */
 struct md_op_spec {
-        union {
-                /** symlink target */
-                const char               *sp_symname;
-                /** eadata for regular files */
-                struct md_spec_reg {
-                        const void *eadata;
-                        int  eadatalen;
-                } sp_ea;
-        } u;
+	union {
+		/** symlink target */
+		const char *sp_symname;
+		/** eadata for regular files */
+		struct md_spec_reg {
+			void *eadata;
+			int  eadatalen;
+		} sp_ea;
+	} u;
 
-	/** Create flag from client: such as MDS_OPEN_CREAT, and others. */
+	/** Open flags from client: such as MDS_OPEN_CREAT, and others. */
 	__u64      sp_cr_flags;
 
 	/* File security context for creates. */
@@ -150,10 +164,30 @@ struct md_op_spec {
 		     sp_permitted:1, /* do not check permission */
 		     sp_migrate_close:1; /* close the file during migrate */
 	/** Current lock mode for parent dir where create is performing. */
-        mdl_mode_t sp_cr_mode;
+	mdl_mode_t sp_cr_mode;
 
-        /** to create directory */
-        const struct dt_index_features *sp_feat;
+	/** to create directory */
+	const struct dt_index_features *sp_feat;
+};
+
+enum md_layout_opc {
+	MD_LAYOUT_NOP	= 0,
+	MD_LAYOUT_WRITE,	/* FLR: write the file */
+	MD_LAYOUT_RESYNC,	/* FLR: resync starts */
+	MD_LAYOUT_RESYNC_DONE,	/* FLR: resync done */
+};
+
+/**
+ * Parameters for layout change API.
+ */
+struct md_layout_change {
+	enum md_layout_opc	 mlc_opc;
+	__u16			 mlc_mirror_id;
+	struct layout_intent	*mlc_intent;
+	struct lu_buf		 mlc_buf;
+	struct lustre_som_attrs	 mlc_som;
+	size_t			 mlc_resync_count;
+	__u32			*mlc_resync_ids;
 };
 
 union ldlm_policy_data;
@@ -161,51 +195,53 @@ union ldlm_policy_data;
  * Operations implemented for each md object (both directory and leaf).
  */
 struct md_object_operations {
-        int (*moo_permission)(const struct lu_env *env,
-                              struct md_object *pobj, struct md_object *cobj,
-                              struct md_attr *attr, int mask);
+	int (*moo_permission)(const struct lu_env *env,
+			      struct md_object *pobj, struct md_object *cobj,
+			      struct md_attr *attr, int mask);
 
-        int (*moo_attr_get)(const struct lu_env *env, struct md_object *obj,
-                            struct md_attr *attr);
+	int (*moo_attr_get)(const struct lu_env *env, struct md_object *obj,
+			    struct md_attr *attr);
 
-        int (*moo_attr_set)(const struct lu_env *env, struct md_object *obj,
-                            const struct md_attr *attr);
+	int (*moo_attr_set)(const struct lu_env *env, struct md_object *obj,
+			    const struct md_attr *attr);
 
-        int (*moo_xattr_get)(const struct lu_env *env, struct md_object *obj,
-                             struct lu_buf *buf, const char *name);
+	int (*moo_xattr_get)(const struct lu_env *env, struct md_object *obj,
+			     struct lu_buf *buf, const char *name);
 
-        int (*moo_xattr_list)(const struct lu_env *env, struct md_object *obj,
-                              struct lu_buf *buf);
+	int (*moo_xattr_list)(const struct lu_env *env, struct md_object *obj,
+			      struct lu_buf *buf);
 
-        int (*moo_xattr_set)(const struct lu_env *env, struct md_object *obj,
-                             const struct lu_buf *buf, const char *name,
-                             int fl);
+	int (*moo_xattr_set)(const struct lu_env *env, struct md_object *obj,
+			     const struct lu_buf *buf, const char *name,
+			     int fl);
 
-        int (*moo_xattr_del)(const struct lu_env *env, struct md_object *obj,
-                             const char *name);
+	int (*moo_xattr_del)(const struct lu_env *env, struct md_object *obj,
+			     const char *name);
 
 	/** This method is used to swap the layouts between 2 objects */
 	int (*moo_swap_layouts)(const struct lu_env *env,
 			       struct md_object *obj1, struct md_object *obj2,
 			       __u64 flags);
 
-        /** \retval number of bytes actually read upon success */
-        int (*moo_readpage)(const struct lu_env *env, struct md_object *obj,
-                            const struct lu_rdpg *rdpg);
+	/** \retval number of bytes actually read upon success */
+	int (*moo_readpage)(const struct lu_env *env, struct md_object *obj,
+			    const struct lu_rdpg *rdpg);
 
-        int (*moo_readlink)(const struct lu_env *env, struct md_object *obj,
-                            struct lu_buf *buf);
+	int (*moo_readlink)(const struct lu_env *env, struct md_object *obj,
+			    struct lu_buf *buf);
+
 	int (*moo_changelog)(const struct lu_env *env,
-			     enum changelog_rec_type type, int flags,
+			     enum changelog_rec_type type,
+			     enum changelog_rec_flags clf_flags,
 			     struct md_device *m, const struct lu_fid *fid);
 
-        int (*moo_open)(const struct lu_env *env,
-                        struct md_object *obj, int flag);
+	int (*moo_open)(const struct lu_env *env,
+			struct md_object *obj, u64 open_flags);
 
-        int (*moo_close)(const struct lu_env *env, struct md_object *obj,
-                         struct md_attr *ma, int mode);
+	int (*moo_close)(const struct lu_env *env, struct md_object *obj,
+			 struct md_attr *ma, u64 open_flags);
 
-        int (*moo_object_sync)(const struct lu_env *, struct md_object *);
+	int (*moo_object_sync)(const struct lu_env *, struct md_object *);
 
 	int (*moo_object_lock)(const struct lu_env *env, struct md_object *obj,
 			       struct lustre_handle *lh,
@@ -222,55 +258,62 @@ struct md_object_operations {
 	 *
 	 * The caller should have held layout lock.
 	 *
+	 * This API can be extended to support every other layout changing
+	 * operations, such as component {add,del,change}, layout swap,
+	 * layout merge, etc. One of the benefits by doing this is that the MDT
+	 * no longer needs to understand layout.
+	 *
+	 * However, layout creation, removal, and fetch should still use
+	 * xattr_{get,set}() because they don't interpret layout on the
+	 * MDT layer.
+	 *
 	 * \param[in] env	execution environment
 	 * \param[in] obj	MD object
 	 * \param[in] layout	data structure to describe the changes to
 	 *			the MD object's layout
-	 * \param[in] buf	buffer containing the client's lovea
 	 *
 	 * \retval 0		success
 	 * \retval -ne		error code
 	 */
 	int (*moo_layout_change)(const struct lu_env *env,
 				 struct md_object *obj,
-				 struct layout_intent *layout,
-				 const struct lu_buf *buf);
+				 struct md_layout_change *layout);
 };
 
 /**
  * Operations implemented for each directory object.
  */
 struct md_dir_operations {
-        int (*mdo_is_subdir) (const struct lu_env *env, struct md_object *obj,
-                              const struct lu_fid *fid, struct lu_fid *sfid);
+	int (*mdo_is_subdir)(const struct lu_env *env, struct md_object *obj,
+			     const struct lu_fid *fid);
 
-        int (*mdo_lookup)(const struct lu_env *env, struct md_object *obj,
-                          const struct lu_name *lname, struct lu_fid *fid,
-                          struct md_op_spec *spec);
+	int (*mdo_lookup)(const struct lu_env *env, struct md_object *obj,
+			  const struct lu_name *lname, struct lu_fid *fid,
+			  struct md_op_spec *spec);
 
-        mdl_mode_t (*mdo_lock_mode)(const struct lu_env *env,
-                                    struct md_object *obj,
-                                    mdl_mode_t mode);
+	mdl_mode_t (*mdo_lock_mode)(const struct lu_env *env,
+				    struct md_object *obj,
+				    mdl_mode_t mode);
 
-        int (*mdo_create)(const struct lu_env *env, struct md_object *pobj,
-                          const struct lu_name *lname, struct md_object *child,
-                          struct md_op_spec *spec,
-                          struct md_attr *ma);
+	int (*mdo_create)(const struct lu_env *env, struct md_object *pobj,
+			  const struct lu_name *lname, struct md_object *child,
+			  struct md_op_spec *spec,
+			  struct md_attr *ma);
 
-        /** This method is used for creating data object for this meta object*/
-        int (*mdo_create_data)(const struct lu_env *env, struct md_object *p,
-                               struct md_object *o,
-                               const struct md_op_spec *spec,
-                               struct md_attr *ma);
+	/** This method is used for creating data object for this meta object*/
+	int (*mdo_create_data)(const struct lu_env *env, struct md_object *p,
+			       struct md_object *o,
+			       const struct md_op_spec *spec,
+			       struct md_attr *ma);
 
-        int (*mdo_rename)(const struct lu_env *env, struct md_object *spobj,
-                          struct md_object *tpobj, const struct lu_fid *lf,
-                          const struct lu_name *lsname, struct md_object *tobj,
-                          const struct lu_name *ltname, struct md_attr *ma);
+	int (*mdo_rename)(const struct lu_env *env, struct md_object *spobj,
+			  struct md_object *tpobj, const struct lu_fid *lf,
+			  const struct lu_name *lsname, struct md_object *tobj,
+			  const struct lu_name *ltname, struct md_attr *ma);
 
-        int (*mdo_link)(const struct lu_env *env, struct md_object *tgt_obj,
-                        struct md_object *src_obj, const struct lu_name *lname,
-                        struct md_attr *ma);
+	int (*mdo_link)(const struct lu_env *env, struct md_object *tgt_obj,
+			struct md_object *src_obj, const struct lu_name *lname,
+			struct md_attr *ma);
 
 	int (*mdo_unlink)(const struct lu_env *env, struct md_object *pobj,
 			  struct md_object *cobj, const struct lu_name *lname,
@@ -278,7 +321,8 @@ struct md_dir_operations {
 
 	int (*mdo_migrate)(const struct lu_env *env, struct md_object *pobj,
 			   struct md_object *sobj, const struct lu_name *lname,
-			   struct md_object *tobj, struct md_attr *ma);
+			   struct md_object *tobj, struct md_op_spec *spec,
+			   struct md_attr *ma);
 };
 
 struct md_device_operations {
@@ -286,8 +330,8 @@ struct md_device_operations {
 	int (*mdo_root_get)(const struct lu_env *env, struct md_device *m,
 			    struct lu_fid *f);
 
-	int (*mdo_maxeasize_get)(const struct lu_env *env, struct md_device *m,
-				int *easize);
+	const struct dt_device_param *(*mdo_dtconf_get)(const struct lu_env *e,
+							struct md_device *m);
 
         int (*mdo_statfs)(const struct lu_env *env, struct md_device *m,
                           struct obd_statfs *sfs);
@@ -346,22 +390,19 @@ static inline struct md_object *md_object_find_slice(const struct lu_env *env,
 
 
 /** md operations */
-static inline int mo_permission(const struct lu_env *env,
-                                struct md_object *p,
-                                struct md_object *c,
-                                struct md_attr *at,
-                                int mask)
+static inline int mo_permission(const struct lu_env *env, struct md_object *p,
+				struct md_object *c, struct md_attr *at,
+				int mask)
 {
-        LASSERT(c->mo_ops->moo_permission);
-        return c->mo_ops->moo_permission(env, p, c, at, mask);
+	LASSERT(c->mo_ops->moo_permission);
+	return c->mo_ops->moo_permission(env, p, c, at, mask);
 }
 
-static inline int mo_attr_get(const struct lu_env *env,
-                              struct md_object *m,
-                              struct md_attr *at)
+static inline int mo_attr_get(const struct lu_env *env, struct md_object *m,
+			      struct md_attr *at)
 {
-        LASSERT(m->mo_ops->moo_attr_get);
-        return m->mo_ops->moo_attr_get(env, m, at);
+	LASSERT(m->mo_ops->moo_attr_get);
+	return m->mo_ops->moo_attr_get(env, m, at);
 }
 
 static inline int mo_readlink(const struct lu_env *env,
@@ -374,8 +415,8 @@ static inline int mo_readlink(const struct lu_env *env,
 
 static inline int mo_changelog(const struct lu_env *env,
 			       enum changelog_rec_type type,
-			       int flags, struct md_device *m,
-			       const struct lu_fid *fid)
+			       enum changelog_rec_flags clf_flags,
+			       struct md_device *m, const struct lu_fid *fid)
 {
 	struct lu_fid rootfid;
 	struct md_object *root;
@@ -390,7 +431,7 @@ static inline int mo_changelog(const struct lu_env *env,
 		RETURN(PTR_ERR(root));
 
 	LASSERT(root->mo_ops->moo_changelog);
-	rc = root->mo_ops->moo_changelog(env, type, flags, m, fid);
+	rc = root->mo_ops->moo_changelog(env, type, clf_flags, m, fid);
 
 	lu_object_put(env, &root->mo_lu);
 
@@ -448,12 +489,11 @@ static inline int mo_invalidate(const struct lu_env *env, struct md_object *m)
 
 static inline int mo_layout_change(const struct lu_env *env,
 				   struct md_object *m,
-				   struct layout_intent *layout,
-				   const struct lu_buf *buf)
+				   struct md_layout_change *layout)
 {
 	/* need instantiate objects which in the access range */
 	LASSERT(m->mo_ops->moo_layout_change);
-	return m->mo_ops->moo_layout_change(env, m, layout, buf);
+	return m->mo_ops->moo_layout_change(env, m, layout);
 }
 
 static inline int mo_swap_layouts(const struct lu_env *env,
@@ -467,21 +507,18 @@ static inline int mo_swap_layouts(const struct lu_env *env,
 	return o1->mo_ops->moo_swap_layouts(env, o1, o2, flags);
 }
 
-static inline int mo_open(const struct lu_env *env,
-                          struct md_object *m,
-                          int flags)
+static inline int mo_open(const struct lu_env *env, struct md_object *m,
+			  u64 open_flags)
 {
-        LASSERT(m->mo_ops->moo_open);
-        return m->mo_ops->moo_open(env, m, flags);
+	LASSERT(m->mo_ops->moo_open);
+	return m->mo_ops->moo_open(env, m, open_flags);
 }
 
-static inline int mo_close(const struct lu_env *env,
-                           struct md_object *m,
-                           struct md_attr *ma,
-                           int mode)
+static inline int mo_close(const struct lu_env *env, struct md_object *m,
+			   struct md_attr *ma, u64 open_flags)
 {
-        LASSERT(m->mo_ops->moo_close);
-        return m->mo_ops->moo_close(env, m, ma, mode);
+	LASSERT(m->mo_ops->moo_close);
+	return m->mo_ops->moo_close(env, m, ma, open_flags);
 }
 
 static inline int mo_readpage(const struct lu_env *env,
@@ -576,19 +613,20 @@ static inline int mdo_migrate(const struct lu_env *env,
 			     struct md_object *sobj,
 			     const struct lu_name *lname,
 			     struct md_object *tobj,
+			     struct md_op_spec *spec,
 			     struct md_attr *ma)
 {
 	LASSERT(pobj->mo_dir_ops->mdo_migrate);
-	return pobj->mo_dir_ops->mdo_migrate(env, pobj, sobj, lname, tobj, ma);
+	return pobj->mo_dir_ops->mdo_migrate(env, pobj, sobj, lname, tobj, spec,
+					     ma);
 }
 
 static inline int mdo_is_subdir(const struct lu_env *env,
-                                struct md_object *mo,
-                                const struct lu_fid *fid,
-                                struct lu_fid *sfid)
+				struct md_object *mo,
+				const struct lu_fid *fid)
 {
-        LASSERT(mo->mo_dir_ops->mdo_is_subdir);
-        return mo->mo_dir_ops->mdo_is_subdir(env, mo, fid, sfid);
+	LASSERT(mo->mo_dir_ops->mdo_is_subdir);
+	return mo->mo_dir_ops->mdo_is_subdir(env, mo, fid);
 }
 
 static inline int mdo_link(const struct lu_env *env,
@@ -611,6 +649,14 @@ static inline int mdo_unlink(const struct lu_env *env,
 	return p->mo_dir_ops->mdo_unlink(env, p, c, lname, ma, no_name);
 }
 
+static inline int mdo_statfs(const struct lu_env *env,
+			     struct md_device *m,
+			     struct obd_statfs *sfs)
+{
+	LASSERT(m->md_ops->mdo_statfs);
+	return m->md_ops->mdo_statfs(env, m, sfs);
+}
+
 /**
  * Used in MDD/OUT layer for object lock rule
  **/
@@ -624,6 +670,7 @@ enum mdd_object_role {
 
 struct dt_device;
 
+void lustre_som_swab(struct lustre_som_attrs *attrs);
 int lustre_buf2hsm(void *buf, int rc, struct md_hsm *mh);
 void lustre_hsm2buf(void *buf, const struct md_hsm *mh);
 
@@ -650,6 +697,8 @@ struct lu_ucred {
 	struct group_info	*uc_ginfo;
 	struct md_identity	*uc_identity;
 	char			 uc_jobid[LUSTRE_JOBID_SIZE];
+	lnet_nid_t		 uc_nid;
+	bool			 uc_enable_audit;
 };
 
 struct lu_ucred *lu_ucred(const struct lu_env *env);
