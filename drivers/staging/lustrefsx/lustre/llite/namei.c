@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -46,7 +46,6 @@
 #include <obd_support.h>
 #include <lustre_fid.h>
 #include <lustre_dlm.h>
-#include <lustre_ver.h>
 #include "llite_internal.h"
 
 #ifndef HAVE_USER_NAMESPACE_ARG
@@ -150,6 +149,9 @@ struct inode *ll_iget(struct super_block *sb, ino_t hash,
 			inode_has_no_xattr(inode);
 			unlock_new_inode(inode);
 		}
+	} else if (is_bad_inode(inode)) {
+		iput(inode);
+		inode = ERR_PTR(-ESTALE);
 	} else if (!(inode->i_state & (I_FREEING | I_CLEAR))) {
 		rc = ll_update_inode(inode, md);
 		CDEBUG(D_VFSTRACE, "got inode: "DFID"(%p): rc = %d\n",
@@ -193,168 +195,314 @@ int ll_test_inode_by_fid(struct inode *inode, void *opaque)
 	return lu_fid_eq(&ll_i2info(inode)->lli_fid, opaque);
 }
 
-int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *desc,
+static int ll_dom_lock_cancel(struct inode *inode, struct ldlm_lock *lock)
+{
+	struct lu_env *env;
+	struct ll_inode_info *lli = ll_i2info(inode);
+	__u16 refcheck;
+	int rc;
+	ENTRY;
+
+	env = cl_env_get(&refcheck);
+	if (IS_ERR(env))
+		RETURN(PTR_ERR(env));
+
+	/* reach MDC layer to flush data under  the DoM ldlm lock */
+	rc = cl_object_flush(env, lli->lli_clob, lock);
+	if (rc == -ENODATA) {
+		CDEBUG(D_INODE, "inode "DFID" layout has no DoM stripe\n",
+		       PFID(ll_inode2fid(inode)));
+		/* most likely result of layout change, do nothing */
+		rc = 0;
+	}
+
+	cl_env_put(env, &refcheck);
+	RETURN(rc);
+}
+
+static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
+{
+	struct inode *inode = ll_inode_from_resource_lock(lock);
+	__u64 bits = to_cancel;
+	int rc;
+
+	ENTRY;
+
+	if (!inode) {
+		/* That means the inode is evicted most likely and may cause
+		 * the skipping of lock cleanups below, so print the message
+		 * about that in log.
+		 */
+		if (lock->l_resource->lr_lvb_inode)
+			LDLM_DEBUG(lock,
+				   "can't take inode for the lock (%sevicted)\n",
+				   lock->l_resource->lr_lvb_inode->i_state &
+				   I_FREEING ? "" : "not ");
+		RETURN_EXIT;
+	}
+
+	if (!fid_res_name_eq(ll_inode2fid(inode),
+			     &lock->l_resource->lr_name)) {
+		LDLM_ERROR(lock, "data mismatch with object "DFID"(%p)",
+			   PFID(ll_inode2fid(inode)), inode);
+		LBUG();
+	}
+
+	if (bits & MDS_INODELOCK_XATTR) {
+		if (S_ISDIR(inode->i_mode))
+			ll_i2info(inode)->lli_def_stripe_offset = -1;
+		ll_xattr_cache_destroy(inode);
+		bits &= ~MDS_INODELOCK_XATTR;
+	}
+
+	/* For OPEN locks we differentiate between lock modes
+	 * LCK_CR, LCK_CW, LCK_PR - bug 22891 */
+	if (bits & MDS_INODELOCK_OPEN)
+		ll_have_md_lock(inode, &bits, lock->l_req_mode);
+
+	if (bits & MDS_INODELOCK_OPEN) {
+		fmode_t fmode;
+
+		switch (lock->l_req_mode) {
+		case LCK_CW:
+			fmode = FMODE_WRITE;
+			break;
+		case LCK_PR:
+			fmode = FMODE_EXEC;
+			break;
+		case LCK_CR:
+			fmode = FMODE_READ;
+			break;
+		default:
+			LDLM_ERROR(lock, "bad lock mode for OPEN lock");
+			LBUG();
+		}
+
+		ll_md_real_close(inode, fmode);
+
+		bits &= ~MDS_INODELOCK_OPEN;
+	}
+
+	if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE |
+		    MDS_INODELOCK_LAYOUT | MDS_INODELOCK_PERM |
+		    MDS_INODELOCK_DOM))
+		ll_have_md_lock(inode, &bits, LCK_MINMODE);
+
+	if (bits & MDS_INODELOCK_DOM) {
+		rc =  ll_dom_lock_cancel(inode, lock);
+		if (rc < 0)
+			CDEBUG(D_INODE, "cannot flush DoM data "
+			       DFID": rc = %d\n",
+			       PFID(ll_inode2fid(inode)), rc);
+	}
+
+	if (bits & MDS_INODELOCK_LAYOUT) {
+		struct cl_object_conf conf = {
+			.coc_opc = OBJECT_CONF_INVALIDATE,
+			.coc_inode = inode,
+		};
+
+		rc = ll_layout_conf(inode, &conf);
+		if (rc < 0)
+			CDEBUG(D_INODE, "cannot invalidate layout of "
+			       DFID": rc = %d\n",
+			       PFID(ll_inode2fid(inode)), rc);
+	}
+
+	if (bits & MDS_INODELOCK_UPDATE) {
+		struct ll_inode_info *lli = ll_i2info(inode);
+
+		lli->lli_update_atime = 1;
+	}
+
+	if ((bits & MDS_INODELOCK_UPDATE) && S_ISDIR(inode->i_mode)) {
+		struct ll_inode_info *lli = ll_i2info(inode);
+
+		CDEBUG(D_INODE, "invalidating inode "DFID" lli = %p, "
+		       "pfid  = "DFID"\n", PFID(ll_inode2fid(inode)),
+		       lli, PFID(&lli->lli_pfid));
+		truncate_inode_pages(inode->i_mapping, 0);
+
+		if (unlikely(!fid_is_zero(&lli->lli_pfid))) {
+			struct inode *master_inode = NULL;
+			unsigned long hash;
+
+			/* This is slave inode, since all of the child dentry
+			 * is connected on the master inode, so we have to
+			 * invalidate the negative children on master inode */
+			CDEBUG(D_INODE, "Invalidate s"DFID" m"DFID"\n",
+			       PFID(ll_inode2fid(inode)), PFID(&lli->lli_pfid));
+
+			hash = cl_fid_build_ino(&lli->lli_pfid,
+					ll_need_32bit_api(ll_i2sbi(inode)));
+
+			/* Do not lookup the inode with ilookup5, otherwise
+			 * it will cause dead lock,
+			 * 1. Client1 send chmod req to the MDT0, then on MDT0,
+			 * it enqueues master and all of its slaves lock,
+			 * (mdt_attr_set() -> mdt_lock_slaves()), after gets
+			 * master and stripe0 lock, it will send the enqueue
+			 * req (for stripe1) to MDT1, then MDT1 finds the lock
+			 * has been granted to client2. Then MDT1 sends blocking
+			 * ast to client2.
+			 * 2. At the same time, client2 tries to unlink
+			 * the striped dir (rm -rf striped_dir), and during
+			 * lookup, it will hold the master inode of the striped
+			 * directory, whose inode state is NEW, then tries to
+			 * revalidate all of its slaves, (ll_prep_inode()->
+			 * ll_iget()->ll_read_inode2()-> ll_update_inode().).
+			 * And it will be blocked on the server side because
+			 * of 1.
+			 * 3. Then the client get the blocking_ast req, cancel
+			 * the lock, but being blocked if using ->ilookup5()),
+			 * because master inode state is NEW. */
+			master_inode = ilookup5_nowait(inode->i_sb, hash,
+							ll_test_inode_by_fid,
+							(void *)&lli->lli_pfid);
+			if (master_inode) {
+				ll_invalidate_negative_children(master_inode);
+				iput(master_inode);
+			}
+		} else {
+			ll_invalidate_negative_children(inode);
+		}
+	}
+
+	if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
+	    inode->i_sb->s_root != NULL &&
+	    inode != inode->i_sb->s_root->d_inode)
+		ll_invalidate_aliases(inode);
+
+	if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM))
+		forget_all_cached_acls(inode);
+
+	iput(inode);
+	RETURN_EXIT;
+}
+
+/* Check if the given lock may be downgraded instead of canceling and
+ * that convert is really needed. */
+int ll_md_need_convert(struct ldlm_lock *lock)
+{
+	struct ldlm_namespace *ns = ldlm_lock_to_ns(lock);
+	struct inode *inode;
+	__u64 wanted = lock->l_policy_data.l_inodebits.cancel_bits;
+	__u64 bits = lock->l_policy_data.l_inodebits.bits & ~wanted;
+	enum ldlm_mode mode = LCK_MINMODE;
+
+	if (!lock->l_conn_export ||
+	    !exp_connect_lock_convert(lock->l_conn_export))
+		return 0;
+
+	if (!wanted || !bits || ldlm_is_cancel(lock))
+		return 0;
+
+	/* do not convert locks other than DOM for now */
+	if (!((bits | wanted) & MDS_INODELOCK_DOM))
+		return 0;
+
+	/* We may have already remaining bits in some other lock so
+	 * lock convert will leave us just extra lock for the same bit.
+	 * Check if client has other lock with the same bits and the same
+	 * or lower mode and don't convert if any.
+	 */
+	switch (lock->l_req_mode) {
+	case LCK_PR:
+		mode = LCK_PR;
+		fallthrough;
+	case LCK_PW:
+		mode |= LCK_CR;
+		break;
+	case LCK_CW:
+		mode = LCK_CW;
+		fallthrough;
+	case LCK_CR:
+		mode |= LCK_CR;
+		break;
+	default:
+		/* do not convert other modes */
+		return 0;
+	}
+
+	/* is lock is too old to be converted? */
+	lock_res_and_lock(lock);
+	if (ktime_after(ktime_get(),
+			ktime_add(lock->l_last_used,
+				  ktime_set(ns->ns_dirty_age_limit, 0)))) {
+		unlock_res_and_lock(lock);
+		return 0;
+	}
+	unlock_res_and_lock(lock);
+
+	inode = ll_inode_from_resource_lock(lock);
+	ll_have_md_lock(inode, &bits, mode);
+	iput(inode);
+	return !!(bits);
+}
+
+int ll_md_blocking_ast(struct ldlm_lock *lock, struct ldlm_lock_desc *ld,
 		       void *data, int flag)
 {
 	struct lustre_handle lockh;
 	int rc;
+
 	ENTRY;
 
 	switch (flag) {
 	case LDLM_CB_BLOCKING:
+	{
+		__u64 cancel_flags = LCF_ASYNC;
+
+		/* if lock convert is not needed then still have to
+		 * pass lock via ldlm_cli_convert() to keep all states
+		 * correct, set cancel_bits to full lock bits to cause
+		 * full cancel to happen.
+		 */
+		if (!ll_md_need_convert(lock)) {
+			lock_res_and_lock(lock);
+			lock->l_policy_data.l_inodebits.cancel_bits =
+					lock->l_policy_data.l_inodebits.bits;
+			unlock_res_and_lock(lock);
+		}
+		rc = ldlm_cli_convert(lock, cancel_flags);
+		if (!rc)
+			RETURN(0);
+		/* continue with cancel otherwise */
 		ldlm_lock2handle(lock, &lockh);
-		rc = ldlm_cli_cancel(&lockh, LCF_ASYNC);
+		rc = ldlm_cli_cancel(&lockh, cancel_flags);
 		if (rc < 0) {
 			CDEBUG(D_INODE, "ldlm_cli_cancel: rc = %d\n", rc);
 			RETURN(rc);
 		}
 		break;
-	case LDLM_CB_CANCELING: {
-		struct inode *inode = ll_inode_from_resource_lock(lock);
-		__u64 bits = lock->l_policy_data.l_inodebits.bits;
+	}
+	case LDLM_CB_CANCELING:
+	{
+		__u64 to_cancel = lock->l_policy_data.l_inodebits.bits;
 
-		/* Inode is set to lock->l_resource->lr_lvb_inode
-		 * for mdc - bug 24555 */
-		LASSERT(lock->l_ast_data == NULL);
-
-		if (inode == NULL)
+		/* Nothing to do for non-granted locks */
+		if (!ldlm_is_granted(lock))
 			break;
 
-		/* Invalidate all dentries associated with this inode */
-		LASSERT(ldlm_is_canceling(lock));
-
-		if (!fid_res_name_eq(ll_inode2fid(inode),
-				     &lock->l_resource->lr_name)) {
-			LDLM_ERROR(lock, "data mismatch with object "DFID"(%p)",
-				   PFID(ll_inode2fid(inode)), inode);
-			LBUG();
+		/* If 'ld' is supplied then bits to be cancelled are passed
+		 * implicitly by lock converting and cancel_bits from 'ld'
+		 * should be used. Otherwise full cancel is being performed
+		 * and lock inodebits are used.
+		 *
+		 * Note: we cannot rely on cancel_bits in lock itself at this
+		 * moment because they can be changed by concurrent thread,
+		 * so ldlm_cli_inodebits_convert() pass cancel bits implicitly
+		 * in 'ld' parameter.
+		 */
+		if (ld) {
+			/* partial bits cancel allowed only during convert */
+			LASSERT(ldlm_is_converting(lock));
+			/* mask cancel bits by lock bits so only no any unused
+			 * bits are passed to ll_lock_cancel_bits()
+			 */
+			to_cancel &= ld->l_policy_data.l_inodebits.cancel_bits;
 		}
-
-		if (bits & MDS_INODELOCK_XATTR) {
-			if (S_ISDIR(inode->i_mode))
-				ll_i2info(inode)->lli_def_stripe_offset = -1;
-			ll_xattr_cache_destroy(inode);
-			bits &= ~MDS_INODELOCK_XATTR;
-		}
-
-		/* For OPEN locks we differentiate between lock modes
-		 * LCK_CR, LCK_CW, LCK_PR - bug 22891 */
-		if (bits & MDS_INODELOCK_OPEN)
-			ll_have_md_lock(inode, &bits, lock->l_req_mode);
-
-		if (bits & MDS_INODELOCK_OPEN) {
-			fmode_t fmode;
-
-			switch (lock->l_req_mode) {
-			case LCK_CW:
-				fmode = FMODE_WRITE;
-				break;
-			case LCK_PR:
-				fmode = FMODE_EXEC;
-				break;
-			case LCK_CR:
-				fmode = FMODE_READ;
-				break;
-			default:
-				LDLM_ERROR(lock, "bad lock mode for OPEN lock");
-				LBUG();
-			}
-
-			ll_md_real_close(inode, fmode);
-
-			bits &= ~MDS_INODELOCK_OPEN;
-		}
-
-		if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_UPDATE |
-			    MDS_INODELOCK_LAYOUT | MDS_INODELOCK_PERM))
-			ll_have_md_lock(inode, &bits, LCK_MINMODE);
-
-		if (bits & MDS_INODELOCK_LAYOUT) {
-			struct cl_object_conf conf = {
-				.coc_opc = OBJECT_CONF_INVALIDATE,
-				.coc_inode = inode,
-			};
-
-			rc = ll_layout_conf(inode, &conf);
-			if (rc < 0)
-				CDEBUG(D_INODE, "cannot invalidate layout of "
-				       DFID": rc = %d\n",
-				       PFID(ll_inode2fid(inode)), rc);
-		}
-
-		if (bits & MDS_INODELOCK_UPDATE) {
-			struct ll_inode_info *lli = ll_i2info(inode);
-			lli->lli_update_atime = 1;
-		}
-
-		if ((bits & MDS_INODELOCK_UPDATE) && S_ISDIR(inode->i_mode)) {
-			struct ll_inode_info *lli = ll_i2info(inode);
-
-			CDEBUG(D_INODE, "invalidating inode "DFID" lli = %p, "
-			       "pfid  = "DFID"\n", PFID(ll_inode2fid(inode)),
-			       lli, PFID(&lli->lli_pfid));
-			truncate_inode_pages(inode->i_mapping, 0);
-
-			if (unlikely(!fid_is_zero(&lli->lli_pfid))) {
-				struct inode *master_inode = NULL;
-				unsigned long hash;
-
-				/* This is slave inode, since all of the child
-				 * dentry is connected on the master inode, so
-				 * we have to invalidate the negative children
-				 * on master inode */
-				CDEBUG(D_INODE, "Invalidate s"DFID" m"DFID"\n",
-				       PFID(ll_inode2fid(inode)),
-				       PFID(&lli->lli_pfid));
-
-				hash = cl_fid_build_ino(&lli->lli_pfid,
-					ll_need_32bit_api(ll_i2sbi(inode)));
-
-				/* Do not lookup the inode with ilookup5,
-				 * otherwise it will cause dead lock,
-				 *
-				 * 1. Client1 send chmod req to the MDT0, then
-				 * on MDT0, it enqueues master and all of its
-				 * slaves lock, (mdt_attr_set() ->
-				 * mdt_lock_slaves()), after gets master and
-				 * stripe0 lock, it will send the enqueue req
-				 * (for stripe1) to MDT1, then MDT1 finds the
-				 * lock has been granted to client2. Then MDT1
-				 * sends blocking ast to client2.
-				 *
-				 * 2. At the same time, client2 tries to unlink
-				 * the striped dir (rm -rf striped_dir), and
-				 * during lookup, it will hold the master inode
-				 * of the striped directory, whose inode state
-				 * is NEW, then tries to revalidate all of its
-				 * slaves, (ll_prep_inode()->ll_iget()->
-				 * ll_read_inode2()-> ll_update_inode().). And
-				 * it will be blocked on the server side because
-				 * of 1.
-				 *
-				 * 3. Then the client get the blocking_ast req,
-				 * cancel the lock, but being blocked if using
-				 * ->ilookup5()), because master inode state is
-				 *  NEW. */
-				master_inode = ilookup5_nowait(inode->i_sb,
-						    hash, ll_test_inode_by_fid,
-							(void *)&lli->lli_pfid);
-				if (master_inode) {
-					ll_invalidate_negative_children(
-								master_inode);
-					iput(master_inode);
-				}
-			} else {
-				ll_invalidate_negative_children(inode);
-			}
-		}
-
-		if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
-		    inode->i_sb->s_root != NULL &&
-		    inode != inode->i_sb->s_root->d_inode)
-			ll_invalidate_aliases(inode);
-
-		iput(inode);
+		ll_lock_cancel_bits(lock, to_cancel);
 		break;
 	}
 	default:
@@ -474,7 +622,8 @@ struct dentry *ll_splice_alias(struct inode *inode, struct dentry *de)
 
 static int ll_lookup_it_finish(struct ptlrpc_request *request,
 			       struct lookup_intent *it,
-			       struct inode *parent, struct dentry **de)
+			       struct inode *parent, struct dentry **de,
+			       void *secctx, __u32 secctxlen, ktime_t kstart)
 {
 	struct inode		 *inode = NULL;
 	__u64			  bits = 0;
@@ -487,20 +636,58 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 	CDEBUG(D_DENTRY, "it %p it_disposition %x\n", it,
 	       it->it_disposition);
 	if (!it_disposition(it, DISP_LOOKUP_NEG)) {
-                rc = ll_prep_inode(&inode, request, (*de)->d_sb, it);
-                if (rc)
-                        RETURN(rc);
+		struct req_capsule *pill = &request->rq_pill;
+		struct mdt_body *body = req_capsule_server_get(pill,
+							       &RMF_MDT_BODY);
 
-                ll_set_lock_data(ll_i2sbi(parent)->ll_md_exp, inode, it, &bits);
+		rc = ll_prep_inode(&inode, request, (*de)->d_sb, it);
+		if (rc)
+			RETURN(rc);
 
-                /* We used to query real size from OSTs here, but actually
-                   this is not needed. For stat() calls size would be updated
-                   from subsequent do_revalidate()->ll_inode_revalidate_it() in
-                   2.4 and
-                   vfs_getattr_it->ll_getattr()->ll_inode_revalidate_it() in 2.6
-                   Everybody else who needs correct file size would call
-                   ll_glimpse_size or some equivalent themselves anyway.
-                   Also see bug 7198. */
+		ll_set_lock_data(ll_i2sbi(parent)->ll_md_exp, inode, it, &bits);
+		/* OPEN can return data if lock has DoM+LAYOUT bits set */
+		if (it->it_op & IT_OPEN &&
+		    bits & MDS_INODELOCK_DOM && bits & MDS_INODELOCK_LAYOUT)
+			ll_dom_finish_open(inode, request);
+
+		/* We used to query real size from OSTs here, but actually
+		 * this is not needed. For stat() calls size would be updated
+		 * from subsequent do_revalidate()->ll_inode_revalidate_it() in
+		 * 2.4 and
+		 * vfs_getattr_it->ll_getattr()->ll_inode_revalidate_it() in 2.6
+		 * Everybody else who needs correct file size would call
+		 * ll_glimpse_size or some equivalent themselves anyway.
+		 * Also see bug 7198.
+		 */
+
+		/* If security context was returned by MDT, put it in
+		 * inode now to save an extra getxattr from security hooks,
+		 * and avoid deadlock.
+		 */
+		if (body->mbo_valid & OBD_MD_SECCTX) {
+			secctx = req_capsule_server_get(pill, &RMF_FILE_SECCTX);
+			secctxlen = req_capsule_get_size(pill,
+							   &RMF_FILE_SECCTX,
+							   RCL_SERVER);
+
+			if (secctxlen)
+				CDEBUG(D_SEC, "server returned security context"
+				       " for "DFID"\n",
+				       PFID(ll_inode2fid(inode)));
+		}
+
+		if (secctx && secctxlen) {
+			/* no need to protect selinux_inode_setsecurity() by
+			 * inode_lock. Taking it would lead to a client deadlock
+			 * LU-13617
+			 */
+			rc = security_inode_notifysecctx(inode, secctx,
+							 secctxlen);
+			if (rc)
+				CWARN("cannot set security context for "
+				      DFID": rc = %d\n",
+				      PFID(ll_inode2fid(inode)), rc);
+		}
 	}
 
 	/* Only hash *de if it is unhashed (new dentry).
@@ -517,9 +704,9 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 		if (bits & MDS_INODELOCK_LOOKUP)
 			d_lustre_revalidate(*de);
 	} else if (!it_disposition(it, DISP_OPEN_CREATE)) {
-		/* If file created on server, don't depend on parent UPDATE
-		 * lock to unhide it. It is left hidden and next lookup can
-		 * find it in ll_splice_alias.
+		/*
+		 * If file was created on the server, the dentry is revalidated
+		 * in ll_create_it if the lock allows for it.
 		 */
 		/* Check that parent has UPDATE lock. */
 		struct lookup_intent parent_it = {
@@ -544,11 +731,18 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 		}
 	}
 
+	if (it_disposition(it, DISP_OPEN_CREATE)) {
+		ll_stats_ops_tally(ll_i2sbi(parent), LPROC_LL_MKNOD,
+				   ktime_us_delta(ktime_get(), kstart));
+	}
+
 	GOTO(out, rc = 0);
 
 out:
-	if (rc != 0 && it->it_op & IT_OPEN)
+	if (rc != 0 && it->it_op & IT_OPEN) {
+		ll_intent_drop_lock(it);
 		ll_open_cleanup((*de)->d_sb, request);
+	}
 
 	return rc;
 }
@@ -557,13 +751,16 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
 				   struct lookup_intent *it,
 				   void **secctx, __u32 *secctxlen)
 {
+	ktime_t kstart = ktime_get();
 	struct lookup_intent lookup_it = { .it_op = IT_LOOKUP };
 	struct dentry *save = dentry, *retval;
 	struct ptlrpc_request *req = NULL;
 	struct md_op_data *op_data = NULL;
-        __u32 opc;
-        int rc;
-        ENTRY;
+	__u32 opc;
+	int rc;
+	char secctx_name[XATTR_NAME_MAX + 1];
+
+	ENTRY;
 
         if (dentry->d_name.len > ll_i2sbi(parent)->ll_namelen)
                 RETURN(ERR_PTR(-ENAMETOOLONG));
@@ -611,10 +808,32 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
 					     &op_data->op_file_secctx_size);
 		if (rc < 0)
 			GOTO(out, retval = ERR_PTR(rc));
-		if (secctx != NULL)
+		if (secctx)
 			*secctx = op_data->op_file_secctx;
-		if (secctxlen != NULL)
+		if (secctxlen)
 			*secctxlen = op_data->op_file_secctx_size;
+	} else {
+		if (secctx)
+			*secctx = NULL;
+		if (secctxlen)
+			*secctxlen = 0;
+	}
+
+	/* ask for security context upon intent */
+	if (it->it_op & (IT_LOOKUP | IT_GETATTR | IT_OPEN)) {
+		/* get name of security xattr to request to server */
+		rc = ll_listsecurity(parent, secctx_name,
+				     sizeof(secctx_name));
+		if (rc < 0) {
+			CDEBUG(D_SEC, "cannot get security xattr name for "
+			       DFID": rc = %d\n",
+			       PFID(ll_inode2fid(parent)), rc);
+		} else if (rc > 0) {
+			op_data->op_file_secctx_name = secctx_name;
+			op_data->op_file_secctx_name_size = rc;
+			CDEBUG(D_SEC, "'%.*s' is security xattr for "DFID"\n",
+			       rc, secctx_name, PFID(ll_inode2fid(parent)));
+		}
 	}
 
 	rc = md_intent_lock(ll_i2mdexp(parent), op_data, it, &req,
@@ -648,11 +867,15 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
 	if (rc < 0)
 		GOTO(out, retval = ERR_PTR(rc));
 
-	rc = ll_lookup_it_finish(req, it, parent, &dentry);
-        if (rc != 0) {
-                ll_intent_release(it);
-                GOTO(out, retval = ERR_PTR(rc));
-        }
+	/* dir layout may change */
+	ll_unlock_md_op_lsm(op_data);
+	rc = ll_lookup_it_finish(req, it, parent, &dentry,
+				 secctx ? *secctx : NULL,
+				 secctxlen ? *secctxlen : 0, kstart);
+	if (rc != 0) {
+		ll_intent_release(it);
+		GOTO(out, retval = ERR_PTR(rc));
+	}
 
         if ((it->it_op & IT_OPEN) && dentry->d_inode &&
             !S_ISREG(dentry->d_inode->i_mode) &&
@@ -665,7 +888,7 @@ static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
 
 out:
 	if (op_data != NULL && !IS_ERR(op_data)) {
-		if (secctx != NULL && secctxlen != NULL) {
+		if (secctx && secctxlen) {
 			/* caller needs sec ctx info, so reset it in op_data to
 			 * prevent it from being freed */
 			op_data->op_file_secctx = NULL;
@@ -991,6 +1214,7 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry,
 			void *secctx, __u32 secctxlen)
 {
 	struct inode *inode;
+	__u64 bits = 0;
 	int rc = 0;
 	ENTRY;
 
@@ -1006,14 +1230,15 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry,
 	if (IS_ERR(inode))
 		RETURN(PTR_ERR(inode));
 
-	if ((ll_i2sbi(inode)->ll_flags & LL_SBI_FILE_SECCTX) &&
-	    secctx != NULL) {
-		inode_lock(inode);
+	if ((ll_i2sbi(inode)->ll_flags & LL_SBI_FILE_SECCTX) && secctx) {
 		/* must be done before d_instantiate, because it calls
 		 * security_d_instantiate, which means a getxattr if security
 		 * context is not set yet */
+		/* no need to protect selinux_inode_setsecurity() by
+		 * inode_lock. Taking it would lead to a client deadlock
+		 * LU-13617
+		 */
 		rc = security_inode_notifysecctx(inode, secctx, secctxlen);
-		inode_unlock(inode);
 		if (rc)
 			RETURN(rc);
 	}
@@ -1025,6 +1250,10 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry,
 		if (rc)
 			RETURN(rc);
 	}
+
+	ll_set_lock_data(ll_i2sbi(dir)->ll_md_exp, inode, it, &bits);
+	if (bits & MDS_INODELOCK_LOOKUP)
+		d_lustre_revalidate(dentry);
 
 	RETURN(0);
 }
@@ -1129,14 +1358,16 @@ again:
 		GOTO(err_exit, err);
 
 	if (sbi->ll_flags & LL_SBI_FILE_SECCTX) {
-		inode_lock(inode);
 		/* must be done before d_instantiate, because it calls
 		 * security_d_instantiate, which means a getxattr if security
 		 * context is not set yet */
+		/* no need to protect selinux_inode_setsecurity() by
+		 * inode_lock. Taking it would lead to a client deadlock
+		 * LU-13617
+		 */
 		err = security_inode_notifysecctx(inode,
 						  op_data->op_file_secctx,
 						  op_data->op_file_secctx_size);
-		inode_unlock(inode);
 		if (err)
 			GOTO(err_exit, err);
 	}
@@ -1161,42 +1392,42 @@ err_exit:
 }
 
 static int ll_mknod(struct user_namespace *mnt_userns, struct inode *dir,
-		    struct dentry *dchild, umode_t mode, dev_t rdev)
+		    struct dentry *dchild, ll_umode_t mode, dev_t rdev)
 {
 	struct qstr *name = &dchild->d_name;
 	int err;
-        ENTRY;
+	ENTRY;
 
 	CDEBUG(D_VFSTRACE, "VFS Op:name=%.*s, dir="DFID"(%p) mode %o dev %x\n",
 	       name->len, name->name, PFID(ll_inode2fid(dir)), dir,
-               mode, rdev);
+	       mode, rdev);
 
 	if (!IS_POSIXACL(dir) || !exp_connect_umask(ll_i2mdexp(dir)))
 		mode &= ~current_umask();
 
-        switch (mode & S_IFMT) {
-        case 0:
-                mode |= S_IFREG; /* for mode = 0 case, fallthrough */
-		/* Fall through */
-        case S_IFREG:
-        case S_IFCHR:
-        case S_IFBLK:
-        case S_IFIFO:
-        case S_IFSOCK:
+	switch (mode & S_IFMT) {
+	case 0:
+		mode |= S_IFREG;
+		fallthrough;
+	case S_IFREG:
+	case S_IFCHR:
+	case S_IFBLK:
+	case S_IFIFO:
+	case S_IFSOCK:
 		err = ll_new_node(dir, dchild, NULL, mode, old_encode_dev(rdev),
 				  LUSTRE_OPC_MKNOD);
-                break;
-        case S_IFDIR:
-                err = -EPERM;
-                break;
-        default:
-                err = -EINVAL;
-        }
+		break;
+	case S_IFDIR:
+		err = -EPERM;
+		break;
+	default:
+		err = -EINVAL;
+	}
 
-        if (!err)
-                ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_MKNOD, 1);
+	if (!err)
+		ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_MKNOD, 1);
 
-        RETURN(err);
+	RETURN(err);
 }
 
 #ifdef HAVE_IOP_ATOMIC_OPEN
@@ -1333,7 +1564,7 @@ out:
 }
 
 static int ll_mkdir(struct user_namespace *mnt_userns, struct inode *dir,
-		    struct dentry *dchild, umode_t mode)
+		    struct dentry *dchild, ll_umode_t mode)
 {
 	struct qstr *name = &dchild->d_name;
         int err;
