@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -120,7 +120,7 @@ EXPORT_SYMBOL(mgc_logname2resid);
 
 /********************** config llog list **********************/
 static struct list_head config_llog_list = LIST_HEAD_INIT(config_llog_list);
-static DEFINE_SPINLOCK(config_list_lock);
+static DEFINE_SPINLOCK(config_list_lock);	/* protects config_llog_list */
 
 /* Take a reference to a config log */
 static int config_log_get(struct config_llog_data *cld)
@@ -539,16 +539,15 @@ static int config_log_end(char *logname, struct config_llog_instance *cfg)
 	RETURN(rc);
 }
 
-#ifdef CONFIG_PROC_FS
 int lprocfs_mgc_rd_ir_state(struct seq_file *m, void *data)
 {
 	struct obd_device       *obd = data;
 	struct obd_import       *imp;
 	struct obd_connect_data *ocd;
 	struct config_llog_data *cld;
-	ENTRY;
 
-	LASSERT(obd != NULL);
+	ENTRY;
+	LASSERT(obd);
 	LPROCFS_CLIMP_CHECK(obd);
 	imp = obd->u.cli.cl_import;
 	ocd = &imp->imp_connect_data;
@@ -570,7 +569,6 @@ int lprocfs_mgc_rd_ir_state(struct seq_file *m, void *data)
 	LPROCFS_CLIMP_EXIT(obd);
 	RETURN(0);
 }
-#endif
 
 /* reenqueue any lost locks */
 #define RQ_RUNNING	0x1
@@ -968,11 +966,9 @@ static int mgc_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 		GOTO(err_cleanup, rc);
 	}
 
-#ifdef CONFIG_PROC_FS
-	obd->obd_vars = lprocfs_mgc_obd_vars;
-	lprocfs_obd_setup(obd);
-#endif
-	sptlrpc_lprocfs_cliobd_attach(obd);
+	rc = mgc_tunables_init(obd);
+	if (rc)
+		GOTO(err_sysfs, rc);
 
 	if (atomic_inc_return(&mgc_count) == 1) {
 		rq_state = 0;
@@ -985,7 +981,7 @@ static int mgc_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 			CERROR("%s: cannot start requeue thread: rc = %d; "
 			       "no more log updates\n",
 			       obd->obd_name, rc);
-			GOTO(err_cleanup, rc);
+			GOTO(err_sysfs, rc);
 		}
 		/* rc is the task_struct pointer of mgc_requeue_thread. */
 		rc = 0;
@@ -994,6 +990,8 @@ static int mgc_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 
 	RETURN(rc);
 
+err_sysfs:
+	lprocfs_obd_cleanup(obd);
 err_cleanup:
 	client_obd_cleanup(obd);
 err_decref:
@@ -1642,8 +1640,7 @@ static int mgc_process_recover_nodemap_log(struct obd_device *obd,
 	mgc_conn = class_exp2cliimp(cld->cld_mgcexp)->imp_connection;
 
 	/* don't need to get local config */
-	if (cld_is_nodemap(cld) &&
-	    (LNET_NETTYP(LNET_NIDNET(mgc_conn->c_peer.nid)) == LOLND))
+	if (cld_is_nodemap(cld) && LNetIsPeerLocal(mgc_conn->c_peer.nid))
 		GOTO(out, rc = 0);
 
         /* allocate buffer for bulk transfer.
@@ -1754,15 +1751,8 @@ again:
 #ifdef HAVE_SERVER_SUPPORT
 		/* config changed since first read RPC */
 		if (cld_is_nodemap(cld) && config_read_offset == 0) {
-			recent_nodemap = NULL;
-			nodemap_config_dealloc(new_config);
-			new_config = NULL;
-
 			CDEBUG(D_INFO, "nodemap config changed in transit, retrying\n");
-
-			/* setting eof to false, we request config again */
-			eof = false;
-			GOTO(out, rc = 0);
+			GOTO(out, rc = -EAGAIN);
 		}
 #endif
 		if (!eof)
@@ -1770,13 +1760,7 @@ again:
 		GOTO(out, rc);
 	}
 
-	mne_swab = !!ptlrpc_rep_need_swab(req);
-#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(3, 0, 53, 0)
-	/* This import flag means the server did an extra swab of IR MNE
-	 * records (fixed in LU-1252), reverse it here if needed. LU-1644 */
-	if (unlikely(req->rq_import->imp_need_mne_swab))
-		mne_swab = !mne_swab;
-#endif
+	mne_swab = ptlrpc_rep_need_swab(req);
 
 	/* When a nodemap config is received, we build a new nodemap config,
 	 * with new nodemap structs. We keep track of the most recently added
@@ -2115,6 +2099,11 @@ restart:
 				goto restart;
 			} else {
 				mutex_lock(&cld->cld_lock);
+				/* unlock/lock mutex, so check stopping again */
+				if (cld->cld_stopping) {
+					mutex_unlock(&cld->cld_lock);
+					RETURN(0);
+				}
 				spin_lock(&config_list_lock);
 				cld->cld_lostlock = 1;
 				spin_unlock(&config_list_lock);
@@ -2158,6 +2147,12 @@ restart:
 		rcl = mgc_cancel(mgc->u.cli.cl_mgc_mgsexp, LCK_CR, &lockh);
 		if (rcl)
 			CERROR("Can't drop cfg lock: %d\n", rcl);
+	}
+
+	/* requeue nodemap lock immediately if transfer was interrupted */
+	if (cld_is_nodemap(cld) && rc == -EAGAIN) {
+		mgc_requeue_add(cld);
+		rc = 0;
 	}
 
 	RETURN(rc);
@@ -2217,11 +2212,6 @@ static int mgc_process_config(struct obd_device *obd, size_t len, void *buf)
 			rc = PTR_ERR(cld);
 			break;
 		}
-
-		/* COMPAT_146 */
-		/* FIXME only set this for old logs!  Right now this forces
-		   us to always skip the "inside markers" check */
-		cld->cld_cfg.cfg_flags |= CFG_F_COMPAT146;
 
 		rc = mgc_process_log(obd, cld);
 		if (rc == 0 && cld->cld_recover != NULL) {
@@ -2293,7 +2283,7 @@ static struct obd_ops mgc_obd_ops = {
 
 static int __init mgc_init(void)
 {
-	return class_register_type(&mgc_obd_ops, NULL, true, NULL,
+	return class_register_type(&mgc_obd_ops, NULL, false, NULL,
 				   LUSTRE_MGC_NAME, NULL);
 }
 
