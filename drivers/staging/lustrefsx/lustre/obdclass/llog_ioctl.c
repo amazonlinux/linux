@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2014, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -33,14 +33,16 @@
 #define DEBUG_SUBSYSTEM S_LOG
 
 #include <obd_class.h>
-#include <uapi/linux/lustre_ioctl.h>
+#include <uapi/linux/lustre/lustre_ioctl.h>
 #include <lustre_log.h>
 #include "llog_internal.h"
 
 static int str2logid(struct llog_logid *logid, char *str, int len)
 {
-	char *start, *end, *endp;
-	__u64 id, seq;
+	unsigned long long id, seq;
+	char *start, *end;
+	u32 ogen;
+	int rc;
 
 	ENTRY;
 	start = str;
@@ -56,10 +58,12 @@ static int str2logid(struct llog_logid *logid, char *str, int len)
 	}
 
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(3, 1, 53, 0)
-	/* logids used to be input in the form "#id#seq:ogen" before they
+	/*
+	 * logids used to be input in the form "#id#seq:ogen" before they
 	 * were changed over to accept the FID [seq:oid:ver] format.
 	 * This is accepted for compatibility reasons, though I doubt
-	 * anyone is actually using this for anything. */
+	 * anyone is actually using this for anything.
+	 */
 	if (start[0] != '#')
 		RETURN(-EINVAL);
 
@@ -71,34 +75,37 @@ static int str2logid(struct llog_logid *logid, char *str, int len)
 		RETURN(-EINVAL);
 
 	*end = '\0';
-	id = simple_strtoull(start, &endp, 0);
-        if (endp != end)
-                RETURN(-EINVAL);
+	rc = kstrtoull(start, 0, &id);
+	if (rc)
+		RETURN(rc);
 
-        start = ++end;
-        if (start - str >= len - 1)
-                RETURN(-EINVAL);
-        end = strchr(start, '#');
-        if (end == NULL || end == start)
-                RETURN(-EINVAL);
+	start = ++end;
+	if (start - str >= len - 1)
+		RETURN(-EINVAL);
 
-        *end = '\0';
-	seq = simple_strtoull(start, &endp, 0);
-        if (endp != end)
-                RETURN(-EINVAL);
+	end = strchr(start, '#');
+	if (!end || end == start)
+		RETURN(-EINVAL);
+
+	*end = '\0';
+	rc = kstrtoull(start, 0, &seq);
+	if (rc)
+		RETURN(rc);
 
 	ostid_set_seq(&logid->lgl_oi, seq);
 	if (ostid_set_id(&logid->lgl_oi, id))
 		RETURN(-EINVAL);
 
 	start = ++end;
-        if (start - str >= len - 1)
-                RETURN(-EINVAL);
-        logid->lgl_ogen = simple_strtoul(start, &endp, 16);
-        if (*endp != '\0')
-                RETURN(-EINVAL);
+	if (start - str >= len - 1)
+		RETURN(-EINVAL);
 
-        RETURN(0);
+	rc = kstrtouint(start, 16, &ogen);
+	if (rc)
+                RETURN(-EINVAL);
+	logid->lgl_ogen = ogen;
+
+	RETURN(0);
 #else
 	RETURN(-EINVAL);
 #endif
@@ -107,29 +114,31 @@ static int str2logid(struct llog_logid *logid, char *str, int len)
 static int llog_check_cb(const struct lu_env *env, struct llog_handle *handle,
 			 struct llog_rec_hdr *rec, void *data)
 {
-        struct obd_ioctl_data *ioc_data = (struct obd_ioctl_data *)data;
+	struct obd_ioctl_data *ioc_data = data;
 	static int l, remains;
 	static long from, to;
-        static char *out;
-        char *endp;
-        int cur_index, rc = 0;
+	static char *out;
+	int cur_index;
+	int rc = 0;
 
-        ENTRY;
-
+	ENTRY;
 	if (ioc_data && ioc_data->ioc_inllen1 > 0) {
-                l = 0;
-                remains = ioc_data->ioc_inllen4 +
-                        cfs_size_round(ioc_data->ioc_inllen1) +
-                        cfs_size_round(ioc_data->ioc_inllen2) +
-                        cfs_size_round(ioc_data->ioc_inllen3);
-                from = simple_strtol(ioc_data->ioc_inlbuf2, &endp, 0);
-                if (*endp != '\0')
-                        RETURN(-EINVAL);
-                to = simple_strtol(ioc_data->ioc_inlbuf3, &endp, 0);
-                if (*endp != '\0')
-                        RETURN(-EINVAL);
-                ioc_data->ioc_inllen1 = 0;
-                out = ioc_data->ioc_bulk;
+		l = 0;
+		remains = ioc_data->ioc_inllen4 +
+			  round_up(ioc_data->ioc_inllen1, 8) +
+			  round_up(ioc_data->ioc_inllen2, 8) +
+			  round_up(ioc_data->ioc_inllen3, 8);
+
+		rc = kstrtol(ioc_data->ioc_inlbuf2, 0, &from);
+		if (rc)
+			RETURN(rc);
+
+		rc = kstrtol(ioc_data->ioc_inlbuf3, 0, &to);
+		if (rc)
+			RETURN(rc);
+
+		ioc_data->ioc_inllen1 = 0;
+		out = ioc_data->ioc_bulk;
 	}
 
 	cur_index = rec->lrh_index;
@@ -139,17 +148,17 @@ static int llog_check_cb(const struct lu_env *env, struct llog_handle *handle,
 		RETURN(-LLOG_EEMPTY);
 
 	if (handle->lgh_hdr->llh_flags & LLOG_F_IS_CAT) {
-		struct llog_logid_rec	*lir = (struct llog_logid_rec *)rec;
-		struct llog_handle	*loghandle;
+		struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
+		struct llog_handle *loghandle;
 
-                if (rec->lrh_type != LLOG_LOGID_MAGIC) {
-                        l = snprintf(out, remains, "[index]: %05d  [type]: "
-                                     "%02x  [len]: %04d failed\n",
-                                     cur_index, rec->lrh_type,
-                                     rec->lrh_len);
-                }
-                if (handle->lgh_ctxt == NULL)
-                        RETURN(-EOPNOTSUPP);
+		if (rec->lrh_type != LLOG_LOGID_MAGIC) {
+			l = snprintf(out, remains,
+				     "[index]: %05d  [type]: %02x  [len]: %04d failed\n",
+				     cur_index, rec->lrh_type,
+				     rec->lrh_len);
+		}
+		if (handle->lgh_ctxt == NULL)
+			RETURN(-EOPNOTSUPP);
 		rc = llog_cat_id2handle(env, handle, &loghandle, &lir->lid_id);
 		if (rc) {
 			CDEBUG(D_IOCTL, "cannot find log "DFID":%x\n",
@@ -158,16 +167,16 @@ static int llog_check_cb(const struct lu_env *env, struct llog_handle *handle,
 			RETURN(rc);
 		}
 		rc = llog_process(env, loghandle, llog_check_cb, NULL, NULL);
-		llog_handle_put(loghandle);
+		llog_handle_put(env, loghandle);
 	} else {
 		bool ok;
 
-                switch (rec->lrh_type) {
-                case OST_SZ_REC:
-                case MDS_UNLINK_REC:
+		switch (rec->lrh_type) {
+		case OST_SZ_REC:
+		case MDS_UNLINK_REC:
 		case MDS_UNLINK64_REC:
-                case MDS_SETATTR64_REC:
-                case OBD_CFG_REC:
+		case MDS_SETATTR64_REC:
+		case OBD_CFG_REC:
 		case LLOG_GEN_REC:
 		case LLOG_HDR_MAGIC:
 			ok = true;
@@ -194,43 +203,46 @@ static int llog_check_cb(const struct lu_env *env, struct llog_handle *handle,
 static int llog_print_cb(const struct lu_env *env, struct llog_handle *handle,
 			 struct llog_rec_hdr *rec, void *data)
 {
-        struct obd_ioctl_data *ioc_data = (struct obd_ioctl_data *)data;
+	struct obd_ioctl_data *ioc_data = data;
 	static int l, remains;
 	static long from, to;
-        static char *out;
-        char *endp;
-        int cur_index;
+	static char *out;
+	int cur_index;
+	int rc;
 
-        ENTRY;
-	if (ioc_data != NULL && ioc_data->ioc_inllen1 > 0) {
-                l = 0;
-                remains = ioc_data->ioc_inllen4 +
-                        cfs_size_round(ioc_data->ioc_inllen1) +
-                        cfs_size_round(ioc_data->ioc_inllen2) +
-                        cfs_size_round(ioc_data->ioc_inllen3);
-                from = simple_strtol(ioc_data->ioc_inlbuf2, &endp, 0);
-                if (*endp != '\0')
-                        RETURN(-EINVAL);
-                to = simple_strtol(ioc_data->ioc_inlbuf3, &endp, 0);
-                if (*endp != '\0')
-                        RETURN(-EINVAL);
-                out = ioc_data->ioc_bulk;
-                ioc_data->ioc_inllen1 = 0;
-        }
+	ENTRY;
+	if (ioc_data && ioc_data->ioc_inllen1 > 0) {
+		l = 0;
+		remains = ioc_data->ioc_inllen4 +
+			  round_up(ioc_data->ioc_inllen1, 8) +
+			  round_up(ioc_data->ioc_inllen2, 8) +
+			  round_up(ioc_data->ioc_inllen3, 8);
 
-        cur_index = rec->lrh_index;
-        if (cur_index < from)
-                RETURN(0);
-        if (to > 0 && cur_index > to)
-                RETURN(-LLOG_EEMPTY);
+		rc = kstrtol(ioc_data->ioc_inlbuf2, 0, &from);
+		if (rc)
+			RETURN(rc);
 
-        if (handle->lgh_hdr->llh_flags & LLOG_F_IS_CAT) {
-                struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
+		rc = kstrtol(ioc_data->ioc_inlbuf3, 0, &to);
+		if (rc)
+			RETURN(rc);
 
-                if (rec->lrh_type != LLOG_LOGID_MAGIC) {
-                        CERROR("invalid record in catalog\n");
-                        RETURN(-EINVAL);
-                }
+		out = ioc_data->ioc_bulk;
+		ioc_data->ioc_inllen1 = 0;
+	}
+
+	cur_index = rec->lrh_index;
+	if (cur_index < from)
+		RETURN(0);
+	if (to > 0 && cur_index > to)
+		RETURN(-LLOG_EEMPTY);
+
+	if (handle->lgh_hdr->llh_flags & LLOG_F_IS_CAT) {
+		struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
+
+		if (rec->lrh_type != LLOG_LOGID_MAGIC) {
+			CERROR("invalid record in catalog\n");
+			RETURN(-EINVAL);
+		}
 
 		l = snprintf(out, remains,
 			     "[index]: %05d  [logid]: "DFID":%x\n",
@@ -247,21 +259,21 @@ static int llog_print_cb(const struct lu_env *env, struct llog_handle *handle,
 		l = snprintf(out, remains,
 			     "[index]: %05d  [type]: %02x  [len]: %04d\n",
 			     cur_index, rec->lrh_type, rec->lrh_len);
-        }
-        out += l;
-        remains -= l;
-        if (remains <= 0) {
-                CERROR("not enough space for print log records\n");
-                RETURN(-LLOG_EEMPTY);
-        }
+	}
+	out += l;
+	remains -= l;
+	if (remains <= 0) {
+		CERROR("not enough space for print log records\n");
+		RETURN(-LLOG_EEMPTY);
+	}
 
-        RETURN(0);
+	RETURN(0);
 }
 static int llog_remove_log(const struct lu_env *env, struct llog_handle *cat,
 			   struct llog_logid *logid)
 {
-	struct llog_handle	*log;
-	int			 rc;
+	struct llog_handle *log;
+	int rc;
 
 	ENTRY;
 
@@ -280,7 +292,7 @@ static int llog_remove_log(const struct lu_env *env, struct llog_handle *cat,
 	}
 	llog_cat_cleanup(env, cat, log, log->u.phd.phd_cookie.lgc_index);
 out:
-	llog_handle_put(log);
+	llog_handle_put(env, log);
 	RETURN(rc);
 
 }
@@ -288,8 +300,8 @@ out:
 static int llog_delete_cb(const struct lu_env *env, struct llog_handle *handle,
 			  struct llog_rec_hdr *rec, void *data)
 {
-	struct llog_logid_rec	*lir = (struct llog_logid_rec *)rec;
-	int			 rc;
+	struct llog_logid_rec *lir = (struct llog_logid_rec *)rec;
+	int rc;
 
 	ENTRY;
 	if (rec->lrh_type != LLOG_LOGID_MAGIC)
@@ -303,15 +315,16 @@ static int llog_delete_cb(const struct lu_env *env, struct llog_handle *handle,
 int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt, int cmd,
 	       struct obd_ioctl_data *data)
 {
-	struct llog_logid	 logid;
-	int			 rc = 0;
-	struct llog_handle	*handle = NULL;
-	char *logname;
+	struct llog_logid logid;
+	int rc = 0;
+	struct llog_handle *handle = NULL;
+	char *logname, start;
 
 	ENTRY;
 
 	logname = data->ioc_inlbuf1;
-	if (logname[0] == '#' || logname[0] == '[') {
+	start = logname[0];
+	if (start == '#' || start == '[') {
 		rc = str2logid(&logid, logname, data->ioc_inllen1);
 		if (rc)
 			RETURN(rc);
@@ -319,8 +332,8 @@ int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt, int cmd,
 			       LLOG_OPEN_EXISTS);
 		if (rc)
 			RETURN(rc);
-	} else if (logname[0] == '$' || isalpha(logname[0])) {
-		if (logname[0] == '$')
+	} else if (start == '$' || isalpha(start) || isdigit(start)) {
+		if (start == '$')
 			logname++;
 
 		rc = llog_open(env, ctxt, &handle, NULL, logname,
@@ -328,7 +341,10 @@ int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt, int cmd,
 		if (rc)
 			RETURN(rc);
 	} else {
-		RETURN(-EINVAL);
+		rc = -EINVAL;
+		CDEBUG(D_INFO, "%s: invalid log name '%s': rc = %d\n",
+		      ctxt->loc_obd->obd_name, logname, rc);
+		RETURN(rc);
 	}
 
 	rc = llog_init_handle(env, handle, 0, NULL);
@@ -337,10 +353,10 @@ int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt, int cmd,
 
 	switch (cmd) {
 	case OBD_IOC_LLOG_INFO: {
-		int	 l;
-		int	 remains = data->ioc_inllen2 +
+		int l;
+		int remains = data->ioc_inllen2 +
 				   cfs_size_round(data->ioc_inllen1);
-		char	*out = data->ioc_bulk;
+		char *out = data->ioc_bulk;
 
 		l = snprintf(out, remains,
 			     "logid:            "DFID":%x\n"
@@ -382,11 +398,12 @@ int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt, int cmd,
 	case OBD_IOC_LLOG_CANCEL: {
 		struct llog_cookie cookie;
 		struct llog_logid plain;
-		char *endp;
+		u32 lgc_index;
 
-		cookie.lgc_index = simple_strtoul(data->ioc_inlbuf3, &endp, 0);
-		if (*endp != '\0')
-			GOTO(out_close, rc = -EINVAL);
+		rc = kstrtouint(data->ioc_inlbuf3, 0, &lgc_index);
+		if (rc)
+			GOTO(out_close, rc);
+		cookie.lgc_index = lgc_index;
 
 		if (handle->lgh_hdr->llh_flags & LLOG_F_IS_PLAIN) {
 			rc = llog_cancel_rec(env, handle, cookie.lgc_index);
@@ -453,11 +470,11 @@ int llog_catalog_list(const struct lu_env *env, struct dt_device *d,
 		      int count, struct obd_ioctl_data *data,
 		      const struct lu_fid *fid)
 {
-	int			 size, i;
-	struct llog_catid	*idarray;
-	struct llog_logid	*id;
-	char			*out;
-	int			 l, remains, rc = 0;
+	int size, i;
+	struct llog_catid *idarray;
+	struct llog_logid *id;
+	char *out;
+	int l, remains, rc = 0;
 
 	ENTRY;
 
@@ -480,15 +497,28 @@ int llog_catalog_list(const struct lu_env *env, struct dt_device *d,
 
 	out = data->ioc_bulk;
 	remains = data->ioc_inllen1;
-	for (i = 0; i < count; i++) {
+	/* OBD_FAIL: fetch the catalog records from the specified one */
+	if (OBD_FAIL_CHECK(OBD_FAIL_CATLIST))
+		data->ioc_count = cfs_fail_val - 1;
+	for (i = data->ioc_count; i < count; i++) {
 		id = &idarray[i].lci_logid;
 		l = snprintf(out, remains, "catalog_log: "DFID":%x\n",
-			     PFID(&id->lgl_oi.oi_fid), id->lgl_ogen);
+			      PFID(&id->lgl_oi.oi_fid), id->lgl_ogen);
 		out += l;
 		remains -= l;
-		if (remains <= 0)
-			break;
+		if (remains <= 0) {
+			if (remains < 0) {
+				/* the print is not complete */
+				remains += l;
+				data->ioc_bulk[out - data->ioc_bulk - l] = '\0';
+				data->ioc_count = i;
+			} else {
+				data->ioc_count = i++;
+			}
+			goto out;
+		}
 	}
+	data->ioc_count = 0;
 out:
 	OBD_FREE_LARGE(idarray, size);
 	RETURN(rc);

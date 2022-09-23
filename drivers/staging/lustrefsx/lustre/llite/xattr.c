@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -42,8 +42,8 @@
 
 #include <obd_support.h>
 #include <lustre_dlm.h>
-#include <lustre_ver.h>
 #include <lustre_eacl.h>
+#include <lustre_swab.h>
 
 #include "llite_internal.h"
 
@@ -111,7 +111,10 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	int rc;
 	ENTRY;
 
-	if (flags == XATTR_REPLACE) {
+	/* When setxattr() is called with a size of 0 the value is
+	 * unconditionally replaced by "". When removexattr() is
+	 * called we get a NULL value and XATTR_REPLACE for flags. */
+	if (!value && flags == XATTR_REPLACE) {
 		ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_REMOVEXATTR, 1);
 		valid = OBD_MD_FLXATTRRM;
 	} else {
@@ -131,7 +134,7 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	if ((handler->flags == XATTR_ACL_ACCESS_T ||
 	     handler->flags == XATTR_ACL_DEFAULT_T) &&
 /* Test for older kernels that was cleaned up in LU-12477 and LU-10092 */
-#if defined(HAVE_USER_NAMESPACE_ARG) || defined(HAVE_INODE_OWNER_OR_CAPABLE)
+#if defined(HAVE_INODE_OWNER_OR_CAPABLE) || defined(HAVE_USER_NAMESPACE_ARG)
 	    !inode_owner_or_capable(mnt_userns, inode))
 #else
 	    !is_owner_or_cap(inode))
@@ -163,7 +166,7 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 		RETURN(-ENOMEM);
 
 	rc = md_setxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid, fullname,
-			 pv, size, 0, flags, ll_i2suppgid(inode), &req);
+			 pv, size, flags, ll_i2suppgid(inode), &req);
 	kfree(fullname);
 	if (rc) {
 		if (rc == -EOPNOTSUPP && handler->flags == XATTR_USER_T) {
@@ -177,7 +180,7 @@ static int ll_xattr_set_common(const struct xattr_handler *handler,
 	RETURN(0);
 }
 
-static int get_hsm_state(struct inode *inode, u32 *hus_states)
+int ll_get_hsm_state(struct inode *inode, u32 *hus_states)
 {
 	struct md_op_data *op_data;
 	struct hsm_user_state *hus;
@@ -208,7 +211,7 @@ static int get_hsm_state(struct inode *inode, u32 *hus_states)
 	return rc;
 }
 
-static int ll_adjust_lum(struct inode *inode, struct lov_user_md *lump)
+static int ll_adjust_lum(struct inode *inode, struct lov_user_md *lump, size_t size)
 {
 	struct lov_comp_md_v1 *comp_v1 = (struct lov_comp_md_v1 *)lump;
 	struct lov_user_md *v1 = lump;
@@ -223,13 +226,22 @@ static int ll_adjust_lum(struct inode *inode, struct lov_user_md *lump)
 		return 0;
 
 	if (lump->lmm_magic == LOV_USER_MAGIC_COMP_V1) {
+		if (size < sizeof(*comp_v1))
+			return -ERANGE;
+
 		entry_count = comp_v1->lcm_entry_count;
+		if (size < offsetof(typeof(*comp_v1), lcm_entries[entry_count]))
+			return -ERANGE;
 		is_composite = true;
 	}
 
 	for (i = 0; i < entry_count; i++) {
 		if (lump->lmm_magic == LOV_USER_MAGIC_COMP_V1) {
 			void *ptr = comp_v1;
+
+			if (comp_v1->lcm_entries[i].lcme_offset + sizeof(*v1) >
+			    size)
+				return -ERANGE;
 
 			ptr += comp_v1->lcm_entries[i].lcme_offset;
 			v1 = (struct lov_user_md *)ptr;
@@ -249,7 +261,7 @@ static int ll_adjust_lum(struct inode *inode, struct lov_user_md *lump)
 			if (!release_checked) {
 				u32 state = HS_NONE;
 
-				rc = get_hsm_state(inode, &state);
+				rc = ll_get_hsm_state(inode, &state);
 				if (rc)
 					return rc;
 
@@ -278,7 +290,13 @@ static int ll_setstripe_ea(struct dentry *dentry, struct lov_user_md *lump,
 	if (!size && lump)
 		lump = NULL;
 
-	rc = ll_adjust_lum(inode, lump);
+	if (size && size < sizeof(*lump)) {
+		/* ll_adjust_lum() or ll_lov_user_md_size() might access
+		 * before size - just give up now.
+		 */
+		return -ERANGE;
+	}
+	rc = ll_adjust_lum(inode, lump, size);
 	if (rc)
 		return rc;
 
@@ -346,8 +364,13 @@ static int ll_xattr_set(const struct xattr_handler *handler,
 		return 0;
 	}
 
-    return ll_xattr_set_common(handler, mnt_userns, dentry, inode, name,
-    				   value, size, flags);
+	if (strncmp(name, "lov.", 4) == 0 &&
+	    (__swab32(((struct lov_user_md *)value)->lmm_magic) &
+	    le32_to_cpu(LOV_MAGIC_MASK)) == le32_to_cpu(LOV_MAGIC_MAGIC))
+		lustre_swab_lov_user_md((struct lov_user_md *)value, 0);
+
+	return ll_xattr_set_common(handler, mnt_userns, dentry, inode, name,
+				   value, size, flags);
 }
 
 int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
@@ -356,7 +379,6 @@ int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
 	struct ll_inode_info *lli = ll_i2info(inode);
         struct ll_sb_info *sbi = ll_i2sbi(inode);
         struct ptlrpc_request *req = NULL;
-        struct mdt_body *body;
         void *xdata;
 	int rc;
 	ENTRY;
@@ -383,35 +405,25 @@ int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
 		}
 	} else {
 getxattr_nocache:
-		rc = md_getxattr(sbi->ll_md_exp, ll_inode2fid(inode),
-				 valid, name, NULL, 0, size, 0, &req);
+		rc = md_getxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid,
+				 name, size, &req);
 		if (rc < 0)
 			GOTO(out_xattr, rc);
 
-		body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
-		LASSERT(body);
-
 		/* only detect the xattr size */
 		if (size == 0)
-			GOTO(out, rc = body->mbo_eadatasize);
+			GOTO(out, rc);
 
-		if (size < body->mbo_eadatasize) {
-			CERROR("server bug: replied size %u > %u\n",
-				body->mbo_eadatasize, (int)size);
+		if (size < rc)
 			GOTO(out, rc = -ERANGE);
-		}
-
-		if (body->mbo_eadatasize == 0)
-			GOTO(out, rc = -ENODATA);
 
 		/* do not need swab xattr data */
 		xdata = req_capsule_server_sized_get(&req->rq_pill, &RMF_EADATA,
-							body->mbo_eadatasize);
+						     rc);
 		if (!xdata)
-			GOTO(out, rc = -EFAULT);
+			GOTO(out, rc = -EPROTO);
 
-		memcpy(buffer, xdata, body->mbo_eadatasize);
-		rc = body->mbo_eadatasize;
+		memcpy(buffer, xdata, rc);
 	}
 
 	EXIT;
@@ -524,21 +536,37 @@ static ssize_t ll_getxattr_lov(struct inode *inode, void *buf, size_t buf_size)
 		 * recognizing layout gen as stripe offset when the
 		 * file is restored. See LU-2809.
 		 */
-		if (((struct lov_mds_md *)buf)->lmm_magic == LOV_MAGIC_COMP_V1)
-			goto out_env;
+		if ((((struct lov_mds_md *)buf)->lmm_magic &
+		    __swab32(LOV_MAGIC_MAGIC)) == __swab32(LOV_MAGIC_MAGIC))
+			lustre_swab_lov_user_md((struct lov_user_md *)buf,
+						cl.cl_size);
 
-		((struct lov_mds_md *)buf)->lmm_layout_gen = 0;
+		switch (((struct lov_mds_md *)buf)->lmm_magic) {
+		case LOV_MAGIC_V1:
+		case LOV_MAGIC_V3:
+		case LOV_MAGIC_SPECIFIC:
+			((struct lov_mds_md *)buf)->lmm_layout_gen = 0;
+			break;
+		case LOV_MAGIC_COMP_V1:
+			goto out_env;
+		default:
+			CERROR("Invalid LOV magic %08x\n",
+			       ((struct lov_mds_md *)buf)->lmm_magic);
+			GOTO(out_env, rc = -EINVAL);
+		}
+
 out_env:
 		cl_env_put(env, &refcheck);
 
 		RETURN(rc);
 	} else if (S_ISDIR(inode->i_mode)) {
 		struct ptlrpc_request *req = NULL;
+		struct ptlrpc_request *root_req = NULL;
 		struct lov_mds_md *lmm = NULL;
 		int lmm_size = 0;
 
-		rc = ll_dir_getstripe(inode, (void **)&lmm, &lmm_size,
-				      &req, 0);
+		rc = ll_dir_getstripe_default(inode, (void **)&lmm, &lmm_size,
+					      &req, &root_req, 0);
 		if (rc < 0)
 			GOTO(out_req, rc);
 
@@ -553,6 +581,8 @@ out_env:
 out_req:
 		if (req)
 			ptlrpc_req_finished(req);
+		if (root_req)
+			ptlrpc_req_finished(root_req);
 
 		RETURN(rc);
 	} else {
