@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2010, 2016, Intel Corporation.
+ * Copyright (c) 2010, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -31,13 +31,15 @@
  */
 
 #define DEBUG_SUBSYSTEM S_RPC
+
 #include <linux/kthread.h>
 #include <obd_support.h>
 #include <obd_class.h>
 #include <lustre_net.h>
 #include <lu_object.h>
-#include <lnet/types.h>
+#include <uapi/linux/lnet/lnet-types.h>
 #include "ptlrpc_internal.h"
+#include <linux/delay.h>
 
 /* The following are visible and mutable through /sys/module/ptlrpc */
 int test_req_buffer_pressure = 0;
@@ -139,7 +141,9 @@ ptlrpc_grow_req_bufs(struct ptlrpc_service_part *svcpt, int post)
         for (i = 0; i < svc->srv_nbuf_per_group; i++) {
                 /* NB: another thread might have recycled enough rqbds, we
 		 * need to make sure it wouldn't over-allocate, see LU-1212. */
-		if (svcpt->scp_nrqbds_posted >= svc->srv_nbuf_per_group)
+		if (svcpt->scp_nrqbds_posted >= svc->srv_nbuf_per_group ||
+		    (svc->srv_nrqbds_max != 0 &&
+		     svcpt->scp_nrqbds_total > svc->srv_nrqbds_max))
 			break;
 
 		rqbd = ptlrpc_alloc_rqbd(svcpt);
@@ -479,7 +483,7 @@ static void ptlrpc_at_timer(cfs_timer_cb_arg_t data)
 	svcpt = cfs_from_timer(svcpt, data, scp_at_timer);
 
 	svcpt->scp_at_check = 1;
-	svcpt->scp_at_checktime = cfs_time_current();
+	svcpt->scp_at_checktime = ktime_get();
 	wake_up(&svcpt->scp_waitq);
 }
 
@@ -602,6 +606,7 @@ ptlrpc_service_part_init(struct ptlrpc_service *svc,
 
 	/* rqbd and incoming request queue */
 	spin_lock_init(&svcpt->scp_lock);
+	mutex_init(&svcpt->scp_mutex);
 	INIT_LIST_HEAD(&svcpt->scp_rqbd_idle);
 	INIT_LIST_HEAD(&svcpt->scp_rqbd_posted);
 	INIT_LIST_HEAD(&svcpt->scp_req_incoming);
@@ -683,7 +688,8 @@ ptlrpc_service_part_init(struct ptlrpc_service *svc,
  */
 struct ptlrpc_service *
 ptlrpc_register_service(struct ptlrpc_service_conf *conf,
-			struct proc_dir_entry *proc_entry)
+			struct kset *parent,
+			struct dentry *debugfs_entry)
 {
 	struct ptlrpc_service_cpt_conf	*cconf = &conf->psc_cpt;
 	struct ptlrpc_service		*service;
@@ -705,7 +711,13 @@ ptlrpc_register_service(struct ptlrpc_service_conf *conf,
 	if (cptable == NULL)
 		cptable = cfs_cpt_table;
 
-	if (!conf->psc_thr.tc_cpu_affinity) {
+	if (conf->psc_thr.tc_cpu_bind > 1) {
+		CERROR("%s: Invalid cpu bind value %d, only 1 or 0 allowed\n",
+		       conf->psc_name, conf->psc_thr.tc_cpu_bind);
+		RETURN(ERR_PTR(-EINVAL));
+	}
+
+	if (!cconf->cc_affinity) {
 		ncpts = 1;
 	} else {
 		ncpts = cfs_cpt_number(cptable);
@@ -744,6 +756,7 @@ ptlrpc_register_service(struct ptlrpc_service_conf *conf,
 	service->srv_cptable		= cptable;
 	service->srv_cpts		= cpts;
 	service->srv_ncpts		= ncpts;
+	service->srv_cpt_bind		= conf->psc_thr.tc_cpu_bind;
 
 	service->srv_cpt_bits = 0; /* it's zero already, easy to read... */
 	while ((1 << service->srv_cpt_bits) < cfs_cpt_number(cptable))
@@ -758,6 +771,9 @@ ptlrpc_register_service(struct ptlrpc_service_conf *conf,
 	/* buffer configuration */
 	service->srv_nbuf_per_group	= test_req_buffer_pressure ?
 					  1 : conf->psc_buf.bc_nbufs;
+	/* do not limit max number of rqbds by default */
+	service->srv_nrqbds_max		= 0;
+
 	service->srv_max_req_size	= conf->psc_buf.bc_req_max_size +
 					  SPTLRPC_MAX_PAYLOAD;
 	service->srv_buf_size		= conf->psc_buf.bc_buf_size;
@@ -776,7 +792,7 @@ ptlrpc_register_service(struct ptlrpc_service_conf *conf,
 	service->srv_ops		= conf->psc_ops;
 
 	for (i = 0; i < ncpts; i++) {
-		if (!conf->psc_thr.tc_cpu_affinity)
+		if (!cconf->cc_affinity)
 			cpt = CFS_CPT_ANY;
 		else
 			cpt = cpts != NULL ? cpts[i] : i;
@@ -800,8 +816,14 @@ ptlrpc_register_service(struct ptlrpc_service_conf *conf,
 	list_add(&service->srv_list, &ptlrpc_all_services);
 	mutex_unlock(&ptlrpc_all_services_mutex);
 
-	if (proc_entry != NULL)
-		ptlrpc_lprocfs_register_service(proc_entry, service);
+	if (parent) {
+		rc = ptlrpc_sysfs_register_service(parent, service);
+		if (rc)
+			GOTO(failed, rc);
+	}
+
+	if (debugfs_entry != NULL)
+		ptlrpc_ldebugfs_register_service(debugfs_entry, service);
 
 	rc = ptlrpc_service_nrs_setup(service);
 	if (rc != 0)
@@ -939,8 +961,10 @@ void ptlrpc_server_drop_request(struct ptlrpc_request *req)
 			 */
 			LASSERT(atomic_read(&rqbd->rqbd_req.rq_refcount) == 0);
 			if (svcpt->scp_nrqbds_posted >=
-			    svc->srv_nbuf_per_group &&
-			    !test_req_buffer_pressure) {
+			    svc->srv_nbuf_per_group ||
+			    (svc->srv_nrqbds_max != 0 &&
+			     svcpt->scp_nrqbds_total > svc->srv_nrqbds_max) ||
+			    test_req_buffer_pressure) {
 				/* like in ptlrpc_free_rqbd() */
 				svcpt->scp_nrqbds_total--;
 				OBD_FREE_LARGE(rqbd->rqbd_buffer,
@@ -977,18 +1001,18 @@ void ptlrpc_request_change_export(struct ptlrpc_request *req,
 	if (req->rq_export != NULL) {
 		LASSERT(!list_empty(&req->rq_exp_list));
 		/* remove rq_exp_list from last export */
-		spin_lock_bh(&req->rq_export->exp_rpc_lock);
+		spin_lock(&req->rq_export->exp_rpc_lock);
 		list_del_init(&req->rq_exp_list);
-		spin_unlock_bh(&req->rq_export->exp_rpc_lock);
+		spin_unlock(&req->rq_export->exp_rpc_lock);
 		/* export has one reference already, so it`s safe to
 		 * add req to export queue here and get another
 		 * reference for request later */
-		spin_lock_bh(&export->exp_rpc_lock);
+		spin_lock(&export->exp_rpc_lock);
 		if (req->rq_ops != NULL) /* hp request */
 			list_add(&req->rq_exp_list, &export->exp_hp_rpcs);
 		else
 			list_add(&req->rq_exp_list, &export->exp_reg_rpcs);
-		spin_unlock_bh(&export->exp_rpc_lock);
+		spin_unlock(&export->exp_rpc_lock);
 
 		class_export_rpc_dec(req->rq_export);
 		class_export_put(req->rq_export);
@@ -1041,10 +1065,10 @@ static void ptlrpc_server_finish_active_request(
  * This function is only called when some export receives a message (i.e.,
  * the network is up.)
  */
-void ptlrpc_update_export_timer(struct obd_export *exp, long extra_delay)
+void ptlrpc_update_export_timer(struct obd_export *exp, time64_t extra_delay)
 {
-        struct obd_export *oldest_exp;
-        time_t oldest_time, new_time;
+	struct obd_export *oldest_exp;
+	time64_t oldest_time, new_time;
 
         ENTRY;
 
@@ -1057,7 +1081,7 @@ void ptlrpc_update_export_timer(struct obd_export *exp, long extra_delay)
            will make it to the top of the list. */
 
         /* Do not pay attention on 1sec or smaller renewals. */
-        new_time = cfs_time_current_sec() + extra_delay;
+	new_time = ktime_get_real_seconds() + extra_delay;
         if (exp->exp_last_request_time + 1 /*second */ >= new_time)
                 RETURN_EXIT;
 
@@ -1088,33 +1112,35 @@ void ptlrpc_update_export_timer(struct obd_export *exp, long extra_delay)
                 return;
         }
 
-        /* Note - racing to start/reset the obd_eviction timer is safe */
-        if (exp->exp_obd->obd_eviction_timer == 0) {
-                /* Check if the oldest entry is expired. */
-                if (cfs_time_current_sec() > (oldest_time + PING_EVICT_TIMEOUT +
-                                              extra_delay)) {
-                        /* We need a second timer, in case the net was down and
-                         * it just came back. Since the pinger may skip every
-                         * other PING_INTERVAL (see note in ptlrpc_pinger_main),
-                         * we better wait for 3. */
-                        exp->exp_obd->obd_eviction_timer =
-                                cfs_time_current_sec() + 3 * PING_INTERVAL;
-			CDEBUG(D_HA, "%s: Think about evicting %s from %ld\n",
-                               exp->exp_obd->obd_name,
-                               obd_export_nid2str(oldest_exp), oldest_time);
-                }
-        } else {
-                if (cfs_time_current_sec() >
-                    (exp->exp_obd->obd_eviction_timer + extra_delay)) {
-                        /* The evictor won't evict anyone who we've heard from
-                         * recently, so we don't have to check before we start
-                         * it. */
-                        if (!ping_evictor_wake(exp))
-                                exp->exp_obd->obd_eviction_timer = 0;
-                }
-        }
+	/* Note - racing to start/reset the obd_eviction timer is safe */
+	if (exp->exp_obd->obd_eviction_timer == 0) {
+		/* Check if the oldest entry is expired. */
+		if (ktime_get_real_seconds() >
+		    oldest_time + PING_EVICT_TIMEOUT + extra_delay) {
+			/* We need a second timer, in case the net was down and
+			 * it just came back. Since the pinger may skip every
+			 * other PING_INTERVAL (see note in ptlrpc_pinger_main),
+			 * we better wait for 3.
+			 */
+			exp->exp_obd->obd_eviction_timer =
+				ktime_get_real_seconds() + 3 * PING_INTERVAL;
+			CDEBUG(D_HA, "%s: Think about evicting %s from %lld\n",
+			       exp->exp_obd->obd_name,
+			       obd_export_nid2str(oldest_exp), oldest_time);
+		}
+	} else {
+		if (ktime_get_real_seconds() >
+		    (exp->exp_obd->obd_eviction_timer + extra_delay)) {
+			/* The evictor won't evict anyone who we've heard from
+			 * recently, so we don't have to check before we start
+			 * it.
+			 */
+			if (!ping_evictor_wake(exp))
+				exp->exp_obd->obd_eviction_timer = 0;
+		}
+	}
 
-        EXIT;
+	EXIT;
 }
 
 /**
@@ -1166,7 +1192,7 @@ static int ptlrpc_check_req(struct ptlrpc_request *req)
 static void ptlrpc_at_set_timer(struct ptlrpc_service_part *svcpt)
 {
 	struct ptlrpc_at_array *array = &svcpt->scp_at_array;
-	__s32 next;
+	time64_t next;
 
 	if (array->paa_count == 0) {
 		del_timer(&svcpt->scp_at_timer);
@@ -1174,13 +1200,14 @@ static void ptlrpc_at_set_timer(struct ptlrpc_service_part *svcpt)
 	}
 
 	/* Set timer for closest deadline */
-	next = (__s32)(array->paa_deadline - ktime_get_real_seconds() -
-		       at_early_margin);
+	next = array->paa_deadline - ktime_get_real_seconds() -
+	       at_early_margin;
 	if (next <= 0) {
 		ptlrpc_at_timer(cfs_timer_cb_arg(svcpt, scp_at_timer));
 	} else {
-		mod_timer(&svcpt->scp_at_timer, cfs_time_shift(next));
-		CDEBUG(D_INFO, "armed %s at %+ds\n",
+		mod_timer(&svcpt->scp_at_timer,
+			  jiffies + nsecs_to_jiffies(next * NSEC_PER_SEC));
+		CDEBUG(D_INFO, "armed %s at %+llds\n",
 		       svcpt->scp_service->srv_name, next);
 	}
 }
@@ -1432,16 +1459,16 @@ static int ptlrpc_at_check_timed(struct ptlrpc_service_part *svcpt)
         __u32  index, count;
 	time64_t deadline;
 	time64_t now = ktime_get_real_seconds();
-        cfs_duration_t delay;
-        int first, counter = 0;
-        ENTRY;
+	s64 delay;
+	int first, counter = 0;
 
+	ENTRY;
 	spin_lock(&svcpt->scp_at_lock);
 	if (svcpt->scp_at_check == 0) {
 		spin_unlock(&svcpt->scp_at_lock);
 		RETURN(0);
 	}
-	delay = cfs_time_sub(cfs_time_current(), svcpt->scp_at_checktime);
+	delay = ktime_ms_delta(ktime_get(), svcpt->scp_at_checktime);
 	svcpt->scp_at_check = 0;
 
 	if (array->paa_count == 0) {
@@ -1477,14 +1504,18 @@ static int ptlrpc_at_check_timed(struct ptlrpc_service_part *svcpt)
 				break;
 			}
 
-			ptlrpc_at_remove_timed(rq);
 			/**
 			 * ptlrpc_server_drop_request() may drop
 			 * refcount to 0 already. Let's check this and
 			 * don't add entry to work_list
 			 */
-			if (likely(atomic_inc_not_zero(&rq->rq_refcount)))
+			if (likely(atomic_inc_not_zero(&rq->rq_refcount))) {
+				ptlrpc_at_remove_timed(rq);
 				list_add(&rq->rq_timed_list, &work_list);
+			} else {
+				ptlrpc_at_remove_timed(rq);
+			}
+
 			counter++;
 		}
 
@@ -1505,7 +1536,7 @@ static int ptlrpc_at_check_timed(struct ptlrpc_service_part *svcpt)
                 LCONSOLE_WARN("%s: This server is not able to keep up with "
 			      "request traffic (cpu-bound).\n",
 			      svcpt->scp_service->srv_name);
-		CWARN("earlyQ=%d reqQ=%d recA=%d, svcEst=%d, delay=%ld(jiff)\n",
+		CWARN("earlyQ=%d reqQ=%d recA=%d, svcEst=%d, delay=%lld\n",
 		      counter, svcpt->scp_nreqs_incoming,
 		      svcpt->scp_nreqs_active,
 		      at_get(&svcpt->scp_at_estimate), delay);
@@ -1529,18 +1560,14 @@ static int ptlrpc_at_check_timed(struct ptlrpc_service_part *svcpt)
 
 /* Check if we are already handling earlier incarnation of this request.
  * Called under &req->rq_export->exp_rpc_lock locked */
-static int ptlrpc_server_check_resend_in_progress(struct ptlrpc_request *req)
+static struct ptlrpc_request*
+ptlrpc_server_check_resend_in_progress(struct ptlrpc_request *req)
 {
 	struct ptlrpc_request	*tmp = NULL;
 
 	if (!(lustre_msg_get_flags(req->rq_reqmsg) & MSG_RESENT) ||
 	    (atomic_read(&req->rq_export->exp_rpc_count) == 0))
-		return 0;
-
-	/* bulk request are aborted upon reconnect, don't try to
-	 * find a match */
-	if (req->rq_bulk_write || req->rq_bulk_read)
-		return 0;
+		return NULL;
 
 	/* This list should not be longer than max_requests in
 	 * flights on the client, so it is not all that long.
@@ -1558,12 +1585,12 @@ static int ptlrpc_server_check_resend_in_progress(struct ptlrpc_request *req)
 		if (tmp->rq_xid == req->rq_xid)
 			goto found;
 	}
-	return 0;
+	return NULL;
 
 found:
 	DEBUG_REQ(D_HA, req, "Found duplicate req in processing");
 	DEBUG_REQ(D_HA, tmp, "Request being processed");
-	return -EBUSY;
+	return tmp;
 }
 
 /**
@@ -1617,9 +1644,9 @@ static void ptlrpc_server_hpreq_fini(struct ptlrpc_request *req)
 		if (req->rq_ops && req->rq_ops->hpreq_fini)
 			req->rq_ops->hpreq_fini(req);
 
-		spin_lock_bh(&req->rq_export->exp_rpc_lock);
+		spin_lock(&req->rq_export->exp_rpc_lock);
 		list_del_init(&req->rq_exp_list);
-		spin_unlock_bh(&req->rq_export->exp_rpc_lock);
+		spin_unlock(&req->rq_export->exp_rpc_lock);
 	}
 	EXIT;
 }
@@ -1653,6 +1680,7 @@ static int ptlrpc_server_request_add(struct ptlrpc_service_part *svcpt,
 {
 	int rc;
 	bool hp;
+	struct ptlrpc_request *orig;
 	ENTRY;
 
 	rc = ptlrpc_server_hpreq_init(svcpt, req);
@@ -1662,18 +1690,43 @@ static int ptlrpc_server_request_add(struct ptlrpc_service_part *svcpt,
 	hp = rc > 0;
 	ptlrpc_nrs_req_initialize(svcpt, req, hp);
 
-	if (req->rq_export != NULL) {
+	while (req->rq_export != NULL) {
 		struct obd_export *exp = req->rq_export;
 
 		/* do search for duplicated xid and the adding to the list
 		 * atomically */
 		spin_lock_bh(&exp->exp_rpc_lock);
-		rc = ptlrpc_server_check_resend_in_progress(req);
-		if (rc < 0) {
+		orig = ptlrpc_server_check_resend_in_progress(req);
+		if (orig && OBD_FAIL_PRECHECK(OBD_FAIL_PTLRPC_RESEND_RACE)) {
 			spin_unlock_bh(&exp->exp_rpc_lock);
 
+			OBD_RACE(OBD_FAIL_PTLRPC_RESEND_RACE);
+			msleep(4 * MSEC_PER_SEC);
+			continue;
+		}
+		if (orig && likely(atomic_inc_not_zero(&orig->rq_refcount))) {
+			bool linked;
+
+			spin_unlock_bh(&exp->exp_rpc_lock);
+
+			/*
+			 * When the client resend request and the server has
+			 * the previous copy of it, we need to update deadlines,
+			 * to be sure that the client and the server have equal
+			 *  request deadlines.
+			 */
+
+			spin_lock(&orig->rq_rqbd->rqbd_svcpt->scp_at_lock);
+			linked = orig->rq_at_linked;
+			if (likely(linked))
+				ptlrpc_at_remove_timed(orig);
+			spin_unlock(&orig->rq_rqbd->rqbd_svcpt->scp_at_lock);
+			orig->rq_deadline = req->rq_deadline;
+			if (likely(linked))
+				ptlrpc_at_add_timed(orig);
+			ptlrpc_server_drop_request(orig);
 			ptlrpc_nrs_req_finalize(req);
-			RETURN(rc);
+			RETURN(-EBUSY);
 		}
 
 		if (hp || req->rq_ops != NULL)
@@ -1681,6 +1734,7 @@ static int ptlrpc_server_request_add(struct ptlrpc_service_part *svcpt,
 		else
 			list_add(&req->rq_exp_list, &exp->exp_reg_rpcs);
 		spin_unlock_bh(&exp->exp_rpc_lock);
+		break;
 	}
 
 	/* the current thread is not the processing thread for this request
@@ -2064,7 +2118,8 @@ ptlrpc_server_handle_request(struct ptlrpc_service_part *svcpt,
 		if (unlikely(ptlrpc_check_req(request)))
 			goto put_conn;
 		ptlrpc_update_export_timer(request->rq_export,
-					   timediff_usecs >> 19);
+					   div_u64(timediff_usecs,
+						   USEC_PER_SEC / 2));
         }
 
         /* Discard requests queued for longer than the deadline.
@@ -2151,7 +2206,7 @@ put_conn:
 		DEBUG_REQ(D_ADAPTTO, request,
 			  "sent %d early replies before finishing in %llds",
 			  request->rq_early_count,
-			  arrived_usecs / USEC_PER_SEC);
+			  div_u64(arrived_usecs, USEC_PER_SEC));
 	}
 
 	ptlrpc_server_finish_active_request(svcpt, request);
@@ -2239,7 +2294,7 @@ ptlrpc_handle_rs(struct ptlrpc_reply_state *rs)
 
 				while (nlocks-- > 0) {
 					lock = ack_locks[nlocks];
-					ldlm_lock_downgrade(lock, LCK_COS);
+					ldlm_lock_mode_downgrade(lock, LCK_COS);
 					LDLM_LOCK_PUT(lock);
 				}
 				RETURN(0);
@@ -2453,40 +2508,39 @@ static int ptlrpc_main(void *arg)
 	thread->t_pid = current_pid();
 	unshare_fs_struct();
 
-	/* NB: we will call cfs_cpt_bind() for all threads, because we
-	 * might want to run lustre server only on a subset of system CPUs,
-	 * in that case ->scp_cpt is CFS_CPT_ANY */
-	rc = cfs_cpt_bind(svc->srv_cptable, svcpt->scp_cpt);
-	if (rc != 0) {
-		CWARN("%s: failed to bind %s on CPT %d\n",
-		      svc->srv_name, thread->t_name, svcpt->scp_cpt);
+	if (svc->srv_cpt_bind) {
+		rc = cfs_cpt_bind(svc->srv_cptable, svcpt->scp_cpt);
+		if (rc != 0) {
+			CWARN("%s: failed to bind %s on CPT %d\n",
+			      svc->srv_name, thread->t_name, svcpt->scp_cpt);
+		}
 	}
 
 	ginfo = groups_alloc(0);
-	if (!ginfo) {
-		rc = -ENOMEM;
-		goto out;
-	}
+	if (!ginfo)
+		GOTO(out, rc = -ENOMEM);
 
 	set_current_groups(ginfo);
 	put_group_info(ginfo);
 
 	if (svc->srv_ops.so_thr_init != NULL) {
 		rc = svc->srv_ops.so_thr_init(thread);
-                if (rc)
-                        goto out;
-        }
 
-        OBD_ALLOC_PTR(env);
-        if (env == NULL) {
-                rc = -ENOMEM;
-                goto out_srv_fini;
-        }
+		if (rc)
+			GOTO(out, rc);
+	}
 
-        rc = lu_context_init(&env->le_ctx,
-                             svc->srv_ctx_tags|LCT_REMEMBER|LCT_NOREF);
-        if (rc)
-                goto out_srv_fini;
+	OBD_ALLOC_PTR(env);
+	if (env == NULL)
+		GOTO(out_srv_fini, rc = -ENOMEM);
+	rc = lu_env_add(env);
+	if (rc)
+		GOTO(out_env, rc);
+
+	rc = lu_context_init(&env->le_ctx,
+			     svc->srv_ctx_tags|LCT_REMEMBER|LCT_NOREF);
+	if (rc)
+		GOTO(out_env_remove, rc);
 
         thread->t_env = env;
         env->le_ctx.lc_thread = thread;
@@ -2499,15 +2553,13 @@ static int ptlrpc_main(void *arg)
 
 		CERROR("Failed to post rqbd for %s on CPT %d: %d\n",
 			svc->srv_name, svcpt->scp_cpt, rc);
-		goto out_srv_fini;
+		GOTO(out_ctx_fini, rc);
 	}
 
 	/* Alloc reply state structure for this one */
 	OBD_ALLOC_LARGE(rs, svc->srv_max_reply_size);
-	if (!rs) {
-		rc = -ENOMEM;
-		goto out_srv_fini;
-	}
+	if (!rs)
+		GOTO(out_ctx_fini, rc = -ENOMEM);
 
 	spin_lock(&svcpt->scp_lock);
 
@@ -2553,6 +2605,9 @@ static int ptlrpc_main(void *arg)
 
 		/* reset le_ses to initial state */
 		env->le_ses = NULL;
+		/* Refill the context before execution to make sure
+		 * all thread keys are allocated */
+		lu_env_refill(env);
 		/* Process all incoming reqs before handling any */
 		if (ptlrpc_server_request_incoming(svcpt)) {
 			lu_context_enter(&env->le_ctx);
@@ -2588,17 +2643,18 @@ static int ptlrpc_main(void *arg)
         lc_watchdog_delete(thread->t_watchdog);
         thread->t_watchdog = NULL;
 
+out_ctx_fini:
+	lu_context_fini(&env->le_ctx);
+out_env_remove:
+	lu_env_remove(env);
+out_env:
+	OBD_FREE_PTR(env);
 out_srv_fini:
         /*
          * deconstruct service specific state created by ptlrpc_start_thread()
          */
 	if (svc->srv_ops.so_thr_done != NULL)
 		svc->srv_ops.so_thr_done(thread);
-
-        if (env != NULL) {
-                lu_context_fini(&env->le_ctx);
-                OBD_FREE_PTR(env);
-        }
 out:
         CDEBUG(D_RPCTRACE, "service thread [ %p : %u ] %d exiting: rc %d\n",
                thread, thread->t_pid, thread->t_id, rc);
@@ -2644,7 +2700,12 @@ static int ptlrpc_hr_main(void *arg)
 	struct ptlrpc_hr_thread		*hrt = (struct ptlrpc_hr_thread *)arg;
 	struct ptlrpc_hr_partition	*hrp = hrt->hrt_partition;
 	struct list_head		replies;
+	struct lu_env			*env;
 	int				rc;
+
+	OBD_ALLOC_PTR(env);
+	if (env == NULL)
+		RETURN(-ENOMEM);
 
 	INIT_LIST_HEAD(&replies);
 	unshare_fs_struct();
@@ -2659,6 +2720,15 @@ static int ptlrpc_hr_main(void *arg)
 		      threadname, hrp->hrp_cpt, ptlrpc_hr.hr_cpt_table, rc);
 	}
 
+	rc = lu_context_init(&env->le_ctx, LCT_MD_THREAD | LCT_DT_THREAD |
+			     LCT_REMEMBER | LCT_NOREF);
+	if (rc)
+		GOTO(out_env, rc);
+
+	rc = lu_env_add(env);
+	if (rc)
+		GOTO(out_ctx_fini, rc);
+
 	atomic_inc(&hrp->hrp_nstarted);
 	wake_up(&ptlrpc_hr.hr_waitq);
 
@@ -2672,13 +2742,22 @@ static int ptlrpc_hr_main(void *arg)
 					struct ptlrpc_reply_state,
 					rs_list);
 			list_del_init(&rs->rs_list);
+			/* refill keys if needed */
+			lu_env_refill(env);
+			lu_context_enter(&env->le_ctx);
 			ptlrpc_handle_rs(rs);
+			lu_context_exit(&env->le_ctx);
 		}
 	}
 
 	atomic_inc(&hrp->hrp_nstopped);
 	wake_up(&ptlrpc_hr.hr_waitq);
 
+	lu_env_remove(env);
+out_ctx_fini:
+	lu_context_fini(&env->le_ctx);
+out_env:
+	OBD_FREE_PTR(env);
 	return 0;
 }
 
@@ -3243,6 +3322,7 @@ int ptlrpc_unregister_service(struct ptlrpc_service *service)
 	ptlrpc_service_nrs_cleanup(service);
 
 	ptlrpc_lprocfs_unregister_service(service);
+	ptlrpc_sysfs_unregister_service(service);
 
 	ptlrpc_service_free(service);
 
