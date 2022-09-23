@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -86,6 +86,8 @@ struct dt_device_param {
 	 * calculation */
 	unsigned int	   ddp_extent_tax;
 	unsigned int	   ddp_brw_size;	/* optimal RPC size */
+	/* T10PI checksum type, zero if not supported */
+	enum cksum_types   ddp_t10_cksum_type;
 };
 
 /**
@@ -252,6 +254,13 @@ struct dt_device_operations {
                              struct dt_device_param *param);
 
 	/**
+	 * Return device's super block.
+	 *
+	 * \param[in] dev	dt device
+	 */
+	struct super_block *(*dt_mnt_sb_get)(const struct dt_device *dev);
+
+	/**
 	 * Sync the device.
 	 *
 	 * Sync all the cached state (dirty buffers, pages, etc) to the
@@ -369,6 +378,9 @@ struct dt_allocation_hint {
 	const void		*dah_eadata;
 	int			dah_eadata_len;
 	__u32			dah_mode;
+	int			dah_append_stripes;
+	bool			dah_can_block;
+	char			*dah_append_pool;
 };
 
 /**
@@ -415,6 +427,8 @@ enum dt_format_type dt_mode_to_dft(__u32 mode);
 typedef __u64 dt_obj_version_t;
 
 union ldlm_policy_data;
+
+struct md_layout_change;
 
 /**
  * A dt_object provides common operations to create and destroy
@@ -1040,8 +1054,7 @@ struct dt_object_operations {
 	 */
 	int (*do_declare_layout_change)(const struct lu_env *env,
 					struct dt_object *dt,
-					struct layout_intent *layout,
-					const struct lu_buf *buf,
+					struct md_layout_change *mlc,
 					struct thandle *th);
 
 	/**
@@ -1057,8 +1070,8 @@ struct dt_object_operations {
 	 * \retval -ne		error code
 	 */
 	int (*do_layout_change)(const struct lu_env *env, struct dt_object *dt,
-				struct layout_intent *layout,
-				const struct lu_buf *buf, struct thandle *th);
+				struct md_layout_change *mlc,
+				struct thandle *th);
 };
 
 enum dt_bufs_type {
@@ -1136,7 +1149,6 @@ struct dt_body_operations {
 	 * \param[in] pos	position in the object to start
 	 * \param[out] pos	\a pos + bytes written
 	 * \param[in] th	transaction handle
-	 * \param[in] ignore	unused (was used to request quota ignorance)
 	 *
 	 * \retval positive	bytes written on success
 	 * \retval negative	negated errno on error
@@ -1145,8 +1157,7 @@ struct dt_body_operations {
 			     struct dt_object *dt,
 			     const struct lu_buf *buf,
 			     loff_t *pos,
-			     struct thandle *th,
-			     int ignore);
+			     struct thandle *th);
 
 	/**
 	 * Return buffers for data.
@@ -1175,6 +1186,7 @@ struct dt_body_operations {
 	 * \param[in] pos	position in the object to start
 	 * \param[in] len	size of region in bytes
 	 * \param[out] lb	array of descriptors to fill
+	 * \param[in] maxlnb	max slots in @lnb array
 	 * \param[in] rw	0 if used to read, 1 if used for write
 	 *
 	 * \retval positive	number of descriptors on success
@@ -1185,6 +1197,7 @@ struct dt_body_operations {
 			    loff_t pos,
 			    ssize_t len,
 			    struct niobuf_local *lb,
+			    int maxlnb,
 			    enum dt_bufs_type rw);
 
 	/**
@@ -1479,7 +1492,6 @@ struct dt_index_operations {
 	 * \param[in] rec	buffer storing value
 	 * \param[in] key	key
 	 * \param[in] th	transaction handle
-	 * \param[in] ignore	unused (was used to request quota ignorance)
 	 *
 	 * \retval 0		on success
 	 * \retval negative	negated errno on error
@@ -1488,8 +1500,7 @@ struct dt_index_operations {
 			  struct dt_object *dt,
 			  const struct dt_rec *rec,
 			  const struct dt_key *key,
-			  struct thandle *th,
-			  int ignore);
+			  struct thandle *th);
 
 	/**
 	 * Declare intention to delete a key/value from an index.
@@ -1782,6 +1793,14 @@ struct dt_device {
 	struct list_head		   dd_txn_callbacks;
 	unsigned int			   dd_record_fid_accessed:1,
 					   dd_rdonly:1;
+
+	/* sysfs and debugfs handling */
+	struct dentry			  *dd_debugfs_entry;
+
+	const struct attribute		 **dd_def_attrs;
+	struct kobject			   dd_kobj;
+	struct kobj_type		   dd_ktype;
+	struct completion		   dd_kobj_unregister;
 };
 
 int  dt_device_init(struct dt_device *dev, struct lu_device_type *t);
@@ -1900,7 +1919,9 @@ struct thandle {
 				th_wait_submit:1,
 	/* complex transaction which will track updates on all targets,
 	 * including OSTs */
-				th_complex:1;
+				th_complex:1,
+	/* whether ignore quota */
+				th_ignore_quota:1;
 };
 
 /**
@@ -2380,13 +2401,14 @@ static inline int dt_ref_del(const struct lu_env *env,
 
 static inline int dt_bufs_get(const struct lu_env *env, struct dt_object *d,
 			      struct niobuf_remote *rnb,
-			      struct niobuf_local *lnb, enum dt_bufs_type rw)
+			      struct niobuf_local *lnb, int maxlnb,
+			      enum dt_bufs_type rw)
 {
 	LASSERT(d);
 	LASSERT(d->do_body_ops);
 	LASSERT(d->do_body_ops->dbo_bufs_get);
 	return d->do_body_ops->dbo_bufs_get(env, d, rnb->rnb_offset,
-					    rnb->rnb_len, lnb, rw);
+					    rnb->rnb_len, lnb, maxlnb, rw);
 }
 
 static inline int dt_bufs_put(const struct lu_env *env, struct dt_object *d,
@@ -2450,12 +2472,12 @@ static inline int dt_declare_write(const struct lu_env *env,
 
 static inline ssize_t dt_write(const struct lu_env *env, struct dt_object *dt,
 			       const struct lu_buf *buf, loff_t *pos,
-			       struct thandle *th, int rq)
+			       struct thandle *th)
 {
 	LASSERT(dt);
 	LASSERT(dt->do_body_ops);
 	LASSERT(dt->do_body_ops->dbo_write);
-	return dt->do_body_ops->dbo_write(env, dt, buf, pos, th, rq);
+	return dt->do_body_ops->dbo_write(env, dt, buf, pos, th);
 }
 
 static inline int dt_declare_punch(const struct lu_env *env,
@@ -2525,6 +2547,16 @@ static inline void dt_conf_get(const struct lu_env *env,
         return dev->dd_ops->dt_conf_get(env, dev, param);
 }
 
+static inline struct super_block *dt_mnt_sb_get(const struct dt_device *dev)
+{
+	LASSERT(dev);
+	LASSERT(dev->dd_ops);
+	if (dev->dd_ops->dt_mnt_sb_get)
+		return dev->dd_ops->dt_mnt_sb_get(dev);
+
+	return ERR_PTR(-EOPNOTSUPP);
+}
+
 static inline int dt_sync(const struct lu_env *env, struct dt_device *dev)
 {
         LASSERT(dev);
@@ -2558,11 +2590,10 @@ static inline int dt_declare_insert(const struct lu_env *env,
 }
 
 static inline int dt_insert(const struct lu_env *env,
-                                    struct dt_object *dt,
-                                    const struct dt_rec *rec,
-                                    const struct dt_key *key,
-                                    struct thandle *th,
-                                    int noquota)
+			    struct dt_object *dt,
+			    const struct dt_rec *rec,
+			    const struct dt_key *key,
+			    struct thandle *th)
 {
         LASSERT(dt);
         LASSERT(dt->do_index_ops);
@@ -2571,7 +2602,7 @@ static inline int dt_insert(const struct lu_env *env,
 	if (CFS_FAULT_CHECK(OBD_FAIL_DT_INSERT))
 		return cfs_fail_err;
 
-	return dt->do_index_ops->dio_insert(env, dt, rec, key, th, noquota);
+	return dt->do_index_ops->dio_insert(env, dt, rec, key, th);
 }
 
 static inline int dt_declare_xattr_del(const struct lu_env *env,
@@ -2747,26 +2778,24 @@ static inline int dt_lookup(const struct lu_env *env,
 
 static inline int dt_declare_layout_change(const struct lu_env *env,
 					   struct dt_object *o,
-					   struct layout_intent *layout,
-					   const struct lu_buf *buf,
+					   struct md_layout_change *mlc,
 					   struct thandle *th)
 {
 	LASSERT(o);
 	LASSERT(o->do_ops);
 	LASSERT(o->do_ops->do_declare_layout_change);
-	return o->do_ops->do_declare_layout_change(env, o, layout, buf, th);
+	return o->do_ops->do_declare_layout_change(env, o, mlc, th);
 }
 
 static inline int dt_layout_change(const struct lu_env *env,
 				   struct dt_object *o,
-				   struct layout_intent *layout,
-				   const struct lu_buf *buf,
+				   struct md_layout_change *mlc,
 				   struct thandle *th)
 {
 	LASSERT(o);
 	LASSERT(o->do_ops);
 	LASSERT(o->do_ops->do_layout_change);
-	return o->do_ops->do_layout_change(env, o, layout, buf, th);
+	return o->do_ops->do_layout_change(env, o, mlc, th);
 }
 
 struct dt_find_hint {
@@ -2815,6 +2844,9 @@ static inline struct dt_thread_info *dt_info(const struct lu_env *env)
 
 int dt_global_init(void);
 void dt_global_fini(void);
+int dt_tunables_init(struct dt_device *dt, struct obd_type *type,
+		     const char *name, struct ldebugfs_vars *list);
+int dt_tunables_fini(struct dt_device *dt);
 
 # ifdef CONFIG_PROC_FS
 int lprocfs_dt_blksize_seq_show(struct seq_file *m, void *v);
