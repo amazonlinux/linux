@@ -3,4 +3,5 @@ ccflags-y += -include $(srctree)/drivers/staging/lustrefsx/config.h
 ccflags-y += -I$(srctree)/drivers/staging/lustrefsx/libcfs/include
 ccflags-y += -I$(srctree)/drivers/staging/lustrefsx/lnet/include
 ccflags-y += -I$(srctree)/drivers/staging/lustrefsx/lustre/include
+ccflags-y += -I$(srctree)/drivers/staging/lustrefsx/lustre/include/uapi
 ccflags-y += -Wno-format-truncation -Werror
