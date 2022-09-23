@@ -20,7 +20,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2016, Intel Corporation.
+ * Copyright (c) 2017, Intel Corporation.
  *
  * lustre/target/barrier.c
  *
@@ -35,12 +35,11 @@
 
 #include <linux/percpu_counter.h>
 
-#include <lustre/lustre_idl.h>
 #include <dt_object.h>
 #include <obd.h>
 #include <obd_class.h>
 #include <lustre_barrier.h>
-#include <lustre/lustre_barrier_user.h>
+#include <uapi/linux/lustre/lustre_barrier_user.h>
 
 static LIST_HEAD(barrier_instance_list);
 static DEFINE_SPINLOCK(barrier_instance_lock);
@@ -53,7 +52,7 @@ struct barrier_instance {
 	rwlock_t		 bi_rwlock;
 	struct percpu_counter	 bi_writers;
 	atomic_t		 bi_ref;
-	time_t			 bi_deadline;
+	time64_t		 bi_deadline;
 	__u32			 bi_status;
 };
 
@@ -173,7 +172,7 @@ static void barrier_set(struct barrier_instance *barrier, __u32 status)
 static int barrier_freeze(const struct lu_env *env,
 			  struct barrier_instance *barrier, bool phase1)
 {
-	int left;
+	time64_t left;
 	int rc = 0;
 	__s64 inflight = 0;
 	ENTRY;
@@ -195,7 +194,7 @@ static int barrier_freeze(const struct lu_env *env,
 
 	LASSERT(barrier->bi_deadline != 0);
 
-	left = barrier->bi_deadline - cfs_time_current_sec();
+	left = barrier->bi_deadline - ktime_get_real_seconds();
 	if (left <= 0)
 		RETURN(1);
 
@@ -214,8 +213,7 @@ static int barrier_freeze(const struct lu_env *env,
 		if (rc)
 			RETURN(rc);
 
-		if (cfs_time_beforeq(barrier->bi_deadline,
-				     cfs_time_current_sec()))
+		if (ktime_get_real_seconds() > barrier->bi_deadline)
 			RETURN(1);
 	}
 
@@ -252,7 +250,7 @@ bool barrier_entry(struct dt_device *key)
 	if (likely(barrier->bi_status != BS_FREEZING_P1 &&
 		   barrier->bi_status != BS_FREEZING_P2 &&
 		   barrier->bi_status != BS_FROZEN) ||
-	    cfs_time_beforeq(barrier->bi_deadline, cfs_time_current_sec())) {
+	    ktime_get_real_seconds() > barrier->bi_deadline) {
 		percpu_counter_inc(&barrier->bi_writers);
 		entered = true;
 	}
@@ -292,7 +290,7 @@ int barrier_handler(struct dt_device *key, struct ptlrpc_request *req)
 	ENTRY;
 
 	/* glimpse on barrier locks always packs a glimpse descriptor */
-	req_capsule_extend(&req->rq_pill, &RQF_LDLM_GL_DESC_CALLBACK);
+	req_capsule_extend(&req->rq_pill, &RQF_LDLM_GL_CALLBACK_DESC);
 	desc = req_capsule_client_get(&req->rq_pill, &RMF_DLM_GL_DESC);
 	if (!desc)
 		GOTO(out, rc = -EPROTO);
@@ -326,8 +324,8 @@ int barrier_handler(struct dt_device *key, struct ptlrpc_request *req)
 		if (OBD_FAIL_CHECK(OBD_FAIL_BARRIER_FAILURE))
 			GOTO(fini, rc = -EINVAL);
 
-		barrier->bi_deadline = cfs_time_current_sec() +
-					desc->lgbd_timeout;
+		barrier->bi_deadline = ktime_get_real_seconds() +
+				       desc->lgbd_timeout;
 		rc = barrier_freeze(&env, barrier,
 				    desc->lgbd_status == BS_FREEZING_P1);
 		break;
@@ -358,7 +356,7 @@ out_barrier:
 	lvb->lvb_index = barrier_dev_idx(barrier);
 
 	CDEBUG(D_SNAPSHOT, "%s: handled barrier request: status %u, "
-	       "deadline %lu: rc = %d\n", barrier_barrier2name(barrier),
+	       "deadline %lld: rc = %d\n", barrier_barrier2name(barrier),
 	       lvb->lvb_status, barrier->bi_deadline, rc);
 
 	barrier_instance_put(barrier);
