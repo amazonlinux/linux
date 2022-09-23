@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2014, Intel Corporation.
+ * Copyright (c) 2014, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -43,7 +43,7 @@
 /* Sparse annotation. */
 #define __user
 
-#include <libcfs/libcfs_ioctl.h>
+#include <uapi/linux/lnet/libcfs_ioctl.h>
 
 #define LIBCFS_IOC_INIT(data)					\
 do {								\
