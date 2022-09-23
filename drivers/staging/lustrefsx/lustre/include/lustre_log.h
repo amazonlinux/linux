@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -52,9 +52,9 @@
  */
 
 #include <obd_class.h>
-#include <lustre/lustre_idl.h>
 #include <dt_object.h>
-#include <lustre_log_user.h>
+#include <uapi/linux/lustre/lustre_idl.h>
+#include <uapi/linux/lustre/lustre_log_user.h>
 
 #define LOG_NAME_LIMIT(logname, name)                   \
         snprintf(logname, sizeof(logname), "LOGS/%s", name)
@@ -160,6 +160,7 @@ int llog_cat_process_or_fork(const struct lu_env *env,
 int llog_cat_process(const struct lu_env *env, struct llog_handle *cat_llh,
 		     llog_cb_t cb, void *data, int startcat, int startidx);
 __u64 llog_cat_size(const struct lu_env *env, struct llog_handle *cat_llh);
+__u32 llog_cat_free_space(struct llog_handle *cat_llh);
 int llog_cat_reverse_process(const struct lu_env *env,
 			     struct llog_handle *cat_llh, llog_cb_t cb,
 			     void *data);
@@ -170,8 +171,6 @@ int llog_setup(const struct lu_env *env, struct obd_device *obd,
 int __llog_ctxt_put(const struct lu_env *env, struct llog_ctxt *ctxt);
 int llog_cleanup(const struct lu_env *env, struct llog_ctxt *);
 int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp, int flags);
-int llog_cancel(const struct lu_env *env, struct llog_ctxt *ctxt,
-		struct llog_cookie *cookies, int flags);
 
 /* llog_ioctl.c */
 struct obd_ioctl_data;
@@ -202,8 +201,6 @@ struct llog_operations {
 	int (*lop_sync)(struct llog_ctxt *ctxt, struct obd_export *exp,
 			int flags);
 	int (*lop_cleanup)(const struct lu_env *env, struct llog_ctxt *ctxt);
-	int (*lop_cancel)(const struct lu_env *env, struct llog_ctxt *ctxt,
-			  struct llog_cookie *cookies, int flags);
 	int (*lop_connect)(struct llog_ctxt *ctxt, struct llog_logid *logid,
 			   struct llog_gen *gen, struct obd_uuid *uuid);
 	/**
@@ -271,8 +268,8 @@ struct llog_handle {
 	 * case, after it will have reached LLOG_HDR_BITMAP_SIZE, llh_cat_idx
 	 * will become its upper limit */
 	int			 lgh_last_idx;
-	int			 lgh_cur_idx; /* used during llog_process */
-	__u64			 lgh_cur_offset; /* used during llog_process */
+	struct rw_semaphore	 lgh_last_sem;
+	__u64			 lgh_cur_offset; /* used for test only */
 	struct llog_ctxt	*lgh_ctxt;
 	union {
 		struct plain_handle_data	 phd;
@@ -284,7 +281,7 @@ struct llog_handle {
 	atomic_t		 lgh_refcount;
 
 	int			lgh_max_size;
-	__u32			lgh_stale:1;
+	bool			lgh_destroyed;
 };
 
 /* llog_osd.c */
