@@ -21,7 +21,7 @@
  * GPL HEADER END
  */
 /*
- * Copyright (c) 2012, 2014, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  * Use is subject to license terms.
  */
 
@@ -175,13 +175,22 @@ struct qsd_instance;
  * Below are the function prototypes to be used by OSD layer to manage quota
  * enforcement. Arguments are documented where each function is defined.  */
 
+/* flags for quota local enforcement */
+enum osd_quota_local_flags {
+	QUOTA_FL_OVER_USRQUOTA = 1 << 0,
+	QUOTA_FL_OVER_GRPQUOTA = 1 << 1,
+	QUOTA_FL_SYNC = 1 << 2,
+	QUOTA_FL_OVER_PRJQUOTA = 1 << 3,
+};
+
 struct qsd_instance *qsd_init(const struct lu_env *, char *, struct dt_device *,
-			      struct proc_dir_entry *);
+			      struct proc_dir_entry *, bool is_md);
 int qsd_prepare(const struct lu_env *, struct qsd_instance *);
 int qsd_start(const struct lu_env *, struct qsd_instance *);
 void qsd_fini(const struct lu_env *, struct qsd_instance *);
 int qsd_op_begin(const struct lu_env *, struct qsd_instance *,
-		 struct lquota_trans *, struct lquota_id_info *, int *);
+		 struct lquota_trans *, struct lquota_id_info *,
+		 enum osd_quota_local_flags *);
 void qsd_op_end(const struct lu_env *, struct qsd_instance *,
 		struct lquota_trans *);
 void qsd_op_adjust(const struct lu_env *, struct qsd_instance *,
@@ -212,25 +221,19 @@ struct lquota_id_info {
 	bool			 lqi_is_blk;
 };
 
-/* Since we enforce only inode quota in meta pool (MDTs), and block quota in
- * data pool (OSTs), there are at most 4 quota ids being enforced in a single
- * transaction, which is chown transaction:
+/* With the DoM, both inode quota in meta pool and block quota in data pool
+ * will be enforced at MDT, there are at most 4 quota ids being enforced in
+ * a single transaction for inode and block quota, which is chown transaction:
  * original uid and gid, new uid and gid.
  *
  * This value might need to be revised when directory quota is added.  */
-#define QUOTA_MAX_TRANSIDS    4
+#define QUOTA_MAX_TRANSIDS    8
 
 /* all qids involved in a single transaction */
 struct lquota_trans {
 	unsigned short		lqt_id_cnt;
 	struct lquota_id_info	lqt_ids[QUOTA_MAX_TRANSIDS];
 };
-
-/* flags for quota local enforcement */
-#define QUOTA_FL_OVER_USRQUOTA  0x01
-#define QUOTA_FL_OVER_GRPQUOTA  0x02
-#define QUOTA_FL_SYNC           0x04
-#define QUOTA_FL_OVER_PRJQUOTA  0x08
 
 #define IS_LQUOTA_RES(res)						\
 	(res->lr_name.name[LUSTRE_RES_ID_SEQ_OFF] == FID_SEQ_QUOTA ||	\
