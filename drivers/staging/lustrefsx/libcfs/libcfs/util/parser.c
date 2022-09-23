@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2001 Cluster File Systems, Inc.
  *
- * Copyright (c) 2014, Intel Corporation.
+ * Copyright (c) 2014, 2017, Intel Corporation.
  *
  *   This file is part of Lustre, http://www.sf.net/projects/lustre/
  *
@@ -36,7 +36,7 @@
 #include <unistd.h>
 
 #include <libcfs/util/parser.h>
-#include <lustre_ver.h>
+#include <linux/lustre/lustre_ver.h>
 
 static command_t * top_level;           /* Top level of commands, initialized by
                                     * InitParser                              */
@@ -768,40 +768,41 @@ int Parser_arg2int(const char *inp, long *result, int base)
 }
 
 /* Convert human readable size string to and int; "1k" -> 1000 */
-int Parser_size (int *sizep, char *str) {
-        int size;
-        char mod[32];
+int Parser_size(unsigned long *sizep, char *str)
+{
+	unsigned long size;
+	char mod[32];
 
-        switch (sscanf (str, "%d%1[gGmMkK]", &size, mod)) {
-        default:
-                return (-1);
+	switch (sscanf(str, "%lu%1[gGmMkK]", &size, mod)) {
+	default:
+		return -1;
 
-        case 1:
-                *sizep = size;
-                return (0);
+	case 1:
+		*sizep = size;
+		return 0;
 
-        case 2:
-                switch (*mod) {
-                case 'g':
-                case 'G':
-                        *sizep = size << 30;
-                        return (0);
+	case 2:
+		switch (*mod) {
+		case 'g':
+		case 'G':
+			*sizep = size << 30;
+			return 0;
 
-                case 'm':
-                case 'M':
-                        *sizep = size << 20;
-                        return (0);
+		case 'm':
+		case 'M':
+			*sizep = size << 20;
+			return 0;
 
-                case 'k':
-                case 'K':
-                        *sizep = size << 10;
-                        return (0);
+		case 'k':
+		case 'K':
+			*sizep = size << 10;
+			return 0;
 
-                default:
-                        *sizep = size;
-                        return (0);
-                }
-        }
+		default:
+			*sizep = size;
+			return 0;
+		}
+	}
 }
 
 /* Convert a string boolean to an int; "enable" -> 1 */
