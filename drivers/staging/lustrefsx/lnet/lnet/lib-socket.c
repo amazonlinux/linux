@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2015, 2016, Intel Corporation.
+ * Copyright (c) 2015, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -40,9 +40,9 @@
 #include <linux/syscalls.h>
 #include <net/sock.h>
 
+#include <libcfs/linux/linux-time.h>
 #include <libcfs/linux/linux-net.h>
 #include <libcfs/libcfs.h>
-#include <libcfs/linux/linux-time.h>
 #include <lnet/lib-lnet.h>
 
 /*
@@ -65,20 +65,6 @@
 #ifndef SO_RCVTIMEO
 #define SO_RCVTIMEO SO_RCVTIMEO_OLD
 #endif
-
-static int
-lnet_sock_create_kern(struct socket **sock, struct net *ns)
-{
-	int rc;
-
-#ifdef HAVE_SOCK_CREATE_KERN_USE_NET
-	rc = sock_create_kern(ns, PF_INET, SOCK_STREAM, 0, sock);
-#else
-	rc = sock_create_kern(PF_INET, SOCK_STREAM, 0, sock);
-#endif
-
-	return rc;
-}
 
 int
 lnet_sock_write(struct socket *sock, void *buffer, int nob, int timeout)
@@ -186,13 +172,17 @@ lnet_sock_create(struct socket **sockp, int *fatal,
 		 __u32 local_ip, int local_port, struct net *ns)
 {
 	struct sockaddr_in  locaddr;
-	struct socket *sock;
-	int rc;
+	struct socket	   *sock;
+	int		    rc;
 
 	/* All errors are fatal except bind failure if the port is in use */
 	*fatal = 1;
 
-	rc = lnet_sock_create_kern(&sock, ns);
+#ifdef HAVE_SOCK_CREATE_KERN_USE_NET
+	rc = sock_create_kern(ns, PF_INET, SOCK_STREAM, 0, &sock);
+#else
+	rc = sock_create_kern(PF_INET, SOCK_STREAM, 0, &sock);
+#endif
 	*sockp = sock;
 	if (rc != 0) {
 		CERROR("Can't create socket: %d\n", rc);
