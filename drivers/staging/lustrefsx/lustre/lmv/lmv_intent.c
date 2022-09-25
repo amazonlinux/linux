@@ -42,7 +42,6 @@
 #include <lustre_intent.h>
 
 #include <obd_support.h>
-#include <lustre/lustre_idl.h>
 #include <lustre_lib.h>
 #include <lustre_net.h>
 #include <lustre_dlm.h>
@@ -55,7 +54,8 @@ static int lmv_intent_remote(struct obd_export *exp, struct lookup_intent *it,
 			     const struct lu_fid *parent_fid,
 			     struct ptlrpc_request **reqp,
 			     ldlm_blocking_callback cb_blocking,
-			     __u64 extra_lock_flags)
+			     __u64 extra_lock_flags,
+			     const char *secctx_name, __u32 secctx_name_size)
 {
 	struct obd_device	*obd = exp->exp_obd;
 	struct lmv_obd		*lmv = &obd->u.lmv;
@@ -73,13 +73,6 @@ static int lmv_intent_remote(struct obd_export *exp, struct lookup_intent *it,
 		RETURN(-EPROTO);
 
 	LASSERT((body->mbo_valid & OBD_MD_MDS));
-
-	/*
-	 * Unfortunately, we have to lie to MDC/MDS to retrieve
-	 * attributes llite needs and provideproper locking.
-	 */
-	if (it->it_op & IT_LOOKUP)
-		it->it_op = IT_GETATTR;
 
 	/*
 	 * We got LOOKUP lock, but we really need attrs.
@@ -114,6 +107,16 @@ static int lmv_intent_remote(struct obd_export *exp, struct lookup_intent *it,
 	op_data->op_bias = MDS_CROSS_REF;
 	CDEBUG(D_INODE, "REMOTE_INTENT with fid="DFID" -> mds #%u\n",
 	       PFID(&body->mbo_fid1), tgt->ltd_idx);
+
+	/* ask for security context upon intent */
+	if (it->it_op & (IT_LOOKUP | IT_GETATTR | IT_OPEN) &&
+	    secctx_name_size != 0 && secctx_name != NULL) {
+		op_data->op_file_secctx_name = secctx_name;
+		op_data->op_file_secctx_name_size = secctx_name_size;
+		CDEBUG(D_SEC, "'%.*s' is security xattr to fetch for "
+		       DFID"\n",
+		       secctx_name_size, secctx_name, PFID(&body->mbo_fid1));
+	}
 
 	rc = md_intent_lock(tgt->ltd_exp, op_data, it, &req, cb_blocking,
 			    extra_lock_flags);
@@ -153,13 +156,14 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 			  ldlm_blocking_callback cb_blocking,
 			  int extra_lock_flags)
 {
-	struct obd_device      *obd = exp->exp_obd;
-	struct lmv_obd         *lmv = &obd->u.lmv;
-	struct ptlrpc_request	*req = NULL;
-	struct mdt_body		*body;
-	struct md_op_data      *op_data;
-	int                     i;
-	int                     rc = 0;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct ptlrpc_request *req = NULL;
+	struct mdt_body *body;
+	struct md_op_data *op_data;
+	int i;
+	int valid_stripe_count = 0;
+	int rc = 0;
 
 	ENTRY;
 
@@ -185,6 +189,9 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 		fid = lsm->lsm_md_oinfo[i].lmo_fid;
 		inode = lsm->lsm_md_oinfo[i].lmo_root;
 
+		if (!inode)
+			continue;
+
 		/*
 		 * Prepare op_data for revalidating. Note that @fid2 shluld be
 		 * defined otherwise it will go to server and take new lock
@@ -193,8 +200,14 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 		memset(op_data, 0, sizeof(*op_data));
 		op_data->op_fid1 = fid;
 		op_data->op_fid2 = fid;
+		/* shard revalidate only needs to fetch attributes and UPDATE
+		 * lock, which is similar to the bottom half of remote object
+		 * getattr, set this flag so that MDT skips checking whether
+		 * it's remote object.
+		 */
+		op_data->op_bias = MDS_CROSS_REF;
 
-		tgt = lmv_locate_mds(lmv, op_data, &fid);
+		tgt = lmv_get_target(lmv, lsm->lsm_md_oinfo[i].lmo_mds, NULL);
 		if (IS_ERR(tgt))
 			GOTO(cleanup, rc = PTR_ERR(tgt));
 
@@ -208,6 +221,12 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 
 		rc = md_intent_lock(tgt->ltd_exp, op_data, &it, &req,
 				    cb_blocking, extra_lock_flags);
+		if (rc == -ENOENT) {
+			/* skip stripe is not exists */
+			rc = 0;
+			continue;
+		}
+
 		if (rc < 0)
 			GOTO(cleanup, rc);
 
@@ -243,16 +262,21 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 			ldlm_lock_decref(lockh, it.it_lock_mode);
 			it.it_lock_mode = 0;
 		}
+
+		valid_stripe_count++;
 	}
 
 cleanup:
 	if (req != NULL)
 		ptlrpc_req_finished(req);
 
+	/* if all stripes are invalid, return -ENOENT to notify user */
+	if (!rc && !valid_stripe_count)
+		rc = -ENOENT;
+
 	OBD_FREE_PTR(op_data);
 	RETURN(rc);
 }
-
 
 /*
  * IT_OPEN is intended to open (and create, possible) an object. Parent (pid)
@@ -264,13 +288,58 @@ static int lmv_intent_open(struct obd_export *exp, struct md_op_data *op_data,
 			   ldlm_blocking_callback cb_blocking,
 			   __u64 extra_lock_flags)
 {
-	struct obd_device	*obd = exp->exp_obd;
-	struct lmv_obd		*lmv = &obd->u.lmv;
-	struct lmv_tgt_desc	*tgt;
-	struct mdt_body		*body;
-	int			rc;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_tgt_desc *tgt;
+	struct mdt_body *body;
+	__u64 flags = it->it_flags;
+	int rc;
+
 	ENTRY;
 
+	if ((it->it_op & IT_CREAT) && !(flags & MDS_OPEN_BY_FID)) {
+		/* don't allow create under dir with bad hash */
+		if (lmv_is_dir_bad_hash(op_data->op_mea1))
+			RETURN(-EBADF);
+
+		if (lmv_is_dir_migrating(op_data->op_mea1)) {
+			if (flags & O_EXCL) {
+				/*
+				 * open(O_CREAT | O_EXCL) needs to check
+				 * existing name, which should be done on both
+				 * old and new layout, to avoid creating new
+				 * file under old layout, check old layout on
+				 * client side.
+				 */
+				tgt = lmv_locate_tgt(lmv, op_data,
+						     &op_data->op_fid1);
+				if (IS_ERR(tgt))
+					RETURN(PTR_ERR(tgt));
+
+				rc = md_getattr_name(tgt->ltd_exp, op_data,
+						     reqp);
+				if (!rc) {
+					ptlrpc_req_finished(*reqp);
+					*reqp = NULL;
+					RETURN(-EEXIST);
+				}
+
+				if (rc != -ENOENT)
+					RETURN(rc);
+
+				op_data->op_post_migrate = true;
+			} else {
+				/*
+				 * open(O_CREAT) will be sent to MDT in old
+				 * layout first, to avoid creating new file
+				 * under old layout, clear O_CREAT.
+				 */
+				it->it_flags &= ~O_CREAT;
+			}
+		}
+	}
+
+retry:
 	if (it->it_flags & MDS_OPEN_BY_FID) {
 		LASSERT(fid_is_sane(&op_data->op_fid2));
 
@@ -290,7 +359,7 @@ static int lmv_intent_open(struct obd_export *exp, struct md_op_data *op_data,
 		LASSERT(fid_is_zero(&op_data->op_fid2));
 		LASSERT(op_data->op_name != NULL);
 
-		tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
+		tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
 		if (IS_ERR(tgt))
 			RETURN(PTR_ERR(tgt));
 	}
@@ -321,8 +390,21 @@ static int lmv_intent_open(struct obd_export *exp, struct md_op_data *op_data,
 	 */
 	if ((it->it_disposition & DISP_LOOKUP_NEG) &&
 	    !(it->it_disposition & DISP_OPEN_CREATE) &&
-	    !(it->it_disposition & DISP_OPEN_OPEN))
+	    !(it->it_disposition & DISP_OPEN_OPEN)) {
+		if (!(it->it_flags & MDS_OPEN_BY_FID) &&
+		    lmv_dir_retry_check_update(op_data)) {
+			ptlrpc_req_finished(*reqp);
+			it->it_request = NULL;
+			it->it_disposition = 0;
+			*reqp = NULL;
+
+			it->it_flags = flags;
+			fid_zero(&op_data->op_fid2);
+			goto retry;
+		}
+
 		RETURN(rc);
+	}
 
 	body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
 	if (body == NULL)
@@ -331,7 +413,9 @@ static int lmv_intent_open(struct obd_export *exp, struct md_op_data *op_data,
 	/* Not cross-ref case, just get out of here. */
 	if (unlikely((body->mbo_valid & OBD_MD_MDS))) {
 		rc = lmv_intent_remote(exp, it, &op_data->op_fid1, reqp,
-				       cb_blocking, extra_lock_flags);
+				       cb_blocking, extra_lock_flags,
+				       op_data->op_file_secctx_name,
+				       op_data->op_file_secctx_name_size);
 		if (rc != 0)
 			RETURN(rc);
 
@@ -352,42 +436,56 @@ lmv_intent_lookup(struct obd_export *exp, struct md_op_data *op_data,
 		  ldlm_blocking_callback cb_blocking,
 		  __u64 extra_lock_flags)
 {
-	struct obd_device	*obd = exp->exp_obd;
-	struct lmv_obd		*lmv = &obd->u.lmv;
-	struct lmv_tgt_desc	*tgt = NULL;
-	struct mdt_body		*body;
-	struct lmv_stripe_md	*lsm = op_data->op_mea1;
-	int			rc = 0;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_tgt_desc *tgt = NULL;
+	struct mdt_body *body;
+	int rc;
 	ENTRY;
 
-	/* If it returns ERR_PTR(-EBADFD) then it is an unknown hash type
-	 * it will try all stripes to locate the object */
-	tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
-	if (IS_ERR(tgt) && (PTR_ERR(tgt) != -EBADFD))
+retry:
+	if (op_data->op_flags & MF_GETATTR_BY_FID) {
+		/* getattr by FID, replace fid1 with stripe FID,
+		 * NB, don't replace if name is "/", because it may be a subtree
+		 * mount, and if it's a striped directory, fid1 will be replaced
+		 * to stripe FID by hash, while fid2 is master object FID, which
+		 * will be treated as a remote object if the two FIDs are
+		 * located on different MDTs, and LOOKUP lock can't be fetched.
+		 */
+		LASSERT(op_data->op_name);
+		if (op_data->op_namelen != 1 ||
+		    strncmp(op_data->op_name, "/", 1) != 0) {
+			tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+			if (IS_ERR(tgt))
+				RETURN(PTR_ERR(tgt));
+		}
+
+		/* name is used to locate stripe target, clear it here
+		 * to avoid packing name in request, so that MDS knows
+		 * it's getattr by FID.
+		 */
+		op_data->op_name = NULL;
+		op_data->op_namelen = 0;
+
+		/* getattr request is sent to MDT where fid2 inode is */
+		tgt = lmv_find_target(lmv, &op_data->op_fid2);
+	} else if (op_data->op_name) {
+		/* getattr by name */
+		tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+		if (!fid_is_sane(&op_data->op_fid2))
+			fid_zero(&op_data->op_fid2);
+	} else {
+		/* old way to getattr by FID, parent FID not packed */
+		tgt = lmv_find_target(lmv, &op_data->op_fid1);
+	}
+	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
-	/* Both migrating dir and unknown hash dir need to try
-	 * all of sub-stripes */
-	if (lsm != NULL && !lmv_is_known_hash_type(lsm->lsm_md_hash_type)) {
-		struct lmv_oinfo *oinfo;
-
-		oinfo = &lsm->lsm_md_oinfo[0];
-
-		op_data->op_fid1 = oinfo->lmo_fid;
-		op_data->op_mds = oinfo->lmo_mds;
-		tgt = lmv_get_target(lmv, oinfo->lmo_mds, NULL);
-		if (IS_ERR(tgt))
-			RETURN(PTR_ERR(tgt));
-	}
-
-	if (!fid_is_sane(&op_data->op_fid2))
-		fid_zero(&op_data->op_fid2);
-
 	CDEBUG(D_INODE, "LOOKUP_INTENT with fid1="DFID", fid2="DFID
-	       ", name='%s' -> mds #%u lsm=%p lsm_magic=%x\n",
+	       ", name='%s' -> mds #%u\n",
 	       PFID(&op_data->op_fid1), PFID(&op_data->op_fid2),
 	       op_data->op_name ? op_data->op_name : "<NULL>",
-	       tgt->ltd_idx, lsm, lsm == NULL ? -1 : lsm->lsm_md_magic);
+	       tgt->ltd_idx);
 
 	op_data->op_bias &= ~MDS_CROSS_REF;
 
@@ -407,37 +505,14 @@ lmv_intent_lookup(struct obd_export *exp, struct md_op_data *op_data,
 				RETURN(rc);
 		}
 		RETURN(rc);
-	} else if (it_disposition(it, DISP_LOOKUP_NEG) && lsm != NULL &&
-		   lmv_need_try_all_stripes(lsm)) {
-		/* For migrating and unknown hash type directory, it will
-		 * try to target the entry on other stripes */
-		int stripe_index;
+	} else if (it_disposition(it, DISP_LOOKUP_NEG) &&
+		   lmv_dir_retry_check_update(op_data)) {
+		ptlrpc_req_finished(*reqp);
+		it->it_request = NULL;
+		it->it_disposition = 0;
+		*reqp = NULL;
 
-		for (stripe_index = 1;
-		     stripe_index < lsm->lsm_md_stripe_count &&
-		     it_disposition(it, DISP_LOOKUP_NEG); stripe_index++) {
-			struct lmv_oinfo *oinfo;
-
-			/* release the previous request */
-			ptlrpc_req_finished(*reqp);
-			it->it_request = NULL;
-			*reqp = NULL;
-
-			oinfo = &lsm->lsm_md_oinfo[stripe_index];
-			tgt = lmv_find_target(lmv, &oinfo->lmo_fid);
-			if (IS_ERR(tgt))
-				RETURN(PTR_ERR(tgt));
-
-			CDEBUG(D_INODE, "Try other stripes " DFID"\n",
-			       PFID(&oinfo->lmo_fid));
-
-			op_data->op_fid1 = oinfo->lmo_fid;
-			it->it_disposition &= ~DISP_ENQ_COMPLETE;
-			rc = md_intent_lock(tgt->ltd_exp, op_data, it, reqp,
-					    cb_blocking, extra_lock_flags);
-			if (rc != 0)
-				RETURN(rc);
-		}
+		goto retry;
 	}
 
 	if (!it_has_reply_body(it))
@@ -454,7 +529,9 @@ lmv_intent_lookup(struct obd_export *exp, struct md_op_data *op_data,
 	/* Not cross-ref case, just get out of here. */
 	if (unlikely((body->mbo_valid & OBD_MD_MDS))) {
 		rc = lmv_intent_remote(exp, it, NULL, reqp, cb_blocking,
-				       extra_lock_flags);
+				       extra_lock_flags,
+				       op_data->op_file_secctx_name,
+				       op_data->op_file_secctx_name_size);
 		if (rc != 0)
 			RETURN(rc);
 		body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
