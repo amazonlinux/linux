@@ -1,7 +1,7 @@
 /*
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  *
- * Copyright (c) 2011, 2015, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  *
  *   This file is part of Lustre, https://wiki.whamcloud.com/
  *
@@ -21,13 +21,14 @@
  */
 
 #define DEBUG_SUBSYSTEM S_LNET
+
+#include <linux/uaccess.h>
+
 #include <libcfs/libcfs.h>
 #include <lnet/lib-lnet.h>
 
 /* This is really lnet_proc.c. You might need to update sanity test 215
  * if any file format is changed. */
-
-static struct ctl_table_header *lnet_table_header = NULL;
 
 #define LNET_LOFFT_BITS		(sizeof(loff_t) * 8)
 /*
@@ -81,6 +82,7 @@ static int __proc_lnet_stats(void *data, int write,
 {
 	int		 rc;
 	struct lnet_counters *ctrs;
+	struct lnet_counters_common common;
 	int		 len;
 	char		*tmpstr;
 	const int	 tmpsiz = 256; /* 7 %u and 4 __u64 */
@@ -103,16 +105,17 @@ static int __proc_lnet_stats(void *data, int write,
 	}
 
 	lnet_counters_get(ctrs);
+	common = ctrs->lct_common;
 
 	len = snprintf(tmpstr, tmpsiz,
 		       "%u %u %u %u %u %u %u %llu %llu "
 		       "%llu %llu",
-		       ctrs->msgs_alloc, ctrs->msgs_max,
-		       ctrs->errors,
-		       ctrs->send_count, ctrs->recv_count,
-		       ctrs->route_count, ctrs->drop_count,
-		       ctrs->send_length, ctrs->recv_length,
-		       ctrs->route_length, ctrs->drop_length);
+		       common.lcc_msgs_alloc, common.lcc_msgs_max,
+		       common.lcc_errors,
+		       common.lcc_send_count, common.lcc_recv_count,
+		       common.lcc_route_count, common.lcc_drop_count,
+		       common.lcc_send_length, common.lcc_recv_length,
+		       common.lcc_route_length, common.lcc_drop_length);
 
 	if (pos >= min_t(int, len, strlen(tmpstr)))
 		rc = 0;
@@ -244,14 +247,9 @@ proc_lnet_routes(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
-#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else {
-#else
-		memcpy(buffer, tmpstr, len);
-		{
-#endif
 			off += 1;
 			*ppos = LNET_PROC_POS_MAKE(0, ver, 0, off);
 		}
@@ -335,15 +333,14 @@ proc_lnet_routers(struct ctl_table *table, int write, void __user *buffer,
 
 		if (peer != NULL) {
 			lnet_nid_t nid = peer->lpni_nid;
-			cfs_time_t now = cfs_time_current();
-			cfs_time_t deadline = peer->lpni_ping_deadline;
+			time64_t now = ktime_get_seconds();
+			time64_t deadline = peer->lpni_ping_deadline;
 			int nrefs     = atomic_read(&peer->lpni_refcount);
 			int nrtrrefs  = peer->lpni_rtr_refcount;
 			int alive_cnt = peer->lpni_alive_count;
 			int alive     = peer->lpni_alive;
 			int pingsent  = !peer->lpni_ping_notsent;
-			int last_ping = cfs_duration_sec(cfs_time_sub(now,
-						     peer->lpni_ping_timestamp));
+			time64_t last_ping = now - peer->lpni_ping_timestamp;
 			int down_ni   = 0;
 			struct lnet_route *rtr;
 
@@ -362,18 +359,18 @@ proc_lnet_routers(struct ctl_table *table, int write, void __user *buffer,
 
 			if (deadline == 0)
 				s += snprintf(s, tmpstr + tmpsiz - s,
-					      "%-4d %7d %9d %6s %12d %9d %8s %7d %s\n",
+					      "%-4d %7d %9d %6s %12llu %9d %8s %7d %s\n",
 					      nrefs, nrtrrefs, alive_cnt,
 					      alive ? "up" : "down", last_ping,
 					      pingsent, "NA", down_ni,
 					      libcfs_nid2str(nid));
 			else
 				s += snprintf(s, tmpstr + tmpsiz - s,
-					      "%-4d %7d %9d %6s %12d %9d %8lu %7d %s\n",
+					      "%-4d %7d %9d %6s %12llu %9d %8llu %7d %s\n",
 					      nrefs, nrtrrefs, alive_cnt,
 					      alive ? "up" : "down", last_ping,
 					      pingsent,
-					      cfs_duration_sec(cfs_time_sub(deadline, now)),
+					      deadline - now,
 					      down_ni, libcfs_nid2str(nid));
 			LASSERT(tmpstr + tmpsiz - s > 0);
 		}
@@ -386,14 +383,9 @@ proc_lnet_routers(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
-#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else {
-#else
-		memcpy(buffer, tmpstr, len);
-		{
-#endif
 			off += 1;
 			*ppos = LNET_PROC_POS_MAKE(0, ver, 0, off);
 		}
@@ -531,7 +523,7 @@ proc_lnet_peers(struct ctl_table *table, int write, void __user *buffer,
 		if (peer != NULL) {
 			lnet_nid_t nid = peer->lpni_nid;
 			int nrefs = atomic_read(&peer->lpni_refcount);
-			int lastalive = -1;
+			time64_t lastalive = -1;
 			char *aliveness = "NA";
 			int maxcr = (peer->lpni_net) ?
 			  peer->lpni_net->net_tunables.lct_peer_tx_credits : 0;
@@ -546,11 +538,9 @@ proc_lnet_peers(struct ctl_table *table, int write, void __user *buffer,
 				aliveness = peer->lpni_alive ? "up" : "down";
 
 			if (lnet_peer_aliveness_enabled(peer)) {
-				cfs_time_t now = cfs_time_current();
-				cfs_duration_t delta;
+				time64_t now = ktime_get_seconds();
 
-				delta = cfs_time_sub(now, peer->lpni_last_alive);
-				lastalive = cfs_duration_sec(delta);
+				lastalive = now - peer->lpni_last_alive;
 
 				/* No need to mess up peers contents with
 				 * arbitrarily long integers - it suffices to
@@ -563,7 +553,7 @@ proc_lnet_peers(struct ctl_table *table, int write, void __user *buffer,
 			lnet_net_unlock(cpt);
 
 			s += snprintf(s, tmpstr + tmpsiz - s,
-				      "%-24s %4d %5s %5d %5d %5d %5d %5d %5d %d\n",
+				      "%-24s %4d %5s %5lld %5d %5d %5d %5d %5d %d\n",
 				      libcfs_nid2str(nid), nrefs, aliveness,
 				      lastalive, maxcr, rtrcr, minrtrcr, txcr,
 				      mintxcr, txqnob);
@@ -587,13 +577,9 @@ proc_lnet_peers(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
-#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else
-#else
-		memcpy(buffer, tmpstr, len);
-#endif
 			*ppos = LNET_PROC_POS_MAKE(cpt, ver, hash, hoff);
 	}
 
@@ -741,12 +727,12 @@ proc_lnet_nis(struct ctl_table *table, int write, void __user *buffer,
 		ni = lnet_get_ni_idx_locked(skip);
 
 		if (ni != NULL) {
-			struct lnet_tx_queue	*tq;
-			char	*stat;
-			long now = cfs_time_current_sec();
-			int	last_alive = -1;
-			int	i;
-			int	j;
+			struct lnet_tx_queue *tq;
+			char *stat;
+			time64_t now = ktime_get_real_seconds();
+			time64_t last_alive = -1;
+			int i;
+			int j;
 
 			if (the_lnet.ln_routing)
 				last_alive = now - ni->ni_last_alive;
@@ -777,7 +763,7 @@ proc_lnet_nis(struct ctl_table *table, int write, void __user *buffer,
 					lnet_net_lock(i);
 
 				s += snprintf(s, tmpstr + tmpsiz - s,
-				      "%-24s %6s %5d %4d %4d %4d %5d %5d %5d\n",
+				      "%-24s %6s %5lld %4d %4d %4d %5d %5d %5d\n",
 				      libcfs_nid2str(ni->ni_nid), stat,
 				      last_alive, *ni->ni_refs[i],
 				      ni->ni_net->net_tunables.lct_peer_tx_credits,
@@ -798,14 +784,9 @@ proc_lnet_nis(struct ctl_table *table, int write, void __user *buffer,
 	if (len > *lenp) {    /* linux-supplied buffer is too small */
 		rc = -EINVAL;
 	} else if (len > 0) { /* wrote something */
-
-#ifdef PROC_HANDLER_USE_USER_ATTR
 		if (copy_to_user(buffer, tmpstr, len))
 			rc = -EFAULT;
 		else
-#else
-		memcpy(buffer, tmpstr, len);
-#endif
 			*ppos += 1;
 	}
 
@@ -974,34 +955,12 @@ static struct ctl_table lnet_table[] = {
 	{ .procname = NULL }
 };
 
-static struct ctl_table top_table[] = {
-	{
-		INIT_CTL_NAME
-		.procname	= "lnet",
-		.mode		= 0555,
-		.data		= NULL,
-		.maxlen		= 0,
-		.child		= lnet_table,
-	},
-	{ .procname = NULL }
-};
-
-void
-lnet_proc_init(void)
+void lnet_router_debugfs_init(void)
 {
-#ifdef CONFIG_SYSCTL
-	if (lnet_table_header == NULL)
-		lnet_table_header = register_sysctl_table(top_table);
-#endif
+	lnet_insert_debugfs(lnet_table);
 }
 
-void
-lnet_proc_fini(void)
+void lnet_router_debugfs_fini(void)
 {
-#ifdef CONFIG_SYSCTL
-	if (lnet_table_header != NULL)
-		unregister_sysctl_table(lnet_table_header);
-
-	lnet_table_header = NULL;
-#endif
+	lnet_remove_debugfs(lnet_table);
 }
