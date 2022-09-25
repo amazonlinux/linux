@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -36,14 +36,15 @@
 
 #define DEBUG_SUBSYSTEM S_CLASS
 
+#include <linux/kobject.h>
 #include <linux/string.h>
 
 #include <llog_swab.h>
 #include <lprocfs_status.h>
 #include <lustre_disk.h>
-#include <uapi/linux/lustre_ioctl.h>
+#include <uapi/linux/lustre/lustre_ioctl.h>
 #include <lustre_log.h>
-#include <uapi/linux/lustre_param.h>
+#include <uapi/linux/lustre/lustre_param.h>
 #include <obd_class.h>
 
 #include "llog_internal.h"
@@ -805,7 +806,7 @@ static int class_del_conn(struct obd_device *obd, struct lustre_cfg *lcfg)
 static LIST_HEAD(lustre_profile_list);
 static DEFINE_SPINLOCK(lustre_profile_list_lock);
 
-struct lustre_profile *class_get_profile(const char * prof)
+struct lustre_profile *class_get_profile(const char *prof)
 {
 	struct lustre_profile *lprof;
 
@@ -947,40 +948,12 @@ void class_del_profiles(void)
 }
 EXPORT_SYMBOL(class_del_profiles);
 
-static int class_set_global(char *ptr, int val, struct lustre_cfg *lcfg)
-{
-	ENTRY;
-	if (class_match_param(ptr, PARAM_AT_MIN, NULL) == 0)
-		at_min = val;
-	else if (class_match_param(ptr, PARAM_AT_MAX, NULL) == 0)
-		at_max = val;
-	else if (class_match_param(ptr, PARAM_AT_EXTRA, NULL) == 0)
-		at_extra = val;
-	else if (class_match_param(ptr, PARAM_AT_EARLY_MARGIN, NULL) == 0)
-		at_early_margin = val;
-	else if (class_match_param(ptr, PARAM_AT_HISTORY, NULL) == 0)
-		at_history = val;
-	else if (class_match_param(ptr, PARAM_JOBID_VAR, NULL) == 0)
-		strlcpy(obd_jobid_var, lustre_cfg_string(lcfg, 2),
-			JOBSTATS_JOBID_VAR_MAX_LEN + 1);
-	else
-		RETURN(-EINVAL);
-
-	CDEBUG(D_IOCTL, "global %s = %d\n", ptr, val);
-	RETURN(0);
-}
-
-
-/* We can't call ll_process_config or lquota_process_config directly because
- * it lives in a module that must be loaded after this one. */
-static int (*client_process_config)(struct lustre_cfg *lcfg) = NULL;
+/* We can't call lquota_process_config directly because
+ * it lives in a module that must be loaded after this one.
+ */
+#ifdef HAVE_SERVER_SUPPORT
 static int (*quota_process_config)(struct lustre_cfg *lcfg) = NULL;
-
-void lustre_register_client_process_config(int (*cpc)(struct lustre_cfg *lcfg))
-{
-        client_process_config = cpc;
-}
-EXPORT_SYMBOL(lustre_register_client_process_config);
+#endif /* HAVE_SERVER_SUPPORT */
 
 /**
  * Rename the proc parameter in \a cfg with a new name \a new_name.
@@ -1057,10 +1030,12 @@ out_nocfg:
 }
 EXPORT_SYMBOL(lustre_cfg_rename);
 
-static int process_param2_config(struct lustre_cfg *lcfg)
+static ssize_t process_param2_config(struct lustre_cfg *lcfg)
 {
 	char *param = lustre_cfg_string(lcfg, 1);
 	char *upcall = lustre_cfg_string(lcfg, 2);
+	struct kobject *kobj = NULL;
+	const char *subsys = param;
 	char *argv[] = {
 		[0] = "/usr/sbin/lctl",
 		[1] = "set_param",
@@ -1069,8 +1044,44 @@ static int process_param2_config(struct lustre_cfg *lcfg)
 	};
 	ktime_t start;
 	ktime_t end;
-	int		rc;
+	size_t len;
+	int rc;
+
 	ENTRY;
+	print_lustre_cfg(lcfg);
+
+	len = strcspn(param, ".=");
+	if (!len)
+		return -EINVAL;
+
+	/* If we find '=' then its the top level sysfs directory */
+	if (param[len] == '=')
+		return class_set_global(param);
+
+	subsys = kstrndup(param, len, GFP_KERNEL);
+	if (!subsys)
+		return -ENOMEM;
+
+	kobj = kset_find_obj(lustre_kset, subsys);
+	kfree(subsys);
+	if (kobj) {
+		char *value = param;
+		char *envp[3];
+		int i;
+
+		param = strsep(&value, "=");
+		envp[0] = kasprintf(GFP_KERNEL, "PARAM=%s", param);
+		envp[1] = kasprintf(GFP_KERNEL, "SETTING=%s", value);
+		envp[2] = NULL;
+
+		rc = kobject_uevent_env(kobj, KOBJ_CHANGE, envp);
+		for (i = 0; i < ARRAY_SIZE(envp); i++)
+			kfree(envp[i]);
+
+		kobject_put(kobj);
+
+		RETURN(rc);
+	}
 
 	/* Add upcall processing here. Now only lctl is supported */
 	if (strcmp(upcall, LCTL_UPCALL) != 0) {
@@ -1096,11 +1107,13 @@ static int process_param2_config(struct lustre_cfg *lcfg)
 	RETURN(rc);
 }
 
+#ifdef HAVE_SERVER_SUPPORT
 void lustre_register_quota_process_config(int (*qpc)(struct lustre_cfg *lcfg))
 {
 	quota_process_config = qpc;
 }
 EXPORT_SYMBOL(lustre_register_quota_process_config);
+#endif /* HAVE_SERVER_SUPPORT */
 
 /** Process configuration commands given in lustre_cfg form.
  * These may come from direct calls (e.g. class_manual_cleanup)
@@ -1187,29 +1200,51 @@ int class_process_config(struct lustre_cfg *lcfg)
         }
         case LCFG_PARAM: {
                 char *tmp;
+
                 /* llite has no obd */
-                if ((class_match_param(lustre_cfg_string(lcfg, 1),
-				       PARAM_LLITE, NULL) == 0) &&
-                    client_process_config) {
-                        err = (*client_process_config)(lcfg);
-                        GOTO(out, err);
+		if (class_match_param(lustre_cfg_string(lcfg, 1),
+				      PARAM_LLITE, NULL) == 0) {
+			struct lustre_sb_info *lsi;
+			unsigned long addr;
+			ssize_t count;
+
+			/* The instance name contains the sb:
+			 * lustre-client-aacfe000
+			 */
+			tmp = strrchr(lustre_cfg_string(lcfg, 0), '-');
+			if (!tmp || !*(++tmp))
+				GOTO(out, err = -EINVAL);
+
+			if (sscanf(tmp, "%lx", &addr) != 1)
+				GOTO(out, err = -EINVAL);
+
+			lsi = s2lsi((struct super_block *)addr);
+			/* This better be a real Lustre superblock! */
+			LASSERT(lsi->lsi_lmd->lmd_magic == LMD_MAGIC);
+
+			count = class_modify_config(lcfg, PARAM_LLITE,
+						    lsi->lsi_kobj);
+			err = count < 0 ? count : 0;
+			GOTO(out, err);
                 } else if ((class_match_param(lustre_cfg_string(lcfg, 1),
                                               PARAM_SYS, &tmp) == 0)) {
                         /* Global param settings */
-			err = class_set_global(tmp, lcfg->lcfg_num, lcfg);
+			err = class_set_global(tmp);
 			/*
 			 * Client or server should not fail to mount if
 			 * it hits an unknown configuration parameter.
 			 */
-			if (err != 0)
+			if (err < 0)
 				CWARN("Ignoring unknown param %s\n", tmp);
 
 			GOTO(out, err = 0);
+#ifdef HAVE_SERVER_SUPPORT
 		} else if ((class_match_param(lustre_cfg_string(lcfg, 1),
 					      PARAM_QUOTA, &tmp) == 0) &&
 			   quota_process_config) {
 			err = (*quota_process_config)(lcfg);
 			GOTO(out, err);
+#endif /* HAVE_SERVER_SUPPORT */
 		}
 
 		break;
@@ -1230,7 +1265,6 @@ int class_process_config(struct lustre_cfg *lcfg)
 
                 GOTO(out, err = -EINVAL);
         }
-
 	switch(lcfg->lcfg_command) {
 	case LCFG_SETUP: {
 		err = class_setup(obd, lcfg);
@@ -1270,12 +1304,47 @@ int class_process_config(struct lustre_cfg *lcfg)
                 err = obd_pool_del(obd, lustre_cfg_string(lcfg, 2));
                 GOTO(out, err = 0);
         }
-        default: {
-                err = obd_process_config(obd, sizeof(*lcfg), lcfg);
-                GOTO(out, err);
+	/* Process config log ADD_MDC record twice to add MDC also to LOV
+	 * for Data-on-MDT:
+	 *
+	 * add 0:lustre-clilmv 1:lustre-MDT0000_UUID 2:0 3:1
+	 *     4:lustre-MDT0000-mdc_UUID
+	 */
+	case LCFG_ADD_MDC: {
+		struct obd_device *lov_obd;
+		char *clilmv;
+
+		err = obd_process_config(obd, sizeof(*lcfg), lcfg);
+		if (err)
+			GOTO(out, err);
+
+		/* make sure this is client LMV log entry */
+		clilmv = strstr(lustre_cfg_string(lcfg, 0), "clilmv");
+		if (!clilmv)
+			GOTO(out, err);
+
+		/* replace 'lmv' with 'lov' name to address LOV device and
+		 * process llog record to add MDC there. */
+		clilmv[4] = 'o';
+		lov_obd = class_name2obd(lustre_cfg_string(lcfg, 0));
+		if (lov_obd == NULL) {
+			err = -ENOENT;
+			CERROR("%s: Cannot find LOV by %s name, rc = %d\n",
+			       obd->obd_name, lustre_cfg_string(lcfg, 0), err);
+		} else {
+			err = obd_process_config(lov_obd, sizeof(*lcfg), lcfg);
+		}
+		/* restore 'lmv' name */
+		clilmv[4] = 'm';
+		GOTO(out, err);
+	}
+	default: {
+		err = obd_process_config(obd, sizeof(*lcfg), lcfg);
+		GOTO(out, err);
 
         }
         }
+	EXIT;
 out:
         if ((err < 0) && !(lcfg->lcfg_command & LCFG_REQUIRED)) {
                 CWARN("Ignoring error %d on optional command %#x\n", err,
@@ -1286,97 +1355,89 @@ out:
 }
 EXPORT_SYMBOL(class_process_config);
 
-int class_process_proc_param(char *prefix, struct lprocfs_vars *lvars,
-			     struct lustre_cfg *lcfg, void *data)
+ssize_t class_modify_config(struct lustre_cfg *lcfg, const char *prefix,
+			    struct kobject *kobj)
 {
-	struct lprocfs_vars *var;
-	struct file fakefile = {};
-	struct seq_file fake_seqfile;
-	char *key, *sval;
-	int i, keylen, vallen;
-	int matched = 0, j = 0;
-	int rc = 0;
-	int skip = 0;
-	ENTRY;
+	struct kobj_type *typ;
+	ssize_t count = 0;
+	int i;
 
 	if (lcfg->lcfg_command != LCFG_PARAM) {
 		CERROR("Unknown command: %d\n", lcfg->lcfg_command);
-		RETURN(-EINVAL);
+		return -EINVAL;
 	}
 
-	/* fake a seq file so that var->fops->proc_write can work... */
-	lprocfs_file_set_kernel(&fakefile);
-	fakefile.private_data = &fake_seqfile;
-	fake_seqfile.private = data;
-	/* e.g. tunefs.lustre --param mdt.group_upcall=foo /r/tmp/lustre-mdt
-	   or   lctl conf_param lustre-MDT0000.mdt.group_upcall=bar
-	   or   lctl conf_param lustre-OST0000.osc.max_dirty_mb=36 */
+	typ = get_ktype(kobj);
+	if (!typ || !typ->default_attrs)
+		return -ENODEV;
+
+	print_lustre_cfg(lcfg);
+
+	/*
+	 * e.g. tunefs.lustre --param mdt.group_upcall=foo /r/tmp/lustre-mdt
+	 * or   lctl conf_param lustre-MDT0000.mdt.group_upcall=bar
+	 * or   lctl conf_param lustre-OST0000.osc.max_dirty_mb=36
+	 */
 	for (i = 1; i < lcfg->lcfg_bufcount; i++) {
+		struct attribute *attr;
+		size_t keylen;
+		char *value;
+		char *key;
+		int j;
+
 		key = lustre_cfg_buf(lcfg, i);
 		/* Strip off prefix */
 		if (class_match_param(key, prefix, &key))
 			/* If the prefix doesn't match, return error so we
-			 * can pass it down the stack */
-			RETURN(-ENOSYS);
-		sval = strchr(key, '=');
-		if (!sval || *(sval + 1) == 0) {
+			 * can pass it down the stack
+			 */
+			return -EINVAL;
+
+		value = strchr(key, '=');
+		if (!value || *(value + 1) == 0) {
 			CERROR("%s: can't parse param '%s' (missing '=')\n",
 			       lustre_cfg_string(lcfg, 0),
 			       lustre_cfg_string(lcfg, i));
-			/* rc = -EINVAL;        continue parsing other params */
+			/* continue parsing other params */
 			continue;
 		}
-		keylen = sval - key;
-		sval++;
-		vallen = strlen(sval);
-		matched = 0;
-		j = 0;
-		/* Search proc entries */
-		while (lvars[j].name) {
-			var = &lvars[j];
-			if (class_match_param(key, var->name, NULL) == 0 &&
-			    keylen == strlen(var->name)) {
-				matched++;
-				rc = -EROFS;
+		keylen = value - key;
+		value++;
 
-				if (var->fops && var->fops->proc_write) {
-					rc = (var->fops->proc_write)(&fakefile,
-								     sval,
-								     vallen,
-								     NULL);
-				}
+		attr = NULL;
+		for (j = 0; typ->default_attrs[j]; j++) {
+			if (!strncmp(typ->default_attrs[j]->name, key,
+				     keylen)) {
+				attr = typ->default_attrs[j];
 				break;
 			}
-			j++;
 		}
-		if (!matched) {
-			/* It was upgraded from old MDT/OST device,
-			 * ignore the obsolete "sec_level" parameter. */
-			if (strncmp("sec_level", key, keylen) == 0)
-				continue;
 
-			CERROR("%s: unknown config parameter '%s'\n",
-			       lustre_cfg_string(lcfg, 0),
-			       lustre_cfg_string(lcfg, i));
-			/* rc = -EINVAL;        continue parsing other params */
-			skip++;
-		} else if (rc < 0) {
-			CERROR("%s: error writing parameter '%s': rc = %d\n",
-			       lustre_cfg_string(lcfg, 0), key, rc);
-			rc = 0;
+		if (!attr) {
+			char *envp[3];
+
+			envp[0] = kasprintf(GFP_KERNEL, "PARAM=%s.%s.%.*s",
+					    kobject_name(kobj->parent),
+					    kobject_name(kobj),
+					    (int) keylen, key);
+			envp[1] = kasprintf(GFP_KERNEL, "SETTING=%s", value);
+			envp[2] = NULL;
+
+			if (kobject_uevent_env(kobj, KOBJ_CHANGE, envp)) {
+				CERROR("%s: failed to send uevent %s\n",
+				       kobject_name(kobj), key);
+			}
+
+			for (i = 0; i < ARRAY_SIZE(envp); i++)
+				kfree(envp[i]);
 		} else {
-			CDEBUG(D_CONFIG, "%s: set parameter '%s'\n",
-			       lustre_cfg_string(lcfg, 0), key);
+			count += lustre_attr_store(kobj, attr, value,
+						   strlen(value));
 		}
 	}
-
-	if (rc > 0)
-		rc = 0;
-	if (!rc && skip)
-		rc = skip;
-	RETURN(rc);
+	return count;
 }
-EXPORT_SYMBOL(class_process_proc_param);
+EXPORT_SYMBOL(class_modify_config);
 
 /*
  * Supplemental functions for config logs, it allocates lustre_cfg
@@ -1478,12 +1539,11 @@ int class_config_llog_handler(const struct lu_env *env,
 			}
 		}
 		/* A config command without a start marker before it is
-		   illegal (post 146) */
-		if (!(cfg->cfg_flags & CFG_F_COMPAT146) &&
-		    !(cfg->cfg_flags & CFG_F_MARKER) &&
+		 * illegal
+		 */
+		if (!(cfg->cfg_flags & CFG_F_MARKER) &&
 		    (lcfg->lcfg_command != LCFG_MARKER)) {
-			CWARN("Config not inside markers, ignoring! "
-			      "(inst: %p, uuid: %s, flags: %#x)\n",
+			CWARN("Skip config outside markers, (inst: %016lx, uuid: %s, flags: %#x)\n",
 				cfg->cfg_instance,
 				cfg->cfg_uuid.uuid, cfg->cfg_flags);
 			cfg->cfg_flags |= CFG_F_SKIP;
@@ -1559,12 +1619,11 @@ int class_config_llog_handler(const struct lu_env *env,
 		if (cfg->cfg_instance &&
 		    lcfg->lcfg_command != LCFG_SPTLRPC_CONF &&
 		    LUSTRE_CFG_BUFLEN(lcfg, 0) > 0) {
-			inst_len = LUSTRE_CFG_BUFLEN(lcfg, 0) +
-				   sizeof(cfg->cfg_instance) * 2 + 4;
+			inst_len = LUSTRE_CFG_BUFLEN(lcfg, 0) + 16 + 4;
 			OBD_ALLOC(inst_name, inst_len);
 			if (inst_name == NULL)
 				GOTO(out, rc = -ENOMEM);
-			snprintf(inst_name, inst_len, "%s-%p",
+			snprintf(inst_name, inst_len, "%s-%016lx",
 				lustre_cfg_string(lcfg, 0),
 				cfg->cfg_instance);
 			lustre_cfg_bufs_set_string(&bufs, 0, inst_name);
@@ -1572,23 +1631,22 @@ int class_config_llog_handler(const struct lu_env *env,
 			       lcfg->lcfg_command, inst_name);
 		}
 
-                /* we override the llog's uuid for clients, to insure they
-                are unique */
-		if (cfg->cfg_instance != NULL &&
-		    lcfg->lcfg_command == LCFG_ATTACH) {
+		/* override llog UUID for clients, to insure they are unique */
+		if (cfg->cfg_instance && lcfg->lcfg_command == LCFG_ATTACH)
 			lustre_cfg_bufs_set_string(&bufs, 2,
 						   cfg->cfg_uuid.uuid);
-		}
-                /*
-                 * sptlrpc config record, we expect 2 data segments:
-                 *  [0]: fs_name/target_name,
-                 *  [1]: rule string
-                 * moving them to index [1] and [2], and insert MGC's
-                 * obdname at index [0].
-                 */
+		/*
+		 * sptlrpc config record, we expect 2 data segments:
+		 *  [0]: fs_name/target_name,
+		 *  [1]: rule string
+		 * moving them to index [1] and [2], and insert MGC's
+		 * obdname at index [0].
+		 */
 		if (cfg->cfg_instance &&
 		    lcfg->lcfg_command == LCFG_SPTLRPC_CONF) {
-			struct obd_device *obd = cfg->cfg_instance;
+			/* After ASLR changes cfg_instance this needs fixing */
+			/* "obd" is set in config_log_find_or_add() */
+			struct obd_device *obd = (void *)cfg->cfg_instance;
 
 			lustre_cfg_bufs_set(&bufs, 2, bufs.lcfg_buf[1],
 					    bufs.lcfg_buflen[1]);
@@ -1731,55 +1789,6 @@ parse_out:
         RETURN(rc);
 }
 EXPORT_SYMBOL(class_config_parse_llog);
-
-static struct lcfg_type_data {
-	__u32	 ltd_type;
-	char	*ltd_name;
-	char	*ltd_bufs[4];
-} lcfg_data_table[] = {
-	{ LCFG_ATTACH, "attach", { "type", "UUID", "3", "4" } },
-	{ LCFG_DETACH, "detach", { "1", "2", "3", "4" } },
-	{ LCFG_SETUP, "setup", { "UUID", "node", "options", "failout" } },
-	{ LCFG_CLEANUP, "cleanup", { "1", "2", "3", "4" } },
-	{ LCFG_ADD_UUID, "add_uuid", { "node", "2", "3", "4" }  },
-	{ LCFG_DEL_UUID, "del_uuid", { "1", "2", "3", "4" }  },
-	{ LCFG_MOUNTOPT, "new_profile", { "name", "lov", "lmv", "4" }  },
-	{ LCFG_DEL_MOUNTOPT, "del_mountopt", { "1", "2", "3", "4" } , },
-	{ LCFG_SET_TIMEOUT, "set_timeout", { "parameter", "2", "3", "4" }  },
-	{ LCFG_SET_UPCALL, "set_upcall", { "1", "2", "3", "4" }  },
-	{ LCFG_ADD_CONN, "add_conn", { "node", "2", "3", "4" }  },
-	{ LCFG_DEL_CONN, "del_conn", { "1", "2", "3", "4" }  },
-	{ LCFG_LOV_ADD_OBD, "add_osc", { "ost", "index", "gen", "UUID" } },
-	{ LCFG_LOV_DEL_OBD, "del_osc", { "1", "2", "3", "4" } },
-	{ LCFG_PARAM, "conf_param", { "parameter", "value", "3", "4" } },
-	{ LCFG_MARKER, "marker", { "1", "2", "3", "4" } },
-	{ LCFG_LOG_START, "log_start", { "1", "2", "3", "4" } },
-	{ LCFG_LOG_END, "log_end", { "1", "2", "3", "4" } },
-	{ LCFG_LOV_ADD_INA, "add_osc_inactive", { "1", "2", "3", "4" }  },
-	{ LCFG_ADD_MDC, "add_mdc", { "mdt", "index", "gen", "UUID" } },
-	{ LCFG_DEL_MDC, "del_mdc", { "1", "2", "3", "4" } },
-	{ LCFG_SPTLRPC_CONF, "security", { "parameter", "2", "3", "4" } },
-	{ LCFG_POOL_NEW, "new_pool", { "fsname", "pool", "3", "4" }  },
-	{ LCFG_POOL_ADD, "add_pool", { "fsname", "pool", "ost", "4" } },
-	{ LCFG_POOL_REM, "remove_pool", { "fsname", "pool", "ost", "4" } },
-	{ LCFG_POOL_DEL, "del_pool", { "fsname", "pool", "3", "4" } },
-	{ LCFG_SET_LDLM_TIMEOUT, "set_ldlm_timeout",
-	  { "parameter", "2", "3", "4" } },
-	{ LCFG_SET_PARAM, "set_param", { "parameter", "value", "3", "4" } },
-	{ 0, NULL, { NULL, NULL, NULL, NULL } }
-};
-
-static struct lcfg_type_data *lcfg_cmd2data(__u32 cmd)
-{
-	int i = 0;
-
-	while (lcfg_data_table[i].ltd_type != 0) {
-		if (lcfg_data_table[i].ltd_type == cmd)
-			return &lcfg_data_table[i];
-		i++;
-	}
-	return NULL;
-}
 
 /**
  * Parse config record and output dump in supplied buffer.
