@@ -23,7 +23,7 @@
  * Copyright (c) 2007, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -43,11 +43,10 @@
 
 #include <obd.h>
 #include <obd_class.h>
-#include <lustre/lustre_user.h>
 #include <linux/version.h>
 #include <lustre_log.h>
 #include <lustre_disk.h>
-#include <uapi/linux/lustre_param.h>
+#include <uapi/linux/lustre/lustre_param.h>
 
 static int (*client_fill_super)(struct super_block *sb,
 				struct vfsmount *mnt);
@@ -243,7 +242,7 @@ int lustre_start_mgc(struct super_block *sb)
 			struct lnet_process_id id;
 
                         while ((rc = LNetGetId(i++, &id)) != -ENOENT) {
-                                if (LNET_NETTYP(LNET_NIDNET(id.nid)) == LOLND)
+                                if (id.nid == LNET_NID_LO_0)
                                         continue;
                                 nid = id.nid;
                                 i++;
@@ -592,7 +591,7 @@ static struct lustre_sb_info *lustre_init_lsi(struct super_block *sb)
         /* Default umount style */
         lsi->lsi_flags = LSI_UMOUNT_FAILOVER;
 	INIT_LIST_HEAD(&lsi->lsi_lwp_list);
-	spin_lock_init(&lsi->lsi_lwp_lock);
+	mutex_init(&lsi->lsi_lwp_mutex);
 
 	RETURN(lsi);
 }
@@ -1157,37 +1156,52 @@ static int lmd_parse_mgs(struct lustre_mount_data *lmd, char **ptr)
  * make \a *endh point to the string starting with the delimiter. The commas
  * in expression list [...] will be skipped.
  *
- * \param[in] buf	a delimiter-separated string
- * \param[in] endh	a pointer to a pointer that will point to the string
- *			starting with the delimiter
+ * @buf		a delimiter-separated string
+ * @endh	a pointer to a pointer that will point to the string
+ *		starting with the delimiter
  *
- * \retval 0		if delimiter is found
- * \retval 1		if delimiter is not found
+ * RETURNS	true if delimiter is found, false if delimiter is not found
  */
-static int lmd_find_delimiter(char *buf, char **endh)
+static bool lmd_find_delimiter(char *buf, char **endh)
 {
 	char *c = buf;
-	int   skip = 0;
+	size_t pos;
+	bool found;
 
-	if (buf == NULL)
-		return 1;
+	if (!buf)
+		return false;
+try_again:
+	if (*c == ',' || *c == ':')
+		return true;
 
-	while (*c != '\0') {
-		if (*c == '[')
-			skip++;
-		else if (*c == ']')
-			skip--;
+	pos = strcspn(c, "[:,]");
+	if (!pos)
+		return false;
 
-		if ((*c == ',' || *c == ':') && skip == 0) {
-			if (endh != NULL)
-				*endh = c;
-			return 0;
-		}
-
-		c++;
+	/* Not a valid mount string */
+	if (*c == ']') {
+		CWARN("invalid mount string format\n");
+		return false;
 	}
 
-	return 1;
+	c += pos;
+	if (*c == '[') {
+		c = strchr(c, ']');
+
+		/* invalid mount string */
+		if (!c) {
+			CWARN("invalid mount string format\n");
+			return false;
+		}
+		c++;
+		goto try_again;
+	}
+
+	found = *c != '\0';
+	if (found && endh)
+		*endh = c;
+
+	return found;
 }
 
 /**
@@ -1216,7 +1230,7 @@ static int lmd_parse_nidlist(char *buf, char **endh)
 	if (*buf == ' ' || *buf == '/' || *buf == '\0')
 		return 1;
 
-	if (lmd_find_delimiter(buf, &endp) != 0)
+	if (!lmd_find_delimiter(buf, &endp))
 		endp = buf + strlen(buf);
 
 	tmp = *endp;
@@ -1361,9 +1375,8 @@ static int lmd_parse(char *options, struct lustre_mount_data *lmd)
 		} else if (strncmp(s1, "param=", 6) == 0) {
 			size_t length, params_length;
 			char  *tail = s1;
-			if (lmd_find_delimiter(s1 + 6, &tail) != 0)
-				length = strlen(s1);
-			else {
+
+			if (lmd_find_delimiter(s1 + 6, &tail)) {
 				char *param_str = tail + 1;
 				int   supplementary = 1;
 				while (lmd_parse_nidlist(param_str,
@@ -1371,6 +1384,8 @@ static int lmd_parse(char *options, struct lustre_mount_data *lmd)
 					supplementary = 0;
 				}
 				length = param_str - s1 - supplementary;
+			} else {
+				length = strlen(s1);
 			}
 			length -= 6;
 			params_length = strlen(lmd->lmd_params);
@@ -1399,6 +1414,15 @@ static int lmd_parse(char *options, struct lustre_mount_data *lmd)
 			rc = lmd_parse_network(lmd, s1 + 8);
 			if (rc)
 				goto invalid;
+
+			/* check if LNet dynamic peer discovery is activated */
+			if (LNetGetPeerDiscoveryStatus()) {
+				CERROR("LNet Dynamic Peer Discovery is enabled "
+				       "on this node. 'network' mount option "
+				       "cannot be taken into account.\n");
+				goto invalid;
+			}
+
 			clear++;
 		}
 
@@ -1477,6 +1501,8 @@ static int lmd_parse(char *options, struct lustre_mount_data *lmd)
 	s1 = options + strlen(options) - 1;
 	while (s1 >= options && (*s1 == ',' || *s1 == ' '))
 		*s1-- = 0;
+	while (*options && (*options == ',' || *options == ' '))
+		options++;
 	if (*options != 0) {
 		/* Freed in lustre_free_lsi */
 		OBD_ALLOC(lmd->lmd_opts, strlen(options) + 1);
@@ -1649,7 +1675,12 @@ static struct file_system_type lustre_fs_type = {
         .get_sb       = lustre_get_sb,
 #endif
         .kill_sb      = lustre_kill_super,
-	.fs_flags     = FS_REQUIRES_DEV | FS_HAS_FIEMAP | FS_RENAME_DOES_D_MOVE,
+	.fs_flags     = FS_HAS_FIEMAP | FS_RENAME_DOES_D_MOVE |
+#ifdef HAVE_SERVER_SUPPORT
+			FS_REQUIRES_DEV,
+#else
+			0,
+#endif
 };
 MODULE_ALIAS_FS("lustre");
 
