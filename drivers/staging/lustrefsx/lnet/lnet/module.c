@@ -23,7 +23,7 @@
  * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -31,8 +31,9 @@
  */
 
 #define DEBUG_SUBSYSTEM S_LNET
+
 #include <lnet/lib-lnet.h>
-#include <lnet/lib-dlc.h>
+#include <uapi/linux/lnet/lnet-dlc.h>
 
 static int config_on_load = 0;
 module_param(config_on_load, int, 0444);
@@ -171,36 +172,45 @@ lnet_dyn_unconfigure_ni(struct libcfs_ioctl_hdr *hdr)
 }
 
 static int
-lnet_ioctl(unsigned int cmd, struct libcfs_ioctl_hdr *hdr)
+lnet_ioctl(struct notifier_block *nb,
+	   unsigned long cmd, void *vdata)
 {
-	int   rc;
+	struct libcfs_ioctl_hdr *hdr = vdata;
+	int rc;
 
 	switch (cmd) {
 	case IOC_LIBCFS_CONFIGURE: {
 		struct libcfs_ioctl_data *data =
 		  (struct libcfs_ioctl_data *)hdr;
 
-		if (data->ioc_hdr.ioc_len < sizeof(*data))
-			return -EINVAL;
-
-		the_lnet.ln_nis_from_mod_params = data->ioc_flags;
-		return lnet_configure(NULL);
+		if (data->ioc_hdr.ioc_len < sizeof(*data)) {
+			rc = -EINVAL;
+		} else {
+			the_lnet.ln_nis_from_mod_params = data->ioc_flags;
+			rc = lnet_configure(NULL);
+		}
+		break;
 	}
 
 	case IOC_LIBCFS_UNCONFIGURE:
-		return lnet_unconfigure();
+		rc = lnet_unconfigure();
+		break;
 
 	case IOC_LIBCFS_ADD_NET:
-		return lnet_dyn_configure_net(hdr);
+		rc = lnet_dyn_configure_net(hdr);
+		break;
 
 	case IOC_LIBCFS_DEL_NET:
-		return lnet_dyn_unconfigure_net(hdr);
+		rc = lnet_dyn_unconfigure_net(hdr);
+		break;
 
 	case IOC_LIBCFS_ADD_LOCAL_NI:
-		return lnet_dyn_configure_ni(hdr);
+		rc = lnet_dyn_configure_ni(hdr);
+		break;
 
 	case IOC_LIBCFS_DEL_LOCAL_NI:
-		return lnet_dyn_unconfigure_ni(hdr);
+		rc = lnet_dyn_unconfigure_ni(hdr);
+		break;
 
 	default:
 		/* Passing LNET_PID_ANY only gives me a ref if the net is up
@@ -211,11 +221,14 @@ lnet_ioctl(unsigned int cmd, struct libcfs_ioctl_hdr *hdr)
 			rc = LNetCtl(cmd, hdr);
 			LNetNIFini();
 		}
-		return rc;
+		break;
 	}
+	return notifier_from_ioctl_errno(rc);
 }
 
-DECLARE_IOCTL_HANDLER(lnet_ioctl_handler, lnet_ioctl);
+static struct notifier_block lnet_ioctl_handler = {
+	.notifier_call = lnet_ioctl,
+};
 
 static int __init lnet_init(void)
 {
@@ -230,7 +243,8 @@ static int __init lnet_init(void)
 		RETURN(rc);
 	}
 
-	rc = libcfs_register_ioctl(&lnet_ioctl_handler);
+	rc = blocking_notifier_chain_register(&libcfs_ioctl_list,
+					      &lnet_ioctl_handler);
 	LASSERT(rc == 0);
 
 	if (config_on_load) {
@@ -246,7 +260,8 @@ static void __exit lnet_exit(void)
 {
 	int rc;
 
-	rc = libcfs_deregister_ioctl(&lnet_ioctl_handler);
+	rc = blocking_notifier_chain_unregister(&libcfs_ioctl_list,
+						&lnet_ioctl_handler);
 	LASSERT(rc == 0);
 
 	lnet_lib_exit();
