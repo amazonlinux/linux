@@ -39,54 +39,13 @@
 #ifndef __LIBCFS_LINUX_LINUX_TIME_H__
 #define __LIBCFS_LINUX_LINUX_TIME_H__
 
-#ifndef __LIBCFS_LIBCFS_H__
-#error Do not #include this file directly. #include <libcfs/libcfs.h> instead
-#endif
-
-#ifndef __KERNEL__
-#error This include is only for kernel use.
-#endif
-
 /* Portable time API */
-
-/*
- * Platform provides three opaque data-types:
- *
- *  cfs_time_t        represents point in time. This is internal kernel
- *                    time rather than "wall clock". This time bears no
- *                    relation to gettimeofday().
- *
- *  cfs_duration_t    represents time interval with resolution of internal
- *                    platform clock
- *
- *  cfs_time_t     cfs_time_current(void);
- *  cfs_time_t     cfs_time_add    (cfs_time_t, cfs_duration_t);
- *  cfs_duration_t cfs_time_sub    (cfs_time_t, cfs_time_t);
- *  int            cfs_impl_time_before (cfs_time_t, cfs_time_t);
- *  int            cfs_impl_time_before_eq(cfs_time_t, cfs_time_t);
- *
- *  cfs_duration_t cfs_duration_build(int64_t);
- *
- *  time_t         cfs_duration_sec (cfs_duration_t);
- *  void           cfs_duration_usec(cfs_duration_t, struct timeval *);
- *  void           cfs_duration_nsec(cfs_duration_t, struct timespec *);
- *
- *  CFS_TIME_FORMAT
- *  CFS_DURATION_FORMAT
- *
- */
-
-#define ONE_BILLION ((u_int64_t)1000000000)
-#define ONE_MILLION 1000000
-
-#ifndef __KERNEL__
-#error This include is only for kernel use.
-#endif
-
+#include <linux/hrtimer.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/version.h>
 #include <linux/jiffies.h>
+#include <linux/hrtimer.h>
 #include <linux/types.h>
 #include <linux/time.h>
 #include <asm/div64.h>
@@ -94,10 +53,6 @@
 /*
  * Generic kernel stuff
  */
-
-typedef unsigned long cfs_time_t;      /* jiffies */
-typedef long cfs_duration_t;
-
 #ifndef HAVE_TIMESPEC64
 
 typedef __s64 time64_t;
@@ -143,22 +98,23 @@ static inline struct timespec timespec64_to_timespec(const struct timespec64 ts6
 
 #endif /* HAVE_TIMESPEC64 */
 
-#ifndef HAVE_TIME_T
-typedef __kernel_old_time_t time_t;
-#endif
-
-#ifndef HAVE_JIFFIES_TO_TIMESPEC64
-static inline void
-jiffies_to_timespec64(const unsigned long jiffies, struct timespec64 *value)
+#ifndef HAVE_NS_TO_TIMESPEC64
+static inline struct timespec64 ns_to_timespec64(const s64 nsec)
 {
-	/*
-	 * Convert jiffies to nanoseconds and separate with
-	 * one divide.
-	 */
-	u32 rem;
-	value->tv_sec = div_u64_rem((u64)jiffies * TICK_NSEC,
-					NSEC_PER_SEC, &rem);
-	value->tv_nsec = rem;
+	struct timespec64 ts;
+	s32 rem;
+
+	if (!nsec)
+		return (struct timespec64) {0, 0};
+
+	ts.tv_sec = div_s64_rem(nsec, NSEC_PER_SEC, &rem);
+	if (unlikely(rem < 0)) {
+		ts.tv_sec--;
+		rem += NSEC_PER_SEC;
+	}
+	ts.tv_nsec = rem;
+
+	return ts;
 }
 #endif
 
@@ -207,12 +163,26 @@ time64_t ktime_get_real_seconds(void);
 time64_t ktime_get_seconds(void);
 #endif /* HAVE_KTIME_GET_SECONDS */
 
+#ifdef NEED_KTIME_GET_NS
+static inline u64 ktime_get_ns(void)
+{
+	return ktime_to_ns(ktime_get());
+}
+#endif /* NEED_KTIME_GET_NS */
+
 #ifdef NEED_KTIME_GET_REAL_NS
 static inline u64 ktime_get_real_ns(void)
 {
 	return ktime_to_ns(ktime_get_real());
 }
 #endif /* NEED_KTIME_GET_REAL_NS */
+
+#ifndef HAVE_KTIME_MS_DELTA
+static inline s64 ktime_ms_delta(const ktime_t later, const ktime_t earlier)
+{
+	return ktime_to_ms(ktime_sub(later, earlier));
+}
+#endif /* HAVE_KTIME_MS_DELTA */
 
 #ifndef HAVE_KTIME_TO_TIMESPEC64
 static inline struct timespec64 ktime_to_timespec64(ktime_t kt)
@@ -242,79 +212,39 @@ static inline ktime_t timespec64_to_ktime(struct timespec64 ts)
 }
 #endif
 
-static inline int cfs_time_before(cfs_time_t t1, cfs_time_t t2)
+static inline unsigned long cfs_time_seconds(time64_t seconds)
 {
-        return time_before(t1, t2);
+	return nsecs_to_jiffies(seconds * NSEC_PER_SEC);
 }
 
-static inline int cfs_time_beforeq(cfs_time_t t1, cfs_time_t t2)
-{
-        return time_before_eq(t1, t2);
-}
+#ifdef HAVE_NEW_DEFINE_TIMER
+# ifndef TIMER_DATA_TYPE
+# define TIMER_DATA_TYPE struct timer_list *
+# endif
 
-static inline cfs_time_t cfs_time_current(void)
-{
-        return jiffies;
-}
+#define CFS_DEFINE_TIMER(_name, _function, _expires, _data) \
+	DEFINE_TIMER((_name), (_function))
+#else
+# ifndef TIMER_DATA_TYPE
+# define TIMER_DATA_TYPE unsigned long
+# endif
 
-static inline time_t cfs_time_current_sec(void)
-{
-	return get_seconds();
-}
+#define CFS_DEFINE_TIMER(_name, _function, _expires, _data) \
+	DEFINE_TIMER((_name), (_function), (_expires), (_data))
+#endif
 
-static inline cfs_duration_t cfs_time_seconds(int seconds)
-{
-	return ((cfs_duration_t)seconds) * msecs_to_jiffies(MSEC_PER_SEC);
-}
-
-static inline time_t cfs_duration_sec(cfs_duration_t d)
-{
-	return d / msecs_to_jiffies(MSEC_PER_SEC);
-}
-
-#define cfs_time_current_64 get_jiffies_64
-
-static inline __u64 cfs_time_add_64(__u64 t, __u64 d)
-{
-        return t + d;
-}
-
-static inline __u64 cfs_time_shift_64(int seconds)
-{
-        return cfs_time_add_64(cfs_time_current_64(),
-                               cfs_time_seconds(seconds));
-}
-
-static inline int cfs_time_before_64(__u64 t1, __u64 t2)
-{
-        return (__s64)t2 - (__s64)t1 > 0;
-}
-
-static inline int cfs_time_beforeq_64(__u64 t1, __u64 t2)
-{
-        return (__s64)t2 - (__s64)t1 >= 0;
-}
-
-/*
- * One jiffy
- */
-#define CFS_DURATION_T          "%ld"
 #ifdef HAVE_TIMER_SETUP
 #define cfs_timer_cb_arg_t struct timer_list *
 #define cfs_from_timer(var, callback_timer, timer_fieldname) \
 	from_timer(var, callback_timer, timer_fieldname)
 #define cfs_timer_setup(timer, callback, data, flags) \
 	timer_setup((timer), (callback), (flags))
-#define CFS_DEFINE_TIMER(_name, _function, _expires, _data) \
-	DEFINE_TIMER((_name), (_function))
 #define cfs_timer_cb_arg(var, timer_fieldname) (&(var)->timer_fieldname)
 #else
 #define cfs_timer_cb_arg_t unsigned long
 #define cfs_from_timer(var, data, timer_fieldname) (typeof(var))(data)
 #define cfs_timer_setup(timer, callback, data, flags) \
 	setup_timer((timer), (callback), (data))
-#define CFS_DEFINE_TIMER(_name, _function, _expires, _data) \
-	DEFINE_TIMER((_name), (_function), (_expires), (_data))
 #define cfs_timer_cb_arg(var, timer_fieldname) (cfs_timer_cb_arg_t)(var)
 #endif
 
