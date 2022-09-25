@@ -23,7 +23,7 @@
  * Copyright (c) 2003, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -577,45 +577,83 @@ out:
 
 /**
  * Prepare partially written-to page for a write.
+ * @pg is owned when passed in and disowned when it returns non-zero result to
+ * the caller.
  */
 static int ll_prepare_partial_page(const struct lu_env *env, struct cl_io *io,
-				   struct cl_page *pg)
+				   struct cl_page *pg, struct file *file)
 {
 	struct cl_attr *attr   = vvp_env_thread_attr(env);
 	struct cl_object *obj  = io->ci_obj;
 	struct vvp_page *vpg   = cl_object_page_slice(obj, pg);
 	loff_t          offset = cl_offset(obj, vvp_index(vpg));
 	int             result;
+	ENTRY;
 
 	cl_object_attr_lock(obj);
 	result = cl_object_attr_get(env, obj, attr);
 	cl_object_attr_unlock(obj);
-	if (result == 0) {
-		/*
-		 * If are writing to a new page, no need to read old data.
-		 * The extent locking will have updated the KMS, and for our
-		 * purposes here we can treat it like i_size.
-		 */
-		if (attr->cat_kms <= offset) {
-			char *kaddr = ll_kmap_atomic(vpg->vpg_page, KM_USER0);
-
-			memset(kaddr, 0, cl_page_size(obj));
-			ll_kunmap_atomic(kaddr, KM_USER0);
-		} else if (vpg->vpg_defer_uptodate)
-			vpg->vpg_ra_used = 1;
-		else
-			result = ll_page_sync_io(env, io, pg, CRT_READ);
+	if (result) {
+		cl_page_disown(env, io, pg);
+		GOTO(out, result);
 	}
+
+	/*
+	 * If are writing to a new page, no need to read old data.
+	 * The extent locking will have updated the KMS, and for our
+	 * purposes here we can treat it like i_size.
+	 */
+	if (attr->cat_kms <= offset) {
+		char *kaddr = ll_kmap_atomic(vpg->vpg_page, KM_USER0);
+
+		memset(kaddr, 0, cl_page_size(obj));
+		ll_kunmap_atomic(kaddr, KM_USER0);
+		GOTO(out, result = 0);
+	}
+
+	if (vpg->vpg_defer_uptodate) {
+		vpg->vpg_ra_used = 1;
+		GOTO(out, result = 0);
+	}
+
+	result = ll_io_read_page(env, io, pg, file);
+	if (result)
+		GOTO(out, result);
+
+	/* ll_io_read_page() disowns the page */
+	result = cl_page_own(env, io, pg);
+	if (!result) {
+		if (!PageUptodate(cl_page_vmpage(pg))) {
+			cl_page_disown(env, io, pg);
+			result = -EIO;
+		}
+	} else if (result == -ENOENT) {
+		/* page was truncated */
+		result = -EAGAIN;
+	}
+	EXIT;
+
+out:
 	return result;
+}
+
+static int ll_tiny_write_begin(struct page *vmpage)
+{
+	/* Page must be present, up to date, dirty, and not in writeback. */
+	if (!vmpage || !PageUptodate(vmpage) || !PageDirty(vmpage) ||
+	    PageWriteback(vmpage))
+		return -ENODATA;
+
+	return 0;
 }
 
 static int ll_write_begin(struct file *file, struct address_space *mapping,
 			  loff_t pos, unsigned len, unsigned flags,
 			  struct page **pagep, void **fsdata)
 {
-	struct ll_cl_context *lcc;
+	struct ll_cl_context *lcc = NULL;
 	const struct lu_env  *env = NULL;
-	struct cl_io   *io;
+	struct cl_io   *io = NULL;
 	struct cl_page *page = NULL;
 
 	struct cl_object *clob = ll_i2info(mapping->host)->lli_clob;
@@ -626,17 +664,27 @@ static int ll_write_begin(struct file *file, struct address_space *mapping,
 	int result = 0;
 	ENTRY;
 
-	CDEBUG(D_PAGE, "Writing %lu of %d to %d bytes\n", index, from, len);
+	CDEBUG(D_VFSTRACE, "Writing %lu of %d to %d bytes\n", index, from, len);
 
 	lcc = ll_cl_find(file);
 	if (lcc == NULL) {
-		io = NULL;
-		GOTO(out, result = -EIO);
+		vmpage = grab_cache_page_nowait(mapping, index);
+		result = ll_tiny_write_begin(vmpage);
+		GOTO(out, result);
 	}
 
 	env = lcc->lcc_env;
 	io  = lcc->lcc_io;
 
+	if (file->f_flags & O_DIRECT && io->ci_designated_mirror > 0) {
+		/* direct IO failed because it couldn't clean up cached pages,
+		 * this causes a problem for mirror write because the cached
+		 * page may belong to another mirror, which will result in
+		 * problem submitting the I/O. */
+		GOTO(out, result = -EBUSY);
+	}
+
+again:
 	/* To avoid deadlock, try to lock page first. */
 	vmpage = grab_cache_page_nowait(mapping, index);
 
@@ -689,13 +737,18 @@ static int ll_write_begin(struct file *file, struct address_space *mapping,
 			/* TODO: can be optimized at OSC layer to check if it
 			 * is a lockless IO. In that case, it's not necessary
 			 * to read the data. */
-			result = ll_prepare_partial_page(env, io, page);
-			if (result == 0)
-				SetPageUptodate(vmpage);
+			result = ll_prepare_partial_page(env, io, page, file);
+			if (result) {
+				/* vmpage should have been unlocked */
+				put_page(vmpage);
+				vmpage = NULL;
+
+				if (result == -EAGAIN)
+					goto again;
+				GOTO(out, result);
+			}
 		}
 	}
-	if (result < 0)
-		cl_page_unassume(env, io, page);
 	EXIT;
 out:
 	if (result < 0) {
@@ -703,6 +756,7 @@ out:
 			unlock_page(vmpage);
 			put_page(vmpage);
 		}
+		/* On tiny_write failure, page and io are always null. */
 		if (!IS_ERR_OR_NULL(page)) {
 			lu_ref_del(&page->cp_reference, "cl_io", io);
 			cl_page_put(env, page);
@@ -714,6 +768,47 @@ out:
 		*fsdata = lcc;
 	}
 	RETURN(result);
+}
+
+static int ll_tiny_write_end(struct file *file, struct address_space *mapping,
+			     loff_t pos, unsigned int len, unsigned int copied,
+			     struct page *vmpage)
+{
+	struct cl_page *clpage = (struct cl_page *) vmpage->private;
+	loff_t kms = pos+copied;
+	loff_t to = kms & (PAGE_SIZE-1) ? kms & (PAGE_SIZE-1) : PAGE_SIZE;
+	__u16 refcheck;
+	struct lu_env *env = cl_env_get(&refcheck);
+	int rc = 0;
+
+	ENTRY;
+
+	if (IS_ERR(env)) {
+		rc = PTR_ERR(env);
+		goto out;
+	}
+
+	/* This page is dirty in cache, so it should have a cl_page pointer
+	 * set in vmpage->private.
+	 */
+	LASSERT(clpage != NULL);
+
+	if (copied == 0)
+		goto out_env;
+
+	/* Update the underlying size information in the OSC/LOV objects this
+	 * page is part of.
+	 */
+	cl_page_touch(env, clpage, to);
+
+out_env:
+	cl_env_put(env, &refcheck);
+
+out:
+	/* Must return page unlocked. */
+	unlock_page(vmpage);
+
+	RETURN(rc);
 }
 
 static int ll_write_end(struct file *file, struct address_space *mapping,
@@ -731,6 +826,14 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 	ENTRY;
 
 	put_page(vmpage);
+
+	CDEBUG(D_VFSTRACE, "pos %llu, len %u, copied %u\n", pos, len, copied);
+
+	if (lcc == NULL) {
+		result = ll_tiny_write_end(file, mapping, pos, len, copied,
+					   vmpage);
+		GOTO(out, result);
+	}
 
 	LASSERT(lcc != NULL);
 	env  = lcc->lcc_env;
@@ -761,7 +864,7 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 		if (plist->pl_nr >= PTLRPC_MAX_BRW_PAGES)
 			unplug = true;
 
-		CL_PAGE_DEBUG(D_PAGE, env, page,
+		CL_PAGE_DEBUG(D_VFSTRACE, env, page,
 			      "queued page: %d.\n", plist->pl_nr);
 	} else {
 		cl_page_disown(env, io, page);
@@ -773,11 +876,14 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 		/* page list is not contiguous now, commit it now */
 		unplug = true;
 	}
-	if (unplug || io->u.ci_rw.rw_sync)
+	if (unplug || io->u.ci_wr.wr_sync)
 		result = vvp_io_write_commit(env, io);
 
 	if (result < 0)
 		io->ci_result = result;
+
+
+out:
 	RETURN(result >= 0 ? copied : result);
 }
 
