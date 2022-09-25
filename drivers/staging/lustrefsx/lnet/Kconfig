@@ -26,7 +26,6 @@ config LUSTREFSX_LNET_XPRT_IB
 	tristate "LNET infiniband support"
 	depends on m
 	depends on LUSTREFSX_LNET && INFINIBAND && INFINIBAND_ADDR_TRANS
-	default LUSTREFSX_LNET && INFINIBAND
 	help
 	  This option allows the LNET users to use infiniband as an
 	  RDMA-enabled transport.
