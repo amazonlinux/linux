@@ -23,7 +23,7 @@
  * Copyright (c) 2009, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * lustre/target/tgt_grant.c
@@ -71,7 +71,7 @@
  * Author: Johann Lombardi <johann.lombardi@intel.com>
  */
 
-#define DEBUG_SUBSYSTEM S_FILTER
+#define DEBUG_SUBSYSTEM S_CLASS
 
 #include <obd.h>
 #include <obd_class.h>
@@ -280,14 +280,14 @@ EXPORT_SYMBOL(tgt_grant_sanity_check);
  * \retval		negative value on error
  */
 int tgt_statfs_internal(const struct lu_env *env, struct lu_target *lut,
-			struct obd_statfs *osfs, __u64 max_age, int *from_cache)
+			struct obd_statfs *osfs, time64_t max_age, int *from_cache)
 {
 	struct tg_grants_data *tgd = &lut->lut_tgd;
 	int rc = 0;
 	ENTRY;
 
 	spin_lock(&tgd->tgd_osfs_lock);
-	if (cfs_time_before_64(tgd->tgd_osfs_age, max_age) || max_age == 0) {
+	if (tgd->tgd_osfs_age < max_age || max_age == 0) {
 		u64 unstable;
 
 		/* statfs data are too old, get up-to-date one.
@@ -312,6 +312,8 @@ int tgt_statfs_internal(const struct lu_env *env, struct lu_target *lut,
 		rc = dt_statfs(env, lut->lut_bottom, osfs);
 		if (unlikely(rc))
 			GOTO(out, rc);
+
+		osfs->os_namelen = min_t(__u32, osfs->os_namelen, NAME_MAX);
 
 		spin_lock(&tgd->tgd_grant_lock);
 		spin_lock(&tgd->tgd_osfs_lock);
@@ -342,7 +344,7 @@ int tgt_statfs_internal(const struct lu_env *env, struct lu_target *lut,
 
 		/* finally udpate cached statfs data */
 		tgd->tgd_osfs = *osfs;
-		tgd->tgd_osfs_age = cfs_time_current_64();
+		tgd->tgd_osfs_age = ktime_get_seconds();
 
 		tgd->tgd_statfs_inflight--; /* stop tracking */
 		if (tgd->tgd_statfs_inflight == 0)
@@ -388,13 +390,13 @@ static void tgt_grant_statfs(const struct lu_env *env, struct obd_export *exp,
 	struct tg_grants_data	*tgd = &lut->lut_tgd;
 	struct tgt_thread_info	*tti;
 	struct obd_statfs	*osfs;
-	__u64			 max_age;
-	int			 rc;
+	time64_t max_age;
+	int rc;
 
 	if (force)
 		max_age = 0; /* get fresh statfs data */
 	else
-		max_age = cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS);
+		max_age = ktime_get_seconds() - OBD_STATFS_CACHE_SECONDS;
 
 	tti = tgt_th_info(env);
 	osfs = &tti->tti_u.osfs;
@@ -433,6 +435,7 @@ static u64 tgt_grant_space_left(struct obd_export *exp)
 	u64			 left;
 	u64			 avail;
 	u64			 unstable;
+	u64			 reserved;
 
 	ENTRY;
 	assert_spin_locked(&tgd->tgd_grant_lock);
@@ -443,7 +446,8 @@ static u64 tgt_grant_space_left(struct obd_export *exp)
 	unstable = tgd->tgd_osfs_unstable; /* those might be accounted twice */
 	spin_unlock(&tgd->tgd_osfs_lock);
 
-	tot_granted = tgd->tgd_tot_granted;
+	reserved = left * tgd->tgd_reserved_pcnt / 100;
+	tot_granted = tgd->tgd_tot_granted + reserved;
 
 	if (left < tot_granted) {
 		int mask = (left + unstable <
@@ -495,8 +499,7 @@ static void tgt_grant_incoming(const struct lu_env *env, struct obd_export *exp,
 	struct tg_export_data	*ted = &exp->exp_target_data;
 	struct obd_device	*obd = exp->exp_obd;
 	struct tg_grants_data	*tgd = &obd->u.obt.obt_lut->lut_tgd;
-	long			 dirty;
-	long			 dropped;
+	long long		 dirty, dropped;
 	ENTRY;
 
 	assert_spin_locked(&tgd->tgd_grant_lock);
@@ -520,10 +523,19 @@ static void tgt_grant_incoming(const struct lu_env *env, struct obd_export *exp,
 
 	/* inflate grant counters if required */
 	if (!exp_grant_param_supp(exp)) {
+		u64 tmp;
 		oa->o_grant	= tgt_grant_inflate(tgd, oa->o_grant);
 		oa->o_dirty	= tgt_grant_inflate(tgd, oa->o_dirty);
-		oa->o_dropped	= tgt_grant_inflate(tgd, (u64)oa->o_dropped);
-		oa->o_undirty	= tgt_grant_inflate(tgd, oa->o_undirty);
+		/* inflation can bump client's wish to >4GB which doesn't fit
+		 * 32bit o_undirty, limit that ..  */
+		tmp = tgt_grant_inflate(tgd, oa->o_undirty);
+		if (tmp >= OBD_MAX_GRANT)
+			tmp = OBD_MAX_GRANT & ~(1ULL << tgd->tgd_blockbits);
+		oa->o_undirty = tmp;
+		tmp = tgt_grant_inflate(tgd, oa->o_dropped);
+		if (tmp >= OBD_MAX_GRANT)
+			tmp = OBD_MAX_GRANT & ~(1ULL << tgd->tgd_blockbits);
+		oa->o_dropped = tmp;
 	}
 
 	dirty = oa->o_dirty;
@@ -538,13 +550,13 @@ static void tgt_grant_incoming(const struct lu_env *env, struct obd_export *exp,
 	tgd->tgd_tot_dirty += dirty - ted->ted_dirty;
 	if (ted->ted_grant < dropped) {
 		CDEBUG(D_CACHE,
-		       "%s: cli %s/%p reports %lu dropped > grant %lu\n",
+		       "%s: cli %s/%p reports %llu dropped > grant %lu\n",
 		       obd->obd_name, exp->exp_client_uuid.uuid, exp, dropped,
 		       ted->ted_grant);
 		dropped = 0;
 	}
 	if (tgd->tgd_tot_granted < dropped) {
-		CERROR("%s: cli %s/%p reports %lu dropped > tot_grant %llu\n",
+		CERROR("%s: cli %s/%p reports %llu dropped > tot_grant %llu\n",
 		       obd->obd_name, exp->exp_client_uuid.uuid, exp,
 		       dropped, tgd->tgd_tot_granted);
 		dropped = 0;
@@ -592,6 +604,14 @@ static void tgt_grant_shrink(struct obd_export *exp, struct obdo *oa,
 		return;
 
 	grant_shrink = oa->o_grant;
+
+	if (ted->ted_grant < grant_shrink) {
+		CDEBUG(D_CACHE,
+		       "%s: cli %s/%p wants %lu shrinked > grant %lu\n",
+		       obd->obd_name, exp->exp_client_uuid.uuid, exp,
+		       grant_shrink, ted->ted_grant);
+		grant_shrink = ted->ted_grant;
+	}
 
 	ted->ted_grant -= grant_shrink;
 	tgd->tgd_tot_granted -= grant_shrink;
@@ -864,6 +884,7 @@ static void tgt_grant_check(const struct lu_env *env, struct obd_export *exp,
  *				have
  * \param[in] left		remaining free space with granted space taken
  *				out
+ * \param[in] chunk		grant allocation unit
  * \param[in] conservative	if set to true, the server should be cautious
  *				and limit how much space is granted back to the
  *				client. Otherwise, the server should try hard to
@@ -881,6 +902,9 @@ static long tgt_grant_alloc(struct obd_export *exp, u64 curgrant,
 	u64			 grant;
 
 	ENTRY;
+
+	if (OBD_FAIL_CHECK(OBD_FAIL_TGT_NO_GRANT))
+		RETURN(0);
 
 	/* When tgd_grant_compat_disable is set, we don't grant any space to
 	 * clients not supporting OBD_CONNECT_GRANT_PARAM.
@@ -933,18 +957,19 @@ static long tgt_grant_alloc(struct obd_export *exp, u64 curgrant,
 	 * client would like to have by more than grants for 2 full
 	 * RPCs
 	 */
+	if (want + chunk <= ted->ted_grant)
+		RETURN(0);
 	if (ted->ted_grant + grant > want + chunk)
 		grant = want + chunk - ted->ted_grant;
 
 	tgd->tgd_tot_granted += grant;
 	ted->ted_grant += grant;
 
-	if (ted->ted_grant < 0) {
+	if (unlikely(ted->ted_grant < 0 || ted->ted_grant > want + chunk)) {
 		CERROR("%s: cli %s/%p grant %ld want %llu current %llu\n",
 		       obd->obd_name, exp->exp_client_uuid.uuid, exp,
 		       ted->ted_grant, want, curgrant);
 		spin_unlock(&tgd->tgd_grant_lock);
-		LBUG();
 	}
 
 	CDEBUG(D_CACHE,
@@ -1058,28 +1083,51 @@ EXPORT_SYMBOL(tgt_grant_connect);
 void tgt_grant_discard(struct obd_export *exp)
 {
 	struct obd_device	*obd = exp->exp_obd;
-	struct tg_grants_data	*tgd = &obd->u.obt.obt_lut->lut_tgd;
+	struct lu_target        *lut = class_exp2tgt(exp);
 	struct tg_export_data	*ted = &exp->exp_target_data;
+	struct tg_grants_data	*tgd;
 
+	if (!lut)
+		return;
+
+	tgd = &lut->lut_tgd;
 	spin_lock(&tgd->tgd_grant_lock);
-	LASSERTF(tgd->tgd_tot_granted >= ted->ted_grant,
-		 "%s: tot_granted %llu cli %s/%p ted_grant %ld\n",
-		 obd->obd_name, tgd->tgd_tot_granted,
-		 exp->exp_client_uuid.uuid, exp, ted->ted_grant);
-	tgd->tgd_tot_granted -= ted->ted_grant;
+	if (unlikely(tgd->tgd_tot_granted < ted->ted_grant ||
+		     tgd->tgd_tot_dirty < ted->ted_dirty)) {
+		struct obd_export *e;
+		u64 ttg = 0;
+		u64 ttd = 0;
+
+		list_for_each_entry(e, &obd->obd_exports, exp_obd_chain) {
+			LASSERT(exp != e);
+			ttg += e->exp_target_data.ted_grant;
+			ttg += e->exp_target_data.ted_pending;
+			ttd += e->exp_target_data.ted_dirty;
+		}
+		if (tgd->tgd_tot_granted < ted->ted_grant)
+			CERROR("%s: cli %s/%p: tot_granted %llu < ted_grant %ld, corrected to %llu",
+			       obd->obd_name,  exp->exp_client_uuid.uuid, exp,
+			       tgd->tgd_tot_granted, ted->ted_grant, ttg);
+		if (tgd->tgd_tot_dirty < ted->ted_dirty)
+			CERROR("%s: cli %s/%p: tot_dirty %llu < ted_dirty %ld, corrected to %llu",
+			       obd->obd_name, exp->exp_client_uuid.uuid, exp,
+			       tgd->tgd_tot_dirty, ted->ted_dirty, ttd);
+		tgd->tgd_tot_granted = ttg;
+		tgd->tgd_tot_dirty = ttd;
+	} else {
+		tgd->tgd_tot_granted -= ted->ted_grant;
+		tgd->tgd_tot_dirty -= ted->ted_dirty;
+	}
 	ted->ted_grant = 0;
-	LASSERTF(tgd->tgd_tot_pending >= ted->ted_pending,
-		 "%s: tot_pending %llu cli %s/%p ted_pending %ld\n",
-		 obd->obd_name, tgd->tgd_tot_pending,
-		 exp->exp_client_uuid.uuid, exp, ted->ted_pending);
+	ted->ted_dirty = 0;
+
+	if (tgd->tgd_tot_pending < ted->ted_pending) {
+		CERROR("%s: tot_pending %llu < cli %s/%p ted_pending %ld\n",
+		       obd->obd_name, tgd->tgd_tot_pending,
+		       exp->exp_client_uuid.uuid, exp, ted->ted_pending);
+	}
 	/* tgd_tot_pending is handled in tgt_grant_commit as bulk
 	 * commmits */
-	LASSERTF(tgd->tgd_tot_dirty >= ted->ted_dirty,
-		 "%s: tot_dirty %llu cli %s/%p ted_dirty %ld\n",
-		 obd->obd_name, tgd->tgd_tot_dirty,
-		 exp->exp_client_uuid.uuid, exp, ted->ted_dirty);
-	tgd->tgd_tot_dirty -= ted->ted_dirty;
-	ted->ted_dirty = 0;
 	spin_unlock(&tgd->tgd_grant_lock);
 }
 EXPORT_SYMBOL(tgt_grant_discard);
@@ -1514,3 +1562,131 @@ int tgt_grant_commit_cb_add(struct thandle *th, struct obd_export *exp,
 	RETURN(rc);
 }
 EXPORT_SYMBOL(tgt_grant_commit_cb_add);
+
+/**
+ * Show estimate of total amount of dirty data on clients.
+ *
+ * @kobj		kobject embedded in obd_device
+ * @attr		unused
+ * @buf			buf used by sysfs to print out data
+ *
+ * Return:		0 on success
+ *			negative value on error
+ */
+ssize_t tot_dirty_show(struct kobject *kobj, struct attribute *attr,
+		       char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct tg_grants_data *tgd;
+
+	tgd = &obd->u.obt.obt_lut->lut_tgd;
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", tgd->tgd_tot_dirty);
+}
+EXPORT_SYMBOL(tot_dirty_show);
+
+/**
+ * Show total amount of space granted to clients.
+ *
+ * @kobj		kobject embedded in obd_device
+ * @attr		unused
+ * @buf			buf used by sysfs to print out data
+ *
+ * Return:		0 on success
+ *			negative value on error
+ */
+ssize_t tot_granted_show(struct kobject *kobj, struct attribute *attr,
+			 char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct tg_grants_data *tgd;
+
+	tgd = &obd->u.obt.obt_lut->lut_tgd;
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", tgd->tgd_tot_granted);
+}
+EXPORT_SYMBOL(tot_granted_show);
+
+/**
+ * Show total amount of space used by IO in progress.
+ *
+ * @kobj		kobject embedded in obd_device
+ * @attr		unused
+ * @buf			buf used by sysfs to print out data
+ *
+ * Return:		0 on success
+ *			negative value on error
+ */
+ssize_t tot_pending_show(struct kobject *kobj, struct attribute *attr,
+			 char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct tg_grants_data *tgd;
+
+	tgd = &obd->u.obt.obt_lut->lut_tgd;
+	return scnprintf(buf, PAGE_SIZE, "%llu\n", tgd->tgd_tot_pending);
+}
+EXPORT_SYMBOL(tot_pending_show);
+
+/**
+ * Show if grants compatibility mode is disabled.
+ *
+ * When tgd_grant_compat_disable is set, we don't grant any space to clients
+ * not supporting OBD_CONNECT_GRANT_PARAM. Otherwise, space granted to such
+ * a client is inflated since it consumes PAGE_SIZE of grant space per
+ * block, (i.e. typically 4kB units), but underlaying file system might have
+ * block size bigger than page size, e.g. ZFS. See LU-2049 for details.
+ *
+ * @kobj		kobject embedded in obd_device
+ * @attr		unused
+ * @buf			buf used by sysfs to print out data
+ *
+ * Return:		string length of @buf output on success
+ */
+ssize_t grant_compat_disable_show(struct kobject *kobj, struct attribute *attr,
+				  char *buf)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct tg_grants_data *tgd = &obd->u.obt.obt_lut->lut_tgd;
+
+	return scnprintf(buf, PAGE_SIZE, "%u\n", tgd->tgd_grant_compat_disable);
+}
+EXPORT_SYMBOL(grant_compat_disable_show);
+
+/**
+ * Change grant compatibility mode.
+ *
+ * Setting tgd_grant_compat_disable prohibit any space granting to clients
+ * not supporting OBD_CONNECT_GRANT_PARAM. See details above.
+ *
+ * @kobj	kobject embedded in obd_device
+ * @attr	unused
+ * @buffer	string which represents mode
+ *		1: disable compatibility mode
+ *		0: enable compatibility mode
+ * @count	@buffer length
+ *
+ * Return:	@count on success
+ *		negative number on error
+ */
+ssize_t grant_compat_disable_store(struct kobject *kobj,
+				   struct attribute *attr,
+				   const char *buffer, size_t count)
+{
+	struct obd_device *obd = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct tg_grants_data *tgd = &obd->u.obt.obt_lut->lut_tgd;
+	bool val;
+	int rc;
+
+	rc = kstrtobool(buffer, &val);
+	if (rc)
+		return rc;
+
+	tgd->tgd_grant_compat_disable = val;
+
+	return count;
+}
+EXPORT_SYMBOL(grant_compat_disable_store);
