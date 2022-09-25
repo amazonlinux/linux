@@ -23,7 +23,7 @@
  * Copyright (c) 2004, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -31,7 +31,8 @@
  */
 
 #define DEBUG_SUBSYSTEM S_LMV
-#include <linux/slab.h>
+
+#include <linux/file.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/user_namespace.h>
@@ -45,7 +46,6 @@
 #include <linux/seq_file.h>
 #include <linux/namei.h>
 
-#include <lustre/lustre_idl.h>
 #include <obd_support.h>
 #include <lustre_lib.h>
 #include <lustre_net.h>
@@ -54,7 +54,7 @@
 #include <lprocfs_status.h>
 #include <cl_object.h>
 #include <lustre_fid.h>
-#include <uapi/linux/lustre_ioctl.h>
+#include <uapi/linux/lustre/lustre_ioctl.h>
 #include <lustre_kernelcomm.h>
 #include "lmv_internal.h"
 
@@ -213,30 +213,24 @@ static int lmv_connect(const struct lu_env *env,
 	lmv->connected = 0;
 	lmv->conn_data = *data;
 
-	if (lmv->targets_proc_entry == NULL) {
-		lmv->targets_proc_entry = lprocfs_register("target_obds",
-							   obd->obd_proc_entry,
-							   NULL, NULL);
-		if (IS_ERR(lmv->targets_proc_entry)) {
-			CERROR("%s: cannot register "
-			       "/proc/fs/lustre/%s/%s/target_obds\n",
-			       obd->obd_name, obd->obd_type->typ_name,
-			       obd->obd_name);
-			lmv->targets_proc_entry = NULL;
-		}
+	lmv->lmv_tgts_kobj = kobject_create_and_add("target_obds",
+						    &obd->obd_kset.kobj);
+	if (!lmv->lmv_tgts_kobj) {
+		CERROR("%s: cannot create /sys/fs/lustre/%s/%s/target_obds\n",
+		       obd->obd_name, obd->obd_type->typ_name, obd->obd_name);
 	}
 
 	rc = lmv_check_connect(obd);
 	if (rc != 0)
-		GOTO(out_proc, rc);
+		GOTO(out_sysfs, rc);
 
 	*pexp = exp;
 
 	RETURN(rc);
 
-out_proc:
-	if (lmv->targets_proc_entry != NULL)
-		lprocfs_remove(&lmv->targets_proc_entry);
+out_sysfs:
+	if (lmv->lmv_tgts_kobj)
+		kobject_put(lmv->lmv_tgts_kobj);
 
 	class_disconnect(exp);
 
@@ -271,10 +265,12 @@ static int lmv_init_ea_size(struct obd_export *exp, __u32 easize,
 	for (i = 0; i < lmv->desc.ld_tgt_count; i++) {
 		struct lmv_tgt_desc *tgt = lmv->tgts[i];
 
-		if (tgt == NULL || tgt->ltd_exp == NULL || !tgt->ltd_active) {
+		if (tgt == NULL || tgt->ltd_exp == NULL) {
 			CWARN("%s: NULL export for %d\n", obd->obd_name, i);
 			continue;
 		}
+		if (!tgt->ltd_active)
+			continue;
 
 		rc = md_init_ea_size(tgt->ltd_exp, easize, def_easize);
 		if (rc) {
@@ -363,23 +359,11 @@ int lmv_connect_mdc(struct obd_device *obd, struct lmv_tgt_desc *tgt)
 		mdc_obd->obd_name, mdc_obd->obd_uuid.uuid,
 		atomic_read(&obd->obd_refcount));
 
-	if (lmv->targets_proc_entry != NULL) {
-		struct proc_dir_entry *mdc_symlink;
-
-		LASSERT(mdc_obd->obd_type != NULL);
-		LASSERT(mdc_obd->obd_type->typ_name != NULL);
-		mdc_symlink = lprocfs_add_symlink(mdc_obd->obd_name,
-						  lmv->targets_proc_entry,
-						  "../../../%s/%s",
-						  mdc_obd->obd_type->typ_name,
-						  mdc_obd->obd_name);
-		if (mdc_symlink == NULL) {
-			CERROR("cannot register LMV target "
-			       "/proc/fs/lustre/%s/%s/target_obds/%s\n",
-			       obd->obd_type->typ_name, obd->obd_name,
-			       mdc_obd->obd_name);
-		}
-	}
+	if (lmv->lmv_tgts_kobj)
+		/* Even if we failed to create the link, that's fine */
+		rc = sysfs_create_link(lmv->lmv_tgts_kobj,
+				       &mdc_obd->obd_kset.kobj,
+				       mdc_obd->obd_name);
 	RETURN(0);
 }
 
@@ -415,7 +399,7 @@ static int lmv_add_target(struct obd_device *obd, struct obd_uuid *uuidp,
 	mutex_lock(&lmv->lmv_init_mutex);
 	if ((index < lmv->tgts_size) && (lmv->tgts[index] != NULL)) {
 		tgt = lmv->tgts[index];
-		CERROR("%s: UUID %s already assigned at LOV target index %d:"
+		CERROR("%s: UUID %s already assigned at LMV target index %d:"
 		       " rc = %d\n", obd->obd_name,
 		       obd_uuid2str(&tgt->ltd_uuid), index, -EEXIST);
 		mutex_unlock(&lmv->lmv_init_mutex);
@@ -584,9 +568,9 @@ static int lmv_disconnect_mdc(struct obd_device *obd, struct lmv_tgt_desc *tgt)
                 mdc_obd->obd_fail = obd->obd_fail;
                 mdc_obd->obd_no_recov = obd->obd_no_recov;
 
-		if (lmv->targets_proc_entry != NULL)
-			lprocfs_remove_proc_entry(mdc_obd->obd_name,
-						  lmv->targets_proc_entry);
+		if (lmv->lmv_tgts_kobj)
+			sysfs_remove_link(lmv->lmv_tgts_kobj,
+					  mdc_obd->obd_name);
 	}
 
 	rc = obd_fid_fini(tgt->ltd_exp->exp_obd);
@@ -629,11 +613,8 @@ static int lmv_disconnect(struct obd_export *exp)
 		lmv_disconnect_mdc(obd, lmv->tgts[i]);
         }
 
-	if (lmv->targets_proc_entry != NULL)
-		lprocfs_remove(&lmv->targets_proc_entry);
-	else
-		CERROR("/proc/fs/lustre/%s/%s/target_obds missing\n",
-		       obd->obd_type->typ_name, obd->obd_name);
+	if (lmv->lmv_tgts_kobj)
+		kobject_put(lmv->lmv_tgts_kobj);
 
 out_local:
         /*
@@ -681,8 +662,8 @@ repeat_fid2path:
 		int len;
 
 		ori_gf = (struct getinfo_fid2path *)karg;
-		if (strlen(ori_gf->gf_u.gf_path) +
-		    strlen(gf->gf_u.gf_path) > ori_gf->gf_pathlen)
+		if (strlen(ori_gf->gf_u.gf_path) + 1 +
+		    strlen(gf->gf_u.gf_path) + 1 > ori_gf->gf_pathlen)
 			GOTO(out_fid2path, rc = -EOVERFLOW);
 
 		ptr = ori_gf->gf_u.gf_path;
@@ -819,23 +800,42 @@ static int lmv_hsm_ct_register(struct obd_device *obd, unsigned int cmd,
 			       void __user *uarg)
 {
 	struct lmv_obd *lmv = &obd->u.lmv;
-	struct file		*filp;
-	__u32			 i, j;
-	int			 err;
-	bool			 any_set = false;
-	struct kkuc_ct_data	 kcd = {
-		.kcd_magic   = KKUC_CT_DATA_MAGIC,
-		.kcd_archive = lk->lk_data,
-	};
-	int			 rc = 0;
+	struct file *filp;
+	__u32 i, j;
+	int err;
+	bool any_set = false;
+	struct kkuc_ct_data *kcd;
+	size_t kcd_size;
+	int rc = 0;
 	ENTRY;
 
 	filp = fget(lk->lk_wfd);
 	if (!filp)
 		RETURN(-EBADF);
 
+	if (lk->lk_flags & LK_FLG_DATANR)
+		kcd_size = offsetof(struct kkuc_ct_data,
+				    kcd_archives[lk->lk_data_count]);
+	else
+		kcd_size = sizeof(*kcd);
+
+	OBD_ALLOC(kcd, kcd_size);
+	if (kcd == NULL)
+		GOTO(err_fput, rc = -ENOMEM);
+
+	kcd->kcd_nr_archives = lk->lk_data_count;
+	if (lk->lk_flags & LK_FLG_DATANR) {
+		kcd->kcd_magic = KKUC_CT_DATA_ARRAY_MAGIC;
+		if (lk->lk_data_count > 0)
+			memcpy(kcd->kcd_archives, lk->lk_data,
+			       sizeof(*kcd->kcd_archives) * lk->lk_data_count);
+	} else {
+		kcd->kcd_magic = KKUC_CT_DATA_BITMAP_MAGIC;
+	}
+
 	rc = libcfs_kkuc_group_add(filp, &obd->obd_uuid, lk->lk_uid,
-				   lk->lk_group, &kcd, sizeof(kcd));
+				   lk->lk_group, kcd, kcd_size);
+	OBD_FREE(kcd, kcd_size);
 	if (rc)
 		GOTO(err_fput, rc);
 
@@ -934,7 +934,7 @@ static int lmv_iocontrol(unsigned int cmd, struct obd_export *exp,
 			RETURN(-EFAULT);
 
 		rc = obd_statfs(NULL, tgt->ltd_exp, &stat_buf,
-				cfs_time_shift_64(-OBD_STATFS_CACHE_SECONDS),
+				ktime_get_seconds() - OBD_STATFS_CACHE_SECONDS,
 				0);
 		if (rc)
 			RETURN(rc);
@@ -1175,7 +1175,7 @@ static int lmv_placement_policy(struct obd_device *obd,
 	 * 1. See if the stripe offset is specified by lum.
 	 * 2. Then check if there is default stripe offset.
 	 * 3. Finally choose MDS by name hash if the parent
-	 *    is striped directory. (see lmv_locate_mds()). */
+	 *    is striped directory. (see lmv_locate_tgt()). */
 	if (op_data->op_cli_flags & CLI_SET_MEA && lum != NULL &&
 	    le32_to_cpu(lum->lum_stripe_offset) != (__u32)-1) {
 		*mds = le32_to_cpu(lum->lum_stripe_offset);
@@ -1287,16 +1287,11 @@ static int lmv_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 	spin_lock_init(&lmv->lmv_lock);
 	mutex_init(&lmv->lmv_init_mutex);
 
-#ifdef CONFIG_PROC_FS
-	obd->obd_vars = lprocfs_lmv_obd_vars;
-	lprocfs_obd_setup(obd);
-	lprocfs_alloc_md_stats(obd, 0);
-	rc = lprocfs_seq_create(obd->obd_proc_entry, "target_obd",
-				0444, &lmv_proc_target_fops, obd);
+	rc = lmv_tunables_init(obd);
 	if (rc)
-		CWARN("%s: error adding LMV target_obd file: rc = %d\n",
+		CWARN("%s: error adding LMV sysfs/debugfs files: rc = %d\n",
 		      obd->obd_name, rc);
-#endif
+
 	rc = fld_client_init(&lmv->lmv_fld, obd->obd_name,
 			     LUSTRE_CLI_FLD_HASH_DHT);
 	if (rc) {
@@ -1361,49 +1356,88 @@ out:
 	RETURN(rc);
 }
 
+static int lmv_select_statfs_mdt(struct lmv_obd *lmv, __u32 flags)
+{
+	int i;
+
+	if (flags & OBD_STATFS_FOR_MDT0)
+		return 0;
+
+	if (lmv->lmv_statfs_start || lmv->desc.ld_tgt_count == 1)
+		return lmv->lmv_statfs_start;
+
+	/* choose initial MDT for this client */
+	for (i = 0;; i++) {
+		struct lnet_process_id lnet_id;
+		if (LNetGetId(i, &lnet_id) == -ENOENT)
+			break;
+
+		if (lnet_id.nid != LNET_NID_LO_0) {
+			/* We dont need a full 64-bit modulus, just enough
+			 * to distribute the requests across MDTs evenly.
+			 */
+			lmv->lmv_statfs_start =
+				(u32)lnet_id.nid % lmv->desc.ld_tgt_count;
+			break;
+		}
+	}
+
+	return lmv->lmv_statfs_start;
+}
+
 static int lmv_statfs(const struct lu_env *env, struct obd_export *exp,
-                      struct obd_statfs *osfs, __u64 max_age, __u32 flags)
+		      struct obd_statfs *osfs, time64_t max_age, __u32 flags)
 {
 	struct obd_device	*obd = class_exp2obd(exp);
 	struct lmv_obd		*lmv = &obd->u.lmv;
 	struct obd_statfs	*temp;
 	int			 rc = 0;
-	__u32			 i;
+	__u32			 i, idx;
 	ENTRY;
 
         OBD_ALLOC(temp, sizeof(*temp));
         if (temp == NULL)
                 RETURN(-ENOMEM);
 
-        for (i = 0; i < lmv->desc.ld_tgt_count; i++) {
-		if (lmv->tgts[i] == NULL || lmv->tgts[i]->ltd_exp == NULL)
+	/* distribute statfs among MDTs */
+	idx = lmv_select_statfs_mdt(lmv, flags);
+
+	for (i = 0; i < lmv->desc.ld_tgt_count; i++, idx++) {
+		idx = idx % lmv->desc.ld_tgt_count;
+		if (lmv->tgts[idx] == NULL || lmv->tgts[idx]->ltd_exp == NULL)
 			continue;
 
-		rc = obd_statfs(env, lmv->tgts[i]->ltd_exp, temp,
+		rc = obd_statfs(env, lmv->tgts[idx]->ltd_exp, temp,
 				max_age, flags);
 		if (rc) {
-			CERROR("can't stat MDS #%d (%s), error %d\n", i,
-			       lmv->tgts[i]->ltd_exp->exp_obd->obd_name,
+			CERROR("%s: can't stat MDS #%d: rc = %d\n",
+			       lmv->tgts[idx]->ltd_exp->exp_obd->obd_name, i,
 			       rc);
 			GOTO(out_free_temp, rc);
 		}
 
+		if (temp->os_state & OS_STATE_SUM ||
+		    flags == OBD_STATFS_FOR_MDT0) {
+			/* reset to the last aggregated values
+			 * and don't sum with non-aggrated data */
+			/* If the statfs is from mount, it needs to retrieve
+			 * necessary information from MDT0. i.e. mount does
+			 * not need the merged osfs from all of MDT. Also
+			 * clients can be mounted as long as MDT0 is in
+			 * service */
+			*osfs = *temp;
+			break;
+		}
+
 		if (i == 0) {
 			*osfs = *temp;
-			/* If the statfs is from mount, it will needs
-			 * retrieve necessary information from MDT0.
-			 * i.e. mount does not need the merged osfs
-			 * from all of MDT.
-			 * And also clients can be mounted as long as
-			 * MDT0 is in service*/
-			if (flags & OBD_STATFS_FOR_MDT0)
-				GOTO(out_free_temp, rc);
-                } else {
-                        osfs->os_bavail += temp->os_bavail;
-                        osfs->os_blocks += temp->os_blocks;
-                        osfs->os_ffree += temp->os_ffree;
-                        osfs->os_files += temp->os_files;
-                }
+		} else {
+			osfs->os_bavail += temp->os_bavail;
+			osfs->os_blocks += temp->os_blocks;
+			osfs->os_ffree += temp->os_ffree;
+			osfs->os_files += temp->os_files;
+			osfs->os_granted += temp->os_granted;
+		}
         }
 
         EXIT;
@@ -1425,9 +1459,8 @@ static int lmv_get_root(struct obd_export *exp, const char *fileset,
 }
 
 static int lmv_getxattr(struct obd_export *exp, const struct lu_fid *fid,
-			u64 valid, const char *name,
-			const char *input, int input_size, int output_size,
-			int flags, struct ptlrpc_request **request)
+			u64 obd_md_valid, const char *name, size_t buf_size,
+			struct ptlrpc_request **req)
 {
         struct obd_device      *obd = exp->exp_obd;
         struct lmv_obd         *lmv = &obd->u.lmv;
@@ -1439,17 +1472,16 @@ static int lmv_getxattr(struct obd_export *exp, const struct lu_fid *fid,
         if (IS_ERR(tgt))
                 RETURN(PTR_ERR(tgt));
 
-	rc = md_getxattr(tgt->ltd_exp, fid, valid, name, input,
-			 input_size, output_size, flags, request);
+	rc = md_getxattr(tgt->ltd_exp, fid, obd_md_valid, name, buf_size, req);
 
 	RETURN(rc);
 }
 
 static int lmv_setxattr(struct obd_export *exp, const struct lu_fid *fid,
-			u64 valid, const char *name,
-			const char *input, int input_size, int output_size,
-			int flags, __u32 suppgid,
-			struct ptlrpc_request **request)
+			u64 obd_md_valid, const char *name,
+			const void *value, size_t value_size,
+			unsigned int xattr_flags, u32 suppgid,
+			struct ptlrpc_request **req)
 {
         struct obd_device      *obd = exp->exp_obd;
         struct lmv_obd         *lmv = &obd->u.lmv;
@@ -1461,9 +1493,8 @@ static int lmv_setxattr(struct obd_export *exp, const struct lu_fid *fid,
         if (IS_ERR(tgt))
                 RETURN(PTR_ERR(tgt));
 
-	rc = md_setxattr(tgt->ltd_exp, fid, valid, name, input,
-			 input_size, output_size, flags, suppgid,
-			 request);
+	rc = md_setxattr(tgt->ltd_exp, fid, obd_md_valid, name,
+			 value, value_size, xattr_flags, suppgid, req);
 
 	RETURN(rc);
 }
@@ -1532,81 +1563,93 @@ static int lmv_close(struct obd_export *exp, struct md_op_data *op_data,
         RETURN(rc);
 }
 
-/**
- * Choosing the MDT by name or FID in @op_data.
- * For non-striped directory, it will locate MDT by fid.
- * For striped-directory, it will locate MDT by name. And also
- * it will reset op_fid1 with the FID of the choosen stripe.
- **/
-struct lmv_tgt_desc *
-lmv_locate_target_for_name(struct lmv_obd *lmv, struct lmv_stripe_md *lsm,
-			   const char *name, int namelen, struct lu_fid *fid,
-			   u32 *mds)
+struct lmv_tgt_desc*
+__lmv_locate_tgt(struct lmv_obd *lmv, struct lmv_stripe_md *lsm,
+		 const char *name, int namelen, struct lu_fid *fid, u32 *mds,
+		 bool post_migrate)
 {
-	struct lmv_tgt_desc	*tgt;
-	const struct lmv_oinfo	*oinfo;
+	struct lmv_tgt_desc *tgt;
+	const struct lmv_oinfo *oinfo;
+
+	if (lsm == NULL || namelen == 0) {
+		tgt = lmv_find_target(lmv, fid);
+		if (IS_ERR(tgt))
+			return tgt;
+
+		LASSERT(mds);
+		*mds = tgt->ltd_idx;
+		return tgt;
+	}
 
 	if (OBD_FAIL_CHECK(OBD_FAIL_LFSCK_BAD_NAME_HASH)) {
 		if (cfs_fail_val >= lsm->lsm_md_stripe_count)
-			RETURN(ERR_PTR(-EBADF));
+			return ERR_PTR(-EBADF);
 		oinfo = &lsm->lsm_md_oinfo[cfs_fail_val];
 	} else {
-		oinfo = lsm_name_to_stripe_info(lsm, name, namelen);
+		oinfo = lsm_name_to_stripe_info(lsm, name, namelen,
+						post_migrate);
 		if (IS_ERR(oinfo))
-			RETURN(ERR_CAST(oinfo));
+			return ERR_CAST(oinfo);
 	}
 
 	if (fid != NULL)
 		*fid = oinfo->lmo_fid;
 	if (mds != NULL)
 		*mds = oinfo->lmo_mds;
+	/* check stripe FID is sane */
+	if (!fid_is_sane(&oinfo->lmo_fid))
+		return ERR_PTR(-ENODEV);
 
 	tgt = lmv_get_target(lmv, oinfo->lmo_mds, NULL);
 
 	CDEBUG(D_INFO, "locate on mds %u "DFID"\n", oinfo->lmo_mds,
 	       PFID(&oinfo->lmo_fid));
+
 	return tgt;
 }
 
+
 /**
- * Locate mds by fid or name
+ * Locate mdt by fid or name
  *
- * For striped directory (lsm != NULL), it will locate the stripe
- * by name hash (see lsm_name_to_stripe_info()). Note: if the hash_type
- * is unknown, it will return -EBADFD, and lmv_intent_lookup might need
- * walk through all of stripes to locate the entry.
+ * For striped directory, it will locate the stripe by name hash, if hash_type
+ * is unknown, it will return the stripe specified by 'op_data->op_stripe_index'
+ * which is set outside, and if dir is migrating, 'op_data->op_post_migrate'
+ * indicates whether old or new layout is used to locate.
  *
  * For normal direcotry, it will locate MDS by FID directly.
- * \param[in] lmv	LMV device
- * \param[in] op_data	client MD stack parameters, name, namelen
- *                      mds_num etc.
- * \param[in] fid	object FID used to locate MDS.
+ *
+ * \param[in] lmv		LMV device
+ * \param[in/out] op_data	client MD stack parameters, name, namelen etc,
+ *                      	op_mds and op_fid1 will be updated if op_mea1
+ *                      	indicates fid1 represents a striped directory.
+ * \param[out] fid		object FID used to locate MDS.
  *
  * retval		pointer to the lmv_tgt_desc if succeed.
  *                      ERR_PTR(errno) if failed.
  */
 struct lmv_tgt_desc*
-lmv_locate_mds(struct lmv_obd *lmv, struct md_op_data *op_data,
+lmv_locate_tgt(struct lmv_obd *lmv, struct md_op_data *op_data,
 	       struct lu_fid *fid)
 {
-	struct lmv_stripe_md	*lsm = op_data->op_mea1;
-	struct lmv_tgt_desc	*tgt;
+	struct lmv_stripe_md *lsm = op_data->op_mea1;
+	struct lmv_oinfo *oinfo;
+	struct lmv_tgt_desc *tgt;
 
 	/* During creating VOLATILE file, it should honor the mdt
 	 * index if the file under striped dir is being restored, see
 	 * ct_restore(). */
 	if (op_data->op_bias & MDS_CREATE_VOLATILE &&
 	    (int)op_data->op_mds != -1) {
-		int i;
 		tgt = lmv_get_target(lmv, op_data->op_mds, NULL);
 		if (IS_ERR(tgt))
 			return tgt;
 
-		if (lsm != NULL) {
+		if (lsm) {
+			int i;
+
 			/* refill the right parent fid */
 			for (i = 0; i < lsm->lsm_md_stripe_count; i++) {
-				struct lmv_oinfo *oinfo;
-
 				oinfo = &lsm->lsm_md_oinfo[i];
 				if (oinfo->lmo_mds == op_data->op_mds) {
 					*fid = oinfo->lmo_fid;
@@ -1617,22 +1660,21 @@ lmv_locate_mds(struct lmv_obd *lmv, struct md_op_data *op_data,
 			if (i == lsm->lsm_md_stripe_count)
 				*fid = lsm->lsm_md_oinfo[0].lmo_fid;
 		}
+	} else if (lmv_is_dir_bad_hash(lsm)) {
+		LASSERT(op_data->op_stripe_index < lsm->lsm_md_stripe_count);
+		oinfo = &lsm->lsm_md_oinfo[op_data->op_stripe_index];
 
-		return tgt;
+		*fid = oinfo->lmo_fid;
+		op_data->op_mds = oinfo->lmo_mds;
+		tgt = lmv_get_target(lmv, oinfo->lmo_mds, NULL);
+	} else {
+		tgt = __lmv_locate_tgt(lmv, lsm, op_data->op_name,
+				       op_data->op_namelen, fid,
+				       &op_data->op_mds,
+				       op_data->op_post_migrate);
 	}
 
-	if (lsm == NULL || op_data->op_namelen == 0) {
-		tgt = lmv_find_target(lmv, fid);
-		if (IS_ERR(tgt))
-			return tgt;
-
-		op_data->op_mds = tgt->ltd_idx;
-		return tgt;
-	}
-
-	return lmv_locate_target_for_name(lmv, lsm, op_data->op_name,
-					  op_data->op_namelen, fid,
-					  &op_data->op_mds);
+	return tgt;
 }
 
 int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
@@ -1649,7 +1691,33 @@ int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 	if (!lmv->desc.ld_active_tgt_count)
 		RETURN(-EIO);
 
-	tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
+	if (lmv_is_dir_bad_hash(op_data->op_mea1))
+		RETURN(-EBADF);
+
+	if (lmv_is_dir_migrating(op_data->op_mea1)) {
+		/*
+		 * if parent is migrating, create() needs to lookup existing
+		 * name, to avoid creating new file under old layout of
+		 * migrating directory, check old layout here.
+		 */
+		tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
+
+		rc = md_getattr_name(tgt->ltd_exp, op_data, request);
+		if (!rc) {
+			ptlrpc_req_finished(*request);
+			*request = NULL;
+			RETURN(-EEXIST);
+		}
+
+		if (rc != -ENOENT)
+			RETURN(rc);
+
+		op_data->op_post_migrate = true;
+	}
+
+	tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
@@ -1660,6 +1728,7 @@ int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 	rc = lmv_fid_alloc(NULL, exp, &op_data->op_fid2, op_data);
 	if (rc)
 		RETURN(rc);
+
 	if (exp_connect_flags(exp) & OBD_CONNECT_DIR_STRIPE) {
 		/* Send the create request to the MDT where the object
 		 * will be located */
@@ -1699,7 +1768,7 @@ lmv_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
 
 	CDEBUG(D_INODE, "ENQUEUE on "DFID"\n", PFID(&op_data->op_fid1));
 
-	tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
+	tgt = lmv_find_target(lmv, &op_data->op_fid1);
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
@@ -1712,19 +1781,20 @@ lmv_enqueue(struct obd_export *exp, struct ldlm_enqueue_info *einfo,
 	RETURN(rc);
 }
 
-static int
+int
 lmv_getattr_name(struct obd_export *exp,struct md_op_data *op_data,
 		 struct ptlrpc_request **preq)
 {
-	struct ptlrpc_request   *req = NULL;
-	struct obd_device       *obd = exp->exp_obd;
-	struct lmv_obd          *lmv = &obd->u.lmv;
-	struct lmv_tgt_desc     *tgt;
-	struct mdt_body         *body;
-	int                      rc;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_tgt_desc *tgt;
+	struct mdt_body *body;
+	int rc;
+
 	ENTRY;
 
-	tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
+retry:
+	tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
@@ -1733,31 +1803,28 @@ lmv_getattr_name(struct obd_export *exp,struct md_op_data *op_data,
 		PFID(&op_data->op_fid1), tgt->ltd_idx);
 
 	rc = md_getattr_name(tgt->ltd_exp, op_data, preq);
-	if (rc != 0)
+	if (rc == -ENOENT && lmv_dir_retry_check_update(op_data)) {
+		ptlrpc_req_finished(*preq);
+		*preq = NULL;
+		goto retry;
+	}
+
+	if (rc)
 		RETURN(rc);
 
 	body = req_capsule_server_get(&(*preq)->rq_pill, &RMF_MDT_BODY);
 	LASSERT(body != NULL);
 
 	if (body->mbo_valid & OBD_MD_MDS) {
-		struct lu_fid rid = body->mbo_fid1;
-		CDEBUG(D_INODE, "Request attrs for "DFID"\n",
-		       PFID(&rid));
-
-		tgt = lmv_find_target(lmv, &rid);
-		if (IS_ERR(tgt)) {
-			ptlrpc_req_finished(*preq);
-			preq = NULL;
-			RETURN(PTR_ERR(tgt));
-		}
-
-		op_data->op_fid1 = rid;
+		op_data->op_fid1 = body->mbo_fid1;
 		op_data->op_valid |= OBD_MD_FLCROSSREF;
 		op_data->op_namelen = 0;
 		op_data->op_name = NULL;
-		rc = md_getattr_name(tgt->ltd_exp, op_data, &req);
+
 		ptlrpc_req_finished(*preq);
-		*preq = req;
+		*preq = NULL;
+
+		goto retry;
 	}
 
 	RETURN(rc);
@@ -1827,19 +1894,40 @@ static int lmv_link(struct obd_export *exp, struct md_op_data *op_data,
 	op_data->op_fsuid = from_kuid(&init_user_ns, current_fsuid());
 	op_data->op_fsgid = from_kgid(&init_user_ns, current_fsgid());
 	op_data->op_cap = cfs_curproc_cap_pack();
-	if (op_data->op_mea2 != NULL) {
-		struct lmv_stripe_md	*lsm = op_data->op_mea2;
-		const struct lmv_oinfo	*oinfo;
 
-		oinfo = lsm_name_to_stripe_info(lsm, op_data->op_name,
-						op_data->op_namelen);
-		if (IS_ERR(oinfo))
-			RETURN(PTR_ERR(oinfo));
+	if (lmv_is_dir_migrating(op_data->op_mea2)) {
+		struct lu_fid fid1 = op_data->op_fid1;
+		struct lmv_stripe_md *lsm1 = op_data->op_mea1;
 
-		op_data->op_fid2 = oinfo->lmo_fid;
+		/*
+		 * avoid creating new file under old layout of migrating
+		 * directory, check it here.
+		 */
+		tgt = __lmv_locate_tgt(lmv, op_data->op_mea2, op_data->op_name,
+				       op_data->op_namelen, &op_data->op_fid2,
+				       &op_data->op_mds, false);
+		tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
+
+		op_data->op_fid1 = op_data->op_fid2;
+		op_data->op_mea1 = op_data->op_mea2;
+		rc = md_getattr_name(tgt->ltd_exp, op_data, request);
+		op_data->op_fid1 = fid1;
+		op_data->op_mea1 = lsm1;
+		if (!rc) {
+			ptlrpc_req_finished(*request);
+			*request = NULL;
+			RETURN(-EEXIST);
+		}
+
+		if (rc != -ENOENT)
+			RETURN(rc);
 	}
 
-	tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid2);
+	tgt = __lmv_locate_tgt(lmv, op_data->op_mea2, op_data->op_name,
+			       op_data->op_namelen, &op_data->op_fid2,
+			       &op_data->op_mds, true);
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
@@ -1857,158 +1945,323 @@ static int lmv_link(struct obd_export *exp, struct md_op_data *op_data,
 	RETURN(rc);
 }
 
+static int lmv_migrate(struct obd_export *exp, struct md_op_data *op_data,
+			const char *name, size_t namelen,
+			struct ptlrpc_request **request)
+{
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_stripe_md *lsm = op_data->op_mea1;
+	struct lmv_tgt_desc *parent_tgt;
+	struct lmv_tgt_desc *sp_tgt;
+	struct lmv_tgt_desc *tp_tgt = NULL;
+	struct lmv_tgt_desc *child_tgt;
+	struct lmv_tgt_desc *tgt;
+	struct lu_fid target_fid;
+	int rc;
+
+	ENTRY;
+
+	LASSERT(op_data->op_cli_flags & CLI_MIGRATE);
+
+	CDEBUG(D_INODE, "MIGRATE "DFID"/%.*s\n",
+	       PFID(&op_data->op_fid1), (int)namelen, name);
+
+	op_data->op_fsuid = from_kuid(&init_user_ns, current_fsuid());
+	op_data->op_fsgid = from_kgid(&init_user_ns, current_fsgid());
+	op_data->op_cap = cfs_curproc_cap_pack();
+
+	parent_tgt = lmv_find_target(lmv, &op_data->op_fid1);
+	if (IS_ERR(parent_tgt))
+		RETURN(PTR_ERR(parent_tgt));
+
+	if (lsm) {
+		__u32 hash_type = lsm->lsm_md_hash_type;
+		__u32 stripe_count = lsm->lsm_md_stripe_count;
+
+		/*
+		 * old stripes are appended after new stripes for migrating
+		 * directory.
+		 */
+		if (lsm->lsm_md_hash_type & LMV_HASH_FLAG_MIGRATION) {
+			hash_type = lsm->lsm_md_migrate_hash;
+			stripe_count -= lsm->lsm_md_migrate_offset;
+		}
+
+		rc = lmv_name_to_stripe_index(hash_type, stripe_count, name,
+					      namelen);
+		if (rc < 0)
+			RETURN(rc);
+
+		if (lsm->lsm_md_hash_type & LMV_HASH_FLAG_MIGRATION)
+			rc += lsm->lsm_md_migrate_offset;
+
+		/* save it in fid4 temporarily for early cancel */
+		op_data->op_fid4 = lsm->lsm_md_oinfo[rc].lmo_fid;
+		sp_tgt = lmv_get_target(lmv, lsm->lsm_md_oinfo[rc].lmo_mds,
+					NULL);
+		if (IS_ERR(sp_tgt))
+			RETURN(PTR_ERR(sp_tgt));
+
+		/*
+		 * if parent is being migrated too, fill op_fid2 with target
+		 * stripe fid, otherwise the target stripe is not created yet.
+		 */
+		if (lsm->lsm_md_hash_type & LMV_HASH_FLAG_MIGRATION) {
+			hash_type = lsm->lsm_md_hash_type &
+				    ~LMV_HASH_FLAG_MIGRATION;
+			stripe_count = lsm->lsm_md_migrate_offset;
+
+			rc = lmv_name_to_stripe_index(hash_type, stripe_count,
+						      name, namelen);
+			if (rc < 0)
+				RETURN(rc);
+
+			op_data->op_fid2 = lsm->lsm_md_oinfo[rc].lmo_fid;
+			tp_tgt = lmv_get_target(lmv,
+						lsm->lsm_md_oinfo[rc].lmo_mds,
+						NULL);
+			if (IS_ERR(tp_tgt))
+				RETURN(PTR_ERR(tp_tgt));
+		}
+	} else {
+		sp_tgt = parent_tgt;
+	}
+
+	child_tgt = lmv_find_target(lmv, &op_data->op_fid3);
+	if (IS_ERR(child_tgt))
+		RETURN(PTR_ERR(child_tgt));
+
+	if (!S_ISDIR(op_data->op_mode) && tp_tgt)
+		rc = __lmv_fid_alloc(lmv, &target_fid, tp_tgt->ltd_idx);
+	else
+		rc = lmv_fid_alloc(NULL, exp, &target_fid, op_data);
+	if (rc)
+		RETURN(rc);
+
+	/*
+	 * for directory, send migrate request to the MDT where the object will
+	 * be migrated to, because we can't create a striped directory remotely.
+	 *
+	 * otherwise, send to the MDT where source is located because regular
+	 * file may open lease.
+	 *
+	 * NB. if MDT doesn't support DIR_MIGRATE, send to source MDT too for
+	 * backward compatibility.
+	 */
+	if (S_ISDIR(op_data->op_mode) &&
+	    (exp_connect_flags2(exp) & OBD_CONNECT2_DIR_MIGRATE)) {
+		tgt = lmv_find_target(lmv, &target_fid);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
+	} else {
+		tgt = child_tgt;
+	}
+
+	/* cancel UPDATE lock of parent master object */
+	rc = lmv_early_cancel(exp, parent_tgt, op_data, tgt->ltd_idx, LCK_EX,
+			      MDS_INODELOCK_UPDATE, MF_MDC_CANCEL_FID1);
+	if (rc)
+		RETURN(rc);
+
+	/* cancel UPDATE lock of source parent */
+	if (sp_tgt != parent_tgt) {
+		/*
+		 * migrate RPC packs master object FID, because we can only pack
+		 * two FIDs in reint RPC, but MDS needs to know both source
+		 * parent and target parent, and it will obtain them from master
+		 * FID and LMV, the other FID in RPC is kept for target.
+		 *
+		 * since this FID is not passed to MDC, cancel it anyway.
+		 */
+		rc = lmv_early_cancel(exp, sp_tgt, op_data, -1, LCK_EX,
+				      MDS_INODELOCK_UPDATE, MF_MDC_CANCEL_FID4);
+		if (rc)
+			RETURN(rc);
+
+		op_data->op_flags &= ~MF_MDC_CANCEL_FID4;
+	}
+	op_data->op_fid4 = target_fid;
+
+	/* cancel UPDATE locks of target parent */
+	rc = lmv_early_cancel(exp, tp_tgt, op_data, tgt->ltd_idx, LCK_EX,
+			      MDS_INODELOCK_UPDATE, MF_MDC_CANCEL_FID2);
+	if (rc)
+		RETURN(rc);
+
+	/* cancel LOOKUP lock of source if source is remote object */
+	if (child_tgt != sp_tgt) {
+		rc = lmv_early_cancel(exp, sp_tgt, op_data, tgt->ltd_idx,
+				      LCK_EX, MDS_INODELOCK_LOOKUP,
+				      MF_MDC_CANCEL_FID3);
+		if (rc)
+			RETURN(rc);
+	}
+
+	/* cancel ELC locks of source */
+	rc = lmv_early_cancel(exp, child_tgt, op_data, tgt->ltd_idx, LCK_EX,
+			      MDS_INODELOCK_ELC, MF_MDC_CANCEL_FID3);
+	if (rc)
+		RETURN(rc);
+
+	rc = md_rename(tgt->ltd_exp, op_data, name, namelen, NULL, 0, request);
+
+	RETURN(rc);
+}
+
 static int lmv_rename(struct obd_export *exp, struct md_op_data *op_data,
 		      const char *old, size_t oldlen,
 		      const char *new, size_t newlen,
 		      struct ptlrpc_request **request)
 {
-	struct obd_device       *obd = exp->exp_obd;
-	struct lmv_obd          *lmv = &obd->u.lmv;
-	struct lmv_tgt_desc     *src_tgt;
-	struct lmv_tgt_desc     *tgt_tgt;
-	struct obd_export	*target_exp;
-	struct mdt_body		*body;
-	int			rc;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_tgt_desc *sp_tgt;
+	struct lmv_tgt_desc *tp_tgt = NULL;
+	struct lmv_tgt_desc *src_tgt = NULL;
+	struct lmv_tgt_desc *tgt;
+	struct mdt_body *body;
+	int rc;
+
 	ENTRY;
 
 	LASSERT(oldlen != 0);
 
-	CDEBUG(D_INODE, "RENAME %.*s in "DFID":%d to %.*s in "DFID":%d\n",
-	       (int)oldlen, old, PFID(&op_data->op_fid1),
-	       op_data->op_mea1 ? op_data->op_mea1->lsm_md_stripe_count : 0,
-	       (int)newlen, new, PFID(&op_data->op_fid2),
-	       op_data->op_mea2 ? op_data->op_mea2->lsm_md_stripe_count : 0);
+	if (op_data->op_cli_flags & CLI_MIGRATE) {
+		rc = lmv_migrate(exp, op_data, old, oldlen, request);
+		RETURN(rc);
+	}
 
 	op_data->op_fsuid = from_kuid(&init_user_ns, current_fsuid());
 	op_data->op_fsgid = from_kgid(&init_user_ns, current_fsgid());
 	op_data->op_cap = cfs_curproc_cap_pack();
-	if (op_data->op_cli_flags & CLI_MIGRATE) {
-		LASSERTF(fid_is_sane(&op_data->op_fid3), "invalid FID "DFID"\n",
-			 PFID(&op_data->op_fid3));
 
-		if (op_data->op_mea1 != NULL) {
-			struct lmv_stripe_md	*lsm = op_data->op_mea1;
-			struct lmv_tgt_desc	*tmp;
+	if (lmv_is_dir_migrating(op_data->op_mea2)) {
+		struct lu_fid fid1 = op_data->op_fid1;
+		struct lmv_stripe_md *lsm1 = op_data->op_mea1;
 
-			/* Fix the parent fid for striped dir */
-			tmp = lmv_locate_target_for_name(lmv, lsm, old,
-							 oldlen,
-							 &op_data->op_fid1,
-							 NULL);
-			if (IS_ERR(tmp))
-				RETURN(PTR_ERR(tmp));
+		/*
+		 * we avoid creating new file under old layout of migrating
+		 * directory, if there is an existing file with new name under
+		 * old layout, we can't unlink file in old layout and rename to
+		 * new layout in one transaction, so return -EBUSY here.`
+		 */
+		tgt = __lmv_locate_tgt(lmv, op_data->op_mea2, new, newlen,
+				       &op_data->op_fid2, &op_data->op_mds,
+				       false);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
+
+		op_data->op_fid1 = op_data->op_fid2;
+		op_data->op_mea1 = op_data->op_mea2;
+		op_data->op_name = new;
+		op_data->op_namelen = newlen;
+		rc = md_getattr_name(tgt->ltd_exp, op_data, request);
+		op_data->op_fid1 = fid1;
+		op_data->op_mea1 = lsm1;
+		op_data->op_name = NULL;
+		op_data->op_namelen = 0;
+		if (!rc) {
+			ptlrpc_req_finished(*request);
+			*request = NULL;
+			RETURN(-EBUSY);
 		}
 
-		rc = lmv_fid_alloc(NULL, exp, &op_data->op_fid2, op_data);
-		if (rc != 0)
+		if (rc != -ENOENT)
 			RETURN(rc);
+	}
 
+	/* rename to new layout for migrating directory */
+	tp_tgt = __lmv_locate_tgt(lmv, op_data->op_mea2, new, newlen,
+				  &op_data->op_fid2, &op_data->op_mds, true);
+	if (IS_ERR(tp_tgt))
+		RETURN(PTR_ERR(tp_tgt));
+
+	/* Since the target child might be destroyed, and it might become
+	 * orphan, and we can only check orphan on the local MDT right now, so
+	 * we send rename request to the MDT where target child is located. If
+	 * target child does not exist, then it will send the request to the
+	 * target parent */
+	if (fid_is_sane(&op_data->op_fid4)) {
+		tgt = lmv_find_target(lmv, &op_data->op_fid4);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
+	} else {
+		tgt = tp_tgt;
+	}
+
+	op_data->op_flags |= MF_MDC_CANCEL_FID4;
+
+	/* cancel UPDATE locks of target parent */
+	rc = lmv_early_cancel(exp, tp_tgt, op_data, tgt->ltd_idx, LCK_EX,
+			      MDS_INODELOCK_UPDATE, MF_MDC_CANCEL_FID2);
+	if (rc != 0)
+		RETURN(rc);
+
+	if (fid_is_sane(&op_data->op_fid4)) {
+		/* cancel LOOKUP lock of target on target parent */
+		if (tgt != tp_tgt) {
+			rc = lmv_early_cancel(exp, tp_tgt, op_data,
+					      tgt->ltd_idx, LCK_EX,
+					      MDS_INODELOCK_LOOKUP,
+					      MF_MDC_CANCEL_FID4);
+			if (rc != 0)
+				RETURN(rc);
+		}
+	}
+
+	if (fid_is_sane(&op_data->op_fid3)) {
 		src_tgt = lmv_find_target(lmv, &op_data->op_fid3);
 		if (IS_ERR(src_tgt))
 			RETURN(PTR_ERR(src_tgt));
 
-		target_exp = src_tgt->ltd_exp;
-	} else {
-		if (op_data->op_mea1 != NULL) {
-			struct lmv_stripe_md	*lsm = op_data->op_mea1;
-
-			src_tgt = lmv_locate_target_for_name(lmv, lsm, old,
-							     oldlen,
-							     &op_data->op_fid1,
-							     &op_data->op_mds);
-		} else {
-			src_tgt = lmv_find_target(lmv, &op_data->op_fid1);
-		}
-		if (IS_ERR(src_tgt))
-			RETURN(PTR_ERR(src_tgt));
-
-
-		if (op_data->op_mea2 != NULL) {
-			struct lmv_stripe_md	*lsm = op_data->op_mea2;
-
-			tgt_tgt = lmv_locate_target_for_name(lmv, lsm, new,
-							     newlen,
-							     &op_data->op_fid2,
-							     &op_data->op_mds);
-		} else {
-			tgt_tgt = lmv_find_target(lmv, &op_data->op_fid2);
-
-		}
-		if (IS_ERR(tgt_tgt))
-			RETURN(PTR_ERR(tgt_tgt));
-
-		target_exp = tgt_tgt->ltd_exp;
+		/* cancel ELC locks of source */
+		rc = lmv_early_cancel(exp, src_tgt, op_data, tgt->ltd_idx,
+				      LCK_EX, MDS_INODELOCK_ELC,
+				      MF_MDC_CANCEL_FID3);
+		if (rc != 0)
+			RETURN(rc);
 	}
 
-	/*
-	 * LOOKUP lock on src child (fid3) should also be cancelled for
-	 * src_tgt in mdc_rename.
-	 */
-	op_data->op_flags |= MF_MDC_CANCEL_FID1 | MF_MDC_CANCEL_FID3;
+retry:
+	sp_tgt = __lmv_locate_tgt(lmv, op_data->op_mea1, old, oldlen,
+				  &op_data->op_fid1, &op_data->op_mds,
+				  op_data->op_post_migrate);
+	if (IS_ERR(sp_tgt))
+		RETURN(PTR_ERR(sp_tgt));
 
-	/*
-	 * Cancel UPDATE locks on tgt parent (fid2), tgt_tgt is its
-	 * own target.
-	 */
-	rc = lmv_early_cancel(exp, NULL, op_data, src_tgt->ltd_idx,
-			      LCK_EX, MDS_INODELOCK_UPDATE,
-			      MF_MDC_CANCEL_FID2);
-
+	/* cancel UPDATE locks of source parent */
+	rc = lmv_early_cancel(exp, sp_tgt, op_data, tgt->ltd_idx, LCK_EX,
+			      MDS_INODELOCK_UPDATE, MF_MDC_CANCEL_FID1);
 	if (rc != 0)
 		RETURN(rc);
-	/*
-	 * Cancel LOOKUP locks on source child (fid3) for parent tgt_tgt.
-	 */
+
 	if (fid_is_sane(&op_data->op_fid3)) {
-		struct lmv_tgt_desc *tgt;
-
-		tgt = lmv_find_target(lmv, &op_data->op_fid1);
-		if (IS_ERR(tgt))
-			RETURN(PTR_ERR(tgt));
-
-		/* Cancel LOOKUP lock on its parent */
-		rc = lmv_early_cancel(exp, tgt, op_data, src_tgt->ltd_idx,
-				      LCK_EX, MDS_INODELOCK_LOOKUP,
-				      MF_MDC_CANCEL_FID3);
-		if (rc != 0)
-			RETURN(rc);
-
-		rc = lmv_early_cancel(exp, NULL, op_data, src_tgt->ltd_idx,
-				      LCK_EX, MDS_INODELOCK_FULL,
-				      MF_MDC_CANCEL_FID3);
-		if (rc != 0)
-			RETURN(rc);
+		/* cancel LOOKUP lock of source on source parent */
+		if (src_tgt != sp_tgt) {
+			rc = lmv_early_cancel(exp, sp_tgt, op_data,
+					      tgt->ltd_idx, LCK_EX,
+					      MDS_INODELOCK_LOOKUP,
+					      MF_MDC_CANCEL_FID3);
+			if (rc != 0)
+				RETURN(rc);
+		}
 	}
 
-retry_rename:
-	/*
-	 * Cancel all the locks on tgt child (fid4).
-	 */
-	if (fid_is_sane(&op_data->op_fid4)) {
-		struct lmv_tgt_desc *tgt;
+rename:
+	CDEBUG(D_INODE, "RENAME "DFID"/%.*s to "DFID"/%.*s\n",
+		PFID(&op_data->op_fid1), (int)oldlen, old,
+		PFID(&op_data->op_fid2), (int)newlen, new);
 
-		rc = lmv_early_cancel(exp, NULL, op_data, src_tgt->ltd_idx,
-				      LCK_EX, MDS_INODELOCK_FULL,
-				      MF_MDC_CANCEL_FID4);
-		if (rc != 0)
-			RETURN(rc);
-
-		tgt = lmv_find_target(lmv, &op_data->op_fid4);
-		if (IS_ERR(tgt))
-			RETURN(PTR_ERR(tgt));
-
-		/* Since the target child might be destroyed, and it might
-		 * become orphan, and we can only check orphan on the local
-		 * MDT right now, so we send rename request to the MDT where
-		 * target child is located. If target child does not exist,
-		 * then it will send the request to the target parent */
-		target_exp = tgt->ltd_exp;
+	rc = md_rename(tgt->ltd_exp, op_data, old, oldlen, new, newlen,
+			request);
+	if (rc == -ENOENT && lmv_dir_retry_check_update(op_data)) {
+		ptlrpc_req_finished(*request);
+		*request = NULL;
+		goto retry;
 	}
 
-	rc = md_rename(target_exp, op_data, old, oldlen, new, newlen,
-		       request);
-
-	if (rc != 0 && rc != -EXDEV)
+	if (rc && rc != -EXDEV)
 		RETURN(rc);
 
 	body = req_capsule_server_get(&(*request)->rq_pill, &RMF_MDT_BODY);
@@ -2019,13 +2272,28 @@ retry_rename:
 	if (likely(!(body->mbo_valid & OBD_MD_MDS)))
 		RETURN(rc);
 
-	CDEBUG(D_INODE, "%s: try rename to another MDT for "DFID"\n",
-	       exp->exp_obd->obd_name, PFID(&body->mbo_fid1));
-
 	op_data->op_fid4 = body->mbo_fid1;
+
 	ptlrpc_req_finished(*request);
 	*request = NULL;
-	goto retry_rename;
+
+	tgt = lmv_find_target(lmv, &op_data->op_fid4);
+	if (IS_ERR(tgt))
+		RETURN(PTR_ERR(tgt));
+
+	if (fid_is_sane(&op_data->op_fid4)) {
+		/* cancel LOOKUP lock of target on target parent */
+		if (tgt != tp_tgt) {
+			rc = lmv_early_cancel(exp, tp_tgt, op_data,
+					      tgt->ltd_idx, LCK_EX,
+					      MDS_INODELOCK_LOOKUP,
+					      MF_MDC_CANCEL_FID4);
+			if (rc != 0)
+				RETURN(rc);
+		}
+	}
+
+	goto rename;
 }
 
 static int lmv_setattr(struct obd_export *exp, struct md_op_data *op_data,
@@ -2037,8 +2305,9 @@ static int lmv_setattr(struct obd_export *exp, struct md_op_data *op_data,
 	int                      rc = 0;
 	ENTRY;
 
-	CDEBUG(D_INODE, "SETATTR for "DFID", valid 0x%x\n",
-	       PFID(&op_data->op_fid1), op_data->op_attr.ia_valid);
+	CDEBUG(D_INODE, "SETATTR for "DFID", valid 0x%x/0x%x\n",
+	       PFID(&op_data->op_fid1), op_data->op_attr.ia_valid,
+	       op_data->op_xvalid);
 
 	op_data->op_flags |= MF_MDC_CANCEL_FID1;
 	tgt = lmv_find_target(lmv, &op_data->op_fid1);
@@ -2067,146 +2336,228 @@ static int lmv_fsync(struct obd_export *exp, const struct lu_fid *fid,
 	RETURN(rc);
 }
 
-/**
- * Get current minimum entry from striped directory
- *
- * This function will search the dir entry, whose hash value is the
- * closest(>=) to @hash_offset, from all of sub-stripes, and it is
- * only being called for striped directory.
- *
- * \param[in] exp		export of LMV
- * \param[in] op_data		parameters transferred beween client MD stack
- *                              stripe_information will be included in this
- *                              parameter
- * \param[in] cb_op		ldlm callback being used in enqueue in
- *                              mdc_read_page
- * \param[in] hash_offset	the hash value, which is used to locate
- *                              minum(closet) dir entry
- * \param[in|out] stripe_offset the caller use this to indicate the stripe
- *                              index of last entry, so to avoid hash conflict
- *                              between stripes. It will also be used to
- *                              return the stripe index of current dir entry.
- * \param[in|out] entp		the minum entry and it also is being used
- *                              to input the last dir entry to resolve the
- *                              hash conflict
- *
- * \param[out] ppage		the page which holds the minum entry
- *
- * \retval                      = 0 get the entry successfully
- *                              negative errno (< 0) does not get the entry
- */
-static int lmv_get_min_striped_entry(struct obd_export *exp,
-				     struct md_op_data *op_data,
-				     struct md_callback *cb_op,
-				     __u64 hash_offset, int *stripe_offset,
-				     struct lu_dirent **entp,
-				     struct page **ppage)
+struct stripe_dirent {
+	struct page		*sd_page;
+	struct lu_dirpage	*sd_dp;
+	struct lu_dirent	*sd_ent;
+	bool			 sd_eof;
+};
+
+struct lmv_dir_ctxt {
+	struct lmv_obd		*ldc_lmv;
+	struct md_op_data	*ldc_op_data;
+	struct md_callback	*ldc_cb_op;
+	__u64			 ldc_hash;
+	int			 ldc_count;
+	struct stripe_dirent	 ldc_stripes[0];
+};
+
+static inline void stripe_dirent_unload(struct stripe_dirent *stripe)
 {
-	struct obd_device	*obd = exp->exp_obd;
-	struct lmv_obd		*lmv = &obd->u.lmv;
-	struct lmv_stripe_md	*lsm = op_data->op_mea1;
-	struct lmv_tgt_desc	*tgt;
-	int			stripe_count;
-	struct lu_dirent	*min_ent = NULL;
-	struct page		*min_page = NULL;
-	int			min_idx = 0;
-	int			i;
-	int			rc = 0;
+	if (stripe->sd_page) {
+		kunmap(stripe->sd_page);
+		put_page(stripe->sd_page);
+		stripe->sd_page = NULL;
+		stripe->sd_ent = NULL;
+	}
+}
+
+static inline void put_lmv_dir_ctxt(struct lmv_dir_ctxt *ctxt)
+{
+	int i;
+
+	for (i = 0; i < ctxt->ldc_count; i++)
+		stripe_dirent_unload(&ctxt->ldc_stripes[i]);
+}
+
+/* if @ent is dummy, or . .., get next */
+static struct lu_dirent *stripe_dirent_get(struct lmv_dir_ctxt *ctxt,
+					   struct lu_dirent *ent,
+					   int stripe_index)
+{
+	for (; ent; ent = lu_dirent_next(ent)) {
+		/* Skip dummy entry */
+		if (le16_to_cpu(ent->lde_namelen) == 0)
+			continue;
+
+		/* skip . and .. for other stripes */
+		if (stripe_index &&
+		    (strncmp(ent->lde_name, ".",
+			     le16_to_cpu(ent->lde_namelen)) == 0 ||
+		     strncmp(ent->lde_name, "..",
+			     le16_to_cpu(ent->lde_namelen)) == 0))
+			continue;
+
+		if (le64_to_cpu(ent->lde_hash) >= ctxt->ldc_hash)
+			break;
+	}
+
+	return ent;
+}
+
+static struct lu_dirent *stripe_dirent_load(struct lmv_dir_ctxt *ctxt,
+					    struct stripe_dirent *stripe,
+					    int stripe_index)
+{
+	struct md_op_data *op_data = ctxt->ldc_op_data;
+	struct lmv_oinfo *oinfo;
+	struct lu_fid fid = op_data->op_fid1;
+	struct inode *inode = op_data->op_data;
+	struct lmv_tgt_desc *tgt;
+	struct lu_dirent *ent = stripe->sd_ent;
+	__u64 hash = ctxt->ldc_hash;
+	int rc = 0;
+
 	ENTRY;
 
-	stripe_count = lsm->lsm_md_stripe_count;
-	for (i = 0; i < stripe_count; i++) {
-		struct lu_dirent	*ent = NULL;
-		struct page		*page = NULL;
-		struct lu_dirpage	*dp;
-		__u64			stripe_hash = hash_offset;
+	LASSERT(stripe == &ctxt->ldc_stripes[stripe_index]);
+	LASSERT(!ent);
 
-		tgt = lmv_get_target(lmv, lsm->lsm_md_oinfo[i].lmo_mds, NULL);
-		if (IS_ERR(tgt))
-			GOTO(out, rc = PTR_ERR(tgt));
+	do {
+		if (stripe->sd_page) {
+			__u64 end = le64_to_cpu(stripe->sd_dp->ldp_hash_end);
 
-		/* op_data will be shared by each stripe, so we need
-		 * reset these value for each stripe */
-		op_data->op_fid1 = lsm->lsm_md_oinfo[i].lmo_fid;
-		op_data->op_fid2 = lsm->lsm_md_oinfo[i].lmo_fid;
-		op_data->op_data = lsm->lsm_md_oinfo[i].lmo_root;
-next:
-		rc = md_read_page(tgt->ltd_exp, op_data, cb_op, stripe_hash,
-				  &page);
-		if (rc != 0)
-			GOTO(out, rc);
+			/* @hash should be the last dirent hash */
+			LASSERTF(hash <= end,
+				 "ctxt@%p stripe@%p hash %llx end %llx\n",
+				 ctxt, stripe, hash, end);
+			/* unload last page */
+			stripe_dirent_unload(stripe);
+			/* eof */
+			if (end == MDS_DIR_END_OFF) {
+				stripe->sd_eof = true;
+				break;
+			}
+			hash = end;
+		}
 
-		dp = page_address(page);
-		for (ent = lu_dirent_start(dp); ent != NULL;
-		     ent = lu_dirent_next(ent)) {
-			/* Skip dummy entry */
-			if (le16_to_cpu(ent->lde_namelen) == 0)
-				continue;
-
-			if (le64_to_cpu(ent->lde_hash) < hash_offset)
-				continue;
-
-			if (le64_to_cpu(ent->lde_hash) == hash_offset &&
-			    (*entp == ent || i < *stripe_offset))
-				continue;
-
-			/* skip . and .. for other stripes */
-			if (i != 0 &&
-			    (strncmp(ent->lde_name, ".",
-				     le16_to_cpu(ent->lde_namelen)) == 0 ||
-			     strncmp(ent->lde_name, "..",
-				     le16_to_cpu(ent->lde_namelen)) == 0))
-				continue;
+		oinfo = &op_data->op_mea1->lsm_md_oinfo[stripe_index];
+		if (!oinfo->lmo_root) {
+			rc = -ENOENT;
 			break;
 		}
 
-		if (ent == NULL) {
-			stripe_hash = le64_to_cpu(dp->ldp_hash_end);
-
-			kunmap(page);
-			put_page(page);
-			page = NULL;
-
-			/* reach the end of current stripe, go to next stripe */
-			if (stripe_hash == MDS_DIR_END_OFF)
-				continue;
-			else
-				goto next;
+		tgt = lmv_get_target(ctxt->ldc_lmv, oinfo->lmo_mds, NULL);
+		if (IS_ERR(tgt)) {
+			rc = PTR_ERR(tgt);
+			break;
 		}
 
-		if (min_ent != NULL) {
-			if (le64_to_cpu(min_ent->lde_hash) >
-			    le64_to_cpu(ent->lde_hash)) {
-				min_ent = ent;
-				kunmap(min_page);
-				put_page(min_page);
-				min_idx = i;
-				min_page = page;
-			} else {
-				kunmap(page);
-				put_page(page);
-				page = NULL;
-			}
-		} else {
-			min_ent = ent;
-			min_page = page;
-			min_idx = i;
-		}
+		/* op_data is shared by stripes, reset after use */
+		op_data->op_fid1 = oinfo->lmo_fid;
+		op_data->op_fid2 = oinfo->lmo_fid;
+		op_data->op_data = oinfo->lmo_root;
+
+		rc = md_read_page(tgt->ltd_exp, op_data, ctxt->ldc_cb_op, hash,
+				  &stripe->sd_page);
+
+		op_data->op_fid1 = fid;
+		op_data->op_fid2 = fid;
+		op_data->op_data = inode;
+
+		if (rc)
+			break;
+
+		stripe->sd_dp = page_address(stripe->sd_page);
+		ent = stripe_dirent_get(ctxt, lu_dirent_start(stripe->sd_dp),
+					stripe_index);
+		/* in case a page filled with ., .. and dummy, read next */
+	} while (!ent);
+
+	stripe->sd_ent = ent;
+	if (rc) {
+		LASSERT(!ent);
+		/* treat error as eof, so dir can be partially accessed */
+		stripe->sd_eof = true;
+		LCONSOLE_WARN("dir "DFID" stripe %d readdir failed: %d, "
+			      "directory is partially accessed!\n",
+			      PFID(&ctxt->ldc_op_data->op_fid1), stripe_index,
+			      rc);
 	}
 
-out:
-	if (*ppage != NULL) {
-		kunmap(*ppage);
-		put_page(*ppage);
-	}
-	*stripe_offset = min_idx;
-	*entp = min_ent;
-	*ppage = min_page;
+	RETURN(ent);
+}
+
+static int lmv_file_resync(struct obd_export *exp, struct md_op_data *data)
+{
+	struct obd_device	*obd = exp->exp_obd;
+	struct lmv_obd		*lmv = &obd->u.lmv;
+	struct lmv_tgt_desc	*tgt;
+	int			 rc;
+	ENTRY;
+
+	rc = lmv_check_connect(obd);
+	if (rc != 0)
+		RETURN(rc);
+
+	tgt = lmv_find_target(lmv, &data->op_fid1);
+	if (IS_ERR(tgt))
+		RETURN(PTR_ERR(tgt));
+
+	data->op_flags |= MF_MDC_CANCEL_FID1;
+	rc = md_file_resync(tgt->ltd_exp, data);
 	RETURN(rc);
 }
 
 /**
- * Build dir entry page from a striped directory
+ * Get dirent with the closest hash for striped directory
+ *
+ * This function will search the dir entry, whose hash value is the
+ * closest(>=) to hash from all of sub-stripes, and it is only being called
+ * for striped directory.
+ *
+ * \param[in] ctxt		dir read context
+ *
+ * \retval                      dirent get the entry successfully
+ *                              NULL does not get the entry, normally it means
+ *                              it reaches the end of the directory, while read
+ *                              stripe dirent error is ignored to allow partial
+ *                              access.
+ */
+static struct lu_dirent *lmv_dirent_next(struct lmv_dir_ctxt *ctxt)
+{
+	struct stripe_dirent *stripe;
+	struct lu_dirent *ent = NULL;
+	int i;
+	int min = -1;
+
+	/* TODO: optimize with k-way merge sort */
+	for (i = 0; i < ctxt->ldc_count; i++) {
+		stripe = &ctxt->ldc_stripes[i];
+		if (stripe->sd_eof)
+			continue;
+
+		if (!stripe->sd_ent) {
+			stripe_dirent_load(ctxt, stripe, i);
+			if (!stripe->sd_ent) {
+				LASSERT(stripe->sd_eof);
+				continue;
+			}
+		}
+
+		if (min == -1 ||
+		    le64_to_cpu(ctxt->ldc_stripes[min].sd_ent->lde_hash) >
+		    le64_to_cpu(stripe->sd_ent->lde_hash)) {
+			min = i;
+			if (le64_to_cpu(stripe->sd_ent->lde_hash) ==
+			    ctxt->ldc_hash)
+				break;
+		}
+	}
+
+	if (min != -1) {
+		stripe = &ctxt->ldc_stripes[min];
+		ent = stripe->sd_ent;
+		/* pop found dirent */
+		stripe->sd_ent = stripe_dirent_get(ctxt, lu_dirent_next(ent),
+						   min);
+	}
+
+	return ent;
+}
+
+/**
+ * Build dir entry page for striped directory
  *
  * This function gets one entry by @offset from a striped directory. It will
  * read entries from all of stripes, and choose one closest to the required
@@ -2215,12 +2566,11 @@ out:
  * and .. in a directory.
  * 2. op_data will be shared by all of stripes, instead of allocating new
  * one, so need to restore before reusing.
- * 3. release the entry page if that is not being chosen.
  *
  * \param[in] exp	obd export refer to LMV
  * \param[in] op_data	hold those MD parameters of read_entry
  * \param[in] cb_op	ldlm callback being used in enqueue in mdc_read_entry
- * \param[out] ldp	the entry being read
+ * \param[in] offset	starting hash offset
  * \param[out] ppage	the page holding the entry. Note: because the entry
  *                      will be accessed in upper layer, so we need hold the
  *                      page until the usages of entry is finished, see
@@ -2229,124 +2579,117 @@ out:
  * retval		=0 if get entry successfully
  *                      <0 cannot get entry
  */
-static int lmv_read_striped_page(struct obd_export *exp,
+static int lmv_striped_read_page(struct obd_export *exp,
 				 struct md_op_data *op_data,
 				 struct md_callback *cb_op,
 				 __u64 offset, struct page **ppage)
 {
-	struct lu_fid		master_fid = op_data->op_fid1;
-	struct inode		*master_inode = op_data->op_data;
-	__u64			hash_offset = offset;
-	struct lu_dirpage	*dp;
-	struct page		*min_ent_page = NULL;
-	struct page		*ent_page = NULL;
-	struct lu_dirent	*ent;
-	void			*area;
-	int			ent_idx = 0;
-	struct lu_dirent	*min_ent = NULL;
-	struct lu_dirent	*last_ent;
-	size_t			left_bytes;
-	int			rc;
+	struct page *page = NULL;
+	struct lu_dirpage *dp;
+	void *start;
+	struct lu_dirent *ent;
+	struct lu_dirent *last_ent;
+	int stripe_count;
+	struct lmv_dir_ctxt *ctxt;
+	struct lu_dirent *next = NULL;
+	__u16 ent_size;
+	size_t left_bytes;
+	int rc = 0;
 	ENTRY;
 
 	/* Allocate a page and read entries from all of stripes and fill
 	 * the page by hash order */
-	ent_page = alloc_page(GFP_KERNEL);
-	if (ent_page == NULL)
+	page = alloc_page(GFP_KERNEL);
+	if (!page)
 		RETURN(-ENOMEM);
 
 	/* Initialize the entry page */
-	dp = kmap(ent_page);
+	dp = kmap(page);
 	memset(dp, 0, sizeof(*dp));
 	dp->ldp_hash_start = cpu_to_le64(offset);
-	dp->ldp_flags |= LDF_COLLIDE;
 
-	area = dp + 1;
+	start = dp + 1;
 	left_bytes = PAGE_SIZE - sizeof(*dp);
-	ent = area;
+	ent = start;
 	last_ent = ent;
-	do {
-		__u16	ent_size;
 
-		/* Find the minum entry from all sub-stripes */
-		rc = lmv_get_min_striped_entry(exp, op_data, cb_op, hash_offset,
-					       &ent_idx, &min_ent,
-					       &min_ent_page);
-		if (rc != 0)
-			GOTO(out, rc);
+	/* initalize dir read context */
+	stripe_count = op_data->op_mea1->lsm_md_stripe_count;
+	OBD_ALLOC(ctxt, offsetof(typeof(*ctxt), ldc_stripes[stripe_count]));
+	if (!ctxt)
+		GOTO(free_page, rc = -ENOMEM);
+	ctxt->ldc_lmv = &exp->exp_obd->u.lmv;
+	ctxt->ldc_op_data = op_data;
+	ctxt->ldc_cb_op = cb_op;
+	ctxt->ldc_hash = offset;
+	ctxt->ldc_count = stripe_count;
 
-		/* If it can not get minum entry, it means it already reaches
-		 * the end of this directory */
-		if (min_ent == NULL) {
-			last_ent->lde_reclen = 0;
-			hash_offset = MDS_DIR_END_OFF;
-			GOTO(out, rc);
+	while (1) {
+		next = lmv_dirent_next(ctxt);
+
+		/* end of directory */
+		if (!next) {
+			ctxt->ldc_hash = MDS_DIR_END_OFF;
+			break;
 		}
+		ctxt->ldc_hash = le64_to_cpu(next->lde_hash);
 
-		ent_size = le16_to_cpu(min_ent->lde_reclen);
+		ent_size = le16_to_cpu(next->lde_reclen);
 
-		/* the last entry lde_reclen is 0, but it might not
-		 * the end of this entry of this temporay entry */
-		if (ent_size == 0)
+		/* the last entry lde_reclen is 0, but it might not be the last
+		 * one of this temporay dir page */
+		if (!ent_size)
 			ent_size = lu_dirent_calc_size(
-					le16_to_cpu(min_ent->lde_namelen),
-					le32_to_cpu(min_ent->lde_attrs));
-		if (ent_size > left_bytes) {
-			last_ent->lde_reclen = cpu_to_le16(0);
-			hash_offset = le64_to_cpu(min_ent->lde_hash);
-			GOTO(out, rc);
-		}
+					le16_to_cpu(next->lde_namelen),
+					le32_to_cpu(next->lde_attrs));
+		/* page full */
+		if (ent_size > left_bytes)
+			break;
 
-		memcpy(ent, min_ent, ent_size);
+		memcpy(ent, next, ent_size);
 
 		/* Replace . with master FID and Replace .. with the parent FID
 		 * of master object */
 		if (strncmp(ent->lde_name, ".",
 			    le16_to_cpu(ent->lde_namelen)) == 0 &&
 		    le16_to_cpu(ent->lde_namelen) == 1)
-			fid_cpu_to_le(&ent->lde_fid, &master_fid);
+			fid_cpu_to_le(&ent->lde_fid, &op_data->op_fid1);
 		else if (strncmp(ent->lde_name, "..",
 				   le16_to_cpu(ent->lde_namelen)) == 0 &&
 			   le16_to_cpu(ent->lde_namelen) == 2)
 			fid_cpu_to_le(&ent->lde_fid, &op_data->op_fid3);
 
+		CDEBUG(D_INODE, "entry %.*s hash %#llx\n",
+		       le16_to_cpu(ent->lde_namelen), ent->lde_name,
+		       le64_to_cpu(ent->lde_hash));
+
 		left_bytes -= ent_size;
 		ent->lde_reclen = cpu_to_le16(ent_size);
 		last_ent = ent;
 		ent = (void *)ent + ent_size;
-		hash_offset = le64_to_cpu(min_ent->lde_hash);
-		if (hash_offset == MDS_DIR_END_OFF) {
-			last_ent->lde_reclen = 0;
-			break;
-		}
-	} while (1);
-out:
-	if (min_ent_page != NULL) {
-		kunmap(min_ent_page);
-		put_page(min_ent_page);
-	}
+	};
 
-	if (unlikely(rc != 0)) {
-		__free_page(ent_page);
-		ent_page = NULL;
-	} else {
-		if (ent == area)
-			dp->ldp_flags |= LDF_EMPTY;
-		dp->ldp_flags = cpu_to_le32(dp->ldp_flags);
-		dp->ldp_hash_end = cpu_to_le64(hash_offset);
-	}
+	last_ent->lde_reclen = 0;
 
-	/* We do not want to allocate md_op_data during each
-	 * dir entry reading, so op_data will be shared by every stripe,
-	 * then we need to restore it back to original value before
-	 * return to the upper layer */
-	op_data->op_fid1 = master_fid;
-	op_data->op_fid2 = master_fid;
-	op_data->op_data = master_inode;
+	if (ent == start)
+		dp->ldp_flags |= LDF_EMPTY;
+	else if (ctxt->ldc_hash == le64_to_cpu(last_ent->lde_hash))
+		dp->ldp_flags |= LDF_COLLIDE;
+	dp->ldp_flags = cpu_to_le32(dp->ldp_flags);
+	dp->ldp_hash_end = cpu_to_le64(ctxt->ldc_hash);
 
-	*ppage = ent_page;
+	put_lmv_dir_ctxt(ctxt);
+	OBD_FREE(ctxt, offsetof(typeof(*ctxt), ldc_stripes[stripe_count]));
 
-	RETURN(rc);
+	*ppage = page;
+
+	RETURN(0);
+
+free_page:
+	kunmap(page);
+	__free_page(page);
+
+	return rc;
 }
 
 int lmv_read_page(struct obd_export *exp, struct md_op_data *op_data,
@@ -2361,7 +2704,7 @@ int lmv_read_page(struct obd_export *exp, struct md_op_data *op_data,
 	ENTRY;
 
 	if (unlikely(lsm != NULL)) {
-		rc = lmv_read_striped_page(exp, op_data, cb_op, offset, ppage);
+		rc = lmv_striped_read_page(exp, op_data, cb_op, offset, ppage);
 		RETURN(rc);
 	}
 
@@ -2399,67 +2742,33 @@ int lmv_read_page(struct obd_export *exp, struct md_op_data *op_data,
  *                      negative errno if failed.
  */
 static int lmv_unlink(struct obd_export *exp, struct md_op_data *op_data,
-                      struct ptlrpc_request **request)
+		      struct ptlrpc_request **request)
 {
-	struct obd_device       *obd = exp->exp_obd;
-	struct lmv_obd          *lmv = &obd->u.lmv;
-	struct lmv_tgt_desc     *tgt = NULL;
-	struct lmv_tgt_desc     *parent_tgt = NULL;
-	struct mdt_body		*body;
-	int                     rc;
-	int			stripe_index = 0;
-	struct lmv_stripe_md	*lsm = op_data->op_mea1;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_tgt_desc *tgt;
+	struct lmv_tgt_desc *parent_tgt;
+	struct mdt_body *body;
+	int rc;
+
 	ENTRY;
-
-retry_unlink:
-	/* For striped dir, we need to locate the parent as well */
-	if (lsm != NULL) {
-		struct lmv_tgt_desc *tmp;
-
-		LASSERT(op_data->op_name != NULL &&
-			op_data->op_namelen != 0);
-
-		tmp = lmv_locate_target_for_name(lmv, lsm,
-						 op_data->op_name,
-						 op_data->op_namelen,
-						 &op_data->op_fid1,
-						 &op_data->op_mds);
-
-		/* return -EBADFD means unknown hash type, might
-		 * need try all sub-stripe here */
-		if (IS_ERR(tmp) && PTR_ERR(tmp) != -EBADFD)
-			RETURN(PTR_ERR(tmp));
-
-		/* Note: both migrating dir and unknown hash dir need to
-		 * try all of sub-stripes, so we need start search the
-		 * name from stripe 0, but migrating dir is already handled
-		 * inside lmv_locate_target_for_name(), so we only check
-		 * unknown hash type directory here */
-		if (!lmv_is_known_hash_type(lsm->lsm_md_hash_type)) {
-			struct lmv_oinfo *oinfo;
-
-			oinfo = &lsm->lsm_md_oinfo[stripe_index];
-
-			op_data->op_fid1 = oinfo->lmo_fid;
-			op_data->op_mds = oinfo->lmo_mds;
-		}
-	}
-
-try_next_stripe:
-	/* Send unlink requests to the MDT where the child is located */
-	if (likely(!fid_is_zero(&op_data->op_fid2)))
-		tgt = lmv_find_target(lmv, &op_data->op_fid2);
-	else if (lsm != NULL)
-		tgt = lmv_get_target(lmv, op_data->op_mds, NULL);
-	else
-		tgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
-
-	if (IS_ERR(tgt))
-		RETURN(PTR_ERR(tgt));
 
 	op_data->op_fsuid = from_kuid(&init_user_ns, current_fsuid());
 	op_data->op_fsgid = from_kgid(&init_user_ns, current_fsgid());
 	op_data->op_cap = cfs_curproc_cap_pack();
+
+retry:
+	parent_tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+	if (IS_ERR(parent_tgt))
+		RETURN(PTR_ERR(parent_tgt));
+
+	if (likely(!fid_is_zero(&op_data->op_fid2))) {
+		tgt = lmv_find_target(lmv, &op_data->op_fid2);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
+	} else {
+		tgt = parent_tgt;
+	}
 
 	/*
 	 * If child's fid is given, cancel unused locks for it if it is from
@@ -2470,49 +2779,28 @@ try_next_stripe:
 	 */
 	op_data->op_flags |= MF_MDC_CANCEL_FID1 | MF_MDC_CANCEL_FID3;
 
-	/*
-	 * Cancel FULL locks on child (fid3).
-	 */
-	parent_tgt = lmv_find_target(lmv, &op_data->op_fid1);
-	if (IS_ERR(parent_tgt))
-		RETURN(PTR_ERR(parent_tgt));
-
-	if (parent_tgt != tgt) {
+	if (parent_tgt != tgt)
 		rc = lmv_early_cancel(exp, parent_tgt, op_data, tgt->ltd_idx,
 				      LCK_EX, MDS_INODELOCK_LOOKUP,
 				      MF_MDC_CANCEL_FID3);
-	}
 
 	rc = lmv_early_cancel(exp, NULL, op_data, tgt->ltd_idx, LCK_EX,
-			      MDS_INODELOCK_FULL, MF_MDC_CANCEL_FID3);
-	if (rc != 0)
+			      MDS_INODELOCK_ELC, MF_MDC_CANCEL_FID3);
+	if (rc)
 		RETURN(rc);
 
 	CDEBUG(D_INODE, "unlink with fid="DFID"/"DFID" -> mds #%u\n",
 	       PFID(&op_data->op_fid1), PFID(&op_data->op_fid2), tgt->ltd_idx);
 
 	rc = md_unlink(tgt->ltd_exp, op_data, request);
-	if (rc != 0 && rc != -EREMOTE && rc != -ENOENT)
-		RETURN(rc);
-
-	/* Try next stripe if it is needed. */
-	if (rc == -ENOENT && lsm != NULL && lmv_need_try_all_stripes(lsm)) {
-		struct lmv_oinfo *oinfo;
-
-		stripe_index++;
-		if (stripe_index >= lsm->lsm_md_stripe_count)
-			RETURN(rc);
-
-		oinfo = &lsm->lsm_md_oinfo[stripe_index];
-
-		op_data->op_fid1 = oinfo->lmo_fid;
-		op_data->op_mds = oinfo->lmo_mds;
-
+	if (rc == -ENOENT && lmv_dir_retry_check_update(op_data)) {
 		ptlrpc_req_finished(*request);
 		*request = NULL;
-
-		goto try_next_stripe;
+		goto retry;
 	}
+
+	if (rc != -EREMOTE)
+		RETURN(rc);
 
 	body = req_capsule_server_get(&(*request)->rq_pill, &RMF_MDT_BODY);
 	if (body == NULL)
@@ -2522,40 +2810,23 @@ try_next_stripe:
 	if (likely(!(body->mbo_valid & OBD_MD_MDS)))
 		RETURN(rc);
 
-	CDEBUG(D_INODE, "%s: try unlink to another MDT for "DFID"\n",
-	       exp->exp_obd->obd_name, PFID(&body->mbo_fid1));
-
-	/* This is a remote object, try remote MDT, Note: it may
-	 * try more than 1 time here, Considering following case
-	 * /mnt/lustre is root on MDT0, remote1 is on MDT1
-	 * 1. Initially A does not know where remote1 is, it send
-	 *    unlink RPC to MDT0, MDT0 return -EREMOTE, it will
-	 *    resend unlink RPC to MDT1 (retry 1st time).
-	 *
-	 * 2. During the unlink RPC in flight,
-	 *    client B mv /mnt/lustre/remote1 /mnt/lustre/remote2
-	 *    and create new remote1, but on MDT0
-	 *
-	 * 3. MDT1 get unlink RPC(from A), then do remote lock on
-	 *    /mnt/lustre, then lookup get fid of remote1, and find
-	 *    it is remote dir again, and replay -EREMOTE again.
-	 *
-	 * 4. Then A will resend unlink RPC to MDT0. (retry 2nd times).
-	 *
-	 * In theory, it might try unlimited time here, but it should
-	 * be very rare case.  */
+	/* This is a remote object, try remote MDT. */
 	op_data->op_fid2 = body->mbo_fid1;
 	ptlrpc_req_finished(*request);
 	*request = NULL;
 
-	goto retry_unlink;
+	tgt = lmv_find_target(lmv, &op_data->op_fid2);
+	if (IS_ERR(tgt))
+		RETURN(PTR_ERR(tgt));
+
+	goto retry;
 }
 
 static int lmv_precleanup(struct obd_device *obd)
 {
 	ENTRY;
 	libcfs_kkuc_group_rem(&obd->obd_uuid, 0, KUC_GRP_HSM);
-	fld_client_proc_fini(&obd->u.lmv.lmv_fld);
+	fld_client_debugfs_fini(&obd->u.lmv.lmv_fld);
 	lprocfs_obd_cleanup(obd);
 	lprocfs_free_md_stats(obd);
 	RETURN(0);
@@ -2629,6 +2900,96 @@ static int lmv_get_info(const struct lu_env *env, struct obd_export *exp,
 
         CDEBUG(D_IOCTL, "Invalid key\n");
         RETURN(-EINVAL);
+}
+
+static int lmv_rmfid(struct obd_export *exp, struct fid_array *fa,
+		     int *__rcs, struct ptlrpc_request_set *_set)
+{
+	struct obd_device *obddev = class_exp2obd(exp);
+	struct ptlrpc_request_set *set = _set;
+	struct lmv_obd *lmv = &obddev->u.lmv;
+	int tgt_count = lmv->desc.ld_tgt_count;
+	struct fid_array *fat, **fas = NULL;
+	int i, rc, **rcs = NULL;
+
+	if (!set) {
+		set = ptlrpc_prep_set();
+		if (!set)
+			RETURN(-ENOMEM);
+	}
+
+	/* split FIDs by targets */
+	OBD_ALLOC(fas, sizeof(fas) * tgt_count);
+	if (fas == NULL)
+		GOTO(out, rc = -ENOMEM);
+	OBD_ALLOC(rcs, sizeof(int *) * tgt_count);
+	if (rcs == NULL)
+		GOTO(out_fas, rc = -ENOMEM);
+
+	for (i = 0; i < fa->fa_nr; i++) {
+		unsigned int idx;
+
+		rc = lmv_fld_lookup(lmv, &fa->fa_fids[i], &idx);
+		if (rc) {
+			CDEBUG(D_OTHER, "can't lookup "DFID": rc = %d\n",
+			       PFID(&fa->fa_fids[i]), rc);
+			continue;
+		}
+		LASSERT(idx < tgt_count);
+		if (!fas[idx])
+			OBD_ALLOC(fas[idx], offsetof(struct fid_array,
+				  fa_fids[fa->fa_nr]));
+		if (!fas[idx])
+			GOTO(out, rc = -ENOMEM);
+		if (!rcs[idx])
+			OBD_ALLOC(rcs[idx], sizeof(int) * fa->fa_nr);
+		if (!rcs[idx])
+			GOTO(out, rc = -ENOMEM);
+
+		fat = fas[idx];
+		fat->fa_fids[fat->fa_nr++] = fa->fa_fids[i];
+	}
+
+	for (i = 0; i < tgt_count; i++) {
+		fat = fas[i];
+		if (!fat || fat->fa_nr == 0)
+			continue;
+		rc = md_rmfid(lmv->tgts[i]->ltd_exp, fat, rcs[i], set);
+	}
+
+	rc = ptlrpc_set_wait(NULL, set);
+	if (rc == 0) {
+		int j = 0;
+		for (i = 0; i < tgt_count; i++) {
+			fat = fas[i];
+			if (!fat || fat->fa_nr == 0)
+				continue;
+			/* copy FIDs back */
+			memcpy(fa->fa_fids + j, fat->fa_fids,
+			       fat->fa_nr * sizeof(struct lu_fid));
+			/* copy rcs back */
+			memcpy(__rcs + j, rcs[i], fat->fa_nr * sizeof(**rcs));
+			j += fat->fa_nr;
+		}
+	}
+	if (set != _set)
+		ptlrpc_set_destroy(set);
+
+out:
+	for (i = 0; i < tgt_count; i++) {
+		if (fas && fas[i])
+			OBD_FREE(fas[i], offsetof(struct fid_array,
+						fa_fids[fa->fa_nr]));
+		if (rcs && rcs[i])
+			OBD_FREE(rcs[i], sizeof(int) * fa->fa_nr);
+	}
+	if (rcs)
+		OBD_FREE(rcs, sizeof(int *) * tgt_count);
+out_fas:
+	if (fas)
+		OBD_FREE(fas, sizeof(fas) * tgt_count);
+
+	RETURN(rc);
 }
 
 /**
@@ -2705,13 +3066,15 @@ static int lmv_unpack_md_v1(struct obd_export *exp, struct lmv_stripe_md *lsm,
 	else
 		lsm->lsm_md_hash_type = le32_to_cpu(lmm1->lmv_hash_type);
 	lsm->lsm_md_layout_version = le32_to_cpu(lmm1->lmv_layout_version);
+	lsm->lsm_md_migrate_offset = le32_to_cpu(lmm1->lmv_migrate_offset);
+	lsm->lsm_md_migrate_hash = le32_to_cpu(lmm1->lmv_migrate_hash);
 	cplen = strlcpy(lsm->lsm_md_pool_name, lmm1->lmv_pool_name,
 			sizeof(lsm->lsm_md_pool_name));
 
 	if (cplen >= sizeof(lsm->lsm_md_pool_name))
 		RETURN(-E2BIG);
 
-	CDEBUG(D_INFO, "unpack lsm count %d, master %d hash_type %d"
+	CDEBUG(D_INFO, "unpack lsm count %d, master %d hash_type %#x "
 	       "layout_version %d\n", lsm->lsm_md_stripe_count,
 	       lsm->lsm_md_master_mdt_index, lsm->lsm_md_hash_type,
 	       lsm->lsm_md_layout_version);
@@ -2720,10 +3083,22 @@ static int lmv_unpack_md_v1(struct obd_export *exp, struct lmv_stripe_md *lsm,
 	for (i = 0; i < stripe_count; i++) {
 		fid_le_to_cpu(&lsm->lsm_md_oinfo[i].lmo_fid,
 			      &lmm1->lmv_stripe_fids[i]);
+		/*
+		 * set default value -1, so lmv_locate_tgt() knows this stripe
+		 * target is not initialized.
+		 */
+		lsm->lsm_md_oinfo[i].lmo_mds = (u32)-1;
+		if (!fid_is_sane(&lsm->lsm_md_oinfo[i].lmo_fid))
+			continue;
+
 		rc = lmv_fld_lookup(lmv, &lsm->lsm_md_oinfo[i].lmo_fid,
 				    &lsm->lsm_md_oinfo[i].lmo_mds);
-		if (rc != 0)
+		if (rc == -ENOENT)
+			continue;
+
+		if (rc)
 			RETURN(rc);
+
 		CDEBUG(D_INFO, "unpack fid #%d "DFID"\n", i,
 		       PFID(&lsm->lsm_md_oinfo[i].lmo_fid));
 	}
@@ -2746,12 +3121,9 @@ static int lmv_unpackmd(struct obd_export *exp, struct lmv_stripe_md **lsmp,
 	/* Free memmd */
 	if (lsm != NULL && lmm == NULL) {
 		int i;
+
 		for (i = 0; i < lsm->lsm_md_stripe_count; i++) {
-			/* For migrating inode, the master stripe and master
-			 * object will be the same, so do not need iput, see
-			 * ll_update_lsm_md */
-			if (!(lsm->lsm_md_hash_type & LMV_HASH_FLAG_MIGRATION &&
-			      i == 0) && lsm->lsm_md_oinfo[i].lmo_root != NULL)
+			if (lsm->lsm_md_oinfo[i].lmo_root)
 				iput(lsm->lsm_md_oinfo[i].lmo_root);
 		}
 		lsm_size = lmv_stripe_md_size(lsm->lsm_md_stripe_count);
@@ -2963,35 +3335,34 @@ int lmv_clear_open_replay_data(struct obd_export *exp,
 int lmv_intent_getattr_async(struct obd_export *exp,
 			     struct md_enqueue_info *minfo)
 {
-	struct md_op_data       *op_data = &minfo->mi_data;
-	struct obd_device       *obd = exp->exp_obd;
-	struct lmv_obd          *lmv = &obd->u.lmv;
-	struct lmv_tgt_desc     *ptgt = NULL;
-	struct lmv_tgt_desc     *ctgt = NULL;
-	int                      rc;
+	struct md_op_data *op_data = &minfo->mi_data;
+	struct obd_device *obd = exp->exp_obd;
+	struct lmv_obd *lmv = &obd->u.lmv;
+	struct lmv_tgt_desc *ptgt;
+	struct lmv_tgt_desc *ctgt;
+	int rc;
+
 	ENTRY;
 
 	if (!fid_is_sane(&op_data->op_fid2))
 		RETURN(-EINVAL);
 
-	ptgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid1);
+	ptgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
 	if (IS_ERR(ptgt))
 		RETURN(PTR_ERR(ptgt));
 
-	ctgt = lmv_locate_mds(lmv, op_data, &op_data->op_fid2);
+	ctgt = lmv_find_target(lmv, &op_data->op_fid2);
 	if (IS_ERR(ctgt))
 		RETURN(PTR_ERR(ctgt));
 
-	/*
-	 * if child is on remote MDT, we need 2 async RPCs to fetch both LOOKUP
-	 * lock on parent, and UPDATE lock on child MDT, which makes all
-	 * complicated. Considering remote dir is rare case, and not supporting
-	 * it in statahead won't cause any issue, drop its support for now.
+	/* remote object needs two RPCs to lookup and getattr, considering the
+	 * complexity, don't support statahead for now.
 	 */
 	if (ptgt != ctgt)
-		RETURN(-ENOTSUPP);
+		RETURN(-EREMOTE);
 
 	rc = md_intent_getattr_async(ptgt->ltd_exp, minfo);
+
 	RETURN(rc);
 }
 
@@ -3019,7 +3390,7 @@ int lmv_get_fid_from_lsm(struct obd_export *exp,
 	const struct lmv_oinfo *oinfo;
 
 	LASSERT(lsm != NULL);
-	oinfo = lsm_name_to_stripe_info(lsm, name, namelen);
+	oinfo = lsm_name_to_stripe_info(lsm, name, namelen, false);
 	if (IS_ERR(oinfo))
 		return PTR_ERR(oinfo);
 
@@ -3096,6 +3467,9 @@ static int lmv_merge_attr(struct obd_export *exp,
 	for (i = 0; i < lsm->lsm_md_stripe_count; i++) {
 		struct inode *inode = lsm->lsm_md_oinfo[i].lmo_root;
 
+		if (!inode)
+			continue;
+
 		CDEBUG(D_INFO,
 		       "" DFID " size %llu, blocks %llu nlink %u, atime %lld ctime %lld, mtime %lld.\n",
 		       PFID(&lsm->lsm_md_oinfo[i].lmo_fid),
@@ -3156,6 +3530,7 @@ struct md_ops lmv_md_ops = {
         .m_setattr              = lmv_setattr,
         .m_setxattr             = lmv_setxattr,
 	.m_fsync		= lmv_fsync,
+	.m_file_resync		= lmv_file_resync,
 	.m_read_page		= lmv_read_page,
         .m_unlink               = lmv_unlink,
         .m_init_ea_size         = lmv_init_ea_size,
@@ -3171,6 +3546,7 @@ struct md_ops lmv_md_ops = {
 	.m_revalidate_lock      = lmv_revalidate_lock,
 	.m_get_fid_from_lsm	= lmv_get_fid_from_lsm,
 	.m_unpackmd		= lmv_unpackmd,
+	.m_rmfid		= lmv_rmfid,
 };
 
 static int __init lmv_init(void)
