@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2012, 2016, Intel Corporation.
+ * Copyright (c) 2012, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -55,6 +55,11 @@ void request_out_callback(struct lnet_event *ev)
 	LASSERT(ev->unlinked);
 
 	DEBUG_REQ(D_NET, req, "type %d, status %d", ev->type, ev->status);
+
+	/* Do not update imp_next_ping for connection request */
+	if (lustre_msg_get_opc(req->rq_reqmsg) !=
+	    req->rq_import->imp_connect_op)
+		ptlrpc_pinger_sending_on_import(req->rq_import);
 
 	sptlrpc_request_out_callback(req);
 
@@ -161,12 +166,13 @@ void reply_in_callback(struct lnet_event *ev)
                           ev->mlength, ev->offset, req->rq_replen);
         }
 
-	req->rq_import->imp_last_reply_time = ktime_get_real_seconds();
+	if (lustre_msg_get_opc(req->rq_reqmsg) != OBD_PING)
+		req->rq_import->imp_last_reply_time = ktime_get_real_seconds();
 
 out_wake:
-        /* NB don't unlock till after wakeup; req can disappear under us
-         * since we don't have our own ref */
-        ptlrpc_client_wake_req(req);
+	/* NB don't unlock till after wakeup; req can disappear under us
+	 * since we don't have our own ref */
+	ptlrpc_client_wake_req(req);
 	spin_unlock(&req->rq_lock);
 	EXIT;
 }
@@ -200,8 +206,8 @@ void client_bulk_callback(struct lnet_event *ev)
 
 	spin_lock(&desc->bd_lock);
 	req = desc->bd_req;
-	LASSERT(desc->bd_md_count > 0);
-	desc->bd_md_count--;
+	LASSERT(desc->bd_refs > 0);
+	desc->bd_refs--;
 
 	if (ev->type != LNET_EVENT_UNLINK && ev->status == 0) {
 		desc->bd_nob_transferred += ev->mlength;
@@ -218,7 +224,7 @@ void client_bulk_callback(struct lnet_event *ev)
 
 	/* NB don't unlock till after wakeup; desc can disappear under us
 	 * otherwise */
-	if (desc->bd_md_count == 0)
+	if (desc->bd_refs == 0)
 		ptlrpc_client_wake_req(desc->bd_req);
 
 	spin_unlock(&desc->bd_lock);
@@ -450,7 +456,7 @@ void server_bulk_callback(struct lnet_event *ev)
 
 	spin_lock(&desc->bd_lock);
 
-	LASSERT(desc->bd_md_count > 0);
+	LASSERT(desc->bd_refs > 0);
 
 	if ((ev->type == LNET_EVENT_ACK ||
 	     ev->type == LNET_EVENT_REPLY) &&
@@ -466,9 +472,9 @@ void server_bulk_callback(struct lnet_event *ev)
 		desc->bd_failure = 1;
 
 	if (ev->unlinked) {
-		desc->bd_md_count--;
+		desc->bd_refs--;
 		/* This is the last callback no matter what... */
-		if (desc->bd_md_count == 0)
+		if (desc->bd_refs == 0)
 			wake_up(&desc->bd_waitq);
 	}
 
@@ -500,14 +506,14 @@ static void ptlrpc_master_callback(struct lnet_event *ev)
 int ptlrpc_uuid_to_peer(struct obd_uuid *uuid,
 			struct lnet_process_id *peer, lnet_nid_t *self)
 {
-	int               best_dist = 0;
-	__u32             best_order = 0;
-	int               count = 0;
-	int               rc = -ENOENT;
-	int               dist;
-	__u32             order;
-	lnet_nid_t        dst_nid;
-	lnet_nid_t        src_nid;
+	int best_dist = 0;
+	__u32 best_order = 0;
+	int count = 0;
+	int rc = -ENOENT;
+	int dist;
+	__u32 order;
+	lnet_nid_t dst_nid;
+	lnet_nid_t src_nid;
 
 	peer->pid = LNET_PID_LUSTRE;
 
@@ -522,7 +528,7 @@ int ptlrpc_uuid_to_peer(struct obd_uuid *uuid,
 			continue;
 
 		if (dist == 0) {                /* local! use loopback LND */
-			peer->nid = *self = LNET_MKNID(LNET_MKNET(LOLND, 0), 0);
+			peer->nid = *self = LNET_NID_LO_0;
 			rc = 0;
 			break;
 		}

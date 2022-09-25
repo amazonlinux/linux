@@ -76,7 +76,13 @@ int ll_dentry_init_security(struct dentry *dentry, int mode, struct qstr *name,
 
 	rc = security_dentry_init_security(dentry, mode, name, secctx,
 					   secctx_size);
-	if (rc == -EOPNOTSUPP)
+	/* Usually, security_dentry_init_security() returns -EOPNOTSUPP when
+	 * SELinux is disabled.
+	 * But on some kernels (e.g. rhel 8.5) it returns 0 when SELinux is
+	 * disabled, and in this case the security context is empty.
+	 */
+	if (rc == -EOPNOTSUPP || (rc == 0 && *secctx_size == 0))
+		/* do nothing */
 		return 0;
 	if (rc < 0)
 		return rc;
@@ -118,8 +124,8 @@ ll_initxattrs(struct inode *inode, const struct xattr *xattr_array,
 			break;
 		}
 
-		err = __vfs_setxattr(dentry, inode, full_name, xattr->value,
-				     xattr->value_len, XATTR_CREATE);
+		err = ll_vfs_setxattr(dentry, inode, full_name, xattr->value,
+				      xattr->value_len, XATTR_CREATE);
 		kfree(full_name);
 		if (err < 0)
 			break;
@@ -199,3 +205,36 @@ out_free:
 	return err;
 }
 #endif /* HAVE_SECURITY_IINITSEC_CALLBACK */
+
+/**
+ * Get security context xattr name used by policy.
+ *
+ * \retval >= 0     length of xattr name
+ * \retval < 0      failure to get security context xattr name
+ */
+int
+ll_listsecurity(struct inode *inode, char *secctx_name, size_t secctx_name_size)
+{
+	int rc;
+
+	if (!selinux_is_enabled())
+		return 0;
+
+#ifdef HAVE_SECURITY_INODE_LISTSECURITY
+	rc = security_inode_listsecurity(inode, secctx_name, secctx_name_size);
+	if (rc >= secctx_name_size)
+		rc = -ERANGE;
+	else if (rc >= 0)
+		secctx_name[rc] = '\0';
+	return rc;
+#else /* !HAVE_SECURITY_INODE_LISTSECURITY */
+	rc = sizeof(XATTR_NAME_SELINUX);
+	if (secctx_name && rc < secctx_name_size) {
+		memcpy(secctx_name, XATTR_NAME_SELINUX, rc);
+		secctx_name[rc] = '\0';
+	} else {
+		rc = -ERANGE;
+	}
+	return rc;
+#endif /* HAVE_SECURITY_INODE_LISTSECURITY */
+}
