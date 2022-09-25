@@ -23,7 +23,7 @@
  * Copyright (c) 2008, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -34,37 +34,34 @@
 #define _MGC_INTERNAL_H
 
 #include <libcfs/libcfs.h>
-#include <lustre/lustre_idl.h>
 #include <lustre_lib.h>
 #include <lustre_dlm.h>
 #include <lustre_log.h>
 #include <lustre_export.h>
 
-#ifdef CONFIG_PROC_FS
-extern struct lprocfs_vars lprocfs_mgc_obd_vars[];
+int mgc_tunables_init(struct obd_device *obd);
 int lprocfs_mgc_rd_ir_state(struct seq_file *m, void *data);
-#endif /* CONFIG_PROC_FS */
 
 int mgc_process_log(struct obd_device *mgc, struct config_llog_data *cld);
 
-static inline int cld_is_sptlrpc(struct config_llog_data *cld)
+static inline bool cld_is_sptlrpc(struct config_llog_data *cld)
 {
-	return cld->cld_type == CONFIG_T_SPTLRPC;
+	return cld->cld_type == MGS_CFG_T_SPTLRPC;
 }
 
-static inline int cld_is_recover(struct config_llog_data *cld)
+static inline bool cld_is_recover(struct config_llog_data *cld)
 {
-	return cld->cld_type == CONFIG_T_RECOVER;
+	return cld->cld_type == MGS_CFG_T_RECOVER;
 }
 
-static inline int cld_is_nodemap(struct config_llog_data *cld)
+static inline bool cld_is_nodemap(struct config_llog_data *cld)
 {
-	return cld->cld_type == CONFIG_T_NODEMAP;
+	return cld->cld_type == MGS_CFG_T_NODEMAP;
 }
 
-static inline int cld_is_barrier(struct config_llog_data *cld)
+static inline bool cld_is_barrier(struct config_llog_data *cld)
 {
-	return cld->cld_type == CONFIG_T_BARRIER;
+	return cld->cld_type == MGS_CFG_T_BARRIER;
 }
 
 #endif  /* _MGC_INTERNAL_H */
