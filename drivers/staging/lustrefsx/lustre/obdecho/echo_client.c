@@ -23,7 +23,7 @@
  * Copyright (c) 2002, 2010, Oracle and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  *
- * Copyright (c) 2011, 2016, Intel Corporation.
+ * Copyright (c) 2011, 2017, Intel Corporation.
  */
 /*
  * This file is part of Lustre, http://www.lustre.org/
@@ -47,7 +47,7 @@
 #include <lustre_fid.h>
 #include <lustre_lmv.h>
 #include <lustre_acl.h>
-#include <uapi/linux/lustre_ioctl.h>
+#include <uapi/linux/lustre/lustre_ioctl.h>
 #include <lustre_net.h>
 #ifdef HAVE_SERVER_SUPPORT
 # include <md_object.h>
@@ -328,7 +328,8 @@ static void echo_page_completion(const struct lu_env *env,
 }
 
 static void echo_page_fini(const struct lu_env *env,
-			   struct cl_page_slice *slice)
+			   struct cl_page_slice *slice,
+			   struct pagevec *pvec)
 {
 	struct echo_object *eco = cl2echo_obj(slice->cpl_obj);
 	ENTRY;
@@ -506,11 +507,18 @@ static int echo_object_init(const struct lu_env *env, struct lu_object *obj,
 	RETURN(0);
 }
 
-static void echo_object_free(const struct lu_env *env, struct lu_object *obj)
+static void echo_object_delete(const struct lu_env *env, struct lu_object *obj)
 {
-        struct echo_object *eco    = cl2echo_obj(lu2cl(obj));
-        struct echo_client_obd *ec = eco->eo_dev->ed_ec;
-        ENTRY;
+	struct echo_object *eco    = cl2echo_obj(lu2cl(obj));
+	struct echo_client_obd *ec;
+
+	ENTRY;
+
+	/* object delete called unconditolally - layer init or not */
+	if (eco->eo_dev == NULL)
+		return;
+
+	ec = eco->eo_dev->ed_ec;
 
 	LASSERT(atomic_read(&eco->eo_npages) == 0);
 
@@ -518,11 +526,18 @@ static void echo_object_free(const struct lu_env *env, struct lu_object *obj)
 	list_del_init(&eco->eo_obj_chain);
 	spin_unlock(&ec->ec_lock);
 
-        lu_object_fini(obj);
-        lu_object_header_fini(obj->lo_header);
-
 	if (eco->eo_oinfo != NULL)
 		OBD_FREE_PTR(eco->eo_oinfo);
+}
+
+static void echo_object_free(const struct lu_env *env, struct lu_object *obj)
+{
+	struct echo_object *eco    = cl2echo_obj(lu2cl(obj));
+
+	ENTRY;
+
+	lu_object_fini(obj);
+	lu_object_header_fini(obj->lo_header);
 
 	OBD_SLAB_FREE_PTR(eco, echo_object_kmem);
 	EXIT;
@@ -537,12 +552,12 @@ static int echo_object_print(const struct lu_env *env, void *cookie,
 }
 
 static const struct lu_object_operations echo_lu_obj_ops = {
-        .loo_object_init      = echo_object_init,
-        .loo_object_delete    = NULL,
-        .loo_object_release   = NULL,
-        .loo_object_free      = echo_object_free,
-        .loo_object_print     = echo_object_print,
-        .loo_object_invariant = NULL
+	.loo_object_init      = echo_object_init,
+	.loo_object_delete    = echo_object_delete,
+	.loo_object_release   = NULL,
+	.loo_object_free      = echo_object_free,
+	.loo_object_print     = echo_object_print,
+	.loo_object_invariant = NULL
 };
 /** @} echo_lu_ops */
 
@@ -962,19 +977,18 @@ out:
                         CERROR("Cleanup obd device %s error(%d)\n",
                                obd->obd_name, rc2);
         }
-	/* Fall through */
+	fallthrough;
 
         case 3:
                 echo_site_fini(env, ed);
-		/* Fall through */
+		fallthrough;
         case 2:
                 cl_device_fini(&ed->ed_cl);
-		/* Fall through */
+		fallthrough;
         case 1:
                 OBD_FREE_PTR(ed);
-		/* Fall through */
+		fallthrough;
         case 0:
-		/* Fall through */
         default:
                 break;
         }
@@ -1714,7 +1728,7 @@ static int echo_create_md_object(const struct lu_env *env,
 	memset(spec, 0, sizeof(*spec));
 	echo_set_lmm_size(env, ld, ma);
 	if (stripe_count != 0) {
-		spec->sp_cr_flags |= FMODE_WRITE;
+		spec->sp_cr_flags |= MDS_FMODE_WRITE;
 		if (stripe_count != -1) {
 			if (S_ISDIR(mode)) {
 				struct lmv_user_md *lmu;
@@ -1742,7 +1756,7 @@ static int echo_create_md_object(const struct lu_env *env,
 
 	ma->ma_attr.la_mode = mode;
 	ma->ma_attr.la_valid = LA_CTIME | LA_MODE;
-        ma->ma_attr.la_ctime = cfs_time_current_64();
+	ma->ma_attr.la_ctime = ktime_get_real_seconds();
 
 	if (name != NULL) {
 		lname->ln_name = name;
@@ -2085,7 +2099,7 @@ static int echo_destroy_object(const struct lu_env *env,
         memset(ma, 0, sizeof(*ma));
         ma->ma_attr.la_mode = mode;
         ma->ma_attr.la_valid = LA_CTIME;
-        ma->ma_attr.la_ctime = cfs_time_current_64();
+	ma->ma_attr.la_ctime = ktime_get_real_seconds();
         ma->ma_need = MA_INODE;
         ma->ma_valid = 0;
 
@@ -2579,11 +2593,11 @@ static int echo_client_prep_commit(const struct lu_env *env,
 				   u64 offset, u64 count,
 				   u64 batch, int async)
 {
-	struct obd_ioobj	 ioo;
-	struct niobuf_local	*lnb;
-	struct niobuf_remote	 rnb;
-	u64			 off;
-	u64			 npages, tot_pages, apc;
+	struct obd_ioobj ioo;
+	struct niobuf_local *lnb;
+	struct niobuf_remote rnb;
+	u64 off;
+	u64 npages, tot_pages, apc;
 	int i, ret = 0, brw_flags = 0;
 
 	ENTRY;
@@ -2594,7 +2608,7 @@ static int echo_client_prep_commit(const struct lu_env *env,
 	apc = npages = batch >> PAGE_SHIFT;
 	tot_pages = count >> PAGE_SHIFT;
 
-	OBD_ALLOC(lnb, apc * sizeof(struct niobuf_local));
+	OBD_ALLOC_LARGE(lnb, apc * sizeof(struct niobuf_local));
 	if (lnb == NULL)
 		RETURN(-ENOMEM);
 
@@ -2660,7 +2674,7 @@ static int echo_client_prep_commit(const struct lu_env *env,
 	}
 
 out:
-	OBD_FREE(lnb, apc * sizeof(struct niobuf_local));
+	OBD_FREE_LARGE(lnb, apc * sizeof(struct niobuf_local));
 
 	RETURN(ret);
 }
@@ -2703,7 +2717,7 @@ static int echo_client_brw_ioctl(const struct lu_env *env, int rw,
 
         switch (test_mode) {
         case 1:
-                /* fall through */
+                fallthrough;
         case 2:
 		rc = echo_client_kbrw(ed, rw, oa, eco, data->ioc_offset,
 				      data->ioc_count, async);
@@ -2762,6 +2776,9 @@ echo_client_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
 	rc = lu_env_init(env, LCT_DT_THREAD);
 	if (rc)
 		GOTO(out_alloc, rc = -ENOMEM);
+	lu_env_add(env);
+	if (rc)
+		GOTO(out_env_fini, rc = -ENOMEM);
 
 #ifdef HAVE_SERVER_SUPPORT
 	env->le_ses = &echo_session;
@@ -2886,7 +2903,7 @@ echo_client_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
                         GOTO (out, rc = -EPERM);
 
                 rw = OBD_BRW_WRITE;
-                /* fall through */
+                fallthrough;
         case OBD_IOC_BRW_READ:
 		rc = echo_client_brw_ioctl(env, rw, exp, data);
                 GOTO(out, rc);
@@ -2903,6 +2920,8 @@ out:
 	lu_context_fini(env->le_ses);
 out_env:
 #endif
+	lu_env_remove(env);
+out_env_fini:
         lu_env_fini(env);
 out_alloc:
         OBD_FREE_PTR(env);
@@ -3072,15 +3091,15 @@ static int __init obdecho_init(void)
                 goto failed_0;
 
 	rc = class_register_type(&echo_obd_ops, NULL, true, NULL,
-				 LUSTRE_ECHO_NAME, NULL);
+				 LUSTRE_ECHO_NAME, &echo_srv_type);
 	if (rc != 0)
 		goto failed_1;
 # endif
 
 	rc = lu_kmem_init(echo_caches);
 	if (rc == 0) {
-		rc = class_register_type(&echo_client_obd_ops, NULL, true, NULL,
-					 LUSTRE_ECHO_CLIENT_NAME,
+		rc = class_register_type(&echo_client_obd_ops, NULL, false,
+					 NULL, LUSTRE_ECHO_CLIENT_NAME,
 					 &echo_device_type);
 		if (rc)
 			lu_kmem_fini(echo_caches);
