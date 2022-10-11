@@ -1005,6 +1005,10 @@ efi_enable_reset_attack_mitigation(void) { }
 
 void efi_retrieve_tpm2_eventlog(void);
 
+struct screen_info *alloc_screen_info(void);
+void free_screen_info(struct screen_info *si);
+
+
 struct efi_smbios_record {
 	u8	type;
 	u8	length;
@@ -1067,5 +1071,4 @@ struct efi_smbios_type4_record {
 
 const u8 *__efi_get_smbios_string(const struct efi_smbios_record *record,
 				  u8 type, int offset, int recsize);
-
 #endif
