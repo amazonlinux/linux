@@ -89,7 +89,7 @@ lib-$(CONFIG_ARM)		+= arm32-stub.o
 lib-$(CONFIG_ARM64)		+= arm64-stub.o smbios.o arm64-entry.o
 lib-$(CONFIG_X86)		+= x86-stub.o
 lib-$(CONFIG_X86_64)		+= x86-5lvl.o
-lib-$(CONFIG_RISCV)		+= riscv-stub.o
+lib-$(CONFIG_RISCV)		+= riscv.o riscv-stub.o
 lib-$(CONFIG_LOONGARCH)		+= loongarch-stub.o
 
 CFLAGS_arm32-stub.o		:= -DTEXT_OFFSET=$(TEXT_OFFSET)
