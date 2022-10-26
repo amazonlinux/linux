@@ -363,7 +363,7 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					&params);
 	if (err) {
 		pr_err("Failed to register IPv4 top resource\n");
-		goto out;
+		goto err_out;
 	}
 
 	err = devlink_resource_register(devlink, "fib", (u64)-1,
@@ -371,7 +371,7 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					NSIM_RESOURCE_IPV4, &params);
 	if (err) {
 		pr_err("Failed to register IPv4 FIB resource\n");
-		return err;
+		goto err_out;
 	}
 
 	err = devlink_resource_register(devlink, "fib-rules", (u64)-1,
@@ -379,7 +379,7 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					NSIM_RESOURCE_IPV4, &params);
 	if (err) {
 		pr_err("Failed to register IPv4 FIB rules resource\n");
-		return err;
+		goto err_out;
 	}
 
 	/* Resources for IPv6 */
@@ -389,7 +389,7 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					&params);
 	if (err) {
 		pr_err("Failed to register IPv6 top resource\n");
-		goto out;
+		goto err_out;
 	}
 
 	err = devlink_resource_register(devlink, "fib", (u64)-1,
@@ -397,7 +397,7 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					NSIM_RESOURCE_IPV6, &params);
 	if (err) {
 		pr_err("Failed to register IPv6 FIB resource\n");
-		return err;
+		goto err_out;
 	}
 
 	err = devlink_resource_register(devlink, "fib-rules", (u64)-1,
@@ -405,7 +405,7 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					NSIM_RESOURCE_IPV6, &params);
 	if (err) {
 		pr_err("Failed to register IPv6 FIB rules resource\n");
-		return err;
+		goto err_out;
 	}
 
 	/* Resources for nexthops */
@@ -413,8 +413,14 @@ static int nsim_dev_resources_register(struct devlink *devlink)
 					NSIM_RESOURCE_NEXTHOPS,
 					DEVLINK_RESOURCE_ID_PARENT_TOP,
 					&params);
+	if (err) {
+		pr_err("Failed to register NEXTHOPS resource\n");
+		goto err_out;
+	}
+	return 0;
 
-out:
+err_out:
+	devlink_resources_unregister(devlink, NULL);
 	return err;
 }
 
