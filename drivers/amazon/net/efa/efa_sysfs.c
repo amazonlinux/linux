@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "efa_sysfs.h"
@@ -17,8 +17,7 @@ static int sysfs_emit(char *buf, const char *fmt, ...)
 	va_list args;
 	int len;
 
-	if (WARN(!buf || offset_in_page(buf),
-		 "invalid sysfs_emit: buf:%p\n", buf))
+	if (!buf)
 		return 0;
 
 	va_start(args, fmt);
@@ -29,8 +28,8 @@ static int sysfs_emit(char *buf, const char *fmt, ...)
 }
 #endif
 
-#ifdef HAVE_EFA_GDR
-#include "efa_gdr.h"
+#ifdef HAVE_EFA_P2P
+#include "efa_p2p.h"
 
 static ssize_t gdr_show(struct device *dev, struct device_attribute *attr,
 			char *buf)
@@ -46,7 +45,7 @@ static DEVICE_ATTR_RO(gdr);
 
 int efa_sysfs_init(struct efa_dev *dev)
 {
-#ifdef HAVE_EFA_GDR
+#ifdef HAVE_EFA_P2P
 	struct device *device = &dev->pdev->dev;
 
 	if (device_create_file(device, &dev_attr_gdr))
@@ -57,7 +56,7 @@ int efa_sysfs_init(struct efa_dev *dev)
 
 void efa_sysfs_destroy(struct efa_dev *dev)
 {
-#ifdef HAVE_EFA_GDR
+#ifdef HAVE_EFA_P2P
 	device_remove_file(&dev->pdev->dev, &dev_attr_gdr);
 #endif
 }
