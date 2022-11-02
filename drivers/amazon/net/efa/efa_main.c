@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -13,8 +13,8 @@
 #include "efa.h"
 #include "efa_sysfs.h"
 
-#ifdef HAVE_EFA_GDR
-#include "efa_gdr.h"
+#ifdef HAVE_EFA_P2P
+#include "efa_p2p.h"
 #endif
 
 #ifndef HAVE_PCI_VENDOR_ID_AMAZON
@@ -22,16 +22,18 @@
 #endif
 #define PCI_DEV_ID_EFA0_VF 0xefa0
 #define PCI_DEV_ID_EFA1_VF 0xefa1
+#define PCI_DEV_ID_EFA2_VF 0xefa2
 
 static const struct pci_device_id efa_pci_tbl[] = {
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA0_VF) },
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA1_VF) },
+	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA2_VF) },
 	{ }
 };
 
-#define DRV_MODULE_VER_MAJOR           1
-#define DRV_MODULE_VER_MINOR           14
-#define DRV_MODULE_VER_SUBMINOR        1
+#define DRV_MODULE_VER_MAJOR           2
+#define DRV_MODULE_VER_MINOR           1
+#define DRV_MODULE_VER_SUBMINOR        0
 
 #ifndef DRV_MODULE_VERSION
 #define DRV_MODULE_VERSION \
@@ -49,9 +51,6 @@ MODULE_AUTHOR("Amazon.com, Inc. or its affiliates");
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION(DEVICE_NAME);
 MODULE_DEVICE_TABLE(pci, efa_pci_tbl);
-#ifdef HAVE_EFA_GDR
-MODULE_INFO(gdr, "Y");
-#endif
 
 #define EFA_REG_BAR 0
 #define EFA_MEM_BAR 2
@@ -94,6 +93,51 @@ static void efa_release_bars(struct efa_dev *dev, int bars_mask)
 	pci_release_selected_regions(pdev, release_bars);
 }
 
+static void efa_process_comp_eqe(struct efa_dev *dev, struct efa_admin_eqe *eqe)
+{
+	u16 cqn = eqe->u.comp_event.cqn;
+	struct efa_cq *cq;
+
+#ifdef HAVE_XARRAY
+	/* Safe to load as we're in irq and removal calls synchronize_irq() */
+	cq = xa_load(&dev->cqs_xa, cqn);
+#else
+	cq = dev->cqs_arr[cqn];
+#endif
+	if (unlikely(!cq)) {
+		ibdev_err_ratelimited(&dev->ibdev,
+				      "Completion event on non-existent CQ[%u]",
+				      cqn);
+		return;
+	}
+
+	cq->ibcq.comp_handler(&cq->ibcq, cq->ibcq.cq_context);
+}
+
+static void efa_process_eqe(struct efa_com_eq *eeq, struct efa_admin_eqe *eqe)
+{
+	struct efa_dev *dev = container_of(eeq->edev, struct efa_dev, edev);
+
+	if (likely(EFA_GET(&eqe->common, EFA_ADMIN_EQE_EVENT_TYPE) ==
+			   EFA_ADMIN_EQE_EVENT_TYPE_COMPLETION))
+		efa_process_comp_eqe(dev, eqe);
+	else
+		ibdev_err_ratelimited(&dev->ibdev,
+				      "Unknown event type received %lu",
+				      EFA_GET(&eqe->common,
+					      EFA_ADMIN_EQE_EVENT_TYPE));
+}
+
+static irqreturn_t efa_intr_msix_comp(int irq, void *data)
+{
+	struct efa_eq *eq = data;
+	struct efa_com_dev *edev = eq->eeq.edev;
+
+	efa_com_eq_comp_intr_handler(edev, &eq->eeq);
+
+	return IRQ_HANDLED;
+}
+
 static irqreturn_t efa_intr_msix_mgmnt(int irq, void *data)
 {
 	struct efa_dev *dev = data;
@@ -104,24 +148,41 @@ static irqreturn_t efa_intr_msix_mgmnt(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
-static int efa_request_mgmnt_irq(struct efa_dev *dev)
+static int efa_request_irq(struct efa_dev *dev, struct efa_irq *irq)
 {
-	struct efa_irq *irq;
 	int err;
 
-	irq = &dev->admin_irq;
 	err = request_irq(irq->irqn, irq->handler, 0, irq->name, irq->data);
 	if (err) {
-		dev_err(&dev->pdev->dev, "Failed to request admin irq (%d)\n",
-			err);
+		dev_err(&dev->pdev->dev, "Failed to request irq %s (%d)\n",
+			irq->name, err);
 		return err;
 	}
 
-	dev_dbg(&dev->pdev->dev, "Set affinity hint of mgmnt irq to %*pbl (irq vector: %d)\n",
-		nr_cpumask_bits, &irq->affinity_hint_mask, irq->irqn);
 	irq_set_affinity_hint(irq->irqn, &irq->affinity_hint_mask);
 
 	return 0;
+}
+
+static void efa_setup_comp_irq(struct efa_dev *dev, struct efa_eq *eq,
+			       int vector)
+{
+	u32 cpu;
+
+	cpu = vector - EFA_COMP_EQS_VEC_BASE;
+	snprintf(eq->irq.name, EFA_IRQNAME_SIZE, "efa-comp%d@pci:%s", cpu,
+		 pci_name(dev->pdev));
+	eq->irq.handler = efa_intr_msix_comp;
+	eq->irq.data = eq;
+	eq->irq.vector = vector;
+	eq->irq.irqn = pci_irq_vector(dev->pdev, vector);
+	cpumask_set_cpu(cpu, &eq->irq.affinity_hint_mask);
+}
+
+static void efa_free_irq(struct efa_dev *dev, struct efa_irq *irq)
+{
+	irq_set_affinity_hint(irq->irqn, NULL);
+	free_irq(irq->irqn, irq->data);
 }
 
 static void efa_setup_mgmnt_irq(struct efa_dev *dev)
@@ -132,8 +193,9 @@ static void efa_setup_mgmnt_irq(struct efa_dev *dev)
 		 "efa-mgmnt@pci:%s", pci_name(dev->pdev));
 	dev->admin_irq.handler = efa_intr_msix_mgmnt;
 	dev->admin_irq.data = dev;
-	dev->admin_irq.irqn =
-		pci_irq_vector(dev->pdev, dev->admin_msix_vector_idx);
+	dev->admin_irq.vector = dev->admin_msix_vector_idx;
+	dev->admin_irq.irqn = pci_irq_vector(dev->pdev,
+					     dev->admin_msix_vector_idx);
 	cpu = cpumask_first(cpu_online_mask);
 	cpumask_set_cpu(cpu,
 			&dev->admin_irq.affinity_hint_mask);
@@ -142,20 +204,11 @@ static void efa_setup_mgmnt_irq(struct efa_dev *dev)
 		 dev->admin_irq.name);
 }
 
-static void efa_free_mgmnt_irq(struct efa_dev *dev)
-{
-	struct efa_irq *irq;
-
-	irq = &dev->admin_irq;
-	irq_set_affinity_hint(irq->irqn, NULL);
-	free_irq(irq->irqn, irq->data);
-}
-
 static int efa_set_mgmnt_irq(struct efa_dev *dev)
 {
 	efa_setup_mgmnt_irq(dev);
 
-	return efa_request_mgmnt_irq(dev);
+	return efa_request_irq(dev, &dev->admin_irq);
 }
 
 static int efa_request_doorbell_bar(struct efa_dev *dev)
@@ -233,11 +286,11 @@ static void efa_set_host_info(struct efa_dev *dev)
 	if (!hinf)
 		return;
 
-	strlcpy(hinf->os_dist_str, utsname()->release,
-		min(sizeof(hinf->os_dist_str), sizeof(utsname()->release)));
+	strscpy(hinf->os_dist_str, utsname()->release,
+		sizeof(hinf->os_dist_str));
 	hinf->os_type = EFA_ADMIN_OS_LINUX;
-	strlcpy(hinf->kernel_ver_str, utsname()->version,
-		min(sizeof(hinf->kernel_ver_str), sizeof(utsname()->version)));
+	strscpy(hinf->kernel_ver_str, utsname()->version,
+		sizeof(hinf->kernel_ver_str));
 	hinf->kernel_ver = LINUX_VERSION_CODE;
 	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_MAJOR,
 		DRV_MODULE_VER_MAJOR);
@@ -256,7 +309,7 @@ static void efa_set_host_info(struct efa_dev *dev)
 		EFA_COMMON_SPEC_VERSION_MAJOR);
 	EFA_SET(&hinf->spec_ver, EFA_ADMIN_HOST_INFO_SPEC_MINOR,
 		EFA_COMMON_SPEC_VERSION_MINOR);
-#ifdef HAVE_EFA_GDR
+#ifdef HAVE_EFA_P2P
 	EFA_SET(&hinf->flags, EFA_ADMIN_HOST_INFO_GDR, 1);
 #endif
 
@@ -264,6 +317,72 @@ static void efa_set_host_info(struct efa_dev *dev)
 			       hinf_dma, bufsz);
 
 	dma_free_coherent(&dev->pdev->dev, bufsz, hinf, hinf_dma);
+}
+
+static void efa_destroy_eq(struct efa_dev *dev, struct efa_eq *eq)
+{
+	efa_com_eq_destroy(&dev->edev, &eq->eeq);
+	efa_free_irq(dev, &eq->irq);
+}
+
+static int efa_create_eq(struct efa_dev *dev, struct efa_eq *eq, u8 msix_vec)
+{
+	int err;
+
+	efa_setup_comp_irq(dev, eq, msix_vec);
+	err = efa_request_irq(dev, &eq->irq);
+	if (err)
+		return err;
+
+	err = efa_com_eq_init(&dev->edev, &eq->eeq, efa_process_eqe,
+			      dev->dev_attr.max_eq_depth, msix_vec);
+	if (err)
+		goto err_free_comp_irq;
+
+	return 0;
+
+err_free_comp_irq:
+	efa_free_irq(dev, &eq->irq);
+	return err;
+}
+
+static int efa_create_eqs(struct efa_dev *dev)
+{
+	unsigned int neqs = dev->dev_attr.max_eq;
+	int err;
+	int i;
+
+	neqs = min_t(unsigned int, neqs, num_online_cpus());
+	dev->neqs = neqs;
+	dev->eqs = kcalloc(neqs, sizeof(*dev->eqs), GFP_KERNEL);
+	if (!dev->eqs)
+		return -ENOMEM;
+
+	for (i = 0; i < neqs; i++) {
+		err = efa_create_eq(dev, &dev->eqs[i],
+				    i + EFA_COMP_EQS_VEC_BASE);
+		if (err)
+			goto err_destroy_eqs;
+	}
+
+	return 0;
+
+err_destroy_eqs:
+	for (i--; i >= 0; i--)
+		efa_destroy_eq(dev, &dev->eqs[i]);
+	kfree(dev->eqs);
+
+	return err;
+}
+
+static void efa_destroy_eqs(struct efa_dev *dev)
+{
+	int i;
+
+	for (i = 0; i < dev->neqs; i++)
+		efa_destroy_eq(dev, &dev->eqs[i]);
+
+	kfree(dev->eqs);
 }
 
 #ifdef HAVE_IB_DEV_OPS
@@ -290,17 +409,23 @@ static const struct ib_device_ops efa_dev_ops = {
 #else
 	.alloc_ucontext = efa_kzalloc_ucontext,
 #endif
+#ifndef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
 #ifdef HAVE_AH_CORE_ALLOCATION
 	.create_ah = efa_create_ah,
 #else
 	.create_ah = efa_kzalloc_ah,
+#endif
 #endif
 #ifdef HAVE_CQ_CORE_ALLOCATION
 	.create_cq = efa_create_cq,
 #else
 	.create_cq = efa_kzalloc_cq,
 #endif
+#ifdef HAVE_QP_CORE_ALLOCATION
 	.create_qp = efa_create_qp,
+#else
+	.create_qp = efa_kzalloc_qp,
+#endif
 #ifdef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
 	.create_user_ah = efa_create_ah,
 #endif
@@ -332,6 +457,9 @@ static const struct ib_device_ops efa_dev_ops = {
 	.query_port = efa_query_port,
 	.query_qp = efa_query_qp,
 	.reg_user_mr = efa_reg_mr,
+#ifdef HAVE_MR_DMABUF
+	.reg_user_mr_dmabuf = efa_reg_user_mr_dmabuf,
+#endif
 #ifndef HAVE_NO_KVERBS_DRIVERS
 	.req_notify_cq = efa_req_notify_cq,
 #endif
@@ -344,6 +472,9 @@ static const struct ib_device_ops efa_dev_ops = {
 #endif
 #ifdef HAVE_PD_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_pd, efa_pd, ibpd),
+#endif
+#ifdef HAVE_QP_CORE_ALLOCATION
+	INIT_RDMA_OBJ_SIZE(ib_qp, efa_qp, ibqp),
 #endif
 #ifdef HAVE_UCONTEXT_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_ucontext, efa_ucontext, ibucontext),
@@ -379,11 +510,15 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	if (err)
 		goto err_release_doorbell_bar;
 
+	err = efa_create_eqs(dev);
+	if (err)
+		goto err_release_doorbell_bar;
+
 	efa_set_host_info(dev);
 
 	dev->ibdev.node_type = RDMA_NODE_UNSPECIFIED;
 	dev->ibdev.phys_port_cnt = 1;
-	dev->ibdev.num_comp_vectors = 1;
+	dev->ibdev.num_comp_vectors = dev->neqs ?: 1;
 #ifdef HAVE_DEV_PARENT
 	dev->ibdev.dev.parent = &pdev->dev;
 #else
@@ -430,7 +565,7 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	dev->ibdev.alloc_ucontext = efa_kzalloc_ucontext;
 	dev->ibdev.create_ah = efa_kzalloc_ah;
 	dev->ibdev.create_cq = efa_kzalloc_cq;
-	dev->ibdev.create_qp = efa_create_qp;
+	dev->ibdev.create_qp = efa_kzalloc_qp;
 	dev->ibdev.dealloc_pd = efa_dealloc_pd;
 	dev->ibdev.dealloc_ucontext = efa_dealloc_ucontext;
 	dev->ibdev.dereg_mr = efa_dereg_mr;
@@ -462,18 +597,20 @@ static int efa_ib_device_add(struct efa_dev *dev)
 #elif defined(HAVE_IB_REGISTER_DEVICE_NAME_PARAM)
 	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
 #else
-	strlcpy(dev->ibdev.name, "efa_%d",
+	strscpy(dev->ibdev.name, "efa_%d",
 		sizeof(dev->ibdev.name));
 
 	err = ib_register_device(&dev->ibdev, NULL);
 #endif
 	if (err)
-		goto err_release_doorbell_bar;
+		goto err_destroy_eqs;
 
 	ibdev_info(&dev->ibdev, "IB device registered\n");
 
 	return 0;
 
+err_destroy_eqs:
+	efa_destroy_eqs(dev);
 err_release_doorbell_bar:
 	efa_release_doorbell_bar(dev);
 	return err;
@@ -481,9 +618,10 @@ err_release_doorbell_bar:
 
 static void efa_ib_device_remove(struct efa_dev *dev)
 {
-	efa_com_dev_reset(&dev->edev, EFA_REGS_RESET_NORMAL);
 	ibdev_info(&dev->ibdev, "Unregister ib device\n");
 	ib_unregister_device(&dev->ibdev);
+	efa_destroy_eqs(dev);
+	efa_com_dev_reset(&dev->edev, EFA_REGS_RESET_NORMAL);
 	efa_release_doorbell_bar(dev);
 }
 
@@ -496,8 +634,12 @@ static int efa_enable_msix(struct efa_dev *dev)
 {
 	int msix_vecs, irq_num;
 
-	/* Reserve the max msix vectors we might need */
-	msix_vecs = EFA_NUM_MSIX_VEC;
+	/*
+	 * Reserve the max msix vectors we might need, one vector is reserved
+	 * for admin.
+	 */
+	msix_vecs = min_t(int, pci_msix_vec_count(dev->pdev),
+			  num_online_cpus() + 1);
 	dev_dbg(&dev->pdev->dev, "Trying to enable MSI-X, vectors %d\n",
 		msix_vecs);
 
@@ -546,6 +688,7 @@ static int efa_device_init(struct efa_com_dev *edev, struct pci_dev *pdev)
 		dev_err(&pdev->dev, "dma_set_mask_and_coherent failed %d\n", err);
 		return err;
 	}
+
 	dma_set_max_seg_size(&pdev->dev, UINT_MAX);
 	return 0;
 }
@@ -581,6 +724,11 @@ static struct efa_dev *efa_probe_device(struct pci_dev *pdev)
 	edev->efa_dev = dev;
 	edev->dmadev = &pdev->dev;
 	dev->pdev = pdev;
+#ifdef HAVE_XARRAY
+	xa_init(&dev->cqs_xa);
+#else
+	memset(dev->cqs_arr, 0, sizeof(dev->cqs_arr));
+#endif
 
 	bars = pci_select_bars(pdev, IORESOURCE_MEM) & EFA_BASE_BAR_MASK;
 	err = pci_request_selected_regions(pdev, bars, DRV_MODULE_NAME);
@@ -642,7 +790,7 @@ static struct efa_dev *efa_probe_device(struct pci_dev *pdev)
 err_admin_destroy:
 	efa_com_admin_destroy(edev);
 err_free_mgmnt_irq:
-	efa_free_mgmnt_irq(dev);
+	efa_free_irq(dev, &dev->admin_irq);
 err_disable_msix:
 	efa_disable_msix(dev);
 err_reg_read_destroy:
@@ -666,11 +814,14 @@ static void efa_remove_device(struct pci_dev *pdev)
 	edev = &dev->edev;
 	efa_sysfs_destroy(dev);
 	efa_com_admin_destroy(edev);
-	efa_free_mgmnt_irq(dev);
+	efa_free_irq(dev, &dev->admin_irq);
 	efa_disable_msix(dev);
 	efa_com_mmio_reg_read_destroy(edev);
 	devm_iounmap(&pdev->dev, edev->reg_bar);
 	efa_release_bars(dev, EFA_BASE_BAR_MASK);
+#ifdef HAVE_XARRAY
+	xa_destroy(&dev->cqs_xa);
+#endif
 	ib_dealloc_device(&dev->ibdev);
 	pci_disable_device(pdev);
 }
@@ -722,8 +873,8 @@ static int __init efa_init(void)
 		return err;
 	}
 
-#ifdef HAVE_EFA_GDR
-	nvmem_init();
+#ifdef HAVE_EFA_P2P
+	efa_p2p_init();
 #endif
 
 	return 0;
