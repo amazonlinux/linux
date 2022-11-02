@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include <linux/module.h>
@@ -13,8 +13,8 @@
 #include "efa.h"
 #include "efa_sysfs.h"
 
-#ifdef HAVE_EFA_GDR
-#include "efa_gdr.h"
+#ifdef HAVE_EFA_P2P
+#include "efa_p2p.h"
 #endif
 
 #ifndef HAVE_PCI_VENDOR_ID_AMAZON
@@ -22,16 +22,18 @@
 #endif
 #define PCI_DEV_ID_EFA0_VF 0xefa0
 #define PCI_DEV_ID_EFA1_VF 0xefa1
+#define PCI_DEV_ID_EFA2_VF 0xefa2
 
 static const struct pci_device_id efa_pci_tbl[] = {
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA0_VF) },
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA1_VF) },
+	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA2_VF) },
 	{ }
 };
 
-#define DRV_MODULE_VER_MAJOR           1
-#define DRV_MODULE_VER_MINOR           14
-#define DRV_MODULE_VER_SUBMINOR        2
+#define DRV_MODULE_VER_MAJOR           2
+#define DRV_MODULE_VER_MINOR           1
+#define DRV_MODULE_VER_SUBMINOR        0
 
 #ifndef DRV_MODULE_VERSION
 #define DRV_MODULE_VERSION \
@@ -307,7 +309,7 @@ static void efa_set_host_info(struct efa_dev *dev)
 		EFA_COMMON_SPEC_VERSION_MAJOR);
 	EFA_SET(&hinf->spec_ver, EFA_ADMIN_HOST_INFO_SPEC_MINOR,
 		EFA_COMMON_SPEC_VERSION_MINOR);
-#ifdef HAVE_EFA_GDR
+#ifdef HAVE_EFA_P2P
 	EFA_SET(&hinf->flags, EFA_ADMIN_HOST_INFO_GDR, 1);
 #endif
 
@@ -455,6 +457,9 @@ static const struct ib_device_ops efa_dev_ops = {
 	.query_port = efa_query_port,
 	.query_qp = efa_query_qp,
 	.reg_user_mr = efa_reg_mr,
+#ifdef HAVE_MR_DMABUF
+	.reg_user_mr_dmabuf = efa_reg_user_mr_dmabuf,
+#endif
 #ifndef HAVE_NO_KVERBS_DRIVERS
 	.req_notify_cq = efa_req_notify_cq,
 #endif
@@ -683,6 +688,7 @@ static int efa_device_init(struct efa_com_dev *edev, struct pci_dev *pdev)
 		dev_err(&pdev->dev, "dma_set_mask_and_coherent failed %d\n", err);
 		return err;
 	}
+
 	dma_set_max_seg_size(&pdev->dev, UINT_MAX);
 	return 0;
 }
@@ -867,8 +873,8 @@ static int __init efa_init(void)
 		return err;
 	}
 
-#ifdef HAVE_EFA_GDR
-	nvmem_init();
+#ifdef HAVE_EFA_P2P
+	efa_p2p_init();
 #endif
 
 	return 0;
