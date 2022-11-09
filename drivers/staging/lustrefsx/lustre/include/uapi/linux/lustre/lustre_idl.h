@@ -836,6 +836,7 @@ struct ptlrpc_body_v2 {
 #define OBD_CONNECT2_FIDMAP	       0x10000ULL /* FID map */
 #define OBD_CONNECT2_GETATTR_PFID      0x20000ULL /* pack parent FID in getattr */
 /* risk of forwards incompatibility with upstream - use high order bits to mitigate */
+#define OBD_CONNECT2_MDLL_BYPASS 0x800000000000000ULL /* disable metadata lazy load */
 #define OBD_CONNECT2_MDLL           0x1000000000000000ULL /* enable metadata lazy load */
 #define OBD_CONNECT2_MDLL_AUTO_REFRESH 0x2000000000000000ULL /* enable metadata lazy load auto-refresh */
 /* XXX README XXX:
@@ -896,6 +897,7 @@ struct ptlrpc_body_v2 {
 				OBD_CONNECT2_LSOM | \
 				OBD_CONNECT2_ASYNC_DISCARD | \
 				OBD_CONNECT2_GETATTR_PFID | \
+				OBD_CONNECT2_MDLL_BYPASS | \
 				OBD_CONNECT2_MDLL | \
 				OBD_CONNECT2_MDLL_AUTO_REFRESH)
 
@@ -2130,6 +2132,8 @@ struct mdt_rec_reint {
 	__u16           rr_padding_4; /* also fix lustre_swab_mdt_rec_reint */
 };
 
+#define LMV_DESC_QOS_MAXAGE_DEFAULT 60  /* Seconds */
+
 /* lmv structures */
 struct lmv_desc {
 	__u32 ld_tgt_count;		/* how many MDS's */
@@ -2178,28 +2182,6 @@ struct lmv_mds_md_v1 {
 
 /* #define LMV_USER_MAGIC 0x0CD30CD0 */
 #define LMV_MAGIC_STRIPE 0x0CD40CD0 /* magic for dir sub_stripe */
-
-/* Right now only the lower part(0-16bits) of lmv_hash_type is being used,
- * and the higher part will be the flag to indicate the status of object,
- * for example the object is being migrated. And the hash function
- * might be interpreted differently with different flags. */
-#define LMV_HASH_TYPE_MASK 0x0000ffff
-
-#define LMV_HASH_FLAG_MIGRATION	0x80000000
-
-#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 12, 53, 0)
-/* Since lustre 2.8, this flag will not be needed, instead this DEAD
- * and orphan flags will be stored in LMA (see LMAI_ORPHAN)
- * Keep this flag just for LFSCK, because it still might meet such
- * flag when it checks the old FS */
-#define LMV_HASH_FLAG_DEAD	0x40000000
-#endif
-#define LMV_HASH_FLAG_BAD_TYPE	0x20000000
-
-/* The striped directory has ever lost its master LMV EA, then LFSCK
- * re-generated it. This flag is used to indicate such case. It is an
- * on-disk flag. */
-#define LMV_HASH_FLAG_LOST_LMV	0x10000000
 
 /**
  * The FNV-1a hash algorithm is as follows:
