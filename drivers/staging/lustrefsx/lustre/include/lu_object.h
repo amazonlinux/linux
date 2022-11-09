@@ -1430,5 +1430,205 @@ static inline bool lu_object_is_cl(const struct lu_object *o)
 	return lu_device_is_cl(o->lo_dev);
 }
 
+/* Generic subset of tgts */
+struct lu_tgt_pool {
+	__u32		   *op_array;	/* array of index of
+					 * lov_obd->lov_tgts */
+	unsigned int	    op_count;	/* number of tgts in the array */
+	unsigned int	    op_size;	/* allocated size of op_array */
+	struct rw_semaphore op_rw_sem;	/* to protect lu_tgt_pool use */
+};
+
+/* bitflags used in rr / qos allocation */
+enum lq_flag {
+	LQ_DIRTY	= 0, /* recalc qos data */
+	LQ_SAME_SPACE,	     /* the OSTs all have approx.
+			      * the same space avail */
+	LQ_RESET,	     /* zero current penalties */
+};
+
+/* round-robin QoS data for LOD/LMV */
+struct lu_qos_rr {
+	spinlock_t		 lqr_alloc;	/* protect allocation index */
+	__u32			 lqr_start_idx;	/* start index of new inode */
+	__u32			 lqr_offset_idx;/* aliasing for start_idx */
+	int			 lqr_start_count;/* reseed counter */
+	struct lu_tgt_pool	 lqr_pool;	/* round-robin optimized list */
+	unsigned long		 lqr_flags;
+};
+
+/* QoS data per MDS/OSS */
+struct lu_svr_qos {
+	struct obd_uuid		 lsq_uuid;	/* ptlrpc's c_remote_uuid */
+	struct list_head	 lsq_svr_list;	/* link to lq_svr_list */
+	__u64			 lsq_bavail;	/* total bytes avail on svr */
+	__u64			 lsq_iavail;	/* total inode avail on svr */
+	__u64			 lsq_penalty;	/* current penalty */
+	__u64			 lsq_penalty_per_obj; /* penalty decrease
+						       * every obj*/
+	time64_t		 lsq_used;	/* last used time, seconds */
+	__u32			 lsq_tgt_count;	/* number of tgts on this svr */
+	__u32			 lsq_id;	/* unique svr id */
+};
+
+/* QoS data per MDT/OST */
+struct lu_tgt_qos {
+	struct lu_svr_qos	*ltq_svr;	/* svr info */
+	__u64			 ltq_penalty;	/* current penalty */
+	__u64			 ltq_penalty_per_obj; /* penalty decrease
+						       * every obj*/
+	__u64			 ltq_avail;	/* bytes/inode avail */
+	__u64			 ltq_weight;	/* net weighting */
+	time64_t		 ltq_used;	/* last used time, seconds */
+	bool			 ltq_usable:1;	/* usable for striping */
+};
+
+/* target descriptor */
+struct lu_tgt_desc {
+	union {
+		struct dt_device	*ltd_tgt;
+		struct obd_device	*ltd_obd;
+	};
+	struct obd_export *ltd_exp;
+	struct obd_uuid    ltd_uuid;
+	__u32              ltd_index;
+	__u32		   ltd_gen;
+	struct list_head   ltd_kill;
+	struct ptlrpc_thread	*ltd_recovery_thread;
+	struct mutex	   ltd_fid_mutex;
+	struct lu_tgt_qos  ltd_qos; /* qos info per target */
+	struct obd_statfs  ltd_statfs;
+	time64_t	   ltd_statfs_age;
+	unsigned long      ltd_active:1,/* is this target up for requests */
+			   ltd_activate:1,/* should target be activated */
+			   ltd_reap:1,  /* should this target be deleted */
+			   ltd_got_update_log:1, /* Already got update log */
+			   ltd_connecting:1; /* target is connecting */
+};
+
+/* number of pointers at 1st level */
+#define TGT_PTRS		(PAGE_SIZE / sizeof(void *))
+/* number of pointers at 2nd level */
+#define TGT_PTRS_PER_BLOCK	(PAGE_SIZE / sizeof(void *))
+
+struct lu_tgt_desc_idx {
+	struct lu_tgt_desc *ldi_tgt[TGT_PTRS_PER_BLOCK];
+};
+
+/* QoS data for LOD/LMV */
+struct lu_qos {
+	struct list_head	 lq_svr_list;	/* lu_svr_qos list */
+	struct rw_semaphore	 lq_rw_sem;
+	__u32			 lq_active_svr_count;
+	unsigned int		 lq_prio_free;   /* priority for free space */
+	unsigned int		 lq_threshold_rr;/* priority for rr */
+	struct lu_qos_rr	 lq_rr;          /* round robin qos data */
+	unsigned long		 lq_flags;
+#if 0
+	unsigned long		 lq_dirty:1,     /* recalc qos data */
+				 lq_same_space:1,/* the servers all have approx.
+						  * the same space avail */
+				 lq_reset:1;     /* zero current penalties */
+#endif
+};
+
+struct lu_tgt_descs {
+	union {
+		struct lov_desc	      ltd_lov_desc;
+		struct lmv_desc	      ltd_lmv_desc;
+	};
+	/* list of known TGTs */
+	struct lu_tgt_desc_idx	*ltd_tgt_idx[TGT_PTRS];
+	/* Size of the lu_tgts array, granted to be a power of 2 */
+	__u32			ltd_tgts_size;
+	/* bitmap of TGTs available */
+	struct cfs_bitmap	*ltd_tgt_bitmap;
+	/* TGTs scheduled to be deleted */
+	__u32			ltd_death_row;
+	/* Table refcount used for delayed deletion */
+	int			ltd_refcount;
+	/* mutex to serialize concurrent updates to the tgt table */
+	struct mutex		ltd_mutex;
+	/* read/write semaphore used for array relocation */
+	struct rw_semaphore	ltd_rw_sem;
+	/* QoS */
+	struct lu_qos		ltd_qos;
+	/* all tgts in a packed array */
+	struct lu_tgt_pool	ltd_tgt_pool;
+	/* true if tgt is MDT */
+	bool			ltd_is_mdt;
+};
+
+#define LTD_TGT(ltd, index)						\
+	 (ltd)->ltd_tgt_idx[(index) /					\
+	 TGT_PTRS_PER_BLOCK]->ldi_tgt[(index) % TGT_PTRS_PER_BLOCK]
+
+u64 lu_prandom_u64_max(u64 ep_ro);
+void lu_qos_rr_init(struct lu_qos_rr *lqr);
+int lu_qos_add_tgt(struct lu_qos *qos, struct lu_tgt_desc *ltd);
+void lu_tgt_qos_weight_calc(struct lu_tgt_desc *tgt);
+
+int lu_tgt_descs_init(struct lu_tgt_descs *ltd, bool is_mdt);
+void lu_tgt_descs_fini(struct lu_tgt_descs *ltd);
+int ltd_add_tgt(struct lu_tgt_descs *ltd, struct lu_tgt_desc *tgt);
+void ltd_del_tgt(struct lu_tgt_descs *ltd, struct lu_tgt_desc *tgt);
+int ltd_qos_penalties_calc(struct lu_tgt_descs *ltd);
+int ltd_qos_update(struct lu_tgt_descs *ltd, struct lu_tgt_desc *tgt,
+		   __u64 *total_wt);
+
+/**
+ * Whether MDT inode and space usages are balanced.
+ */
+static inline bool ltd_qos_is_balanced(struct lu_tgt_descs *ltd)
+{
+	return !test_bit(LQ_DIRTY, &ltd->ltd_qos.lq_flags) &&
+	       test_bit(LQ_SAME_SPACE, &ltd->ltd_qos.lq_flags);
+}
+
+/**
+ * Whether QoS data is up-to-date and QoS can be applied.
+ */
+static inline bool ltd_qos_is_usable(struct lu_tgt_descs *ltd)
+{
+	if (ltd_qos_is_balanced(ltd))
+		return false;
+
+	if (ltd->ltd_lov_desc.ld_active_tgt_count < 2)
+		return false;
+
+	return true;
+}
+
+static inline struct lu_tgt_desc *ltd_first_tgt(struct lu_tgt_descs *ltd)
+{
+	int index;
+
+	index = find_first_bit(ltd->ltd_tgt_bitmap->data,
+			       ltd->ltd_tgt_bitmap->size);
+	return (index < ltd->ltd_tgt_bitmap->size) ? LTD_TGT(ltd, index) : NULL;
+}
+
+static inline struct lu_tgt_desc *ltd_next_tgt(struct lu_tgt_descs *ltd,
+					       struct lu_tgt_desc *tgt)
+{
+	int index;
+
+	if (!tgt)
+		return NULL;
+
+	index = tgt->ltd_index;
+	LASSERT(index < ltd->ltd_tgt_bitmap->size);
+	index = find_next_bit(ltd->ltd_tgt_bitmap->data,
+			      ltd->ltd_tgt_bitmap->size, index + 1);
+	return (index < ltd->ltd_tgt_bitmap->size) ? LTD_TGT(ltd, index) : NULL;
+}
+
+#define ltd_foreach_tgt(ltd, tgt) \
+	for (tgt = ltd_first_tgt(ltd); tgt; tgt = ltd_next_tgt(ltd, tgt))
+
+#define ltd_foreach_tgt_safe(ltd, tgt, tmp)				  \
+	for (tgt = ltd_first_tgt(ltd), tmp = ltd_next_tgt(ltd, tgt); tgt; \
+	     tgt = tmp, tmp = ltd_next_tgt(ltd, tgt))
+
 /** @} lu */
 #endif /* __LUSTRE_LU_OBJECT_H */
