@@ -1285,6 +1285,50 @@ static ssize_t ll_nosquash_nids_seq_write(struct file *file,
 
 LDEBUGFS_SEQ_FOPS(ll_nosquash_nids);
 
+static int ll_mdll_dir_restore_max_retry_count_seq_show(struct seq_file *m,
+							void *v)
+{
+	struct super_block *sb = m->private;
+	struct ll_sb_info *sbi = ll_s2sbi(sb);
+
+	seq_printf(m, "%d\n",
+		   atomic_read(&sbi->ll_dir_restore_max_retry_count));
+
+	return 0;
+}
+
+static ssize_t
+ll_mdll_dir_restore_max_retry_count_seq_write(struct file *file,
+					  const char __user *buffer,
+					  size_t count, loff_t *off)
+{
+	struct seq_file *m = file->private_data;
+	struct super_block *sb = m->private;
+	struct ll_sb_info *sbi = ll_s2sbi(sb);
+	int val, rc;
+
+	rc = kstrtoint_from_user(buffer, count, 0, &val);
+	if (rc)
+		return rc;
+
+	/*
+	 * Right now there is no limitation set on the retry count.
+	 * This is done as we dont know what the right max limit
+	 * would be. The max value would depend on the number of
+	 * files in the directory that is being restored and as well
+	 * if the mdt keeps restarting. The client calls are
+	 * interruptible and can be used to break from long retries.
+	 */
+	if (val < -1)
+		return -EINVAL;
+
+	atomic_set(&sbi->ll_dir_restore_max_retry_count, val);
+
+	return count;
+}
+
+LDEBUGFS_SEQ_FOPS(ll_mdll_dir_restore_max_retry_count);
+
 struct ldebugfs_vars lprocfs_llite_obd_vars[] = {
 	{ .name	=	"site",
 	  .fops	=	&ll_site_stats_fops			},
@@ -1306,6 +1350,8 @@ struct ldebugfs_vars lprocfs_llite_obd_vars[] = {
 	  .fops	=	&ll_root_squash_fops			},
 	{ .name	=	"nosquash_nids",
 	  .fops	=	&ll_nosquash_nids_fops			},
+	{ .name	=	"mdll_dir_restore_max_retry_count",
+	  .fops	=	&ll_mdll_dir_restore_max_retry_count_fops	},
 	{ NULL }
 };
 
