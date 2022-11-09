@@ -9,5 +9,6 @@ obdclass-y += lu_object.o dt_object.o
 obdclass-y += cl_object.o cl_page.o cl_lock.o cl_io.o lu_ref.o
 obdclass-y += linkea.o kernelcomm.o jobid.o
 obdclass-y += integrity.o obd_cksum.o
+obdclass-y += lu_tgt_descs.o
 
 include $(srctree)/drivers/staging/lustrefsx/Makefile.rules
