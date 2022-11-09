@@ -44,10 +44,8 @@ static ssize_t numobd_show(struct kobject *kobj, struct attribute *attr,
 {
 	struct obd_device *dev = container_of(kobj, struct obd_device,
 					      obd_kset.kobj);
-	struct lmv_desc *desc;
 
-        desc = &dev->u.lmv.desc;
-	return sprintf(buf, "%u\n", desc->ld_tgt_count);
+	return sprintf(buf, "%u\n", dev->u.lmv.lmv_mdt_count);
 }
 LUSTRE_RO_ATTR(numobd);
 
@@ -56,10 +54,9 @@ static ssize_t activeobd_show(struct kobject *kobj, struct attribute *attr,
 {
 	struct obd_device *dev = container_of(kobj, struct obd_device,
 					      obd_kset.kobj);
-	struct lmv_desc *desc;
 
-        desc = &dev->u.lmv.desc;
-	return sprintf(buf, "%u\n", desc->ld_active_tgt_count);
+	return sprintf(buf, "%u\n",
+		dev->u.lmv.lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count);
 }
 LUSTRE_RO_ATTR(activeobd);
 
@@ -68,26 +65,154 @@ static ssize_t desc_uuid_show(struct kobject *kobj, struct attribute *attr,
 {
 	struct obd_device *dev = container_of(kobj, struct obd_device,
 					      obd_kset.kobj);
-	struct lmv_desc *desc;
 
-	desc = &dev->u.lmv.desc;
-	return sprintf(buf, "%s\n", desc->ld_uuid.uuid);
+	return sprintf(buf, "%s\n",
+		       dev->u.lmv.lmv_mdt_descs.ltd_lmv_desc.ld_uuid.uuid);
 }
 LUSTRE_RO_ATTR(desc_uuid);
+
+static ssize_t qos_maxage_show(struct kobject *kobj,
+			       struct attribute *attr,
+			       char *buf)
+{
+	struct obd_device *dev = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+
+	return sprintf(buf, "%u\n",
+		       dev->u.lmv.lmv_mdt_descs.ltd_lmv_desc.ld_qos_maxage);
+}
+
+static ssize_t qos_maxage_store(struct kobject *kobj,
+				struct attribute *attr,
+				const char *buffer,
+				size_t count)
+{
+	struct obd_device *dev = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	unsigned int val;
+	int rc;
+
+	rc = kstrtouint(buffer, 0, &val);
+	if (rc)
+		return rc;
+
+	dev->u.lmv.lmv_mdt_descs.ltd_lmv_desc.ld_qos_maxage = val;
+
+	return count;
+}
+LUSTRE_RW_ATTR(qos_maxage);
+
+static ssize_t qos_prio_free_show(struct kobject *kobj,
+				  struct attribute *attr,
+				  char *buf)
+{
+	struct obd_device *dev = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+
+	return sprintf(buf, "%u%%\n",
+		       (dev->u.lmv.lmv_qos.lq_prio_free * 100 + 255) >> 8);
+}
+
+static ssize_t qos_prio_free_store(struct kobject *kobj,
+				   struct attribute *attr,
+				   const char *buffer,
+				   size_t count)
+{
+	struct obd_device *dev = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lmv_obd *lmv = &dev->u.lmv;
+	char buf[6], *tmp;
+	unsigned int val;
+	int rc;
+
+	/* "100%\n\0" should be largest string */
+	if (count >= sizeof(buf))
+		return -ERANGE;
+
+	strncpy(buf, buffer, sizeof(buf));
+	buf[sizeof(buf) - 1] = '\0';
+	tmp = strchr(buf, '%');
+	if (tmp)
+		*tmp = '\0';
+
+	rc = kstrtouint(buf, 0, &val);
+	if (rc)
+		return rc;
+
+	if (val > 100)
+		return -EINVAL;
+
+	lmv->lmv_qos.lq_prio_free = (val << 8) / 100;
+	set_bit(LQ_DIRTY, &lmv->lmv_qos.lq_flags);
+	set_bit(LQ_RESET, &lmv->lmv_qos.lq_flags);
+
+	return count;
+}
+LUSTRE_RW_ATTR(qos_prio_free);
+
+static ssize_t qos_threshold_rr_show(struct kobject *kobj,
+				     struct attribute *attr,
+				     char *buf)
+{
+	struct obd_device *dev = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+
+	return sprintf(buf, "%u%%\n",
+		       (dev->u.lmv.lmv_qos.lq_threshold_rr * 100 + 255) >> 8);
+}
+
+static ssize_t qos_threshold_rr_store(struct kobject *kobj,
+				      struct attribute *attr,
+				      const char *buffer,
+				      size_t count)
+{
+	struct obd_device *dev = container_of(kobj, struct obd_device,
+					      obd_kset.kobj);
+	struct lmv_obd *lmv = &dev->u.lmv;
+	char buf[6], *tmp;
+	unsigned int val;
+	int rc;
+
+	/* "100%\n\0" should be largest string */
+	if (count >= sizeof(buf))
+		return -ERANGE;
+
+	strncpy(buf, buffer, sizeof(buf));
+	buf[sizeof(buf) - 1] = '\0';
+	tmp = strchr(buf, '%');
+	if (tmp)
+		*tmp = '\0';
+
+	rc = kstrtouint(buf, 0, &val);
+	if (rc)
+		return rc;
+
+	if (val > 100)
+		return -EINVAL;
+
+	lmv->lmv_qos.lq_threshold_rr = (val << 8) / 100;
+	set_bit(LQ_DIRTY, &lmv->lmv_qos.lq_flags);
+
+	return count;
+}
+LUSTRE_RW_ATTR(qos_threshold_rr);
 
 #ifdef CONFIG_PROC_FS
 static void *lmv_tgt_seq_start(struct seq_file *p, loff_t *pos)
 {
-	struct obd_device       *dev = p->private;
-	struct lmv_obd          *lmv = &dev->u.lmv;
+	struct obd_device *dev = p->private;
+	struct lmv_obd *lmv = &dev->u.lmv;
+	struct lu_tgt_desc *tgt;
 
-	while (*pos < lmv->tgts_size) {
-		if (lmv->tgts[*pos])
-			return lmv->tgts[*pos];
+	while (*pos < lmv->lmv_mdt_descs.ltd_tgts_size) {
+		tgt = lmv_tgt(lmv, (__u32)*pos);
+		if (tgt)
+			return tgt;
+
 		++*pos;
 	}
 
-	return  NULL;
+	return NULL;
 }
 
 static void lmv_tgt_seq_stop(struct seq_file *p, void *v)
@@ -96,17 +221,20 @@ static void lmv_tgt_seq_stop(struct seq_file *p, void *v)
 
 static void *lmv_tgt_seq_next(struct seq_file *p, void *v, loff_t *pos)
 {
-	struct obd_device       *dev = p->private;
-	struct lmv_obd          *lmv = &dev->u.lmv;
+	struct obd_device *dev = p->private;
+	struct lmv_obd *lmv = &dev->u.lmv;
+	struct lu_tgt_desc *tgt;
 
 	++*pos;
-	while (*pos < lmv->tgts_size) {
-		if (lmv->tgts[*pos])
-			return lmv->tgts[*pos];
+	while (*pos < lmv->lmv_mdt_descs.ltd_tgts_size) {
+		tgt = lmv_tgt(lmv, (__u32)*pos);
+		if (tgt)
+			return tgt;
+
 		++*pos;
 	}
 
-	return  NULL;
+	return NULL;
 }
 
 static int lmv_tgt_seq_show(struct seq_file *p, void *v)
@@ -117,7 +245,7 @@ static int lmv_tgt_seq_show(struct seq_file *p, void *v)
 		return 0;
 
 	seq_printf(p, "%u: %s %sACTIVE\n",
-		   tgt->ltd_idx, tgt->ltd_uuid.uuid,
+		   tgt->ltd_index, tgt->ltd_uuid.uuid,
 		   tgt->ltd_active ? "" : "IN");
 	return 0;
 }
@@ -156,6 +284,9 @@ static struct attribute *lmv_attrs[] = {
 	&lustre_attr_activeobd.attr,
 	&lustre_attr_desc_uuid.attr,
 	&lustre_attr_numobd.attr,
+	&lustre_attr_qos_maxage.attr,
+	&lustre_attr_qos_prio_free.attr,
+	&lustre_attr_qos_threshold_rr.attr,
 	NULL,
 };
 
