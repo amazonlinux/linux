@@ -586,14 +586,21 @@ int mdc_get_lustre_md(struct obd_export *exp, struct ptlrpc_request *req,
 			GOTO(out, rc = -EPROTO);
 		}
 
-		lmv_size = md->body->mbo_eadatasize;
-		if (lmv_size == 0) {
-			CDEBUG(D_INFO, "OBD_MD_FLDIREA is set, "
-			       "but eadatasize 0\n");
-			RETURN(-EPROTO);
+		if (md_exp->exp_obd->obd_type->typ_lu == &mdc_device_type) {
+			CERROR("%s: no LMV, upgrading from old version?\n",
+			       md_exp->exp_obd->obd_name);
+
+			GOTO(out_acl, rc = 0);
 		}
 
 		if (md->body->mbo_valid & OBD_MD_MEA) {
+			lmv_size = md->body->mbo_eadatasize;
+			if (lmv_size == 0) {
+				CDEBUG(D_INFO, "OBD_MD_FLDIREA is set, "
+				       "but eadatasize 0\n");
+				RETURN(-EPROTO);
+			}
+
 			lmv = req_capsule_server_sized_get(pill, &RMF_MDT_MD,
 							   lmv_size);
 			if (lmv == NULL)
@@ -602,17 +609,33 @@ int mdc_get_lustre_md(struct obd_export *exp, struct ptlrpc_request *req,
 			rc = md_unpackmd(md_exp, &md->lmv, lmv, lmv_size);
 			if (rc < 0)
 				GOTO(out, rc);
+		}
 
-			if (rc < (typeof(rc))sizeof(*md->lmv)) {
-				CDEBUG(D_INFO, "size too small:  "
-				       "rc < sizeof(*md->lmv) (%d < %d)\n",
-					rc, (int)sizeof(*md->lmv));
+		/* since 2.12.58 intent_getattr fetches default LMV */
+		if (md->body->mbo_valid & OBD_MD_DEFAULT_MEA) {
+			lmv_size = sizeof(struct lmv_user_md);
+			lmv = req_capsule_server_sized_get(pill,
+							   &RMF_DEFAULT_MDT_MD,
+							   lmv_size);
+			if (!lmv)
+				GOTO(out, rc = -EPROTO);
+
+			rc = md_unpackmd(md_exp, &md->default_lmv, lmv,
+					 lmv_size);
+			if (rc < 0)
+				GOTO(out, rc);
+
+			if (rc < (int)sizeof(*md->default_lmv)) {
+				CDEBUG(D_INFO,
+				       "default lmv size too small: %d < %d\n",
+					rc, (int)sizeof(*md->default_lmv));
 				GOTO(out, rc = -EPROTO);
 			}
 		}
-        }
+	}
         rc = 0;
 
+out_acl:
 	if (md->body->mbo_valid & OBD_MD_FLACL) {
 		/* for ACL, it's possible that FLACL is set but aclsize is zero.
 		 * only when aclsize != 0 there's an actual segment for ACL
@@ -1542,6 +1565,54 @@ fail:
 	mdc_release_page(page, 1);
 	rc = -EIO;
 	goto out_unlock;
+}
+
+static int mdc_statfs_interpret(const struct lu_env *env,
+				struct ptlrpc_request *req, void *args, int rc)
+{
+	struct obd_info *oinfo = args;
+	struct obd_statfs *osfs;
+
+	if (!rc) {
+		osfs = req_capsule_server_get(&req->rq_pill, &RMF_OBD_STATFS);
+		if (!osfs)
+			return -EPROTO;
+
+		oinfo->oi_osfs = osfs;
+
+		CDEBUG(D_CACHE, "blocks=%llu free=%llu avail=%llu "
+		       "objects=%llu free=%llu state=%x\n",
+			osfs->os_blocks, osfs->os_bfree, osfs->os_bavail,
+			osfs->os_files, osfs->os_ffree, osfs->os_state);
+	}
+
+	oinfo->oi_cb_up(oinfo, rc);
+
+	return rc;
+}
+
+static int mdc_statfs_async(struct obd_export *exp,
+			    struct obd_info *oinfo, time64_t max_age,
+			    struct ptlrpc_request_set *unused)
+{
+	struct ptlrpc_request *req;
+	struct obd_info *aa;
+
+	req = ptlrpc_request_alloc_pack(class_exp2cliimp(exp), &RQF_MDS_STATFS,
+					LUSTRE_MDS_VERSION, MDS_STATFS);
+	if (req == NULL)
+		return -ENOMEM;
+
+	ptlrpc_request_set_replen(req);
+	req->rq_interpret_reply = mdc_statfs_interpret;
+
+	CLASSERT(sizeof(*aa) <= sizeof(req->rq_async_args));
+	aa = ptlrpc_req_async_args(req);
+	*aa = *oinfo;
+
+	ptlrpcd_add_req(req);
+
+	return 0;
 }
 
 static int mdc_statfs(const struct lu_env *env,
@@ -2851,26 +2922,26 @@ int mdc_process_config(struct obd_device *obd, size_t len, void *buf)
 }
 
 static struct obd_ops mdc_obd_ops = {
-        .o_owner            = THIS_MODULE,
-        .o_setup            = mdc_setup,
-        .o_precleanup       = mdc_precleanup,
-        .o_cleanup          = mdc_cleanup,
-        .o_add_conn         = client_import_add_conn,
-        .o_del_conn         = client_import_del_conn,
-        .o_connect          = client_connect_import,
+	.o_owner	    = THIS_MODULE,
+	.o_setup	    = mdc_setup,
+	.o_precleanup       = mdc_precleanup,
+	.o_cleanup	    = mdc_cleanup,
+	.o_add_conn	    = client_import_add_conn,
+	.o_del_conn	    = client_import_del_conn,
+	.o_connect	    = client_connect_import,
 	.o_reconnect	    = osc_reconnect,
 	.o_disconnect	    = osc_disconnect,
-        .o_iocontrol        = mdc_iocontrol,
-        .o_set_info_async   = mdc_set_info_async,
-        .o_statfs           = mdc_statfs,
+	.o_iocontrol	    = mdc_iocontrol,
+	.o_set_info_async   = mdc_set_info_async,
+	.o_statfs	    = mdc_statfs,
+	.o_statfs_async     = mdc_statfs_async,
 	.o_fid_init	    = client_fid_init,
 	.o_fid_fini	    = client_fid_fini,
-        .o_fid_alloc        = mdc_fid_alloc,
-        .o_import_event     = mdc_import_event,
-        .o_get_info         = mdc_get_info,
-        .o_process_config   = mdc_process_config,
-        .o_get_uuid         = mdc_get_uuid,
-        .o_quotactl         = mdc_quotactl,
+	.o_fid_alloc	    = mdc_fid_alloc,
+	.o_import_event     = mdc_import_event,
+	.o_get_info	    = mdc_get_info,
+	.o_get_uuid	    = mdc_get_uuid,
+	.o_quotactl	    = mdc_quotactl,
 };
 
 static struct md_ops mdc_md_ops = {
