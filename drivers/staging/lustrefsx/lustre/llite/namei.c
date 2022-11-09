@@ -223,6 +223,7 @@ static int ll_dom_lock_cancel(struct inode *inode, struct ldlm_lock *lock)
 static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 {
 	struct inode *inode = ll_inode_from_resource_lock(lock);
+	struct ll_inode_info *lli;
 	__u64 bits = to_cancel;
 	int rc;
 
@@ -249,8 +250,6 @@ static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 	}
 
 	if (bits & MDS_INODELOCK_XATTR) {
-		if (S_ISDIR(inode->i_mode))
-			ll_i2info(inode)->lli_def_stripe_offset = -1;
 		ll_xattr_cache_destroy(inode);
 		bits &= ~MDS_INODELOCK_XATTR;
 	}
@@ -309,15 +308,12 @@ static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 			       PFID(ll_inode2fid(inode)), rc);
 	}
 
-	if (bits & MDS_INODELOCK_UPDATE) {
-		struct ll_inode_info *lli = ll_i2info(inode);
+	lli = ll_i2info(inode);
 
+	if (bits & MDS_INODELOCK_UPDATE)
 		lli->lli_update_atime = 1;
-	}
 
 	if ((bits & MDS_INODELOCK_UPDATE) && S_ISDIR(inode->i_mode)) {
-		struct ll_inode_info *lli = ll_i2info(inode);
-
 		CDEBUG(D_INODE, "invalidating inode "DFID" lli = %p, "
 		       "pfid  = "DFID"\n", PFID(ll_inode2fid(inode)),
 		       lli, PFID(&lli->lli_pfid));
@@ -370,8 +366,8 @@ static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 
 	if ((bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) &&
 	    inode->i_sb->s_root != NULL &&
-	    inode != inode->i_sb->s_root->d_inode)
-		ll_invalidate_aliases(inode);
+	    !is_root_inode(inode))	
+                ll_invalidate_aliases(inode);
 
 	if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM))
 		forget_all_cached_acls(inode);
@@ -701,8 +697,10 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 
 	if (!it_disposition(it, DISP_LOOKUP_NEG)) {
 		/* we have lookup look - unhide dentry */
-		if (bits & MDS_INODELOCK_LOOKUP)
+		if (bits & MDS_INODELOCK_LOOKUP) {
 			d_lustre_revalidate(*de);
+			ll_update_dir_depth(parent, (*de)->d_inode);
+		}
 	} else if (!it_disposition(it, DISP_OPEN_CREATE)) {
 		/*
 		 * If file was created on the server, the dentry is revalidated
@@ -715,7 +713,7 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 		struct lu_fid	fid = ll_i2info(parent)->lli_fid;
 
 		/* If it is striped directory, get the real stripe parent */
-		if (unlikely(ll_i2info(parent)->lli_lsm_md != NULL)) {
+		if (unlikely(ll_dir_striped(parent))) {
 			rc = md_get_fid_from_lsm(ll_i2mdexp(parent),
 						 ll_i2info(parent)->lli_lsm_md,
 						 (*de)->d_name.name,
@@ -1252,8 +1250,10 @@ static int ll_create_it(struct inode *dir, struct dentry *dentry,
 	}
 
 	ll_set_lock_data(ll_i2sbi(dir)->ll_md_exp, inode, it, &bits);
-	if (bits & MDS_INODELOCK_LOOKUP)
+	if (bits & MDS_INODELOCK_LOOKUP) {
 		d_lustre_revalidate(dentry);
+		ll_update_dir_depth(dir, inode);
+	}
 
 	RETURN(0);
 }
@@ -1278,6 +1278,58 @@ void ll_update_times(struct ptlrpc_request *request, struct inode *inode)
 		inode->i_ctime.tv_sec = body->mbo_ctime;
 }
 
+/* once default LMV (space balanced) is set on ROOT, it should take effect if
+ * default LMV is not set on parent directory.
+ */
+static void ll_qos_mkdir_prep(struct md_op_data *op_data, struct inode *dir)
+{
+	struct inode *root = dir->i_sb->s_root->d_inode;
+	struct ll_inode_info *rlli = ll_i2info(root);
+	struct ll_inode_info *lli = ll_i2info(dir);
+	struct lmv_stripe_md *lsm;
+
+	op_data->op_dir_depth = lli->lli_dir_depth;
+
+	/* parent directory is striped */
+	if (unlikely(lli->lli_lsm_md))
+		return;
+
+	/* default LMV set on parent directory */
+	if (unlikely(lli->lli_default_lsm_md))
+		return;
+
+	/* parent is ROOT */
+	if (unlikely(dir == root))
+		return;
+
+	/* default LMV not set on ROOT */
+	if (!rlli->lli_default_lsm_md)
+		return;
+
+	down_read(&rlli->lli_lsm_sem);
+	lsm = rlli->lli_default_lsm_md;
+	if (!lsm)
+		goto unlock;
+
+	/* not space balanced */
+	if (lsm->lsm_md_master_mdt_index != LMV_OFFSET_DEFAULT)
+		goto unlock;
+
+	if (lsm->lsm_md_max_inherit != LMV_INHERIT_NONE &&
+	    (lsm->lsm_md_max_inherit == LMV_INHERIT_UNLIMITED ||
+	     lsm->lsm_md_max_inherit >= lli->lli_dir_depth)) {
+		op_data->op_flags |= MF_QOS_MKDIR;
+		if (lsm->lsm_md_max_inherit_rr != LMV_INHERIT_RR_NONE &&
+		    (lsm->lsm_md_max_inherit_rr == LMV_INHERIT_RR_UNLIMITED ||
+		     lsm->lsm_md_max_inherit_rr >= lli->lli_dir_depth))
+			op_data->op_flags |= MF_RR_MKDIR;
+		CDEBUG(D_INODE, DFID" requests qos mkdir %#x\n",
+		       PFID(&lli->lli_fid), op_data->op_flags);
+	}
+unlock:
+	up_read(&rlli->lli_lsm_sem);
+}
+
 static int ll_new_node(struct inode *dir, struct dentry *dchild,
 		       const char *tgt, umode_t mode, int rdev, __u32 opc)
 {
@@ -1299,6 +1351,9 @@ again:
 	if (IS_ERR(op_data))
 		GOTO(err_exit, err = PTR_ERR(op_data));
 
+	if (S_ISDIR(mode))
+		ll_qos_mkdir_prep(op_data, dir);
+
 	if (sbi->ll_flags & LL_SBI_FILE_SECCTX) {
 		err = ll_dentry_init_security(dchild, mode, &dchild->d_name,
 					      &op_data->op_file_secctx_name,
@@ -1312,13 +1367,11 @@ again:
 			from_kuid(&init_user_ns, current_fsuid()),
 			from_kgid(&init_user_ns, current_fsgid()),
 			cfs_curproc_cap_pack(), rdev, &request);
-	if (err < 0 && err != -EREMOTE)
-		GOTO(err_exit, err);
-
-	/* If the client doesn't know where to create a subdirectory (or
-	 * in case of a race that sends the RPC to the wrong MDS), the
-	 * MDS will return -EREMOTE and the client will fetch the layout
-	 * of the directory, then create the directory on the right MDT. */
+#if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 14, 58, 0)
+	/*
+	 * server < 2.12.58 doesn't pack default LMV in intent_getattr reply,
+	 * fetch default LMV here.
+	 */
 	if (unlikely(err == -EREMOTE)) {
 		struct ll_inode_info	*lli = ll_i2info(dir);
 		struct lmv_user_md	*lum;
@@ -1327,27 +1380,61 @@ again:
 
 		ptlrpc_req_finished(request);
 		request = NULL;
+		ll_finish_md_op_data(op_data);
+		op_data = NULL;
 
 		err2 = ll_dir_getstripe(dir, (void **)&lum, &lumsize, &request,
 					OBD_MD_DEFAULT_MEA);
 		if (err2 == 0) {
-			/* Update stripe_offset and retry */
-			lli->lli_def_stripe_offset = lum->lum_stripe_offset;
-		} else if (err2 == -ENODATA &&
-			   lli->lli_def_stripe_offset != -1) {
-			/* If there are no default stripe EA on the MDT, but the
+			struct lustre_md md = { NULL };
+
+			md.body = req_capsule_server_get(&request->rq_pill,
+							 &RMF_MDT_BODY);
+			if (!md.body)
+				GOTO(err_exit, err = -EPROTO);
+
+			OBD_ALLOC_PTR(md.default_lmv);
+			if (!md.default_lmv)
+				GOTO(err_exit, err = -ENOMEM);
+
+			md.default_lmv->lsm_md_magic = lum->lum_magic;
+			md.default_lmv->lsm_md_stripe_count =
+				lum->lum_stripe_count;
+			md.default_lmv->lsm_md_master_mdt_index =
+				lum->lum_stripe_offset;
+			md.default_lmv->lsm_md_hash_type = lum->lum_hash_type;
+			md.default_lmv->lsm_md_max_inherit =
+				lum->lum_max_inherit;
+			md.default_lmv->lsm_md_max_inherit_rr =
+				lum->lum_max_inherit_rr;
+
+			err = ll_update_inode(dir, &md);
+			md_free_lustre_md(sbi->ll_md_exp, &md);
+			if (err)
+				GOTO(err_exit, err);
+		} else if (err2 == -ENODATA && lli->lli_default_lsm_md) {
+			/*
+			 * If there are no default stripe EA on the MDT, but the
 			 * client has default stripe, then it probably means
-			 * default stripe EA has just been deleted. */
-			lli->lli_def_stripe_offset = -1;
+			 * default stripe EA has just been deleted.
+			 */
+			down_write(&lli->lli_lsm_sem);
+			if (lli->lli_default_lsm_md)
+				OBD_FREE_PTR(lli->lli_default_lsm_md);
+			lli->lli_default_lsm_md = NULL;
+			up_write(&lli->lli_lsm_sem);
 		} else {
 			GOTO(err_exit, err);
 		}
 
 		ptlrpc_req_finished(request);
 		request = NULL;
-		ll_finish_md_op_data(op_data);
 		goto again;
 	}
+#endif
+
+	if (err < 0)
+		GOTO(err_exit, err);
 
 	ll_update_times(request, dir);
 
