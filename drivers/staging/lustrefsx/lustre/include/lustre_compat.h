@@ -875,4 +875,11 @@ static inline int ll_vfs_removexattr(struct dentry *dentry, struct inode *inode,
 #define ll_set_acl(ns, inode, acl, type)	ll_set_acl(inode, acl, type)
 #endif
 
+#ifndef HAVE_IS_ROOT_INODE
+static inline bool is_root_inode(struct inode *inode)
+{
+	return inode == inode->i_sb->s_root->d_inode;
+}
+#endif
+
 #endif /* _LUSTRE_COMPAT_H */
