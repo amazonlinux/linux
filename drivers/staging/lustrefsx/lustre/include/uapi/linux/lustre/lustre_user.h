@@ -705,6 +705,15 @@ struct fsxattr {
 #define LOV_PATTERN_F_RELEASED	0x80000000 /* HSM released file */
 #define LOV_PATTERN_DEFAULT	0xffffffff
 
+#define LOV_OFFSET_DEFAULT      ((__u16)-1)
+#define LMV_OFFSET_DEFAULT      ((__u32)-1)
+
+#define LOV_QOS_DEF_THRESHOLD_RR_PCT	17
+#define LMV_QOS_DEF_THRESHOLD_RR_PCT	 5
+
+#define LOV_QOS_DEF_PRIO_FREE		90
+#define LMV_QOS_DEF_PRIO_FREE		90
+
 static inline bool lov_pattern_supported(__u32 pattern)
 {
 	return (pattern & ~LOV_PATTERN_F_RELEASED) == LOV_PATTERN_RAID0 ||
@@ -939,8 +948,33 @@ enum lmv_hash_type {
 	LMV_HASH_TYPE_MAX,
 };
 
+#define LMV_HASH_TYPE_DEFAULT LMV_HASH_TYPE_FNV_1A_64
+
 #define LMV_HASH_NAME_ALL_CHARS	"all_char"
 #define LMV_HASH_NAME_FNV_1A_64	"fnv_1a_64"
+
+/* not real hash type, but exposed to user as "space" hash type */
+#define LMV_HASH_NAME_SPACE	"space"
+
+/* Right now only the lower part(0-16bits) of lmv_hash_type is being used,
+ * and the higher part will be the flag to indicate the status of object,
+ * for example the object is being migrated. And the hash function
+ * might be interpreted differently with different flags. */
+#define LMV_HASH_TYPE_MASK 0x0000ffff
+
+static inline bool lmv_is_known_hash_type(__u32 type)
+{
+	return (type & LMV_HASH_TYPE_MASK) == LMV_HASH_TYPE_FNV_1A_64 ||
+	       (type & LMV_HASH_TYPE_MASK) == LMV_HASH_TYPE_ALL_CHARS;
+}
+
+/* The striped directory has ever lost its master LMV EA, then LFSCK
+ * re-generated it. This flag is used to indicate such case. It is an
+ * on-disk flag. */
+#define LMV_HASH_FLAG_LOST_LMV	0x10000000
+
+#define LMV_HASH_FLAG_BAD_TYPE	0x20000000
+#define LMV_HASH_FLAG_MIGRATION	0x80000000
 
 extern char *mdt_hash_name[LMV_HASH_TYPE_MAX];
 
@@ -949,17 +983,61 @@ extern char *mdt_hash_name[LMV_HASH_TYPE_MAX];
 #define LMV_MAX_STRIPE_COUNT 2000  /* ((12 * 4096 - 256) / 24) */
 #define lmv_user_md lmv_user_md_v1
 struct lmv_user_md_v1 {
-	__u32	lum_magic;	 /* must be the first field */
+	__u32	lum_magic;	   /* must be the first field */
 	__u32	lum_stripe_count;  /* dirstripe count */
 	__u32	lum_stripe_offset; /* MDT idx for default dirstripe */
 	__u32	lum_hash_type;     /* Dir stripe policy */
-	__u32	lum_type;	  /* LMV type: default or normal */
-	__u32	lum_padding1;
+	__u32	lum_type;	   /* LMV type: default */
+	__u8	lum_max_inherit;   /* inherit depth of default LMV */
+	__u8	lum_max_inherit_rr;	/* inherit depth of default LMV to round-robin mkdir */
+	__u16	lum_padding1;
 	__u32	lum_padding2;
 	__u32	lum_padding3;
 	char	lum_pool_name[LOV_MAXPOOLNAME + 1];
 	struct	lmv_user_mds_data  lum_objects[0];
 } __attribute__((packed));
+
+/*
+ * NB, historically default layout didn't set type, but use XATTR name to differ
+ * from normal layout, for backward compatibility, define LMV_TYPE_DEFAULT 0x0,
+ * and still use the same method.
+ */
+enum lmv_type {
+	LMV_TYPE_DEFAULT = 0x0000,
+};
+
+/* lum_max_inherit will be decreased by 1 after each inheritance if it's not
+ * LMV_INHERIT_UNLIMITED or > LMV_INHERIT_MAX.
+ */
+enum {
+	/* for historical reason, 0 means unlimited inheritance */
+	LMV_INHERIT_UNLIMITED	= 0,
+	/* unlimited lum_max_inherit by default */
+	LMV_INHERIT_DEFAULT	= 0,
+	/* not inherit any more */
+	LMV_INHERIT_END		= 1,
+	/* max inherit depth */
+	LMV_INHERIT_MAX		= 250,
+	/* [251, 254] are reserved */
+	/* not set, or when inherit depth goes beyond end,  */
+	LMV_INHERIT_NONE	= 255,
+};
+
+enum {
+	/* not set, or when inherit_rr depth goes beyond end,  */
+	LMV_INHERIT_RR_NONE		= 0,
+	/* disable lum_max_inherit_rr by default */
+	LMV_INHERIT_RR_DEFAULT		= 0,
+	/* not inherit any more */
+	LMV_INHERIT_RR_END		= 1,
+	/* default inherit_rr of ROOT */
+	LMV_INHERIT_RR_ROOT		= 3,
+	/* max inherit depth */
+	LMV_INHERIT_RR_MAX		= 250,
+	/* [251, 254] are reserved */
+	/* unlimited inheritance */
+	LMV_INHERIT_RR_UNLIMITED	= 255,
+};
 
 static inline int lmv_user_md_size(int stripes, int lmm_magic)
 {
