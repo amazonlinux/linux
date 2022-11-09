@@ -73,11 +73,11 @@ int lmv_fld_lookup(struct lmv_obd *lmv, const struct lu_fid *fid, u32 *mds)
         CDEBUG(D_INODE, "FLD lookup got mds #%x for fid="DFID"\n",
                *mds, PFID(fid));
 
-        if (*mds >= lmv->desc.ld_tgt_count) {
-                CERROR("FLD lookup got invalid mds #%x (max: %x) "
-                       "for fid="DFID"\n", *mds, lmv->desc.ld_tgt_count,
-                       PFID(fid));
-                rc = -EINVAL;
-        }
-        RETURN(rc);
+	if (*mds >= lmv->lmv_mdt_descs.ltd_tgts_size) {
+		rc = -EINVAL;
+		CERROR("%s: FLD lookup got invalid mds #%x (max: %x) for fid="DFID": rc = %d\n",
+		       obd->obd_name, *mds, lmv->lmv_mdt_descs.ltd_tgts_size,
+		       PFID(fid), rc);
+	}
+	RETURN(rc);
 }
