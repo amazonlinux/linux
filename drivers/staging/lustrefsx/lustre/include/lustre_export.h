@@ -454,6 +454,11 @@ static inline int exp_connect_flr(struct obd_export *exp)
 	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_FLR);
 }
 
+static inline int exp_bypass_mdll(struct obd_export *exp)
+{
+    return !!(exp_connect_flags2(exp) & OBD_CONNECT2_MDLL_BYPASS);
+}
+
 static inline int exp_mdll(struct obd_export *exp)
 {
 	return !!(exp_connect_flags2(exp) & OBD_CONNECT2_MDLL);
