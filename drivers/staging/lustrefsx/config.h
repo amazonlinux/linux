@@ -505,6 +505,9 @@
 /* if iov_iter_type exists */
 #define HAVE_IOV_ITER_TYPE 1
 
+/* is_root_inode defined */
+#define HAVE_IS_ROOT_INODE 1
+
 /* is_sxid is defined */
 #define HAVE_IS_SXID 1
 
@@ -772,7 +775,7 @@
 #define HAVE_PTR_ERR_OR_ZERO 1
 
 /* have quota64 */
-#define HAVE_QUOTA64 1
+/* #undef HAVE_QUOTA64 */
 
 /* radix_tree_exceptional_entry exist */
 /* #undef HAVE_RADIX_EXCEPTION_ENTRY */
@@ -1089,7 +1092,7 @@
 #define LUSTRE_PATCH 8
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.12.8"
+#define LUSTRE_VERSION_STRING "2.12.8_163_g540d104"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1125,7 +1128,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.12.8"
+#define PACKAGE_STRING "Lustre 2.12.8_163_g540d104"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1134,7 +1137,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.12.8"
+#define PACKAGE_VERSION "2.12.8_163_g540d104"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1175,16 +1178,16 @@
 /* #undef USE_LU_REF */
 
 /* Version number of package */
-#define VERSION "2.12.8"
+#define VERSION "2.12.8_163_g540d104"
 
 /* zfs fix version */
-#define ZFS_FIX 0
+/* #undef ZFS_FIX */
 
 /* zfs major version */
-#define ZFS_MAJOR 
+/* #undef ZFS_MAJOR */
 
 /* zfs minor version */
-#define ZFS_MINOR 
+/* #undef ZFS_MINOR */
 
 /* zfs patch version */
-#define ZFS_PATCH 
+/* #undef ZFS_PATCH */
