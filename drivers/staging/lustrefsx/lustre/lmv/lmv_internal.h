@@ -49,7 +49,6 @@ int lmv_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
 int lmv_blocking_ast(struct ldlm_lock *, struct ldlm_lock_desc *,
 		     void *, int);
 int lmv_fld_lookup(struct lmv_obd *lmv, const struct lu_fid *fid, u32 *mds);
-int __lmv_fid_alloc(struct lmv_obd *lmv, struct lu_fid *fid, u32 mds);
 int lmv_fid_alloc(const struct lu_env *env, struct obd_export *exp,
 		  struct lu_fid *fid, struct md_op_data *op_data);
 
@@ -60,62 +59,91 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 
 int lmv_getattr_name(struct obd_export *exp, struct md_op_data *op_data,
 		     struct ptlrpc_request **preq);
+void lmv_activate_target(struct lmv_obd *lmv, struct lmv_tgt_desc *tgt,
+			 int activate);
+
+int lmv_statfs_check_update(struct obd_device *obd, struct lmv_tgt_desc *tgt);
 
 static inline struct obd_device *lmv2obd_dev(struct lmv_obd *lmv)
 {
 	return container_of0(lmv, struct obd_device, u.lmv);
 }
 
-static inline struct lmv_tgt_desc *
-lmv_get_target(struct lmv_obd *lmv, u32 mdt_idx, int *index)
+static inline struct lu_tgt_desc *
+lmv_tgt(struct lmv_obd *lmv, __u32 index)
 {
-	int i;
-
-	for (i = 0; i < lmv->desc.ld_tgt_count; i++) {
-		if (lmv->tgts[i] == NULL)
-			continue;
-
-		if (lmv->tgts[i]->ltd_idx == mdt_idx) {
-			if (index != NULL)
-				*index = i;
-			return lmv->tgts[i];
-		}
-	}
-
-	return ERR_PTR(-ENODEV);
+	return index < lmv->lmv_mdt_descs.ltd_tgt_bitmap->size ?
+		LTD_TGT(&lmv->lmv_mdt_descs, index) : NULL;
 }
+
+static inline bool
+lmv_mdt0_inited(struct lmv_obd *lmv)
+{
+	return lmv->lmv_mdt_descs.ltd_tgt_bitmap->size > 0 &&
+	       cfs_bitmap_check(lmv->lmv_mdt_descs.ltd_tgt_bitmap, 0);
+}
+
+#define lmv_foreach_tgt(lmv, tgt) ltd_foreach_tgt(&(lmv)->lmv_mdt_descs, tgt)
+
+#define lmv_foreach_tgt_safe(lmv, tgt, tmp) \
+	ltd_foreach_tgt_safe(&(lmv)->lmv_mdt_descs, tgt, tmp)
+
+static inline
+struct lu_tgt_desc *lmv_first_connected_tgt(struct lmv_obd *lmv)
+{
+	struct lu_tgt_desc *tgt;
+
+	tgt = ltd_first_tgt(&lmv->lmv_mdt_descs);
+	while (tgt && !tgt->ltd_exp)
+		tgt = ltd_next_tgt(&lmv->lmv_mdt_descs, tgt);
+
+	return tgt;
+}
+
+static inline
+struct lu_tgt_desc *lmv_next_connected_tgt(struct lmv_obd *lmv,
+					   struct lu_tgt_desc *tgt)
+{
+	do {
+		tgt = ltd_next_tgt(&lmv->lmv_mdt_descs, tgt);
+	} while (tgt && !tgt->ltd_exp);
+
+	return tgt;
+}
+
+#define lmv_foreach_connected_tgt(lmv, tgt) \
+	for (tgt = lmv_first_connected_tgt(lmv); tgt; \
+	     tgt = lmv_next_connected_tgt(lmv, tgt))
 
 static inline int
-lmv_find_target_index(struct lmv_obd *lmv, const struct lu_fid *fid)
+lmv_fid2tgt_index(struct lmv_obd *lmv, const struct lu_fid *fid)
 {
-	struct lmv_tgt_desc	*ltd;
-	u32			mdt_idx = 0;
-	int			index = 0;
+	u32 mdt_idx;
+	int rc;
 
-	if (lmv->desc.ld_tgt_count > 1) {
-		int rc;
-		rc = lmv_fld_lookup(lmv, fid, &mdt_idx);
-		if (rc < 0)
-			return rc;
-	}
+	if (lmv->lmv_mdt_count < 2)
+		return 0;
 
-	ltd = lmv_get_target(lmv, mdt_idx, &index);
-	if (IS_ERR(ltd))
-		return PTR_ERR(ltd);
+	rc = lmv_fld_lookup(lmv, fid, &mdt_idx);
+	if (rc < 0)
+		return rc;
 
-	return index;
+	return mdt_idx;
 }
 
 static inline struct lmv_tgt_desc *
-lmv_find_target(struct lmv_obd *lmv, const struct lu_fid *fid)
+lmv_fid2tgt(struct lmv_obd *lmv, const struct lu_fid *fid)
 {
+	struct lu_tgt_desc *tgt;
 	int index;
 
-	index = lmv_find_target_index(lmv, fid);
+	index = lmv_fid2tgt_index(lmv, fid);
 	if (index < 0)
 		return ERR_PTR(index);
 
-	return lmv->tgts[index];
+	tgt = lmv_tgt(lmv, index);
+
+	return tgt ? tgt : ERR_PTR(-ENODEV);
 }
 
 static inline int lmv_stripe_md_size(int stripe_count)
@@ -133,6 +161,8 @@ lsm_name_to_stripe_info(const struct lmv_stripe_md *lsm, const char *name,
 	__u32 hash_type = lsm->lsm_md_hash_type;
 	__u32 stripe_count = lsm->lsm_md_stripe_count;
 	int stripe_index;
+
+	LASSERT(lmv_dir_striped(lsm));
 
 	if (hash_type & LMV_HASH_FLAG_MIGRATION) {
 		if (post_migrate) {
@@ -164,26 +194,6 @@ lsm_name_to_stripe_info(const struct lmv_stripe_md *lsm, const char *name,
 	return &lsm->lsm_md_oinfo[stripe_index];
 }
 
-static inline bool lmv_is_dir_migrating(const struct lmv_stripe_md *lsm)
-{
-	return lsm ? lsm->lsm_md_hash_type & LMV_HASH_FLAG_MIGRATION : false;
-}
-
-static inline bool lmv_is_dir_bad_hash(const struct lmv_stripe_md *lsm)
-{
-	if (!lsm)
-		return false;
-
-	if (lmv_is_dir_migrating(lsm)) {
-		if (lsm->lsm_md_stripe_count - lsm->lsm_md_migrate_offset > 1)
-			return !lmv_is_known_hash_type(
-					lsm->lsm_md_migrate_hash);
-		return false;
-	}
-
-	return !lmv_is_known_hash_type(lsm->lsm_md_hash_type);
-}
-
 static inline bool lmv_dir_retry_check_update(struct md_op_data *op_data)
 {
 	const struct lmv_stripe_md *lsm = op_data->op_mea1;
@@ -191,12 +201,12 @@ static inline bool lmv_dir_retry_check_update(struct md_op_data *op_data)
 	if (!lsm)
 		return false;
 
-	if (lmv_is_dir_migrating(lsm) && !op_data->op_post_migrate) {
+	if (lmv_dir_migrating(lsm) && !op_data->op_post_migrate) {
 		op_data->op_post_migrate = true;
 		return true;
 	}
 
-	if (lmv_is_dir_bad_hash(lsm) &&
+	if (lmv_dir_bad_hash(lsm) &&
 	    op_data->op_stripe_index < lsm->lsm_md_stripe_count - 1) {
 		op_data->op_stripe_index++;
 		return true;
@@ -206,9 +216,10 @@ static inline bool lmv_dir_retry_check_update(struct md_op_data *op_data)
 }
 
 struct lmv_tgt_desc *lmv_locate_tgt(struct lmv_obd *lmv,
-				    struct md_op_data *op_data,
-				    struct lu_fid *fid);
+				    struct md_op_data *op_data);
+int lmv_migrate_existence_check(struct lmv_obd *lmv,
+				struct md_op_data *op_data);
+
 /* lproc_lmv.c */
 int lmv_tunables_init(struct obd_device *obd);
-
 #endif
