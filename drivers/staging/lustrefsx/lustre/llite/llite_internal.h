@@ -158,24 +158,22 @@ struct ll_inode_info {
 			/* "opendir_pid" is the token when lookup/revalid
 			 * -- I am the owner of dir statahead. */
 			pid_t				lli_opendir_pid;
+			/* directory depth to ROOT */
+			unsigned short			lli_dir_depth;
 			/* stat will try to access statahead entries or start
 			 * statahead if this flag is set, and this flag will be
 			 * set upon dir open, and cleared when dir is closed,
 			 * statahead hit ratio is too low, or start statahead
 			 * thread failed. */
-			unsigned int			lli_sa_enabled:1;
+			unsigned short			lli_sa_enabled:1;
 			/* generation for statahead */
 			unsigned int			lli_sa_generation;
 			/* rw lock protects lli_lsm_md */
 			struct rw_semaphore		lli_lsm_sem;
 			/* directory stripe information */
 			struct lmv_stripe_md		*lli_lsm_md;
-			/* default directory stripe offset.  This is extracted
-			 * from the "dmv" xattr in order to decide which MDT to
-			 * create a subdirectory on.  The MDS itself fetches
-			 * "dmv" and gets the rest of the default layout itself
-			 * (count, hash, etc). */
-			__u32				lli_def_stripe_offset;
+			/* directory default LMV */
+			struct lmv_stripe_md		*lli_default_lsm_md;
 		};
 
 		/* for non-directory */
@@ -469,6 +467,7 @@ enum stats_track_type {
 #define LL_SBI_TINY_WRITE   0x2000000 /* tiny write support */
 #define LL_SBI_MDLL_AUTO_REFRESH   0x10000000 /* enable metadata lazy load */
 #define LL_SBI_MDLL   0x20000000 /* enable metadata lazy load auto-refresh */
+#define LL_SBI_MDLL_BYPASS   0x40000000 /* disable metadata lazy load auto-refresh */
 
 #define LL_SBI_FLAGS { 	\
 	"nolck",	\
@@ -593,6 +592,16 @@ struct ll_sb_info {
 	 * 0 always triggers serverside validation
 	 */
 	int			  ll_neg_dentry_timeout;
+
+	/*
+	 * MDLL directory restore retry count
+	 * This would determine the number of times the restore would be
+	 * retried before returning error to the client. The retry would
+	 * be based on the released bit of the directory.
+	 * A value of -1 would retry indefinitely.
+	 */
+#define LL_MDLL_DIR_RESTORE_DEF_RETRY_COUNT 1
+	atomic_t		  ll_dir_restore_max_retry_count;
 
 	struct kset		  ll_kset;	/* sysfs object */
 	struct completion	  ll_kobj_unregister;
@@ -955,6 +964,9 @@ int ll_lov_getstripe_ea_info(struct inode *inode, const char *filename,
                              struct ptlrpc_request **request);
 int ll_dir_setstripe(struct inode *inode, struct lov_user_md *lump,
                      int set_default);
+int ll_dir_get_default_layout(struct inode *inode, void **plmm, int *plmm_size,
+			      struct ptlrpc_request **request, u64 valid,
+			      enum get_default_layout_type type);
 int ll_dir_getstripe_default(struct inode *inode, void **lmmp,
 			     int *lmm_size, struct ptlrpc_request **request,
 			     struct ptlrpc_request **root_request, u64 valid);
@@ -1006,6 +1018,7 @@ int ll_statfs_internal(struct ll_sb_info *sbi, struct obd_statfs *osfs,
 		       u32 flags);
 int ll_update_inode(struct inode *inode, struct lustre_md *md);
 void ll_update_inode_flags(struct inode *inode, int ext_flags);
+void ll_update_dir_depth(struct inode *dir, struct inode *inode);
 int ll_read_inode2(struct inode *inode, void *opaque);
 void ll_delete_inode(struct inode *inode);
 int ll_iocontrol(struct inode *inode, struct file *file,
@@ -1026,19 +1039,12 @@ int ll_get_max_mdsize(struct ll_sb_info *sbi, int *max_mdsize);
 int ll_get_default_mdsize(struct ll_sb_info *sbi, int *default_mdsize);
 int ll_set_default_mdsize(struct ll_sb_info *sbi, int default_mdsize);
 
-enum {
-	LUSTRE_OPC_MKDIR	= 0,
-	LUSTRE_OPC_SYMLINK	= 1,
-	LUSTRE_OPC_MKNOD	= 2,
-	LUSTRE_OPC_CREATE	= 3,
-	LUSTRE_OPC_ANY		= 5,
-};
-
 void ll_unlock_md_op_lsm(struct md_op_data *op_data);
 struct md_op_data *ll_prep_md_op_data(struct md_op_data *op_data,
 				      struct inode *i1, struct inode *i2,
 				      const char *name, size_t namelen,
-				      __u32 mode, __u32 opc, void *data);
+				      __u32 mode, enum md_op_code opc,
+				      void *data);
 void ll_finish_md_op_data(struct md_op_data *op_data);
 int ll_get_obd_name(struct inode *inode, unsigned int cmd, unsigned long arg);
 char *ll_get_fsname(struct super_block *sb, char *buf, int buflen);
@@ -1214,6 +1220,13 @@ static inline struct lu_fid *ll_inode2fid(struct inode *inode)
         fid = &ll_i2info(inode)->lli_fid;
 
         return fid;
+}
+
+static inline bool ll_dir_striped(struct inode *inode)
+{
+	LASSERT(inode);
+	return S_ISDIR(inode->i_mode) &&
+	       lmv_dir_striped(ll_i2info(inode)->lli_lsm_md);
 }
 
 static inline loff_t ll_file_maxbytes(struct inode *inode)
