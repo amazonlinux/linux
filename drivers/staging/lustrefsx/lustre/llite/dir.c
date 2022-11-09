@@ -60,29 +60,38 @@
 
 #include "llite_internal.h"
 
-static void ll_check_and_trigger_restore(struct inode *dir)
+static int ll_check_and_trigger_restore(struct inode *dir)
 {
 	struct ll_sb_info *sbi = ll_i2sbi(dir);
+	const int max_retry = atomic_read(&sbi->ll_dir_restore_max_retry_count);
+	int retry_count = 0;
 	u32 hus_states;
 	__u32 gen = 0;
 	int rc;
 
-	if (!(sbi && (sbi->ll_flags & LL_SBI_MDLL)))
-		return;
+	/* Skip restore if server does not support or if disabled */
+	if (!exp_mdll(sbi->ll_md_exp) || exp_bypass_mdll(sbi->ll_md_exp))
+		return 0;
+
 	/*
 	 * TODO-MDLL:
 	 * use API that does a cached read instead of
 	 * going to the mdt for getting the hsm state.
 	 * Tracked with Simba-21644
 	 */
+try_again:
 	rc = ll_get_hsm_state(dir, &hus_states);
 	if (rc == 0 && (hus_states & HS_RELEASED)) {
-		CDEBUG(D_HSM, "MDLL Calling ll_layout_restore for dir "DFID"\n",
-		       PFID(ll_inode2fid(dir)));
+		CDEBUG(D_HSM,
+		       "MDLL Calling ll_layout_restore for dir "DFID" retry: %d"
+		       "\n", PFID(ll_inode2fid(dir)), retry_count);
 		rc = ll_layout_restore(dir, 0, OBD_OBJECT_EOF);
 		if (rc) {
 			CERROR("MDLL ll_layout_restore ("DFID") error rc: %d\n",
 			       PFID(ll_inode2fid(dir)), rc);
+			rc = -EAGAIN;
+			if (max_retry == 0)
+				goto out_exit;
 		} else {
 			CDEBUG(D_HSM, "MDLL Restore triggered for dir "DFID"\n",
 			       PFID(ll_inode2fid(dir)));
@@ -90,7 +99,46 @@ static void ll_check_and_trigger_restore(struct inode *dir)
 			CDEBUG(D_HSM, "MDLL Restore done for dir "DFID"\n",
 			       PFID(ll_inode2fid(dir)));
 		}
+		/* If the max_retry is set to 0, then the behavior would be
+		 * without a retry. There wont be any check for the hsm state
+		 * after the completed restore. This case would be similar to
+		 * the behaviour without this retry changes. The default
+		 * value of the max_retry would be 1.
+		 * A value of -1 would retry indefinitely.
+		 */
+		/* In case of an mdt restart, the ll_layout_refresh would
+		 * return back only after the mdt has restarted and the
+		 * existing network connection gets a reset. When the retry
+		 * happens, the mdt would be up and running.
+		 * Ideally the directory restore would be done with a single
+		 * retry if the mdt does not crash/restart again.
+		 */
+		if ((max_retry < 0) ||
+		    (max_retry >= 0 && retry_count < max_retry)) {
+			retry_count++;
+			goto try_again;
+		} else if (max_retry > 0 && retry_count >= max_retry) {
+			rc = ll_get_hsm_state(dir, &hus_states);
+			if (rc == 0 && (hus_states & HS_RELEASED)) {
+				CDEBUG(D_HSM,
+				       "MDLL reached max retry %d for ("DFID")"
+				       "hsm_state: %d\n",
+				       retry_count, PFID(ll_inode2fid(dir)),
+				       hus_states);
+				rc = -EAGAIN;
+				goto out_exit;
+			}
+		}
 	}
+	if (rc != 0) {
+		CDEBUG(D_HSM,
+		       "MDLL error calling ll_get_hsm_state for dir "DFID" rc: "
+		       "%d\n", PFID(ll_inode2fid(dir)), rc);
+		rc = -EAGAIN;
+	}
+
+out_exit:
+	return rc;
 }
 
 /*
@@ -181,7 +229,9 @@ struct page *ll_get_dir_page(struct inode *dir, struct md_op_data *op_data,
 	struct page		*page;
 	int			rc;
 
-	ll_check_and_trigger_restore(dir);
+	rc = ll_check_and_trigger_restore(dir);
+	if (rc != 0)
+		return ERR_PTR(rc);
 
 	cb_op.md_blocking_ast = ll_md_blocking_ast;
 	rc = md_read_page(ll_i2mdexp(dir), op_data, &cb_op, offset, &page);
@@ -198,8 +248,7 @@ void ll_release_page(struct inode *inode, struct page *page,
 
 	/* Always remove the page for striped dir, because the page is
 	 * built from temporarily in LMV layer */
-	if (inode != NULL && S_ISDIR(inode->i_mode) &&
-	    ll_i2info(inode)->lli_lsm_md != NULL) {
+	if (inode && ll_dir_striped(inode)) {
 		__free_page(page);
 		return;
 	}
@@ -376,7 +425,7 @@ static int ll_readdir(struct file *filp, void *cookie, filldir_t filldir)
 		 */
 		GOTO(out, rc = 0);
 
-	if (unlikely(ll_i2info(inode)->lli_lsm_md != NULL)) {
+	if (unlikely(ll_dir_striped(inode))) {
 		/*
 		 * This is only needed for striped dir to fill ..,
 		 * see lmv_read_page()
@@ -520,6 +569,8 @@ static int ll_dir_setdirstripe(struct dentry *dparent, struct lmv_user_md *lump,
 				     lump);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
+
+	op_data->op_dir_depth = ll_i2info(parent)->lli_dir_depth;
 
 	if (sbi->ll_flags & LL_SBI_FILE_SECCTX) {
 		/* selinux_dentry_init_security() uses dentry->d_parent and name
@@ -700,27 +751,23 @@ end:
 	RETURN(rc);
 }
 
-static int ll_dir_get_default_layout(struct inode *inode, void **plmm,
-				     int *plmm_size,
-				     struct ptlrpc_request **request, u64 valid,
-				     enum get_default_layout_type type)
+int ll_dir_get_default_layout(struct inode *inode, void **plmm, int *plmm_size,
+			      struct ptlrpc_request **request, u64 valid,
+			      enum get_default_layout_type type)
 {
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
 	struct mdt_body   *body;
 	struct lov_mds_md *lmm = NULL;
 	struct ptlrpc_request *req = NULL;
-	int rc, lmm_size;
+	int lmm_size = OBD_MAX_DEFAULT_EA_SIZE;
 	struct md_op_data *op_data;
 	struct lu_fid fid;
+	int rc;
+
 	ENTRY;
 
-	rc = ll_get_default_mdsize(sbi, &lmm_size);
-	if (rc)
-		RETURN(rc);
-
-	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL,
-				     0, lmm_size, LUSTRE_OPC_ANY,
-				     NULL);
+	op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, lmm_size,
+				     LUSTRE_OPC_ANY, NULL);
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 
@@ -813,7 +860,7 @@ int ll_dir_getstripe_default(struct inode *inode, void **plmm, int *plmm_size,
 	rc = ll_dir_get_default_layout(inode, (void **)&lmm, &lmm_size,
 				       &req, valid, 0);
 	if (rc == -ENODATA && !fid_is_root(ll_inode2fid(inode)) &&
-	    !(valid & (OBD_MD_MEA|OBD_MD_DEFAULT_MEA)) && root_request != NULL){
+	    !(valid & OBD_MD_MEA) && root_request != NULL) {
 		int rc2 = ll_dir_get_default_layout(inode, (void **)&lmm,
 						    &lmm_size, &root_req, valid,
 						    GET_DEFAULT_LAYOUT_ROOT);
@@ -948,6 +995,11 @@ static int ll_ioc_copy_start(struct super_block *sb, struct hsm_copy *copy)
 		/* Store in the hsm_copy for later copytool use.
 		 * Always modified even if no lsm. */
 		copy->hc_data_version = data_version;
+
+	} else if (copy->hc_hai.hai_action == HSMA_IMPORT) {
+
+		/* IMPORT sends its progress using alloc fid when possible */
+		hpk.hpk_fid = copy->hc_hai.hai_dfid;
 	}
 
 progress:
@@ -1054,6 +1106,10 @@ static int ll_ioc_copy_end(struct super_block *sb, struct hsm_copy *copy)
 			GOTO(progress, rc);
 		}
 
+	} else if (copy->hc_hai.hai_action == HSMA_IMPORT) {
+
+		/* IMPORT sends its progress using alloc fid when possible */
+		hpk.hpk_fid = copy->hc_hai.hai_dfid;
 	}
 
 progress:
@@ -1547,7 +1603,7 @@ lmv_out_free:
 		if (copy_from_user(&lumv1, lumv1p, sizeof(lumv1)))
 			RETURN(-EFAULT);
 
-		if (inode->i_sb->s_root == file_dentry(file))
+		if (is_root_inode(inode))
 			set_default = 1;
 
 		switch (lumv1.lmm_magic) {
@@ -1617,6 +1673,59 @@ out:
 			if (lmmsize > sizeof(*ulmv))
 				GOTO(finish_req, rc = -EINVAL);
 
+			if (root_request != NULL) {
+				struct lmv_user_md *lum;
+				struct ll_inode_info *lli;
+
+				lum = (struct lmv_user_md *)lmm;
+				lli = ll_i2info(inode);
+				if (lum->lum_max_inherit !=
+				    LMV_INHERIT_UNLIMITED) {
+					if (lum->lum_max_inherit ==
+						LMV_INHERIT_NONE ||
+					    lum->lum_max_inherit <
+						LMV_INHERIT_END ||
+					    lum->lum_max_inherit >
+						LMV_INHERIT_MAX ||
+					    lum->lum_max_inherit <
+						lli->lli_dir_depth)
+						GOTO(finish_req, rc = -ENODATA);
+
+					if (lum->lum_max_inherit ==
+					    lli->lli_dir_depth) {
+						lum->lum_max_inherit =
+							LMV_INHERIT_NONE;
+						lum->lum_max_inherit_rr =
+							LMV_INHERIT_RR_NONE;
+						goto out_copy;
+					}
+
+					lum->lum_max_inherit -=
+						lli->lli_dir_depth;
+				}
+
+				if (lum->lum_max_inherit_rr !=
+					LMV_INHERIT_RR_UNLIMITED) {
+					if (lum->lum_max_inherit_rr ==
+						LMV_INHERIT_NONE ||
+					    lum->lum_max_inherit_rr <
+						LMV_INHERIT_RR_END ||
+					    lum->lum_max_inherit_rr >
+						LMV_INHERIT_RR_MAX ||
+					    lum->lum_max_inherit_rr <=
+						lli->lli_dir_depth) {
+						lum->lum_max_inherit_rr =
+							LMV_INHERIT_RR_NONE;
+						goto out_copy;
+					}
+
+					if (lum->lum_max_inherit_rr >
+						lli->lli_dir_depth)
+						lum->lum_max_inherit_rr -=
+							lli->lli_dir_depth;
+				}
+			}
+out_copy:
 			if (copy_to_user(ulmv, lmm, lmmsize))
 				GOTO(finish_req, rc = -EFAULT);
 
