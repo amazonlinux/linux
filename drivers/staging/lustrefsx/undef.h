@@ -503,6 +503,9 @@
 /* if iov_iter_type exists */
 #undef HAVE_IOV_ITER_TYPE
 
+/* is_root_inode defined */
+#undef HAVE_IS_ROOT_INODE
+
 /* is_sxid is defined */
 #undef HAVE_IS_SXID
 
