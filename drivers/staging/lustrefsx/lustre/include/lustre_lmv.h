@@ -45,6 +45,8 @@ struct lmv_stripe_md {
 	__u32	lsm_md_stripe_count;
 	__u32	lsm_md_master_mdt_index;
 	__u32	lsm_md_hash_type;
+	__u8	lsm_md_max_inherit;
+	__u8	lsm_md_max_inherit_rr;
 	__u32	lsm_md_layout_version;
 	__u32	lsm_md_migrate_offset;
 	__u32	lsm_md_migrate_hash;
@@ -53,6 +55,29 @@ struct lmv_stripe_md {
 	char	lsm_md_pool_name[LOV_MAXPOOLNAME + 1];
 	struct lmv_oinfo lsm_md_oinfo[0];
 };
+
+static inline bool lmv_dir_striped(const struct lmv_stripe_md *lsm)
+{
+	return lsm && lsm->lsm_md_magic == LMV_MAGIC;
+}
+
+static inline bool lmv_dir_migrating(const struct lmv_stripe_md *lsm)
+{
+	return lmv_dir_striped(lsm) &&
+	       lsm->lsm_md_hash_type & LMV_HASH_FLAG_MIGRATION;
+}
+
+static inline bool lmv_dir_bad_hash(const struct lmv_stripe_md *lsm)
+{
+	if (!lmv_dir_striped(lsm))
+		return false;
+
+	if (lmv_dir_migrating(lsm) &&
+	    lsm->lsm_md_stripe_count - lsm->lsm_md_migrate_offset <= 1)
+		return false;
+
+	return !lmv_is_known_hash_type(lsm->lsm_md_hash_type);
+}
 
 static inline bool
 lsm_md_eq(const struct lmv_stripe_md *lsm1, const struct lmv_stripe_md *lsm2)
@@ -64,6 +89,8 @@ lsm_md_eq(const struct lmv_stripe_md *lsm1, const struct lmv_stripe_md *lsm2)
 	    lsm1->lsm_md_master_mdt_index !=
 				lsm2->lsm_md_master_mdt_index ||
 	    lsm1->lsm_md_hash_type != lsm2->lsm_md_hash_type ||
+	    lsm1->lsm_md_max_inherit != lsm2->lsm_md_max_inherit ||
+	    lsm1->lsm_md_max_inherit_rr != lsm2->lsm_md_max_inherit_rr ||
 	    lsm1->lsm_md_layout_version !=
 				lsm2->lsm_md_layout_version ||
 	    lsm1->lsm_md_migrate_offset !=
@@ -74,10 +101,18 @@ lsm_md_eq(const struct lmv_stripe_md *lsm1, const struct lmv_stripe_md *lsm2)
 		      lsm2->lsm_md_pool_name) != 0)
 		return false;
 
-	for (idx = 0; idx < lsm1->lsm_md_stripe_count; idx++) {
-		if (!lu_fid_eq(&lsm1->lsm_md_oinfo[idx].lmo_fid,
-			       &lsm2->lsm_md_oinfo[idx].lmo_fid))
-			return false;
+	if (lmv_dir_striped(lsm1)) {
+		for (idx = 0; idx < lsm1->lsm_md_stripe_count; idx++) {
+			if (!lu_fid_eq(&lsm1->lsm_md_oinfo[idx].lmo_fid,
+				       &lsm2->lsm_md_oinfo[idx].lmo_fid))
+				return false;
+		}
+	} else if (lsm1->lsm_md_magic == LMV_USER_MAGIC_SPECIFIC) {
+		for (idx = 0; idx < lsm1->lsm_md_stripe_count; idx++) {
+			if (lsm1->lsm_md_oinfo[idx].lmo_mds !=
+			    lsm2->lsm_md_oinfo[idx].lmo_mds)
+				return false;
+		}
 	}
 
 	return true;
@@ -87,12 +122,20 @@ static inline void lsm_md_dump(int mask, const struct lmv_stripe_md *lsm)
 {
 	int i;
 
-	CDEBUG(mask, "magic %#x stripe count %d master mdt %d hash type %#x "
-		"version %d migrate offset %d migrate hash %#x pool %s\n",
-		lsm->lsm_md_magic, lsm->lsm_md_stripe_count,
-		lsm->lsm_md_master_mdt_index, lsm->lsm_md_hash_type,
-		lsm->lsm_md_layout_version, lsm->lsm_md_migrate_offset,
-		lsm->lsm_md_migrate_hash, lsm->lsm_md_pool_name);
+	/* If lsm_md_magic == LMV_MAGIC_FOREIGN pool_name may not be a null
+	 * terminated string so only print LOV_MAXPOOLNAME bytes.
+	 */
+	CDEBUG(mask,
+	       "magic %#x stripe count %d master mdt %d hash type %#x max-inherit %hhu max-inherit-rr %hhu version %d migrate offset %d migrate hash %#x pool %.*s\n",
+	       lsm->lsm_md_magic, lsm->lsm_md_stripe_count,
+	       lsm->lsm_md_master_mdt_index,
+	       lsm->lsm_md_hash_type, lsm->lsm_md_max_inherit,
+	       lsm->lsm_md_max_inherit_rr, lsm->lsm_md_layout_version,
+	       lsm->lsm_md_migrate_offset, lsm->lsm_md_migrate_hash,
+	       LOV_MAXPOOLNAME, lsm->lsm_md_pool_name);
+
+	if (!lmv_dir_striped(lsm))
+		return;
 
 	for (i = 0; i < lsm->lsm_md_stripe_count; i++)
 		CDEBUG(mask, "stripe[%d] "DFID"\n",
@@ -114,6 +157,8 @@ static inline void lmv1_le_to_cpu(struct lmv_mds_md_v1 *lmv_dst,
 				le32_to_cpu(lmv_src->lmv_master_mdt_index);
 	lmv_dst->lmv_hash_type = le32_to_cpu(lmv_src->lmv_hash_type);
 	lmv_dst->lmv_layout_version = le32_to_cpu(lmv_src->lmv_layout_version);
+	if (lmv_src->lmv_stripe_count > LMV_MAX_STRIPE_COUNT)
+		return;
 	for (i = 0; i < lmv_src->lmv_stripe_count; i++)
 		fid_le_to_cpu(&lmv_dst->lmv_stripe_fids[i],
 			      &lmv_src->lmv_stripe_fids[i]);
@@ -185,10 +230,10 @@ static inline int lmv_name_to_stripe_index(__u32 lmv_hash_type,
 	return idx;
 }
 
-static inline bool lmv_is_known_hash_type(__u32 type)
+static inline bool lmv_magic_supported(__u32 lum_magic)
 {
-	return (type & LMV_HASH_TYPE_MASK) == LMV_HASH_TYPE_FNV_1A_64 ||
-	       (type & LMV_HASH_TYPE_MASK) == LMV_HASH_TYPE_ALL_CHARS;
+	return lum_magic == LMV_USER_MAGIC ||
+	       lum_magic == LMV_USER_MAGIC_SPECIFIC;
 }
 
 #endif
