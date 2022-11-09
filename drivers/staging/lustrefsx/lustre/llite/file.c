@@ -370,8 +370,8 @@ int ll_file_release(struct inode *inode, struct file *file)
 	if (S_ISDIR(inode->i_mode) && lli->lli_opendir_key == fd)
 		ll_deauthorize_statahead(inode, fd);
 
-	if (inode->i_sb->s_root == file_dentry(file)) {
-		LUSTRE_FPRIVATE(file) = NULL;
+	if (is_root_inode(inode)) {
+                LUSTRE_FPRIVATE(file) = NULL;
 		ll_file_data_put(fd);
 		RETURN(0);
 	}
@@ -610,8 +610,10 @@ retry:
 		 * of kernel will deal with that later.
 		 */
 		ll_set_lock_data(sbi->ll_md_exp, de->d_inode, itp, &bits);
-		if (bits & MDS_INODELOCK_LOOKUP)
+		if (bits & MDS_INODELOCK_LOOKUP) {
 			d_lustre_revalidate(de);
+			ll_update_dir_depth(parent->d_inode, de->d_inode);
+		}
 
 		/* if DoM bit returned along with LAYOUT bit then there
 		 * can be read-on-open data returned.
@@ -719,10 +721,10 @@ int ll_file_open(struct inode *inode, struct file *file)
 	if (S_ISDIR(inode->i_mode))
 		ll_authorize_statahead(inode, fd);
 
-	if (inode->i_sb->s_root == file_dentry(file)) {
-                LUSTRE_FPRIVATE(file) = fd;
+	if (is_root_inode(inode)) {
+		LUSTRE_FPRIVATE(file) = fd;
                 RETURN(0);
-        }
+	}
 
 	if (!it || !it->it_disposition) {
 		CDEBUG(D_HSM, "MDLL file->f_flags=0x%x/0%o\n",
@@ -2315,26 +2317,26 @@ static int ll_put_grouplock(struct inode *inode, struct file *file,
  */
 int ll_release_openhandle(struct dentry *dentry, struct lookup_intent *it)
 {
-        struct inode *inode = dentry->d_inode;
-        struct obd_client_handle *och;
-        int rc;
-        ENTRY;
+	struct inode *inode = dentry->d_inode;
+	struct obd_client_handle *och;
+	int rc;
+	ENTRY;
 
-        LASSERT(inode);
+	LASSERT(inode);
 
-        /* Root ? Do nothing. */
-        if (dentry->d_inode->i_sb->s_root == dentry)
-                RETURN(0);
+	/* Root ? Do nothing. */
+	if (is_root_inode(inode))
+		RETURN(0);
 
-        /* No open handle to close? Move away */
-        if (!it_disposition(it, DISP_OPEN_OPEN))
-                RETURN(0);
+	/* No open handle to close? Move away */
+	if (!it_disposition(it, DISP_OPEN_OPEN))
+		RETURN(0);
 
-        LASSERT(it_open_error(DISP_OPEN_OPEN, it) == 0);
+	LASSERT(it_open_error(DISP_OPEN_OPEN, it) == 0);
 
-        OBD_ALLOC(och, sizeof(*och));
-        if (!och)
-                GOTO(out, rc = -ENOMEM);
+	OBD_ALLOC(och, sizeof(*och));
+	if (!och)
+		GOTO(out, rc = -ENOMEM);
 
 	rc = ll_och_fill(ll_i2sbi(inode)->ll_md_exp, it, och);
 	if (rc)
@@ -4259,7 +4261,7 @@ int ll_migrate(struct inode *parent, struct file *file, struct lmv_user_md *lum,
 	if (!(exp_connect_flags2(ll_i2sbi(parent)->ll_md_exp) &
 	      OBD_CONNECT2_DIR_MIGRATE)) {
 		if (le32_to_cpu(lum->lum_stripe_count) > 1 ||
-		    ll_i2info(child_inode)->lli_lsm_md) {
+		    ll_dir_striped(child_inode)) {
 			CERROR("%s: MDT doesn't support stripe directory "
 			       "migration!\n",
 			       ll_get_fsname(parent->i_sb, NULL, 0));
@@ -4272,7 +4274,7 @@ int ll_migrate(struct inode *parent, struct file *file, struct lmv_user_md *lum,
 	 * by checking the migrate FID against the FID of the
 	 * filesystem root.
 	 */
-	if (child_inode == parent->i_sb->s_root->d_inode)
+	if (is_root_inode(child_inode))
 		GOTO(out_iput, rc = -EINVAL);
 
 	op_data = ll_prep_md_op_data(NULL, parent, NULL, name, namelen,
@@ -4445,8 +4447,7 @@ static int ll_inode_revalidate_fini(struct inode *inode, int rc)
 		/* If it is striped directory, and there is bad stripe
 		 * Let's revalidate the dentry again, instead of returning
 		 * error */
-		if (S_ISDIR(inode->i_mode) &&
-		    ll_i2info(inode)->lli_lsm_md != NULL)
+		if (ll_dir_striped(inode))
 			return 0;
 
 		/* This path cannot be hit for regular files unless in
@@ -4535,6 +4536,10 @@ static int ll_merge_md_attr(struct inode *inode)
 	int rc;
 
 	LASSERT(lli->lli_lsm_md != NULL);
+
+	if (!lmv_dir_striped(lli->lli_lsm_md))
+		RETURN(0);
+
 	down_read(&lli->lli_lsm_sem);
 	rc = md_merge_attr(ll_i2mdexp(inode), ll_i2info(inode)->lli_lsm_md,
 			   &attr, ll_md_blocking_ast);
@@ -4600,8 +4605,7 @@ int ll_getattr(struct vfsmount *mnt, struct dentry *de, struct kstat *stat)
 		}
 	} else {
 		/* If object isn't regular a file then don't validate size. */
-		if (S_ISDIR(inode->i_mode) &&
-		    lli->lli_lsm_md != NULL) {
+		if (ll_dir_striped(inode)) {
 			rc = ll_merge_md_attr(inode);
 			if (rc < 0)
 				RETURN(rc);
@@ -4831,7 +4835,7 @@ int ll_inode_permission(struct inode *inode, int mask, struct nameidata *nd)
        /* as root inode are NOT getting validated in lookup operation,
         * need to do it before permission check. */
 
-        if (inode == inode->i_sb->s_root->d_inode) {
+	if (is_root_inode(inode)) {
 		rc = ll_inode_revalidate(inode->i_sb->s_root, IT_LOOKUP);
                 if (rc)
                         RETURN(rc);

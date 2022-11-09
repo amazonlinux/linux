@@ -86,7 +86,7 @@ static int lmv_intent_remote(struct obd_export *exp, struct lookup_intent *it,
 
 	LASSERT(fid_is_sane(&body->mbo_fid1));
 
-	tgt = lmv_find_target(lmv, &body->mbo_fid1);
+	tgt = lmv_fid2tgt(lmv, &body->mbo_fid1);
 	if (IS_ERR(tgt))
 		GOTO(out, rc = PTR_ERR(tgt));
 
@@ -106,7 +106,7 @@ static int lmv_intent_remote(struct obd_export *exp, struct lookup_intent *it,
 
 	op_data->op_bias = MDS_CROSS_REF;
 	CDEBUG(D_INODE, "REMOTE_INTENT with fid="DFID" -> mds #%u\n",
-	       PFID(&body->mbo_fid1), tgt->ltd_idx);
+	       PFID(&body->mbo_fid1), tgt->ltd_index);
 
 	/* ask for security context upon intent */
 	if (it->it_op & (IT_LOOKUP | IT_GETATTR | IT_OPEN) &&
@@ -207,12 +207,12 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 		 */
 		op_data->op_bias = MDS_CROSS_REF;
 
-		tgt = lmv_get_target(lmv, lsm->lsm_md_oinfo[i].lmo_mds, NULL);
-		if (IS_ERR(tgt))
-			GOTO(cleanup, rc = PTR_ERR(tgt));
+		tgt = lmv_tgt(lmv, lsm->lsm_md_oinfo[i].lmo_mds);
+		if (!tgt)
+			GOTO(cleanup, rc = -ENODEV);
 
 		CDEBUG(D_INODE, "Revalidate slave "DFID" -> mds #%u\n",
-		       PFID(&fid), tgt->ltd_idx);
+		       PFID(&fid), tgt->ltd_index);
 
 		if (req != NULL) {
 			ptlrpc_req_finished(req);
@@ -299,31 +299,18 @@ static int lmv_intent_open(struct obd_export *exp, struct md_op_data *op_data,
 
 	if ((it->it_op & IT_CREAT) && !(flags & MDS_OPEN_BY_FID)) {
 		/* don't allow create under dir with bad hash */
-		if (lmv_is_dir_bad_hash(op_data->op_mea1))
+		if (lmv_dir_bad_hash(op_data->op_mea1))
 			RETURN(-EBADF);
 
-		if (lmv_is_dir_migrating(op_data->op_mea1)) {
+		if (lmv_dir_migrating(op_data->op_mea1)) {
 			if (flags & O_EXCL) {
 				/*
 				 * open(O_CREAT | O_EXCL) needs to check
 				 * existing name, which should be done on both
-				 * old and new layout, to avoid creating new
-				 * file under old layout, check old layout on
+				 * old and new layout, check old layout on
 				 * client side.
 				 */
-				tgt = lmv_locate_tgt(lmv, op_data,
-						     &op_data->op_fid1);
-				if (IS_ERR(tgt))
-					RETURN(PTR_ERR(tgt));
-
-				rc = md_getattr_name(tgt->ltd_exp, op_data,
-						     reqp);
-				if (!rc) {
-					ptlrpc_req_finished(*reqp);
-					*reqp = NULL;
-					RETURN(-EEXIST);
-				}
-
+				rc = lmv_migrate_existence_check(lmv, op_data);
 				if (rc != -ENOENT)
 					RETURN(rc);
 
@@ -346,20 +333,20 @@ retry:
 		/* for striped directory, we can't know parent stripe fid
 		 * without name, but we can set it to child fid, and MDT
 		 * will obtain it from linkea in open in such case. */
-		if (op_data->op_mea1 != NULL)
+		if (lmv_dir_striped(op_data->op_mea1))
 			op_data->op_fid1 = op_data->op_fid2;
 
-		tgt = lmv_find_target(lmv, &op_data->op_fid2);
+		tgt = lmv_fid2tgt(lmv, &op_data->op_fid2);
 		if (IS_ERR(tgt))
 			RETURN(PTR_ERR(tgt));
 
-		op_data->op_mds = tgt->ltd_idx;
+		op_data->op_mds = tgt->ltd_index;
 	} else {
 		LASSERT(fid_is_sane(&op_data->op_fid1));
 		LASSERT(fid_is_zero(&op_data->op_fid2));
 		LASSERT(op_data->op_name != NULL);
 
-		tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+		tgt = lmv_locate_tgt(lmv, op_data);
 		if (IS_ERR(tgt))
 			RETURN(PTR_ERR(tgt));
 	}
@@ -378,7 +365,7 @@ retry:
 
 	CDEBUG(D_INODE, "OPEN_INTENT with fid1="DFID", fid2="DFID","
 	       " name='%s' -> mds #%u\n", PFID(&op_data->op_fid1),
-	       PFID(&op_data->op_fid2), op_data->op_name, tgt->ltd_idx);
+	       PFID(&op_data->op_fid2), op_data->op_name, tgt->ltd_index);
 
 	rc = md_intent_lock(tgt->ltd_exp, op_data, it, reqp, cb_blocking,
 			    extra_lock_flags);
@@ -455,7 +442,7 @@ retry:
 		LASSERT(op_data->op_name);
 		if (op_data->op_namelen != 1 ||
 		    strncmp(op_data->op_name, "/", 1) != 0) {
-			tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+			tgt = lmv_locate_tgt(lmv, op_data);
 			if (IS_ERR(tgt))
 				RETURN(PTR_ERR(tgt));
 		}
@@ -468,16 +455,17 @@ retry:
 		op_data->op_namelen = 0;
 
 		/* getattr request is sent to MDT where fid2 inode is */
-		tgt = lmv_find_target(lmv, &op_data->op_fid2);
+		tgt = lmv_fid2tgt(lmv, &op_data->op_fid2);
 	} else if (op_data->op_name) {
 		/* getattr by name */
-		tgt = lmv_locate_tgt(lmv, op_data, &op_data->op_fid1);
+		tgt = lmv_locate_tgt(lmv, op_data);
 		if (!fid_is_sane(&op_data->op_fid2))
 			fid_zero(&op_data->op_fid2);
 	} else {
 		/* old way to getattr by FID, parent FID not packed */
-		tgt = lmv_find_target(lmv, &op_data->op_fid1);
+		tgt = lmv_fid2tgt(lmv, &op_data->op_fid1);
 	}
+
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
@@ -485,7 +473,7 @@ retry:
 	       ", name='%s' -> mds #%u\n",
 	       PFID(&op_data->op_fid1), PFID(&op_data->op_fid2),
 	       op_data->op_name ? op_data->op_name : "<NULL>",
-	       tgt->ltd_idx);
+	       tgt->ltd_index);
 
 	op_data->op_bias &= ~MDS_CROSS_REF;
 
@@ -497,7 +485,7 @@ retry:
 	if (*reqp == NULL) {
 		/* If RPC happens, lsm information will be revalidated
 		 * during update_inode process (see ll_update_lsm_md) */
-		if (op_data->op_mea2 != NULL) {
+		if (lmv_dir_striped(op_data->op_mea2)) {
 			rc = lmv_revalidate_slaves(exp, op_data->op_mea2,
 						   cb_blocking,
 						   extra_lock_flags);
