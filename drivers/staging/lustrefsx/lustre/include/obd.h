@@ -87,6 +87,8 @@ typedef int (*obd_enqueue_update_f)(void *cookie, int rc);
 struct obd_info {
 	/* OBD_STATFS_* flags */
 	__u64                   oi_flags;
+	struct obd_device      *oi_obd;
+	struct lu_tgt_desc     *oi_tgt;
         /* statfs data specific for every OSC, if needed at all. */
         struct obd_statfs      *oi_osfs;
         /* An update callback which is called to update some data on upper
@@ -367,15 +369,6 @@ struct echo_client_obd {
 	__u64			ec_unique;
 };
 
-/* Generic subset of OSTs */
-struct ost_pool {
-        __u32              *op_array;      /* array of index of
-                                                   lov_obd->lov_tgts */
-        unsigned int        op_count;      /* number of OSTs in the array */
-        unsigned int        op_size;       /* allocated size of lp_array */
-	struct rw_semaphore op_rw_sem;     /* to protect ost_pool use */
-};
-
 /* allow statfs data caching for 1 second */
 #define OBD_STATFS_CACHE_SECONDS 1
 /* arbitrary maximum. larger would be useless, allows catching bogus input */
@@ -383,17 +376,7 @@ struct ost_pool {
 /* By default, don't do time based negative cache invalidation */
 #define OBD_NEG_CACHE_TIMEOUT_DEFAULT_SECS (-1) /* seconds */
 
-struct lov_tgt_desc {
-	struct list_head    ltd_kill;
-        struct obd_uuid     ltd_uuid;
-        struct obd_device  *ltd_obd;
-        struct obd_export  *ltd_exp;
-        __u32               ltd_gen;
-        __u32               ltd_index;   /* index in lov_obd->tgts */
-        unsigned long       ltd_active:1,/* is this target up for requests */
-                            ltd_activate:1,/* should  target be activated */
-                            ltd_reap:1;  /* should this target be deleted */
-};
+#define lov_tgt_desc lu_tgt_desc
 
 struct lov_md_tgt_desc {
 	struct obd_device *lmtd_mdc;
@@ -403,7 +386,7 @@ struct lov_md_tgt_desc {
 struct lov_obd {
 	struct lov_desc		desc;
 	struct lov_tgt_desc   **lov_tgts;		/* sparse array */
-	struct ost_pool		lov_packed;		/* all OSTs in a packed
+	struct lu_tgt_pool	lov_packed;		/* all OSTs in a packed
 							   array */
 	struct mutex		lov_lock;
 	struct obd_connect_data	lov_ocd;
@@ -428,32 +411,28 @@ struct lov_obd {
 	struct kobject		*lov_tgts_kobj;
 };
 
-struct lmv_tgt_desc {
-	struct obd_uuid		ltd_uuid;
-	struct obd_device	*ltd_obd;
-	struct obd_export	*ltd_exp;
-	__u32			ltd_idx;
-	struct mutex		ltd_fid_mutex;
-	unsigned long		ltd_active:1; /* target up for requests */
-};
+#define lmv_tgt_desc lu_tgt_desc
 
 struct lmv_obd {
 	struct lu_client_fld	lmv_fld;
 	spinlock_t		lmv_lock;
-	struct lmv_desc		desc;
 
-	struct mutex		lmv_init_mutex;
 	int			connected;
 	int			max_easize;
 	int			max_def_easize;
 	u32			lmv_statfs_start;
 
-	u32			tgts_size; /* size of tgts array */
-	struct lmv_tgt_desc	**tgts;
+	struct lu_tgt_descs	lmv_mdt_descs;
 
 	struct obd_connect_data	conn_data;
 	struct kobject		*lmv_tgts_kobj;
+	void			*lmv_cache;
+
+	__u32			lmv_qos_rr_index;
 };
+
+#define lmv_mdt_count	lmv_mdt_descs.ltd_lmv_desc.ld_tgt_count
+#define lmv_qos		lmv_mdt_descs.ltd_qos
 
 /* Minimum sector size is 512 */
 #define MAX_GUARD_NUMBER (PAGE_SIZE / 512)
@@ -820,12 +799,14 @@ static inline int it_to_lock_mode(struct lookup_intent *it)
 }
 
 enum md_op_flags {
-	MF_MDC_CANCEL_FID1	= 1 << 0,
-	MF_MDC_CANCEL_FID2	= 1 << 1,
-	MF_MDC_CANCEL_FID3	= 1 << 2,
-	MF_MDC_CANCEL_FID4	= 1 << 3,
-	MF_GET_MDT_IDX		= 1 << 4,
-	MF_GETATTR_BY_FID	= 1 << 5,
+	MF_MDC_CANCEL_FID1	= BIT(0),
+	MF_MDC_CANCEL_FID2	= BIT(1),
+	MF_MDC_CANCEL_FID3	= BIT(2),
+	MF_MDC_CANCEL_FID4	= BIT(3),
+	MF_GET_MDT_IDX		= BIT(4),
+	MF_GETATTR_BY_FID	= BIT(5),
+	MF_QOS_MKDIR		= BIT(6),
+	MF_RR_MKDIR		= BIT(7),
 };
 
 enum md_cli_flags {
@@ -834,6 +815,14 @@ enum md_cli_flags {
 	CLI_HASH64      = 1 << 2,
 	CLI_API32       = 1 << 3,
 	CLI_MIGRATE     = 1 << 4,
+};
+
+enum md_op_code {
+	LUSTRE_OPC_MKDIR = 1,
+	LUSTRE_OPC_SYMLINK,
+	LUSTRE_OPC_MKNOD,
+	LUSTRE_OPC_CREATE,
+	LUSTRE_OPC_ANY,
 };
 
 /**
@@ -853,6 +842,7 @@ struct md_op_data {
 	struct lu_fid		op_fid4; /* to the operation locks. */
 	u32			op_mds;  /* what mds server open will go to */
 	__u32			op_mode;
+	enum md_op_code		op_code;
 	struct lustre_handle	op_open_handle;
 	s64			op_mod_time;
 	const char		*op_name;
@@ -861,6 +851,7 @@ struct md_op_data {
 	struct rw_semaphore	*op_mea2_sem;
 	struct lmv_stripe_md	*op_mea1;
 	struct lmv_stripe_md	*op_mea2;
+	struct lmv_stripe_md	*op_default_mea1;	/* default LMV */
 	__u32			op_suppgids[2];
 	__u32			op_fsuid;
 	__u32			op_fsgid;
@@ -894,13 +885,14 @@ struct md_op_data {
 	void		       *op_file_secctx;
 	__u32			op_file_secctx_size;
 
-	/* default stripe offset */
-	__u32			op_default_stripe_offset;
-
 	__u32			op_projid;
 
-	/* Used by readdir */
-	unsigned int		op_max_pages;
+	union {
+		/* Used by readdir */
+		unsigned int	op_max_pages;
+		/* mkdir */
+		unsigned short	op_dir_depth;
+	};
 
 	__u16			op_mirror_id;
 
@@ -1035,7 +1027,11 @@ struct obd_ops {
 struct lustre_md {
 	struct mdt_body         *body;
 	struct lu_buf		 layout;
-	struct lmv_stripe_md    *lmv;
+	union {
+		struct lmv_stripe_md    *lmv;
+		struct lmv_foreign_md   *lfm;
+	};
+	struct lmv_stripe_md    *default_lmv;
 #ifdef CONFIG_FS_POSIX_ACL
 	struct posix_acl        *posix_acl;
 #endif
