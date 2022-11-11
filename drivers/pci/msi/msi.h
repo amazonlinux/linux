@@ -37,3 +37,12 @@ static inline __attribute_const__ u32 msi_multi_mask(struct msi_desc *desc)
 		return 0xffffffff;
 	return (1 << (1 << desc->pci.msi_attrib.multi_cap)) - 1;
 }
+
+/* irq_domain related functionality */
+
+enum support_mode {
+	ALLOW_LEGACY,
+	DENY_LEGACY,
+};
+
+bool pci_msi_domain_supports(struct pci_dev *dev, unsigned int feature_mask, enum support_mode mode);
