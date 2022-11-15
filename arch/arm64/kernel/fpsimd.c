@@ -305,8 +305,31 @@ static void task_fpsimd_load(void)
 	WARN_ON(!have_cpu_fpsimd_context());
 
 	/* Check if we should restore SVE first */
-	if (IS_ENABLED(CONFIG_ARM64_SVE) && test_thread_flag(TIF_SVE)) {
-		restore_sve_regs = true;
+	if (system_supports_sve()) {
+		switch (current->thread.fp_type) {
+		case FP_STATE_FPSIMD:
+			/* Stop tracking SVE for this task until next use. */
+			if (test_and_clear_thread_flag(TIF_SVE))
+				sve_user_disable();
+			break;
+		case FP_STATE_SVE:
+			if (!WARN_ON_ONCE(!test_and_set_thread_flag(TIF_SVE)))
+				sve_user_enable();
+			restore_sve_regs = true;
+			break;
+		default:
+			/*
+			 * This indicates either a bug in
+			 * fpsimd_save() or memory corruption, we
+			 * should always record an explicit format
+			 * when we save. We always at least have the
+			 * memory allocated for FPSMID registers so
+			 * try that and hope for the best.
+			 */
+			WARN_ON_ONCE(1);
+			clear_thread_flag(TIF_SVE);
+			break;
+		}
 	}
 
 	if (restore_sve_regs) {
