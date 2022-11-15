@@ -176,16 +176,9 @@ static inline void sve_user_discard(void)
 	if (!system_supports_sve())
 		return;
 
-	clear_thread_flag(TIF_SVE);
-
-	/*
-	 * task_fpsimd_load() won't be called to update CPACR_EL1 in
-	 * ret_to_user unless TIF_FOREIGN_FPSTATE is still set, which only
-	 * happens if a context switch or kernel_neon_begin() or context
-	 * modification (sigreturn, ptrace) intervenes.
-	 * So, ensure that CPACR_EL1 is already correct for the fast-path case.
-	 */
-	sve_user_disable();
+	if (test_thread_flag(TIF_SVE)) {
+		sve_flush_live();
+	}
 }
 
 void do_el0_svc(struct pt_regs *regs)
