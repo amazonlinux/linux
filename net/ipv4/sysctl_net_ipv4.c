@@ -628,16 +628,16 @@ static struct ctl_table ipv4_net_table[] = {
 	{
 		.procname       = "udp_early_demux",
 		.data           = &init_net.ipv4.sysctl_udp_early_demux,
-		.maxlen         = sizeof(int),
+		.maxlen         = sizeof(u8),
 		.mode           = 0644,
-		.proc_handler   = proc_douintvec_minmax,
+		.proc_handler   = proc_dou8vec_minmax,
 	},
 	{
 		.procname       = "tcp_early_demux",
 		.data           = &init_net.ipv4.sysctl_tcp_early_demux,
-		.maxlen         = sizeof(int),
+		.maxlen         = sizeof(u8),
 		.mode           = 0644,
-		.proc_handler   = proc_douintvec_minmax,
+		.proc_handler   = proc_dou8vec_minmax,
 	},
 	{
 		.procname       = "nexthop_compat_mode",
