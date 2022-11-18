@@ -2239,7 +2239,33 @@ static void damon_sysfs_ui_dir_release(struct kobject *kobj)
 	kfree(container_of(kobj, struct damon_sysfs_ui_dir, kobj));
 }
 
+static ssize_t debug_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+#ifdef CONFIG_MEMCG
+	struct mem_cgroup *memcg;
+	char *path = kmalloc(sizeof(*path) * PATH_MAX, GFP_KERNEL);
+
+	if (!path)
+		return -ENOMEM;
+
+	for (memcg = mem_cgroup_iter(NULL, NULL, NULL); memcg; memcg =
+			mem_cgroup_iter(NULL, memcg, NULL)) {
+		cgroup_path(memcg->css.cgroup, path, PATH_MAX);
+		pr_info("id: %u, path: %s\n", mem_cgroup_id(memcg), path);
+	}
+
+	kfree(path);
+#endif
+
+	return 0;
+}
+
+static struct kobj_attribute damon_sysfs_debug_attr =
+		__ATTR_RO_MODE(debug, 0400);
+
 static struct attribute *damon_sysfs_ui_dir_attrs[] = {
+	&damon_sysfs_debug_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(damon_sysfs_ui_dir);
