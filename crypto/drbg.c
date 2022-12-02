@@ -1105,6 +1105,15 @@ static int drbg_seed_from_random(struct drbg_state *drbg)
 	if (ret)
 		goto out;
 
+        /*
+         * nonblocking pool is initialized, if fips enabled
+         * revert to old behavior of deactivating Jitter RNG
+         */
+         if (fips_enabled) {
+            crypto_free_rng(drbg->jent);
+            drbg->jent = NULL;
+         }
+
 	ret = __drbg_seed(drbg, &seedlist, true, DRBG_SEED_STATE_FULL);
 
 out:
@@ -1177,6 +1186,14 @@ static int drbg_seed(struct drbg_state *drbg, struct drbg_string *pers,
 						   entropylen);
 			if (ret) {
 				pr_devel("DRBG: jent failed with %d\n", ret);
+
+                                /* 
+                                 * if fips is enabled our reseed threshold is
+                                 * 2**48 so the logic laid out below does not
+                                 * apply.
+                                 */
+                                if (fips_enabled)
+                                    goto out;
 
 				/*
 				 * Do not treat the transient failure of the
