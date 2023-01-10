@@ -16,6 +16,7 @@
 #include <asm/cache.h>
 #include <asm/cacheflush.h>
 #include <asm/apic.h>
+#include <asm/l1d_flush.h>
 
 #include "mm_internal.h"
 
@@ -334,12 +335,22 @@ static void l1d_flush_force_sigbus(struct callback_head *ch)
 	force_sig(SIGBUS);
 }
 
+static void l1d_do_flush(void)
+{
+	if (boot_cpu_has(X86_FEATURE_FLUSH_L1D)) {
+		wrmsrl(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
+		return;
+	}
+
+	l1d_flush_sw();
+}
+
 static void l1d_flush_evaluate(unsigned long prev_mm, unsigned long next_mm,
 				struct task_struct *next)
 {
 	/* Flush L1D if the outgoing task requests it */
 	if (prev_mm & LAST_USER_MM_L1D_FLUSH)
-		wrmsrl(MSR_IA32_FLUSH_CMD, L1D_FLUSH);
+		l1d_do_flush();
 
 	/* Check whether the incoming task opted in for L1D flush */
 	if (likely(!(next_mm & LAST_USER_MM_L1D_FLUSH)))
