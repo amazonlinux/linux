@@ -33,6 +33,7 @@
 #include <asm/e820/api.h>
 #include <asm/hypervisor.h>
 #include <asm/tlbflush.h>
+#include <asm/l1d_flush.h>
 
 #include "cpu.h"
 
@@ -677,8 +678,11 @@ static enum l1d_flush_mitigations l1d_flush_mitigation __initdata = L1D_FLUSH_OF
 
 static void __init l1d_flush_select_mitigation(void)
 {
-	if (!l1d_flush_mitigation || !boot_cpu_has(X86_FEATURE_FLUSH_L1D))
+	if (!l1d_flush_mitigation)
 		return;
+
+	if (!boot_cpu_has(X86_FEATURE_FLUSH_L1D))
+		l1d_flush_init();
 
 	static_branch_enable(&switch_mm_cond_l1d_flush);
 	pr_info("Conditional flush on switch_mm() enabled\n");
