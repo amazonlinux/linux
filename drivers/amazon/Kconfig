@@ -6,10 +6,37 @@ config AMAZON_DRIVER_UPDATES
 	bool "Amazon Driver Updates"
 	default y
 	depends on PCI || EXPERIMENTAL
-	---help---
+	help
 	 Amazon driver updates includes out-of-tree drivers and/or modifeid
 	 versions of the drivers present in the stable kernel tree.
 
 if AMAZON_DRIVER_UPDATES
+
+config AMAZON_ENA_ETHERNET
+	tristate "Elastic Network Adapter (ENA) support"
+	depends on PCI_MSI && !ENA_ETHERNET
+	help
+	  This driver supports Elastic Network Adapter (ENA)
+
+	  To compile this driver as a module, choose M here.
+	  The module will be called ena.
+
+config AMAZON_EFA_INFINIBAND
+	tristate "Elastic Fabric Adapter (EFA) support"
+	depends on INFINIBAND_USER_ACCESS && AMAZON_ENA_ETHERNET
+	help
+	  This driver support Elastic Fabric Adapter (EFA)
+
+	  To compile this driver as a module, choose M here.
+	  The module will be called efa
+
+config AMAZON_IGB_UIO
+	tristate "DPDK igb_uio driver"
+	help
+	  This is the direct PCI access driver for igb and
+	  other PCI network devices, for DPDK.
+
+	  To compile this driver as a module, choose M here.
+	  The module will be called igb_uio.
 
 endif # AMAZON_DRIVER_UPDATES
