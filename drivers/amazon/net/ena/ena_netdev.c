@@ -57,7 +57,7 @@ MODULE_PARM_DESC(debug, "Debug level (-1=default,0=none,...,16=all)");
 
 static int rx_queue_size = ENA_DEFAULT_RING_SIZE;
 module_param(rx_queue_size, int, 0444);
-MODULE_PARM_DESC(rx_queue_size, "Rx queue size. The size should be a power of 2. Max value is 8K\n");
+MODULE_PARM_DESC(rx_queue_size, "Rx queue size. The size should be a power of 2. Depending on instance type, max value can be up to 16K\n");
 
 static int force_large_llq_header = 0;
 module_param(force_large_llq_header, int, 0444);
@@ -600,7 +600,8 @@ static void ena_free_all_io_rx_resources(struct ena_adapter *adapter)
 		ena_free_rx_resources(adapter, i);
 }
 
-struct page *ena_alloc_map_page(struct ena_ring *rx_ring, dma_addr_t *dma)
+struct page *ena_alloc_map_page(struct ena_ring *rx_ring,
+				dma_addr_t *dma)
 {
 	struct page *page;
 
@@ -869,7 +870,7 @@ static void ena_free_tx_bufs(struct ena_ring *tx_ring)
 
 		ena_unmap_tx_buff(tx_ring, tx_info);
 
-		dev_kfree_skb_any(tx_info->skb);
+		napi_consume_skb(tx_info->skb, 0);
 	}
 	netdev_tx_reset_queue(netdev_get_tx_queue(tx_ring->netdev,
 						  tx_ring->qid));
@@ -1001,7 +1002,7 @@ static int ena_clean_tx_irq(struct ena_ring *tx_ring, u32 budget)
 			  skb);
 
 		tx_bytes += tx_info->total_tx_size;
-		dev_kfree_skb(skb);
+		napi_consume_skb(skb, budget);
 		tx_pkts++;
 		total_done += tx_info->tx_descs;
 
@@ -1050,15 +1051,15 @@ static struct sk_buff *ena_alloc_skb(struct ena_ring *rx_ring, void *first_frag,
 
 #ifdef ENA_LINEAR_FRAG_SUPPORTED
 	if (!first_frag)
-		skb = netdev_alloc_skb_ip_align(rx_ring->netdev, len);
+		skb = napi_alloc_skb(rx_ring->napi, len);
 	else
-		skb = build_skb(first_frag, len);
+		skb = ena_build_skb(first_frag, len);
 #else
 	if (!first_frag)
-		skb = netdev_alloc_skb_ip_align(rx_ring->netdev, len);
+		skb = napi_alloc_skb(rx_ring->napi, len);
 	else
-		skb = netdev_alloc_skb_ip_align(rx_ring->netdev,
-						ENA_SKB_PULL_MIN_LEN);
+		skb = napi_alloc_skb(rx_ring->napi,
+				     ENA_SKB_PULL_MIN_LEN);
 #endif /* ENA_LINEAR_FRAG_SUPPORTED */
 
 	if (unlikely(!skb)) {
@@ -2036,10 +2037,7 @@ static void ena_init_napi_in_range(struct ena_adapter *adapter,
 			napi_handler = ena_xdp_io_poll;
 #endif /* ENA_XDP_SUPPORT */
 
-		netif_napi_add(adapter->netdev,
-			       &napi->napi,
-			       napi_handler,
-			       NAPI_POLL_WEIGHT);
+		ena_netif_napi_add(adapter->netdev, &napi->napi, napi_handler);
 
 #ifdef ENA_BUSY_POLL_SUPPORT
 		napi_hash_add(&adapter->ena_napi[i].napi);
@@ -3006,7 +3004,7 @@ error_unmap_dma:
 	tx_info->skb = NULL;
 
 error_drop_packet:
-	dev_kfree_skb(skb);
+	napi_consume_skb(skb, 0);
 	return NETDEV_TX_OK;
 }
 
@@ -3078,6 +3076,7 @@ static void ena_config_host_info(struct ena_com_dev *ena_dev, struct pci_dev *pd
 {
 	struct device *dev = &pdev->dev;
 	struct ena_admin_host_info *host_info;
+	ssize_t ret;
 	int rc;
 
 	/* Allocate only the host info */
@@ -3092,8 +3091,11 @@ static void ena_config_host_info(struct ena_com_dev *ena_dev, struct pci_dev *pd
 	host_info->bdf = (pdev->bus->number << 8) | pdev->devfn;
 	host_info->os_type = ENA_ADMIN_OS_LINUX;
 	host_info->kernel_ver = LINUX_VERSION_CODE;
-	strlcpy(host_info->kernel_ver_str, utsname()->version,
+	ret = strscpy(host_info->kernel_ver_str, utsname()->version,
 		sizeof(host_info->kernel_ver_str) - 1);
+	if (ret < 0)
+		dev_info(dev,
+			 "kernel version string will be truncated, status = %zd\n", ret);
 	host_info->os_dist = 0;
 	strncpy(host_info->os_dist_str, utsname()->release,
 		sizeof(host_info->os_dist_str) - 1);
@@ -3195,10 +3197,10 @@ static struct rtnl_link_stats64 *ena_get_stats64(struct net_device *netdev,
 		tx_ring = &adapter->tx_ring[i];
 
 		do {
-			start = u64_stats_fetch_begin_irq(&tx_ring->syncp);
+			start = ena_u64_stats_fetch_begin(&tx_ring->syncp);
 			packets = tx_ring->tx_stats.cnt;
 			bytes = tx_ring->tx_stats.bytes;
-		} while (u64_stats_fetch_retry_irq(&tx_ring->syncp, start));
+		} while (ena_u64_stats_fetch_retry(&tx_ring->syncp, start));
 
 		stats->tx_packets += packets;
 		stats->tx_bytes += bytes;
@@ -3210,21 +3212,21 @@ static struct rtnl_link_stats64 *ena_get_stats64(struct net_device *netdev,
 		rx_ring = &adapter->rx_ring[i];
 
 		do {
-			start = u64_stats_fetch_begin_irq(&rx_ring->syncp);
+			start = ena_u64_stats_fetch_begin(&rx_ring->syncp);
 			packets = rx_ring->rx_stats.cnt;
 			bytes = rx_ring->rx_stats.bytes;
 			xdp_rx_drops += ena_ring_xdp_drops_cnt(rx_ring);
-		} while (u64_stats_fetch_retry_irq(&rx_ring->syncp, start));
+		} while (ena_u64_stats_fetch_retry(&rx_ring->syncp, start));
 
 		stats->rx_packets += packets;
 		stats->rx_bytes += bytes;
 	}
 
 	do {
-		start = u64_stats_fetch_begin_irq(&adapter->syncp);
+		start = ena_u64_stats_fetch_begin(&adapter->syncp);
 		rx_drops = adapter->dev_stats.rx_drops;
 		tx_drops = adapter->dev_stats.tx_drops;
-	} while (u64_stats_fetch_retry_irq(&adapter->syncp, start));
+	} while (ena_u64_stats_fetch_retry(&adapter->syncp, start));
 
 	stats->rx_dropped = rx_drops + xdp_rx_drops;
 	stats->tx_dropped = tx_drops;
@@ -3261,10 +3263,10 @@ static struct net_device_stats *ena_get_stats(struct net_device *netdev)
 
 		tx_ring = &adapter->tx_ring[i];
 		do {
-			start = u64_stats_fetch_begin_irq(&tx_ring->syncp);
+			start = ena_u64_stats_fetch_begin(&tx_ring->syncp);
 			packets = (unsigned long)tx_ring->tx_stats.cnt;
 			bytes = (unsigned long)tx_ring->tx_stats.bytes;
-		} while (u64_stats_fetch_retry_irq(&tx_ring->syncp, start));
+		} while (ena_u64_stats_fetch_retry(&tx_ring->syncp, start));
 
 		stats->tx_packets += packets;
 		stats->tx_bytes += bytes;
@@ -3272,19 +3274,19 @@ static struct net_device_stats *ena_get_stats(struct net_device *netdev)
 		rx_ring = &adapter->rx_ring[i];
 
 		do {
-			start = u64_stats_fetch_begin_irq(&tx_ring->syncp);
+			start = ena_u64_stats_fetch_begin(&tx_ring->syncp);
 			packets = (unsigned long)rx_ring->rx_stats.cnt;
 			bytes = (unsigned long)rx_ring->rx_stats.bytes;
-		} while (u64_stats_fetch_retry_irq(&tx_ring->syncp, start));
+		} while (ena_u64_stats_fetch_retry(&tx_ring->syncp, start));
 
 		stats->rx_packets += packets;
 		stats->rx_bytes += bytes;
 	}
 
 	do {
-		start = u64_stats_fetch_begin_irq(&tx_ring->syncp);
+		start = ena_u64_stats_fetch_begin(&tx_ring->syncp);
 		rx_drops = (unsigned long)adapter->dev_stats.rx_drops;
-	} while (u64_stats_fetch_retry_irq(&tx_ring->syncp, start));
+	} while (ena_u64_stats_fetch_retry(&tx_ring->syncp, start));
 
 	stats->rx_dropped = rx_drops;
 
@@ -3699,8 +3701,9 @@ int ena_restore_device(struct ena_adapter *adapter)
 	struct ena_com_dev_get_features_ctx get_feat_ctx;
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	struct pci_dev *pdev = adapter->pdev;
+	struct ena_ring *txr;
+	int rc, count, i;
 	bool wd_state;
-	int rc;
 
 	set_bit(ENA_FLAG_ONGOING_RESET, &adapter->flags);
 	rc = ena_device_init(adapter, adapter->pdev, &get_feat_ctx, &wd_state);
@@ -3709,6 +3712,12 @@ int ena_restore_device(struct ena_adapter *adapter)
 		goto err;
 	}
 	adapter->wd_state = wd_state;
+
+	count =  adapter->xdp_num_queues + adapter->num_io_queues;
+	for (i = 0 ; i < count; i++) {
+		txr = &adapter->tx_ring[i];
+		txr->tx_mem_queue_type = ena_dev->tx_mem_queue_type;
+	}
 
 	rc = ena_device_validate_params(adapter, &get_feat_ctx);
 	if (rc) {
@@ -4507,10 +4516,16 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	adapter->large_llq_header_enabled = !!force_large_llq_header;
 
+	rc = ena_com_allocate_customer_metrics_buffer(ena_dev);
+	if (rc) {
+		netdev_err(netdev, "ena_com_allocate_customer_metrics_buffer failed\n");
+		goto err_netdev_destroy;
+	}
+
 	devlink = ena_devlink_alloc(adapter);
 	if (!devlink) {
 		netdev_err(netdev, "ena_devlink_alloc failed\n");
-		goto err_netdev_destroy;
+		goto err_metrics_destroy;
 	}
 
 	rc = ena_map_llq_mem_bar(pdev, ena_dev, bars);
@@ -4671,6 +4686,8 @@ err_devlink_destroy:
 	ena_devlink_free(devlink);
 err_netdev_destroy:
 	free_netdev(netdev);
+err_metrics_destroy:
+	ena_com_delete_customer_metrics_buffer(ena_dev);
 err_free_region:
 	ena_release_bars(ena_dev, pdev);
 err_free_ena_dev:
@@ -4736,6 +4753,8 @@ static void __ena_shutoff(struct pci_dev *pdev, bool shutdown)
 	ena_com_delete_debug_area(ena_dev);
 
 	ena_com_delete_host_info(ena_dev);
+
+	ena_com_delete_customer_metrics_buffer(ena_dev);
 
 	ena_release_bars(ena_dev, pdev);
 
