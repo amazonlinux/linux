@@ -73,6 +73,7 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #include <linux/types.h>
 #include <linux/vmalloc.h>
 #include <linux/udp.h>
+#include <linux/u64_stats_sync.h>
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
 #include <linux/sizes.h>
@@ -503,6 +504,25 @@ static inline unsigned int u64_stats_fetch_begin_irq(const struct u64_stats_sync
 
 #endif
 
+static inline bool ena_u64_stats_fetch_retry(const struct u64_stats_sync *syncp,
+					     unsigned int start)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+	return u64_stats_fetch_retry_irq(syncp, start);
+#else
+	return u64_stats_fetch_retry(syncp, start);
+#endif
+}
+
+static inline unsigned int ena_u64_stats_fetch_begin(const struct u64_stats_sync *syncp)
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+	return u64_stats_fetch_begin_irq(syncp);
+#else
+	return u64_stats_fetch_begin(syncp);
+#endif
+}
+
 #if ( LINUX_VERSION_CODE < KERNEL_VERSION(3,16,0) && \
       !(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,1))))
 
@@ -714,7 +734,9 @@ do {									\
 #endif
 
 #if defined(CONFIG_NET_DEVLINK) && \
-	(KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0))
+	(KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) && \
+	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) && \
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)))
 #define ENA_DEVLINK_RELOAD_ENABLING_REQUIRED
 #endif
 
@@ -728,15 +750,20 @@ do {									\
 #define ENA_DEVLINK_RELOAD_LIMIT_AND_ACTION_SUPPORT
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) || \
+	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) || \
+	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 #define ENA_DEVLINK_RECEIVES_DEVICE_ON_ALLOC
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0) || \
+	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4))
 #define ENA_DEVLINK_RELOAD_SUPPORT_ADVERTISEMENT_NEEDED
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) && \
+	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) && \
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
 #define ENA_DEVLINK_CONFIGURE_AFTER_REGISTER
 #endif
 
@@ -839,16 +866,31 @@ static inline int numa_mem_id(void)
 #define fallthrough do {} while (0)  /* fallthrough */
 #endif
 
-#ifndef NAPI_POLL_WEIGHT
-#define NAPI_POLL_WEIGHT 64
-#endif
-
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
 #define AF_XDP_BUSY_POLL_SUPPORTED
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 #define ENA_LINEAR_FRAG_SUPPORTED
+static __always_inline struct sk_buff*
+ena_build_skb(void *data, unsigned int frag_size)
+{
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
+	return napi_build_skb(data, frag_size);
+#else
+	return build_skb(data, frag_size);
+#endif
+}
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0) && \
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 3)) && \
+	!(defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE >= UBUNTU_VERSION(4, 2, 0, 42))
+static __always_inline
+void napi_consume_skb(struct sk_buff *skb, int budget)
+{
+	dev_kfree_skb_any(skb);
+}
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0)
@@ -892,7 +934,8 @@ xdp_prepare_buff(struct xdp_buff *xdp, unsigned char *hard_start,
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) && \
-	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6))
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6)) && \
+	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4))
 static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 {
 	memcpy(dev->dev_addr, addr, ETH_ALEN);
@@ -900,11 +943,15 @@ static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) || \
-	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6))
+	(defined(RHEL_RELEASE_CODE) && \
+	RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6) && \
+	RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0)) || \
+	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4))
 #define ENA_EXTENDED_COALESCE_UAPI_WITH_CQE_SUPPORTED
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0) || \
+	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE == RHEL_RELEASE_VERSION(8, 7))
 #define ENA_ETHTOOL_RX_BUFF_SIZE_CHANGE
 #endif
 
@@ -983,5 +1030,38 @@ static inline bool ktime_after(const ktime_t cmp1, const ktime_t cmp2)
 #endif
 
 #endif /* CONFIG_PTP_1588_CLOCK */
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)) && \
+	!(RHEL_RELEASE_CODE && \
+	(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 2)))
+static inline struct sk_buff *napi_alloc_skb(struct napi_struct *napi,
+					     unsigned int length)
+{
+	return netdev_alloc_skb_ip_align(napi->dev, length);
+}
+#endif
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(4, 3, 0)) && \
+	!(RHEL_RELEASE_CODE && \
+	(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 7)))
+static inline ssize_t strscpy(char *dest, const char *src, size_t count)
+{
+	return (ssize_t)strlcpy(dest, src, count);
+}
+#endif
+
+static inline void ena_netif_napi_add(struct net_device *dev,
+				      struct napi_struct *napi,
+				      int (*poll)(struct napi_struct *, int))
+{
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+#ifndef NAPI_POLL_WEIGHT
+#define NAPI_POLL_WEIGHT 64
+#endif
+	netif_napi_add(dev, napi, poll, NAPI_POLL_WEIGHT);
+#else
+	netif_napi_add(dev, napi, poll);
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) */
+}
 
 #endif /* _KCOMPAT_H_ */
