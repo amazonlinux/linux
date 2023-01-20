@@ -28,7 +28,6 @@ void pci_msi_teardown_msi_irqs(struct pci_dev *dev)
 		msi_domain_free_irqs_descs_locked(domain, &dev->dev);
 	else
 		pci_msi_legacy_teardown_msi_irqs(dev);
-	msi_free_msi_descs(&dev->dev);
 }
 
 /**
