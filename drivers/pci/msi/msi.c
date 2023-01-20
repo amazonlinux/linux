@@ -908,7 +908,17 @@ void pci_msix_shutdown(struct pci_dev *dev)
 
 void pci_free_msi_irqs(struct pci_dev *dev)
 {
+	struct msi_desc *desc;
+	int i;
+
+	msi_for_each_desc(desc, &dev->dev, MSI_DESC_NOTASSOCIATED)
+		if (desc->irq)
+			for (i = 0; i < desc->nvec_used; i++)
+				BUG_ON(irq_has_action(desc->irq + i));
+
 	pci_msi_teardown_msi_irqs(dev);
+
+	msi_free_msi_descs(&dev->dev);
 
 	if (dev->msix_base) {
 		iounmap(dev->msix_base);
