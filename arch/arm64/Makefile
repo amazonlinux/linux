@@ -58,20 +58,20 @@ stack_protector_prepare: prepare0
 					include/generated/asm-offsets.h))
 endif
 
-# Ensure that if the compiler supports branch protection we default it
-# off, this will be overridden if we are using branch protection.
-branch-prot-flags-y += $(call cc-option,-mbranch-protection=none)
+
+ifeq ($(CONFIG_ARM64_BTI_KERNEL),y)
+  KBUILD_CFLAGS += -mbranch-protection=pac-ret+bti
+else ifeq ($(CONFIG_ARM64_PTR_AUTH_KERNEL),y)
+  ifeq ($(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET),y)
+    KBUILD_CFLAGS += -mbranch-protection=pac-ret
+  else
+    KBUILD_CFLAGS += -msign-return-address=non-leaf
+  endif
+else
+  KBUILD_CFLAGS += $(call cc-option,-mbranch-protection=none)
+endif
 
 ifeq ($(CONFIG_ARM64_PTR_AUTH_KERNEL),y)
-branch-prot-flags-$(CONFIG_CC_HAS_SIGN_RETURN_ADDRESS) := -msign-return-address=all
-# We enable additional protection for leaf functions as there is some
-# narrow potential for ROP protection benefits and no substantial
-# performance impact has been observed.
-ifeq ($(CONFIG_ARM64_BTI_KERNEL),y)
-branch-prot-flags-$(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET_BTI) := -mbranch-protection=pac-ret+leaf+bti
-else
-branch-prot-flags-$(CONFIG_CC_HAS_BRANCH_PROT_PAC_RET) := -mbranch-protection=pac-ret+leaf
-endif
 # -march=armv8.3-a enables the non-nops instructions for PAC, to avoid the
 # compiler to generate them and consequently to break the single image contract
 # we pass it only to the assembler. This option is utilized only in case of non
@@ -80,8 +80,6 @@ ifeq ($(CONFIG_AS_HAS_PAC), y)
 asm-arch := armv8.3-a
 endif
 endif
-
-KBUILD_CFLAGS += $(branch-prot-flags-y)
 
 ifeq ($(CONFIG_AS_HAS_ARMV8_4), y)
 # make sure to pass the newest target architecture to -march.
