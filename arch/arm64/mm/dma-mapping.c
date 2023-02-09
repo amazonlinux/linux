@@ -7,7 +7,6 @@
 #include <linux/gfp.h>
 #include <linux/cache.h>
 #include <linux/dma-map-ops.h>
-#include <linux/dma-page-touching.h>
 #include <xen/xen.h>
 
 #include <asm/cacheflush.h>
@@ -52,9 +51,4 @@ void arch_setup_dma_ops(struct device *dev, bool coherent)
 	dev->dma_coherent = coherent;
 
 	xen_setup_dma_ops(dev);
-
-#ifdef CONFIG_DMA_PAGE_TOUCHING
-	if (!dev->dma_ops)
-		setup_dma_page_touching_ops(dev);
-#endif
 }
