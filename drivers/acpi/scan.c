@@ -13,6 +13,7 @@
 #include <linux/acpi_iort.h>
 #include <linux/acpi_viot.h>
 #include <linux/iommu.h>
+#include <linux/dma-page-touching.h>
 #include <linux/signal.h>
 #include <linux/kthread.h>
 #include <linux/dmi.h>
@@ -1634,6 +1635,11 @@ int acpi_dma_configure_id(struct device *dev, enum dev_dma_attr attr,
 
 	arch_setup_dma_ops(dev, 0, U64_MAX,
 				iommu, attr == DEV_DMA_COHERENT);
+
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	if (!dev->dma_ops)
+		setup_dma_page_touching_ops(dev);
+#endif
 
 	return 0;
 }
