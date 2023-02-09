@@ -7,6 +7,7 @@
 #include <linux/of_iommu.h>
 #include <linux/dma-direct.h> /* for bus_dma_region */
 #include <linux/dma-map-ops.h>
+#include <linux/dma-page-touching.h>
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/mod_devicetable.h>
@@ -185,6 +186,11 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 		iommu ? " " : " not ");
 
 	arch_setup_dma_ops(dev, dma_start, size, iommu, coherent);
+
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	if (!dev->dma_ops)
+		setup_dma_page_touching_ops(dev);
+#endif
 
 	return 0;
 }
