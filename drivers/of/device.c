@@ -7,6 +7,7 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/dma-direct.h> /* for bus_dma_region */
 #include <linux/dma-map-ops.h>
+#include <linux/dma-page-touching.h>
 #include <linux/init.h>
 #include <linux/mod_devicetable.h>
 #include <linux/slab.h>
@@ -166,6 +167,11 @@ int of_dma_configure_id(struct device *dev, struct device_node *np,
 		!ret ? " " : " not ");
 
 	arch_setup_dma_ops(dev, coherent);
+
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	if (!dev->dma_ops)
+		setup_dma_page_touching_ops(dev);
+#endif
 
 	if (ret)
 		of_dma_set_restricted_buffer(dev, np);
