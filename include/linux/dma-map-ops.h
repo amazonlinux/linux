@@ -7,6 +7,7 @@
 #define _LINUX_DMA_MAP_OPS_H
 
 #include <linux/dma-mapping.h>
+#include <linux/dma-page-touching.h>
 #include <linux/pgtable.h>
 
 struct cma;
@@ -321,6 +322,10 @@ void arch_setup_dma_ops(struct device *dev, u64 dma_base, u64 size,
 static inline void arch_setup_dma_ops(struct device *dev, u64 dma_base,
 		u64 size, const struct iommu_ops *iommu, bool coherent)
 {
+#ifdef CONFIG_DMA_PAGE_TOUCHING
+	if (!dev->dma_ops)
+		setup_dma_page_touching_ops(dev);
+#endif
 }
 #endif /* CONFIG_ARCH_HAS_SETUP_DMA_OPS */
 
