@@ -3,6 +3,7 @@
  * Copyright 2015-2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include "ena_devlink.h"
 #include "ena_phc.h"
 
 #ifdef ENA_PHC_SUPPORT
@@ -17,7 +18,8 @@ static int ena_phc_adjtime(struct ptp_clock_info *clock_info, s64 delta)
 	return -EOPNOTSUPP;
 }
 
-static int ena_phc_enable(struct ptp_clock_info *clock_info, struct ptp_clock_request *rq, int on)
+static int ena_phc_feature_enable(struct ptp_clock_info *clock_info, struct ptp_clock_request *rq,
+				  int on)
 {
 	return -EOPNOTSUPP;
 }
@@ -120,8 +122,37 @@ static struct ptp_clock_info ena_ptp_clock_info = {
 	.gettime	= ena_phc_gettime,
 	.settime	= ena_phc_settime,
 #endif /* ENA_PHC_SUPPORT_GETTIME64 */
-	.enable		= ena_phc_enable,
+	.enable		= ena_phc_feature_enable,
 };
+
+/* Enable/Disable PHC by the kernel, affects on the next init flow */
+void ena_phc_enable(struct ena_adapter *adapter, bool enable)
+{
+	struct ena_phc_info *phc_info = adapter->phc_info;
+
+	if (!phc_info) {
+		netdev_err(adapter->netdev, "phc_info is not allocated\n");
+		return;
+	}
+
+	phc_info->enabled = enable;
+}
+
+/* Check if PHC is enabled by the kernel */
+bool ena_phc_is_enabled(struct ena_adapter *adapter)
+{
+	struct ena_phc_info *phc_info = adapter->phc_info;
+
+	return (phc_info && phc_info->enabled);
+}
+
+/* PHC is activated if ptp clock is registered in the kernel */
+bool ena_phc_is_active(struct ena_adapter *adapter)
+{
+	struct ena_phc_info *phc_info = adapter->phc_info;
+
+	return (phc_info && phc_info->clock);
+}
 
 static int ena_phc_register(struct ena_adapter *adapter)
 {
@@ -154,19 +185,34 @@ static int ena_phc_register(struct ena_adapter *adapter)
 	return rc;
 }
 
-bool ena_phc_enabled(struct ena_adapter *adapter)
-{
-	struct ena_phc_info *phc_info = adapter->phc_info;
-
-	return (phc_info && phc_info->clock);
-}
-
 static void ena_phc_unregister(struct ena_adapter *adapter)
 {
 	struct ena_phc_info *phc_info = adapter->phc_info;
 
-	if (ena_phc_enabled(adapter))
+	if (ena_phc_is_active(adapter)) {
 		ptp_clock_unregister(phc_info->clock);
+		phc_info->clock = NULL;
+	}
+}
+
+int ena_phc_alloc(struct ena_adapter *adapter)
+{
+	/* Allocate driver specific PHC info */
+	adapter->phc_info = vzalloc(sizeof(*adapter->phc_info));
+	if (unlikely(!adapter->phc_info)) {
+		netdev_err(adapter->netdev, "Failed to alloc phc_info\n");
+		return -ENOMEM;
+	}
+
+	return 0;
+}
+
+void ena_phc_free(struct ena_adapter *adapter)
+{
+	if (adapter->phc_info) {
+		vfree(adapter->phc_info);
+		adapter->phc_info = NULL;
+	}
 }
 
 int ena_phc_init(struct ena_adapter *adapter)
@@ -175,13 +221,19 @@ int ena_phc_init(struct ena_adapter *adapter)
 	struct net_device *netdev = adapter->netdev;
 	int rc = -EOPNOTSUPP;
 
-	/* Validate phc feature is supported in the device */
+	/* Validate PHC feature is supported in the device */
 	if (!ena_com_phc_supported(ena_dev)) {
-		netdev_dbg(netdev, "PHC feature is not supported\n");
+		netdev_dbg(netdev, "PHC feature is not supported by the device\n");
 		goto err_ena_com_phc_init;
 	}
 
-	/* Allocate and initialize device specific PHC info */
+	/* Validate PHC feature is enabled by the kernel */
+	if (!ena_phc_is_enabled(adapter)) {
+		netdev_dbg(netdev, "PHC feature is not enabled by the kernel\n");
+		goto err_ena_com_phc_init;
+	}
+
+	/* Initialize device specific PHC info */
 	rc = ena_com_phc_init(ena_dev);
 	if (unlikely(rc)) {
 		netdev_err(netdev, "Failed to init phc, error: %d\n", rc);
@@ -195,50 +247,33 @@ int ena_phc_init(struct ena_adapter *adapter)
 		goto err_ena_com_phc_config;
 	}
 
-	/* Allocate and initialize driver specific PHC info */
-	adapter->phc_info = vzalloc(sizeof(*adapter->phc_info));
-	if (unlikely(!adapter->phc_info)) {
-		rc = -ENOMEM;
-		netdev_err(netdev, "Failed to alloc phc_info, error: %d\n", rc);
-		goto err_ena_com_phc_config;
-	}
-
 	/* Register to PTP class driver */
 	rc = ena_phc_register(adapter);
 	if (unlikely(rc)) {
 		netdev_err(netdev, "Failed to register phc, error: %d\n", rc);
-		goto err_ena_phc_register;
+		goto err_ena_com_phc_config;
 	}
 
 	return 0;
 
-err_ena_phc_register:
-	vfree(adapter->phc_info);
-	adapter->phc_info = NULL;
 err_ena_com_phc_config:
 	ena_com_phc_destroy(ena_dev);
 err_ena_com_phc_init:
+	ena_phc_enable(adapter, false);
+	ena_devlink_disable_phc_param(adapter->devlink);
 	return rc;
 }
 
 void ena_phc_destroy(struct ena_adapter *adapter)
 {
 	ena_phc_unregister(adapter);
-
-	if (likely(adapter->phc_info)) {
-		vfree(adapter->phc_info);
-		adapter->phc_info = NULL;
-	}
-
 	ena_com_phc_destroy(adapter->ena_dev);
 }
 
 int ena_phc_get_index(struct ena_adapter *adapter)
 {
-	struct ena_phc_info *phc_info = adapter->phc_info;
-
-	if (ena_phc_enabled(adapter))
-		return ptp_clock_index(phc_info->clock);
+	if (ena_phc_is_active(adapter))
+		return ptp_clock_index(adapter->phc_info->clock);
 
 	return -1;
 }
