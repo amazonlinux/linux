@@ -75,6 +75,12 @@ static int lpc_size = ENA_LPC_DEFAULT_MULTIPLIER;
 module_param(lpc_size, uint, 0444);
 MODULE_PARM_DESC(lpc_size, "Each local page cache (lpc) holds N * 1024 pages. This parameter sets N which is rounded up to a multiplier of 2. If zero, the page cache is disabled. Max: 32\n");
 
+#ifdef ENA_PHC_SUPPORT
+static int phc_enable = 0;
+module_param(phc_enable, uint, 0444);
+MODULE_PARM_DESC(phc_enable, "Enable PHC.\n");
+
+#endif /* ENA_PHC_SUPPORT */
 static struct ena_aenq_handlers aenq_handlers;
 
 static struct workqueue_struct *ena_wq;
@@ -319,8 +325,10 @@ void ena_init_io_rings(struct ena_adapter *adapter,
 		txr->tx_mem_queue_type = ena_dev->tx_mem_queue_type;
 		txr->sgl_size = adapter->max_tx_sgl_size;
 		txr->enable_bql = enable_bql;
-		txr->smoothed_interval =
+		txr->interrupt_interval =
 			ena_com_get_nonadaptive_moderation_interval_tx(ena_dev);
+		/* Initial value, mark as true */
+		txr->interrupt_interval_changed = true;
 		txr->disable_meta_caching = adapter->disable_meta_caching;
 #ifdef ENA_XDP_SUPPORT
 		spin_lock_init(&txr->xdp_tx_lock);
@@ -335,8 +343,10 @@ void ena_init_io_rings(struct ena_adapter *adapter,
 			rxr->ring_size = adapter->requested_rx_ring_size;
 			rxr->rx_copybreak = adapter->rx_copybreak;
 			rxr->sgl_size = adapter->max_rx_sgl_size;
-			rxr->smoothed_interval =
+			rxr->interrupt_interval =
 				ena_com_get_nonadaptive_moderation_interval_rx(ena_dev);
+			/* Initial value, mark as true */
+			rxr->interrupt_interval_changed = true;
 			rxr->empty_rx_queue = 0;
 			rxr->rx_headroom = NET_SKB_PAD;
 			adapter->ena_napi[i].dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
@@ -1103,6 +1113,7 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 	struct ena_rx_buffer *rx_info;
 	struct ena_adapter *adapter;
 	int page_offset, pkt_offset;
+	dma_addr_t pre_reuse_paddr;
 	u16 len, req_id, buf = 0;
 	bool reuse_rx_buf_page;
 	struct sk_buff *skb;
@@ -1168,12 +1179,19 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 
 	buf_len = SKB_DATA_ALIGN(len + buf_offset + tailroom);
 
+	pre_reuse_paddr = dma_unmap_addr(&rx_info->ena_buf, paddr);
+
 	/* If XDP isn't loaded try to reuse part of the RX buffer */
 	reuse_rx_buf_page = !is_xdp_loaded &&
 			    ena_try_rx_buf_page_reuse(rx_info, buf_len, len, pkt_offset);
 
 	if (!reuse_rx_buf_page)
 		ena_unmap_rx_buff(rx_ring, rx_info);
+	else
+		dma_sync_single_for_cpu(rx_ring->dev,
+					pre_reuse_paddr + pkt_offset,
+					len,
+					DMA_FROM_DEVICE);
 
 	skb = ena_alloc_skb(rx_ring, buf_addr, buf_len);
 	if (unlikely(!skb))
@@ -1226,11 +1244,18 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 		buf_len = SKB_DATA_ALIGN(len + buf_offset + tailroom);
 		page_offset = rx_info->page_offset;
 
+		pre_reuse_paddr = dma_unmap_addr(&rx_info->ena_buf, paddr);
+
 		reuse_rx_buf_page = !is_xdp_loaded &&
 				    ena_try_rx_buf_page_reuse(rx_info, buf_len, len, pkt_offset);
 
 		if (!reuse_rx_buf_page)
 			ena_unmap_rx_buff(rx_ring, rx_info);
+		else
+			dma_sync_single_for_cpu(rx_ring->dev,
+						pre_reuse_paddr + pkt_offset,
+						len,
+						DMA_FROM_DEVICE);
 
 		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags, rx_info->page,
 				page_offset + buf_offset, len, buf_len);
@@ -1528,6 +1553,8 @@ error:
 		ena_increase_stat(&rx_ring->rx_stats.bad_desc_num, 1,
 				  &rx_ring->syncp);
 		ena_reset_device(adapter, ENA_REGS_RESET_TOO_MANY_RX_DESCS);
+	} else if (rc == -EFAULT) {
+		ena_reset_device(adapter, ENA_REGS_RESET_RX_DESCRIPTOR_MALFORMED);
 	} else {
 		ena_increase_stat(&rx_ring->rx_stats.bad_req_id, 1,
 				  &rx_ring->syncp);
@@ -1543,7 +1570,10 @@ static void ena_dim_work(struct work_struct *w)
 		net_dim_get_rx_moderation(dim->mode, dim->profile_ix);
 	struct ena_napi *ena_napi = container_of(dim, struct ena_napi, dim);
 
-	ena_napi->rx_ring->smoothed_interval = cur_moder.usec;
+	ena_napi->rx_ring->interrupt_interval = cur_moder.usec;
+	/* DIM will schedule the work in case there was a change in the profile. */
+	ena_napi->rx_ring->interrupt_interval_changed = true;
+
 	dim->state = DIM_START_MEASURE;
 }
 
@@ -1570,27 +1600,33 @@ static void ena_adjust_adaptive_rx_intr_moderation(struct ena_napi *ena_napi)
 void ena_unmask_interrupt(struct ena_ring *tx_ring,
 			  struct ena_ring *rx_ring)
 {
+	u32 rx_interval = tx_ring->interrupt_interval;
 	struct ena_eth_io_intr_reg intr_reg;
-#ifdef ENA_XDP_SUPPORT
-	u32 rx_interval = tx_ring->smoothed_interval;
-#else
-	u32 rx_interval = 0;
-#endif
+	bool no_moderation_update = true;
+
 	/* Rx ring can be NULL when for XDP tx queues which don't have an
 	 * accompanying rx_ring pair.
 	 */
-	if (rx_ring)
+	if (rx_ring) {
 		rx_interval = ena_com_get_adaptive_moderation_enabled(rx_ring->ena_dev) ?
-			rx_ring->smoothed_interval :
+			rx_ring->interrupt_interval :
 			ena_com_get_nonadaptive_moderation_interval_rx(rx_ring->ena_dev);
+
+		no_moderation_update &= !rx_ring->interrupt_interval_changed;
+		rx_ring->interrupt_interval_changed = false;
+	}
+
+	no_moderation_update &= !tx_ring->interrupt_interval_changed;
+	tx_ring->interrupt_interval_changed = false;
 
 	/* Update intr register: rx intr delay,
 	 * tx intr delay and interrupt unmask
 	 */
 	ena_com_update_intr_reg(&intr_reg,
 				rx_interval,
-				tx_ring->smoothed_interval,
-				true);
+				tx_ring->interrupt_interval,
+				true,
+				no_moderation_update);
 
 	ena_increase_stat(&tx_ring->tx_stats.unmask_interrupt, 1,
 			  &tx_ring->syncp);
@@ -2439,14 +2475,12 @@ int ena_up(struct ena_adapter *adapter)
 	 */
 	ena_init_napi_in_range(adapter, 0, io_queue_count);
 
-#ifdef CONFIG_ARM64
-	/* enable DIM by default on ARM machines, also needs to happen
-	 * before enabling IRQs since DIM is ran from napi routine
+	/* Enabling DIM needs to happen before enabling IRQs since DIM
+	 * is run from napi routine
 	 */
 	if (ena_com_interrupt_moderation_supported(adapter->ena_dev))
 		ena_com_enable_adaptive_moderation(adapter->ena_dev);
 
-#endif
 	rc = ena_request_io_irq(adapter);
 	if (rc)
 		goto err_req_irq;
@@ -3407,7 +3441,7 @@ static void set_default_llq_configurations(struct ena_adapter *adapter,
 			ENA_ADMIN_LIST_ENTRY_SIZE_256B);
 
 	if ((llq->entry_size_ctrl_supported & ENA_ADMIN_LIST_ENTRY_SIZE_256B) &&
-		adapter->large_llq_header_enabled) {
+	    adapter->large_llq_header_enabled) {
 		llq_config->llq_ring_entry_size = ENA_ADMIN_LIST_ENTRY_SIZE_256B;
 		llq_config->llq_ring_entry_size_value = 256;
 	} else {
@@ -3717,6 +3751,7 @@ int ena_restore_device(struct ena_adapter *adapter)
 	for (i = 0 ; i < count; i++) {
 		txr = &adapter->tx_ring[i];
 		txr->tx_mem_queue_type = ena_dev->tx_mem_queue_type;
+		txr->tx_max_header_size = ena_dev->tx_max_header_size;
 	}
 
 	rc = ena_device_validate_params(adapter, &get_feat_ctx);
@@ -3880,8 +3915,6 @@ static int check_missing_comp_in_tx_queue(struct ena_adapter *adapter,
 				reset_reason = ENA_REGS_RESET_SUSPECTED_POLL_STARVATION;
 			}
 
-			missed_tx++;
-
 			if (tx_buf->print_once)
 				continue;
 
@@ -3889,6 +3922,7 @@ static int check_missing_comp_in_tx_queue(struct ena_adapter *adapter,
 				     "TX hasn't completed, qid %d, index %d. %u usecs from last napi execution, napi scheduled: %d\n",
 				     tx_ring->qid, i, time_since_last_napi, napi_scheduled);
 
+			missed_tx++;
 			tx_buf->print_once = 1;
 		}
 	}
@@ -4388,10 +4422,12 @@ static int ena_calc_io_queue_size(struct ena_adapter *adapter,
 		if ((llq->entry_size_ctrl_supported & ENA_ADMIN_LIST_ENTRY_SIZE_256B) &&
 		    (ena_dev->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV)) {
 			max_tx_queue_size /= 2;
-			dev_info(&adapter->pdev->dev, "Forcing large headers and decreasing maximum TX queue size to %d\n",
+			dev_info(&adapter->pdev->dev,
+				 "Forcing large headers and decreasing maximum TX queue size to %d\n",
 				 max_tx_queue_size);
 		} else {
-			dev_err(&adapter->pdev->dev, "Forcing large headers failed: LLQ is disabled or device does not support large headers\n");
+			dev_err(&adapter->pdev->dev,
+				"Forcing large headers failed: LLQ is disabled or device does not support large headers\n");
 
 			adapter->large_llq_header_enabled = false;
 			ena_devlink_disable_large_llq_header_param(adapter->devlink);
@@ -4514,12 +4550,22 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_set_drvdata(pdev, adapter);
 
+	rc = ena_phc_alloc(adapter);
+	if (rc) {
+		netdev_err(netdev, "ena_phc_alloc failed\n");
+		goto err_netdev_destroy;
+	}
+
 	adapter->large_llq_header_enabled = !!force_large_llq_header;
 
+#ifdef ENA_PHC_SUPPORT
+	ena_phc_enable(adapter, !!phc_enable);
+
+#endif /* ENA_PHC_SUPPORT */
 	rc = ena_com_allocate_customer_metrics_buffer(ena_dev);
 	if (rc) {
 		netdev_err(netdev, "ena_com_allocate_customer_metrics_buffer failed\n");
-		goto err_netdev_destroy;
+		goto err_free_phc;
 	}
 
 	devlink = ena_devlink_alloc(adapter);
@@ -4684,10 +4730,12 @@ err_device_destroy:
 	ena_com_admin_destroy(ena_dev);
 err_devlink_destroy:
 	ena_devlink_free(devlink);
-err_netdev_destroy:
-	free_netdev(netdev);
 err_metrics_destroy:
 	ena_com_delete_customer_metrics_buffer(ena_dev);
+err_free_phc:
+	ena_phc_free(adapter);
+err_netdev_destroy:
+	free_netdev(netdev);
 err_free_region:
 	ena_release_bars(ena_dev, pdev);
 err_free_ena_dev:
@@ -4755,6 +4803,8 @@ static void __ena_shutoff(struct pci_dev *pdev, bool shutdown)
 	ena_com_delete_host_info(ena_dev);
 
 	ena_com_delete_customer_metrics_buffer(ena_dev);
+
+	ena_phc_free(adapter);
 
 	ena_release_bars(ena_dev, pdev);
 
@@ -4873,13 +4923,19 @@ static struct pci_driver ena_pci_driver = {
 
 static int __init ena_init(void)
 {
+	int ret;
+
 	ena_wq = create_singlethread_workqueue(DRV_MODULE_NAME);
 	if (!ena_wq) {
 		pr_err("Failed to create workqueue\n");
 		return -ENOMEM;
 	}
 
-	return pci_register_driver(&ena_pci_driver);
+	ret = pci_register_driver(&ena_pci_driver);
+	if (ret)
+		destroy_workqueue(ena_wq);
+
+	return ret;
 }
 
 static void __exit ena_cleanup(void)
