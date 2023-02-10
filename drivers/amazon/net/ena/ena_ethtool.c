@@ -342,9 +342,8 @@ static void ena_get_stats(struct ena_adapter *adapter,
 	ena_queue_stats(adapter, &data);
 	ena_com_admin_queue_stats(adapter, &data);
 
-	if (ena_phc_enabled(adapter)) {
+	if (ena_phc_is_active(adapter))
 		ena_com_phc_stats(adapter, &data);
-	}
 }
 
 static void ena_get_ethtool_stats(struct net_device *netdev,
@@ -377,7 +376,7 @@ static int ena_get_sw_stats_count(struct ena_adapter *adapter)
 		    + adapter->xdp_num_queues * ENA_STATS_ARRAY_TX
 		    + ENA_STATS_ARRAY_GLOBAL + ENA_STATS_ARRAY_ENA_COM_ADMIN;
 
-	if (ena_phc_enabled(adapter))
+	if (ena_phc_is_active(adapter))
 		count += ENA_STATS_ARRAY_ENA_COM_PHC;
 
 	return count;
@@ -515,9 +514,8 @@ static void ena_get_strings(struct ena_adapter *adapter,
 	ena_queue_strings(adapter, &data);
 	ena_com_admin_strings(&data);
 
-	if (ena_phc_enabled(adapter)) {
+	if (ena_phc_is_active(adapter))
 		ena_com_phc_strings(&data);
-	}
 }
 
 static void ena_get_ethtool_strings(struct net_device *netdev,
@@ -637,8 +635,11 @@ static void ena_update_tx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 
 	val = ena_com_get_nonadaptive_moderation_interval_tx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_io_queues; i++)
-		adapter->tx_ring[i].smoothed_interval = val;
+	for (i = 0; i < adapter->num_io_queues; i++) {
+		adapter->tx_ring[i].interrupt_interval_changed =
+			adapter->tx_ring[i].interrupt_interval != val;
+		adapter->tx_ring[i].interrupt_interval = val;
+	}
 }
 
 static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *adapter)
@@ -648,8 +649,11 @@ static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 
 	val = ena_com_get_nonadaptive_moderation_interval_rx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_io_queues; i++)
-		adapter->rx_ring[i].smoothed_interval = val;
+	for (i = 0; i < adapter->num_io_queues; i++) {
+		adapter->rx_ring[i].interrupt_interval_changed =
+			adapter->rx_ring[i].interrupt_interval != val;
+		adapter->rx_ring[i].interrupt_interval = val;
+	}
 }
 
 static int ena_set_coalesce(struct net_device *net_dev,
