@@ -35,8 +35,14 @@ u32 inet6_ehashfn(const struct net *net,
 	net_get_random_once(&inet6_ehash_secret, sizeof(inet6_ehash_secret));
 	net_get_random_once(&ipv6_hash_secret, sizeof(ipv6_hash_secret));
 
-	lhash = (__force u32)laddr->s6_addr32[3];
-	fhash = __ipv6_addr_jhash(faddr, ipv6_hash_secret);
+	lhash = jhash_3words((__force u32)laddr->s6_addr32[3],
+			    (((u32)lport) << 16) | (__force u32)fport,
+			    (__force u32)faddr->s6_addr32[0],
+			    ipv6_hash_secret);
+	fhash = jhash_3words((__force u32)faddr->s6_addr32[1],
+			    (__force u32)faddr->s6_addr32[2],
+			    (__force u32)faddr->s6_addr32[3],
+			    ipv6_hash_secret);
 
 	return __inet6_ehashfn(lhash, lport, fhash, fport,
 			       inet6_ehash_secret + net_hash_mix(net));
