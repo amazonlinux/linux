@@ -1620,4 +1620,6 @@ void mpi3mr_init_debugfs(void);
 void mpi3mr_exit_debugfs(void);
 void mpi3mr_setup_debugfs(struct mpi3mr_ioc *mrioc);
 void mpi3mr_destroy_debugfs(struct mpi3mr_ioc *mrioc);
+void mpi3mr_expander_node_remove(struct mpi3mr_ioc *mrioc,
+	struct mpi3mr_sas_node *sas_expander);
 #endif /*MPI3MR_H_INCLUDED*/
