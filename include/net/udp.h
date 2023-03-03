@@ -207,6 +207,11 @@ void udp_lib_rehash(struct sock *sk, u16 new_hash);
 
 static inline void udp_lib_close(struct sock *sk, long timeout)
 {
+	/* A zerocopy skb has a refcnt of sk and may be
+	 * put into sk_error_queue with TX timestamp
+	 */
+	skb_queue_purge(&sk->sk_error_queue);
+
 	sk_common_release(sk);
 }
 
