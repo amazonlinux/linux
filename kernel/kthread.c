@@ -148,6 +148,7 @@ void *kthread_data(struct task_struct *task)
 {
 	return to_kthread(task)->data;
 }
+EXPORT_SYMBOL_GPL(kthread_data);
 
 /**
  * kthread_probe_data - speculative version of kthread_data()
