@@ -26,7 +26,9 @@
 
 #include "internal.h"
 
-static DEFINE_MUTEX(crypto_default_rng_lock);
+static ____cacheline_aligned_in_smp DEFINE_MUTEX(crypto_reseed_rng_lock);
+static struct crypto_rng *crypto_reseed_rng;
+static ____cacheline_aligned_in_smp DEFINE_MUTEX(crypto_default_rng_lock);
 struct crypto_rng *crypto_default_rng;
 EXPORT_SYMBOL_GPL(crypto_default_rng);
 static int crypto_default_rng_refcnt;
@@ -116,12 +118,12 @@ struct crypto_rng *crypto_alloc_rng(const char *alg_name, u32 type, u32 mask)
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_rng);
 
-static int __crypto_get_default_rng(void)
+static int crypto_get_rng(struct crypto_rng **rngp)
 {
 	struct crypto_rng *rng;
 	int err;
 
-	if (!crypto_default_rng) {
+	if (!*rngp) {
 		rng = crypto_alloc_rng("stdrng", 0, 0);
 		err = PTR_ERR(rng);
 		if (IS_ERR(rng))
@@ -133,10 +135,8 @@ static int __crypto_get_default_rng(void)
 			return err;
 		}
 
-		crypto_default_rng = rng;
+		*rngp = rng;
 	}
-
-	crypto_default_rng_refcnt++;
 
 	return 0;
 }
@@ -146,7 +146,9 @@ int crypto_get_default_rng(void)
 	int err;
 
 	mutex_lock(&crypto_default_rng_lock);
-	err = __crypto_get_default_rng();
+	err = crypto_get_rng(&crypto_default_rng);
+	if (!err)
+		crypto_default_rng_refcnt++;
 	mutex_unlock(&crypto_default_rng_lock);
 
 	return err;
@@ -162,16 +164,17 @@ void crypto_put_default_rng(void)
 EXPORT_SYMBOL_GPL(crypto_put_default_rng);
 
 #if defined(CONFIG_CRYPTO_RNG) || defined(CONFIG_CRYPTO_RNG_MODULE)
-int crypto_del_default_rng(void)
+static int crypto_del_rng(struct crypto_rng **rngp, int *refcntp,
+		      struct mutex *lock)
 {
 	int err = -EBUSY;
 
-	mutex_lock(&crypto_default_rng_lock);
-	if (crypto_default_rng_refcnt)
+	mutex_lock(lock);
+	if (refcntp && *refcntp)
 		goto out;
 
-	crypto_free_rng(crypto_default_rng);
-	crypto_default_rng = NULL;
+	crypto_free_rng(*rngp);
+	*rngp = NULL;
 
 	err = 0;
 
@@ -179,6 +182,14 @@ out:
 	mutex_unlock(&crypto_default_rng_lock);
 
 	return err;
+}
+
+int crypto_del_default_rng(void)
+{
+	return crypto_del_rng(&crypto_default_rng, &crypto_default_rng_refcnt,
+			      &crypto_default_rng_lock) ?:
+	       crypto_del_rng(&crypto_reseed_rng, NULL,
+			      &crypto_reseed_rng_lock);
 }
 EXPORT_SYMBOL_GPL(crypto_del_default_rng);
 #endif
@@ -236,6 +247,7 @@ EXPORT_SYMBOL_GPL(crypto_unregister_rngs);
 static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen,
 				     bool reseed)
 {
+	struct crypto_rng *rng;
 	u8 tmp[256];
 	ssize_t ret;
 
@@ -243,63 +255,38 @@ static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen,
 		return 0;
 
 	if (reseed) {
-		int err;
-		int i;
 		u32 flags = 0;
 
 		/* If reseeding is requested, acquire a lock on
-		 * crypto_default_rng so it is not swapped out until
+		 * crypto_reseed_rng so it is not swapped out until
 		 * the initial random bytes are generated.
 		 *
 		 * The algorithm implementation is also protected with
 		 * a separate mutex (drbg->drbg_mutex) around the
 		 * reseed-and-generate operation.
 		 */
-		mutex_lock(&crypto_default_rng_lock);
+		mutex_lock(&crypto_reseed_rng_lock);
 
 		/* If crypto_default_rng is not set, it will be seeded
 		 * at creation in __crypto_get_default_rng and thus no
 		 * reseeding is needed.
 		 */
-		if (crypto_default_rng)
+		if (crypto_reseed_rng)
 			flags |= CRYPTO_TFM_REQ_NEED_RESEED;
 
-		ret = __crypto_get_default_rng();
+		ret = crypto_get_rng(&crypto_reseed_rng);
 		if (ret) {
-			mutex_unlock(&crypto_default_rng_lock);
+			mutex_unlock(&crypto_reseed_rng_lock);
 			return ret;
 		}
 
-		crypto_tfm_set_flags(crypto_rng_tfm(crypto_default_rng),
-				     flags);
-
-		i = min_t(int, buflen, sizeof(tmp));
-		err = crypto_rng_get_bytes(crypto_default_rng, tmp, i);
-
-		crypto_tfm_clear_flags(crypto_rng_tfm(crypto_default_rng),
-				       flags);
-
-		mutex_unlock(&crypto_default_rng_lock);
-		if (err) {
-			ret = err;
-			goto out;
-		}
-
-		if (copy_to_user(buf, tmp, i)) {
-			ret = -EFAULT;
-			goto out;
-		}
-
-		buflen -= i;
-		buf += i;
-		ret += i;
-
-		if (!buflen)
-			goto out;
+		rng = crypto_reseed_rng;
+		crypto_tfm_set_flags(crypto_rng_tfm(rng), flags);
 	} else {
 		ret = crypto_get_default_rng();
 		if (ret)
 			return ret;
+		rng = crypto_default_rng;
 	}
 
 	for (;;) {
@@ -307,7 +294,7 @@ static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen,
 		int i;
 
 		i = min_t(int, buflen, sizeof(tmp));
-		err = crypto_rng_get_bytes(crypto_default_rng, tmp, i);
+		err = crypto_rng_get_bytes(rng, tmp, i);
 		if (err) {
 			ret = err;
 			break;
@@ -332,8 +319,10 @@ static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen,
 		}
 	}
 
- out:
-	crypto_put_default_rng();
+	if (reseed)
+		mutex_unlock(&crypto_reseed_rng_lock);
+	else
+		crypto_put_default_rng();
 	memzero_explicit(tmp, sizeof(tmp));
 
 	return ret;
