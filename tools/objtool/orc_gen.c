@@ -9,6 +9,7 @@
 #include <linux/objtool.h>
 #include <asm/orc_types.h>
 
+#include <arch/elf.h>
 #include <objtool/check.h>
 #include <objtool/warn.h>
 #include <objtool/endianness.h>
@@ -101,7 +102,7 @@ static int write_orc_entry(struct elf *elf, struct section *orc_sec,
 	orc->bp_offset = bswap_if_needed(orc->bp_offset);
 
 	/* populate reloc for ip */
-	if (elf_add_reloc_to_insn(elf, ip_sec, idx * sizeof(int), R_X86_64_PC32,
+	if (elf_add_reloc_to_insn(elf, ip_sec, idx * sizeof(int), R_REL32,
 				  insn_sec, insn_off))
 		return -1;
 
