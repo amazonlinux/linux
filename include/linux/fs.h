@@ -1625,6 +1625,7 @@ extern struct dentry *vfs_tmpfile(struct dentry *dentry, umode_t mode,
 extern void inode_init_owner(struct inode *inode, const struct inode *dir,
 			umode_t mode);
 extern bool may_open_dev(const struct path *path);
+umode_t mode_strip_sgid(const struct inode *dir, umode_t mode);
 /*
  * VFS FS_IOC_FIEMAP helper definitions.
  */
