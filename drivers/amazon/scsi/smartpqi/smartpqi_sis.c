@@ -44,7 +44,7 @@
 #define SIS_CLEAR_CTRL_TO_HOST_DOORBELL		0x1000
 
 #define SIS_CMD_STATUS_SUCCESS			0x1
-#define SIS_CMD_COMPLETE_TIMEOUT_SECS		(30 * HZ)
+#define SIS_CMD_COMPLETE_TIMEOUT_SECS		30
 #define SIS_CMD_COMPLETE_POLL_INTERVAL_MSECS	10
 
 /* used with SIS_CMD_GET_ADAPTER_PROPERTIES command */
@@ -63,11 +63,11 @@
 #define SIS_CTRL_KERNEL_UP			0x80
 #define SIS_CTRL_KERNEL_PANIC			0x100
 #if TORTUGA
-#define SIS_CTRL_READY_TIMEOUT_SECS		(150 * HZ)
+#define SIS_CTRL_READY_TIMEOUT_SECS		150
 #else
-#define SIS_CTRL_READY_TIMEOUT_SECS		(180 * HZ)
+#define SIS_CTRL_READY_TIMEOUT_SECS		180
 #endif
-#define SIS_CTRL_READY_RESUME_TIMEOUT_SECS	(90 * HZ)
+#define SIS_CTRL_READY_RESUME_TIMEOUT_SECS	90
 #define SIS_CTRL_READY_POLL_INTERVAL_MSECS	10
 
 enum sis_fw_triage_status {
@@ -98,13 +98,15 @@ struct sis_base_struct {
 
 #pragma pack()
 
+unsigned int sis_ctrl_ready_timeout_secs = SIS_CTRL_READY_TIMEOUT_SECS;
+
 static int sis_wait_for_ctrl_ready_with_timeout(struct pqi_ctrl_info *ctrl_info,
 	unsigned int timeout_secs)
 {
 	unsigned long timeout;
 	u32 status;
 
-	timeout = timeout_secs + jiffies;
+	timeout = (timeout_secs * HZ) + jiffies;
 
 	while (1) {
 		status = readl(&ctrl_info->registers->sis_firmware_status);
@@ -134,7 +136,7 @@ static int sis_wait_for_ctrl_ready_with_timeout(struct pqi_ctrl_info *ctrl_info,
 int sis_wait_for_ctrl_ready(struct pqi_ctrl_info *ctrl_info)
 {
 	return sis_wait_for_ctrl_ready_with_timeout(ctrl_info,
-		SIS_CTRL_READY_TIMEOUT_SECS);
+		sis_ctrl_ready_timeout_secs);
 }
 
 int sis_wait_for_ctrl_ready_resume(struct pqi_ctrl_info *ctrl_info)
@@ -150,7 +152,7 @@ bool sis_is_firmware_running(struct pqi_ctrl_info *ctrl_info)
 
 	status = readl(&ctrl_info->registers->sis_firmware_status);
 
-	if (status & SIS_CTRL_KERNEL_PANIC)
+	if (status != ~0 && (status & SIS_CTRL_KERNEL_PANIC))
 		running = false;
 	else
 		running = true;
@@ -206,6 +208,7 @@ static int sis_send_sync_cmd(struct pqi_ctrl_info *ctrl_info,
 
 	/* Disable doorbell interrupts by masking all interrupts. */
 	writel(~0, &registers->sis_interrupt_mask);
+	usleep_range(1000, 2000);
 
 	/*
 	 * Force the completion of the interrupt mask register write before
@@ -221,7 +224,7 @@ static int sis_send_sync_cmd(struct pqi_ctrl_info *ctrl_info,
 	 * the top of the loop in order to give the controller time to start
 	 * processing the command before we start polling.
 	 */
-	timeout = SIS_CMD_COMPLETE_TIMEOUT_SECS + jiffies;
+	timeout = (SIS_CMD_COMPLETE_TIMEOUT_SECS * HZ) + jiffies;
 	while (1) {
 		msleep(SIS_CMD_COMPLETE_POLL_INTERVAL_MSECS);
 		doorbell = readl(&registers->sis_ctrl_to_host_doorbell);
@@ -358,7 +361,7 @@ out:
 	return rc;
 }
 
-#define SIS_DOORBELL_BIT_CLEAR_TIMEOUT_SECS	(30 * HZ)
+#define SIS_DOORBELL_BIT_CLEAR_TIMEOUT_SECS	30
 
 static int sis_wait_for_doorbell_bit_to_clear(
 	struct pqi_ctrl_info *ctrl_info, u32 bit)
@@ -367,7 +370,7 @@ static int sis_wait_for_doorbell_bit_to_clear(
 	u32 doorbell_register;
 	unsigned long timeout;
 
-	timeout = SIS_DOORBELL_BIT_CLEAR_TIMEOUT_SECS + jiffies;
+	timeout = (SIS_DOORBELL_BIT_CLEAR_TIMEOUT_SECS * HZ) + jiffies;
 
 	while (1) {
 		doorbell_register =
@@ -395,6 +398,7 @@ static int sis_wait_for_doorbell_bit_to_clear(
 static inline int sis_set_doorbell_bit(struct pqi_ctrl_info *ctrl_info, u32 bit)
 {
 	writel(bit, &ctrl_info->registers->sis_host_to_ctrl_doorbell);
+	usleep_range(1000, 2000);
 
 	return sis_wait_for_doorbell_bit_to_clear(ctrl_info, bit);
 }
@@ -435,6 +439,7 @@ int sis_reenable_sis_mode(struct pqi_ctrl_info *ctrl_info)
 void sis_write_driver_scratch(struct pqi_ctrl_info *ctrl_info, u32 value)
 {
 	writel(value, &ctrl_info->registers->sis_driver_scratch);
+	usleep_range(1000, 2000);
 }
 
 u32 sis_read_driver_scratch(struct pqi_ctrl_info *ctrl_info)
@@ -455,7 +460,7 @@ void sis_soft_reset(struct pqi_ctrl_info *ctrl_info)
 		&ctrl_info->registers->sis_host_to_ctrl_doorbell);
 }
 
-#define SIS_FW_TRIAGE_STATUS_TIMEOUT_SECS		(300 * HZ)
+#define SIS_FW_TRIAGE_STATUS_TIMEOUT_SECS		300
 #define SIS_FW_TRIAGE_STATUS_POLL_INTERVAL_SECS		1
 
 int sis_wait_for_fw_triage_completion(struct pqi_ctrl_info *ctrl_info)
@@ -464,7 +469,7 @@ int sis_wait_for_fw_triage_completion(struct pqi_ctrl_info *ctrl_info)
 	enum sis_fw_triage_status status;
 	unsigned long timeout;
 
-	timeout = SIS_FW_TRIAGE_STATUS_TIMEOUT_SECS + jiffies;
+	timeout = (SIS_FW_TRIAGE_STATUS_TIMEOUT_SECS * HZ) + jiffies;
 	while (1) {
 		status = sis_read_firmware_triage_status(ctrl_info);
 		if (status == FW_TRIAGE_COND_INVALID) {
@@ -492,7 +497,7 @@ int sis_wait_for_fw_triage_completion(struct pqi_ctrl_info *ctrl_info)
 
 }
 
-static void __attribute__((unused)) verify_structures(void)
+void sis_verify_structures(void)
 {
 	BUILD_BUG_ON(offsetof(struct sis_base_struct,
 		revision) != 0x0);
