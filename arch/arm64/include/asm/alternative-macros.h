@@ -230,7 +230,7 @@ alternative_has_feature_likely(unsigned long feature)
 			   "feature must be < ARM64_NCAPS");
 
 	asm_volatile_goto(
-	ALTERNATIVE_CB("b	%l[l_no]", %[feature], alt_cb_patch_nops)
+	ALTERNATIVE("b	%l[l_no]", "nop", %[feature])
 	:
 	: [feature] "i" (feature)
 	:
