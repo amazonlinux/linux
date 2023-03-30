@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
+/* SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB */
 /*
- * Copyright 2015-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2015-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef DEVLINK_H
@@ -12,9 +12,8 @@
 #endif
 
 #ifdef ENA_DEVLINK_SUPPORT
-
 #define ENA_DEVLINK_PRIV(devlink) \
-	(*(struct ena_adapter **) devlink_priv(devlink))
+	(*(struct ena_adapter **)devlink_priv(devlink))
 
 struct devlink *ena_devlink_alloc(struct ena_adapter *adapter);
 void ena_devlink_free(struct devlink *devlink);
@@ -22,9 +21,9 @@ void ena_devlink_register(struct devlink *devlink, struct device *dev);
 void ena_devlink_unregister(struct devlink *devlink);
 void ena_devlink_params_get(struct devlink *devlink);
 void ena_devlink_disable_large_llq_header_param(struct devlink *devlink);
+void ena_devlink_disable_phc_param(struct devlink *devlink);
 
 #else /* ENA_DEVLINK_SUPPORT */
-
 #ifdef ENA_NO_DEVLINK_HEADERS
 struct devlink {};
 #endif
@@ -39,7 +38,7 @@ static inline void ena_devlink_register(struct devlink *devlink, struct device *
 static inline void ena_devlink_unregister(struct devlink *devlink) { }
 static inline void ena_devlink_params_get(struct devlink *devlink) { }
 static inline void ena_devlink_disable_large_llq_header_param(struct devlink *devlink) { }
+static inline void ena_devlink_disable_phc_param(struct devlink *devlink) { }
 
 #endif /* ENA_DEVLINK_SUPPORT */
-
 #endif /* DEVLINK_H */
