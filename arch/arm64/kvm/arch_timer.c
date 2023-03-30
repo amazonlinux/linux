@@ -213,7 +213,7 @@ static u64 kvm_timer_compute_delta(struct arch_timer_context *timer_ctx)
 		ns = cyclecounter_cyc2ns(timecounter->cc,
 					 cval - now,
 					 timecounter->mask,
-					 &timecounter->frac);
+					 &timer_ctx->ns_frac);
 		return ns;
 	}
 
