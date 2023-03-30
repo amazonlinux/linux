@@ -49,7 +49,7 @@
 /* ENA adaptive interrupt moderation settings */
 
 #define ENA_INTR_INITIAL_TX_INTERVAL_USECS 64
-#define ENA_INTR_INITIAL_RX_INTERVAL_USECS 0
+#define ENA_INTR_INITIAL_RX_INTERVAL_USECS 20
 #define ENA_DEFAULT_INTR_DELAY_RESOLUTION 1
 
 #define ENA_HASH_KEY_SIZE 40
@@ -302,8 +302,8 @@ struct ena_com_phc_info {
 	/* Request id sent to the device */
 	u16 req_id;
 
-	/* True if PHC is enabled */
-	bool enabled;
+	/* True if PHC is active in the device */
+	bool active;
 
 	/* PHC shared memory - memory handle */
 
@@ -1146,13 +1146,16 @@ static inline int ena_com_get_customer_metric_count(struct ena_com_dev *ena_dev)
  * @rx_delay_interval: Rx interval in usecs
  * @tx_delay_interval: Tx interval in usecs
  * @unmask: unmask enable/disable
+ * @no_moderation_update: 0 - Indicates that any of the TX/RX intervals was
+ *                        updated, 1 - otherwise
  *
  * Prepare interrupt update register with the supplied parameters.
  */
 static inline void ena_com_update_intr_reg(struct ena_eth_io_intr_reg *intr_reg,
 					   u32 rx_delay_interval,
 					   u32 tx_delay_interval,
-					   bool unmask)
+					   bool unmask,
+					   bool no_moderation_update)
 {
 	intr_reg->intr_control = 0;
 	intr_reg->intr_control |= rx_delay_interval &
@@ -1164,6 +1167,10 @@ static inline void ena_com_update_intr_reg(struct ena_eth_io_intr_reg *intr_reg,
 
 	if (unmask)
 		intr_reg->intr_control |= ENA_ETH_IO_INTR_REG_INTR_UNMASK_MASK;
+
+	intr_reg->intr_control |=
+		(((u32)no_moderation_update) << ENA_ETH_IO_INTR_REG_NO_MODERATION_UPDATE_SHIFT) &
+			ENA_ETH_IO_INTR_REG_NO_MODERATION_UPDATE_MASK;
 }
 
 static inline u8 *ena_com_get_next_bounce_buffer(struct ena_com_io_bounce_buffer_control *bounce_buf_ctrl)
