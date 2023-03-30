@@ -72,5 +72,6 @@
 #define ARM64_WORKAROUND_SPECULATIVE_SSBS	62
 
 #define ARM64_NCAPS				63
+#define ARM64_HAS_ECV_CNTPOFF       64
 
 #endif /* __ASM_CPUCAPS_H */
