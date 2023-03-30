@@ -29,7 +29,7 @@
 
 #define DRV_MODULE_GEN_MAJOR	2
 #define DRV_MODULE_GEN_MINOR	8
-#define DRV_MODULE_GEN_SUBMINOR 1
+#define DRV_MODULE_GEN_SUBMINOR 3
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -125,8 +125,10 @@
 
 struct ena_page_cache;
 
+#ifdef ENA_PHC_SUPPORT
 struct ena_phc_info;
 
+#endif
 struct ena_irq {
 	irq_handler_t handler;
 	void *data;
@@ -320,8 +322,13 @@ struct ena_ring {
 	enum ena_admin_placement_policy_type tx_mem_queue_type;
 
 	struct ena_com_rx_buf_info ena_bufs[ENA_PKT_MAX_BUFS];
-	u32  smoothed_interval;
-	u32  per_napi_packets;
+	u32 interrupt_interval;
+	/* Indicates whether interrupt interval has changed since previous set.
+	 * This flag will be kept up, until cleared by the routine which updates
+	 * the device with the modified interrupt interval value.
+	 */
+	bool interrupt_interval_changed;
+	u32 per_napi_packets;
 	u16 non_empty_napi_events;
 	struct u64_stats_sync syncp;
 	union {
@@ -421,6 +428,10 @@ struct ena_adapter {
 	unsigned long missing_tx_completion_to;
 
 	char name[ENA_NAME_MAX_LEN];
+#ifdef ENA_PHC_SUPPORT
+
+	struct ena_phc_info *phc_info;
+#endif
 
 	unsigned long flags;
 	/* TX */
@@ -459,8 +470,6 @@ struct ena_adapter {
 #endif
 	u32 xdp_first_ring;
 	u32 xdp_num_queues;
-
-	struct ena_phc_info *phc_info;
 };
 
 void ena_set_ethtool_ops(struct net_device *netdev);
