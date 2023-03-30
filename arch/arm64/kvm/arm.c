@@ -200,6 +200,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_ARM_NISV_TO_USER:
 	case KVM_CAP_ARM_INJECT_EXT_DABT:
 	case KVM_CAP_PTP_KVM:
+	case KVM_CAP_COUNTER_OFFSET:
 		r = 1;
 		break;
 	case KVM_CAP_ARM_SET_DEVICE_ADDR:
@@ -1311,6 +1312,13 @@ long kvm_arch_vm_ioctl(struct file *filp,
 			return -EFAULT;
 
 		return 0;
+	}
+	case KVM_ARM_SET_COUNTER_OFFSET: {
+		struct kvm_arm_counter_offset offset;
+
+		if (copy_from_user(&offset, argp, sizeof(offset)))
+			return -EFAULT;
+		return kvm_vm_ioctl_set_counter_offset(kvm, &offset);
 	}
 	default:
 		return -EINVAL;
