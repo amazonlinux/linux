@@ -399,6 +399,38 @@ static inline bool __hyp_handle_ptrauth(struct kvm_vcpu *vcpu)
 	return true;
 }
 
+static bool __kvm_hyp_handle_cntpct(struct kvm_vcpu *vcpu)
+{
+	struct arch_timer_context *ctxt;
+	u32 sysreg;
+	u64 val;
+
+	/*
+	 * We only get here for 64bit guests, 32bit guests will hit
+	 * the long and winding road all the way to the standard
+	 * handling. Yes, it sucks to be irrelevant.
+	 */
+	sysreg = esr_sys64_to_sysreg(kvm_vcpu_get_esr(vcpu));
+
+	switch (sysreg) {
+	case SYS_CNTPCT_EL0:
+	case SYS_CNTPCTSS_EL0:
+		ctxt = vcpu_ptimer(vcpu);
+		break;
+	default:
+		return false;
+	}
+
+	val = arch_timer_read_cntpct_el0();
+
+	if (ctxt->offset.vm_offset)
+		val -= *kern_hyp_va(ctxt->offset.vm_offset);
+
+	vcpu_set_reg(vcpu, kvm_vcpu_sys_get_rt(vcpu), val);
+	__kvm_skip_instr(vcpu);
+	return true;
+}
+
 /*
  * Return true when we were able to fixup the guest exit and should return to
  * the guest, false when we should restore the host state and return to the
@@ -476,6 +508,9 @@ static inline bool fixup_guest_exit(struct kvm_vcpu *vcpu, u64 *exit_code)
 		if (ret == 1)
 			goto guest;
 	}
+
+	if (__kvm_hyp_handle_cntpct(vcpu))
+		goto guest;
 
 exit:
 	/* Return to the host kernel and handle the exit */
