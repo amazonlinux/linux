@@ -178,6 +178,8 @@ struct kvm_arch {
 #define KVM_ARCH_FLAG_VCPU_HAS_IMP_DEF_PMU		6
 	/* VM counter offset */
 #define KVM_ARCH_FLAG_VM_COUNTER_OFFSET			7
+	/* Timer PPIs made immutable */
+#define KVM_ARCH_FLAG_TIMER_PPIS_IMMUTABLE		8
 
 	unsigned long flags;
 
