@@ -1762,7 +1762,7 @@ static void arm_cmn_migrate(struct arm_cmn *cmn, unsigned int cpu)
 
 	perf_pmu_migrate_context(&cmn->pmu, cmn->cpu, cpu);
 	for (i = 0; i < cmn->num_dtcs; i++)
-		irq_set_affinity(cmn->dtc[i].irq, cpumask_of(cpu));
+		irq_set_affinity_hint(cmn->dtc[i].irq, cpumask_of(cpu));
 	cmn->cpu = cpu;
 }
 
@@ -1855,7 +1855,7 @@ static int arm_cmn_init_irqs(struct arm_cmn *cmn)
 		if (err)
 			return err;
 
-		err = irq_set_affinity(irq, cpumask_of(cmn->cpu));
+		err = irq_set_affinity_hint(irq, cpumask_of(cmn->cpu));
 		if (err)
 			return err;
 	next:
@@ -2321,12 +2321,17 @@ static int arm_cmn_probe(struct platform_device *pdev)
 static int arm_cmn_remove(struct platform_device *pdev)
 {
 	struct arm_cmn *cmn = platform_get_drvdata(pdev);
+	int i;
 
 	writel_relaxed(0, cmn->dtc[0].base + CMN_DT_DTC_CTL);
 
 	perf_pmu_unregister(&cmn->pmu);
 	cpuhp_state_remove_instance_nocalls(arm_cmn_hp_state, &cmn->cpuhp_node);
 	debugfs_remove(cmn->debug);
+
+	for (i = 0; i < cmn->num_dtcs; i++)
+		irq_set_affinity_hint(cmn->dtc[i].irq, NULL);
+
 	return 0;
 }
 
