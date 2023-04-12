@@ -835,9 +835,13 @@ static int set_con2fb_map(int unit, int newidx, int user)
 
 	if (!err && !found) {
 		err = con2fb_acquire_newinfo(vc, info, unit);
-		if (!err)
-			con2fb_map[unit] = newidx;
+		if (err)
+			return err;
+
+		fbcon_add_cursor_work(info);
 	}
+
+	con2fb_map[unit] = newidx;
 
 	/*
 	 * If old fb is not mapped to any of the consoles,
