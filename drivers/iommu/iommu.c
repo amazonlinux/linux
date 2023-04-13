@@ -237,6 +237,8 @@ static int __iommu_probe_device(struct device *dev, struct list_head *group_list
 		list_add_tail(&group->entry, group_list);
 
 	iommu_device_link(iommu_dev, dev);
+	if (dev_is_pci(dev))
+		dev->iommu->pci_32bit_workaround = 1;
 
 	return 0;
 
