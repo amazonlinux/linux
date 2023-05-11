@@ -5626,6 +5626,7 @@ static int nft_add_set_elem(struct nft_ctx *ctx, struct nft_set *set,
 	u64 expiration;
 	u8 ulen;
 	int err;
+	unsigned int max;
 
 	err = nla_parse_nested_deprecated(nla, NFTA_SET_ELEM_MAX, attr,
 					  nft_set_elem_policy, NULL);
@@ -5866,8 +5867,9 @@ static int nft_add_set_elem(struct nft_ctx *ctx, struct nft_set *set,
 		goto err_element_clash;
 	}
 
-	if (set->size &&
-	    !atomic_add_unless(&set->nelems, 1, set->size + set->ndeact)) {
+	max = set->size ? set->size + set->ndeact : UINT_MAX;
+
+	if (!atomic_add_unless(&set->nelems, 1, max)) {
 		err = -ENFILE;
 		goto err_set_full;
 	}
