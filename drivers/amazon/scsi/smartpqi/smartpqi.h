@@ -301,8 +301,8 @@ struct pqi_raid_path_request {
 	u8	additional_cdb_bytes_usage : 3;
 	u8	reserved5 : 3;
 	u8	cdb[16];
-	u8      reserved6[11];
-	u8      ml_device_lun_number;
+        u8      reserved6[11];
+        u8      ml_device_lun_number;
 	__le32	timeout;
 	struct pqi_sg_descriptor sg_descriptors[PQI_MAX_EMBEDDED_SG_DESCRIPTORS];
 };
@@ -476,8 +476,8 @@ struct pqi_task_management_request {
 	struct pqi_iu_header header;
 	__le16	request_id;
 	__le16	nexus_id;
-	u8      reserved;
-	u8      ml_device_lun_number;
+        u8      reserved;
+        u8      ml_device_lun_number;
 	__le16  timeout;
 	u8	lun_number[8];
 	__le16	protocol_specific;
@@ -1127,6 +1127,7 @@ struct pqi_scsi_dev {
 	u8	volume_offline : 1;
 	u8	rescan : 1;
 	u8	ignore_device : 1;
+	u8	erase_in_progress : 1;
 	bool	aio_enabled;		/* only valid for physical disks */
 	bool	in_remove;
 	bool	device_offline;
@@ -1165,8 +1166,8 @@ struct pqi_scsi_dev {
 	struct list_head delete_list_entry;
 
 	struct pqi_stream_data stream_data[NUM_STREAMS_PER_LUN];
-	atomic_t scsi_cmds_outstanding[PQI_MAX_LUNS_PER_DEVICE];
-	atomic_t raid_bypass_cnt;
+        atomic_t scsi_cmds_outstanding[PQI_MAX_LUNS_PER_DEVICE];
+	unsigned int raid_bypass_cnt;
 };
 
 /* VPD inquiry pages */
@@ -1365,7 +1366,7 @@ struct pqi_ctrl_info {
 	u8		tmf_iu_timeout_supported : 1;
 	u8		firmware_triage_supported : 1;
 	u8		rpl_extended_format_4_5_supported : 1;
-	u8              multi_lun_device_supported : 1;
+        u8              multi_lun_device_supported : 1;
 	u8		enable_r1_writes : 1;
 	u8		enable_r5_writes : 1;
 	u8		enable_r6_writes : 1;
