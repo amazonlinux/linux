@@ -693,16 +693,22 @@ static int ena_alloc_rx_buffer(struct ena_ring *rx_ring,
 	return 0;
 }
 
-static void ena_unmap_rx_buff(struct ena_ring *rx_ring,
-			      struct ena_rx_buffer *rx_info)
+static void ena_unmap_rx_buff_attrs(struct ena_ring *rx_ring,
+				    struct ena_rx_buffer *rx_info,
+				    unsigned long attrs)
 {
 	/* LPC pages are unmapped at cache destruction */
 	if (rx_info->is_lpc_page)
 		return;
 
-	dma_unmap_page(rx_ring->dev, rx_info->dma_addr,
-		       ENA_PAGE_SIZE,
-		       DMA_BIDIRECTIONAL);
+	ena_dma_unmap_page_attrs(rx_ring->dev, rx_info->dma_addr, ENA_PAGE_SIZE,
+				 DMA_BIDIRECTIONAL, attrs);
+}
+
+static void ena_unmap_rx_buff(struct ena_ring *rx_ring,
+			      struct ena_rx_buffer *rx_info)
+{
+	ena_unmap_rx_buff_attrs(rx_ring, rx_info, 0);
 }
 
 static void ena_free_rx_page(struct ena_ring *rx_ring,
@@ -880,7 +886,7 @@ static void ena_free_tx_bufs(struct ena_ring *tx_ring)
 
 		ena_unmap_tx_buff(tx_ring, tx_info);
 
-		napi_consume_skb(tx_info->skb, 0);
+		dev_kfree_skb_any(tx_info->skb);
 	}
 	netdev_tx_reset_queue(netdev_get_tx_queue(tx_ring->netdev,
 						  tx_ring->qid));
@@ -1012,7 +1018,7 @@ static int ena_clean_tx_irq(struct ena_ring *tx_ring, u32 budget)
 			  skb);
 
 		tx_bytes += tx_info->total_tx_size;
-		napi_consume_skb(skb, budget);
+		dev_kfree_skb(skb);
 		tx_pkts++;
 		total_done += tx_info->tx_descs;
 
@@ -1063,7 +1069,7 @@ static struct sk_buff *ena_alloc_skb(struct ena_ring *rx_ring, void *first_frag,
 	if (!first_frag)
 		skb = napi_alloc_skb(rx_ring->napi, len);
 	else
-		skb = ena_build_skb(first_frag, len);
+		skb = build_skb(first_frag, len);
 #else
 	if (!first_frag)
 		skb = napi_alloc_skb(rx_ring->napi, len);
@@ -1185,13 +1191,14 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 	reuse_rx_buf_page = !is_xdp_loaded &&
 			    ena_try_rx_buf_page_reuse(rx_info, buf_len, len, pkt_offset);
 
+	dma_sync_single_for_cpu(rx_ring->dev,
+				pre_reuse_paddr + pkt_offset,
+				len,
+				DMA_FROM_DEVICE);
+
 	if (!reuse_rx_buf_page)
-		ena_unmap_rx_buff(rx_ring, rx_info);
-	else
-		dma_sync_single_for_cpu(rx_ring->dev,
-					pre_reuse_paddr + pkt_offset,
-					len,
-					DMA_FROM_DEVICE);
+		ena_unmap_rx_buff_attrs(rx_ring, rx_info, ENA_DMA_ATTR_SKIP_CPU_SYNC);
+
 
 	skb = ena_alloc_skb(rx_ring, buf_addr, buf_len);
 	if (unlikely(!skb))
@@ -1249,13 +1256,14 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 		reuse_rx_buf_page = !is_xdp_loaded &&
 				    ena_try_rx_buf_page_reuse(rx_info, buf_len, len, pkt_offset);
 
+		dma_sync_single_for_cpu(rx_ring->dev,
+					pre_reuse_paddr + pkt_offset,
+					len,
+					DMA_FROM_DEVICE);
+
 		if (!reuse_rx_buf_page)
-			ena_unmap_rx_buff(rx_ring, rx_info);
-		else
-			dma_sync_single_for_cpu(rx_ring->dev,
-						pre_reuse_paddr + pkt_offset,
-						len,
-						DMA_FROM_DEVICE);
+			ena_unmap_rx_buff_attrs(rx_ring, rx_info, ENA_DMA_ATTR_SKIP_CPU_SYNC);
+
 
 		skb_add_rx_frag(skb, skb_shinfo(skb)->nr_frags, rx_info->page,
 				page_offset + buf_offset, len, buf_len);
@@ -3038,7 +3046,7 @@ error_unmap_dma:
 	tx_info->skb = NULL;
 
 error_drop_packet:
-	napi_consume_skb(skb, 0);
+	dev_kfree_skb(skb);
 	return NETDEV_TX_OK;
 }
 
