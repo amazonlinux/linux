@@ -106,20 +106,18 @@ static int pqi_sas_port_add_rphy(struct pqi_sas_port *pqi_sas_port,
 	identify->initiator_port_protocols = SAS_PROTOCOL_ALL;
 	identify->target_port_protocols = SAS_PROTOCOL_STP;
 
-	if (pqi_sas_port->device) {
-		switch (pqi_sas_port->device->device_type) {
-		case SA_DEVICE_TYPE_SAS:
-		case SA_DEVICE_TYPE_SES:
-		case SA_DEVICE_TYPE_NVME:
-			identify->target_port_protocols = SAS_PROTOCOL_SSP;
-			break;
-		case SA_DEVICE_TYPE_EXPANDER_SMP:
-			identify->target_port_protocols = SAS_PROTOCOL_SMP;
-			break;
-		case SA_DEVICE_TYPE_SATA:
-		default:
-			break;
-		}
+	switch (pqi_sas_port->device->device_type) {
+	case SA_DEVICE_TYPE_SAS:
+	case SA_DEVICE_TYPE_SES:
+	case SA_DEVICE_TYPE_NVME:
+		identify->target_port_protocols = SAS_PROTOCOL_SSP;
+		break;
+	case SA_DEVICE_TYPE_EXPANDER_SMP:
+		identify->target_port_protocols = SAS_PROTOCOL_SMP;
+		break;
+	case SA_DEVICE_TYPE_SATA:
+	default:
+		break;
 	}
 
 	return sas_rphy_add(rphy);
@@ -304,10 +302,12 @@ int pqi_add_sas_device(struct pqi_sas_node *pqi_sas_node,
 
 	rc = pqi_sas_port_add_rphy(pqi_sas_port, rphy);
 	if (rc)
-		goto free_sas_port;
+		goto free_sas_rphy;
 
 	return 0;
 
+free_sas_rphy:
+	sas_rphy_free(rphy);
 free_sas_port:
 	pqi_free_sas_port(pqi_sas_port);
 	device->sas_port = NULL;
