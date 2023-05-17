@@ -433,6 +433,9 @@ struct pqi_io_request *pqi_get_io_request(struct pqi_ctrl_info *ctrl_info, struc
 		u32 blk_tag = blk_mq_unique_tag(PQI_SCSI_REQUEST(scmd));
 
 		i = blk_mq_unique_tag_to_tag(blk_tag);
+		if (i < 0 || i >= ctrl_info->scsi_ml_can_queue)
+			return NULL;
+
 		io_request = &ctrl_info->io_request_pool[i];
 		if (atomic_inc_return(&io_request->refcount) > 1) {
 			atomic_dec(&io_request->refcount);

@@ -106,7 +106,9 @@
 	defined(SLES15SP0) || \
 	defined(SLES15SP1) || \
 	defined(SLES15SP2) || \
-	defined(SLES15SP3)
+	defined(SLES15SP3) || \
+	defined(SLES15SP4) || \
+	defined(SLES15SP5)
 #define SLES15
 #endif
 
@@ -188,7 +190,7 @@
 #define shost_use_blk_mq(x) 				1
 #define KFEATURE_ENABLE_SCSI_MAP_QUEUES 		1
 #define KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V3		1
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2		1
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2 		1
 #elif defined(SLES11)
 #define KFEATURE_HAS_WAIT_FOR_COMPLETION_IO		0
 #define KFEATURE_HAS_NO_WRITE_SAME			0
@@ -219,13 +221,13 @@
 #define KFEATURE_ENABLE_SCSI_MAP_QUEUES 		1
 #if defined(SLES15SP0)
 #define KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V1 		1
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1		1
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1 		1
 #elif defined(SLES15SP1)
 #define KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V2 		1
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1		1
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1 		1
 #else
 #define KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V3 		1
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2		1
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2 		1
 #endif
 #elif defined(OEULER2003)
 #define dma_zalloc_coherent				dma_alloc_coherent
@@ -235,12 +237,12 @@
 #define KFEATURE_HAS_BSG_JOB_SMP_HANDLER		1
 #define KFEATURE_HAS_USE_CLUSTERING			0
 #define KFEATURE_HAS_NCQ_PRIO_SUPPORT			1
-#define KFEATURE_ENABLE_PCI_ALLOC_IRQ_VECTORS		1
-#define KFEATURE_HAS_MQ_SUPPORT			1
-#define shost_use_blk_mq(x)				1
-#define KFEATURE_ENABLE_SCSI_MAP_QUEUES		1
+#define KFEATURE_ENABLE_PCI_ALLOC_IRQ_VECTORS 		1
+#define KFEATURE_HAS_MQ_SUPPORT 			1
+#define shost_use_blk_mq(x) 				1
+#define KFEATURE_ENABLE_SCSI_MAP_QUEUES 		1
 #define KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V2		1
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1		1
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1 		1
 #elif defined(UBUNTU1404) || TORTUGA || defined(KCLASS3C)
 #define KFEATURE_HAS_PCI_ENABLE_MSIX_RANGE		0
 #define KFEATURE_HAS_ATOMIC_HOST_BUSY			0
@@ -256,17 +258,20 @@
     defined(SLES12SP5) || defined(RHEL8) || defined(KCLASS5A) || \
     defined(KCLASS5B) || defined(KCLASS5C) || defined(KCLASS5D) || \
     defined(SLES15SP2) || defined(SLES15SP3) || defined(SLES15SP4) || \
-    defined(RHEL9) || defined(CENTOS7ALTARM) || defined(OEULER2203) || \
-    defined(KCLASS6)
+    defined(SLES15SP5) || \
+    defined(RHEL9) || defined (CENTOS7ALTARM) || defined(OEULER2203) || \
+    defined(KCLASS6) || defined(K10SP2)
 #define KFEATURE_HAS_KTIME_SECONDS			1
 #define KFEATURE_HAS_SCSI_REQUEST			1
 #define KFEATURE_HAS_KTIME64				1
 #endif
 #if defined(KCLASS4C) || defined(RHEL8) || defined(SLES15SP1) || \
     defined(SLES15SP2) || defined(SLES15SP3) || defined(SLES15SP4) || \
+    defined(SLES15SP5) || \
     defined(KCLASS5A) ||  defined(KCLASS5B) || defined(KCLASS5C) || \
-    defined(KCLASS5D) ||  defined(SLES12SP5) || defined(CENTOS7ALTARM) || \
-    defined(RHEL9) || defined(OEULER2203) || defined(KCLASS6)
+    defined(KCLASS5D) ||  defined(SLES12SP5) || defined (CENTOS7ALTARM) || \
+    defined(RHEL9) || defined(OEULER2203) || defined(KCLASS6) || \
+    defined(K10SP2)
 #define KFEATURE_HAS_BSG_JOB_SMP_HANDLER		1
 #endif
 #if defined(RHEL8U3) || defined(RHEL8U4) || defined(RHEL8U5) || \
@@ -279,8 +284,9 @@
 #endif
 #if defined(KCLASS5A) || defined(KCLASS5B) || defined(KCLASS5C) || \
     defined(KCLASS5D) || defined(KCLASS4D) || defined(SLES15SP2) || \
-    defined(SLES15SP3) || defined(SLES15SP4) || defined(RHEL9) || \
-    defined(OEULER2203) || defined(KCLASS6)
+    defined(SLES15SP3) || defined(SLES15SP4) || defined(SLES15SP5) || \
+    defined(RHEL9) || defined(OEULER2203) || defined(KCLASS6) || \
+    defined(K10SP2)
 #define dma_zalloc_coherent	dma_alloc_coherent
 #define shost_use_blk_mq(x)	1
 #define KFEATURE_HAS_USE_CLUSTERING			0
@@ -288,14 +294,16 @@
 
 #if defined(KCLASS5B) || defined(KCLASS5C) || defined(KCLASS5D) || \
     defined(KCLASS4D) || defined(SLES15SP2) || defined(SLES15SP3) || \
-    defined(SLES15SP4) || defined(RHEL9) || defined(OEULER2003) || \
-    defined(OEULER2203) || defined(KCLASS6)
+    defined(SLES15SP4) || defined(SLES15SP5) || \
+    defined(RHEL9) || defined(OEULER2003) || \
+    defined(OEULER2203) || defined(KCLASS6) || defined(K10SP2)
 #define IOCTL_INT	unsigned int
 #else
 #define IOCTL_INT	int
 #endif
 
 #if defined(KCLASS5C) || defined(KCLASS5D) || defined(SLES15SP4) || \
+    defined(SLES15SP5) || \
     defined(RHEL9) || defined(OEULER2203) || defined(KCLASS6)
 #define KFEATURE_HAS_HOST_BUSY_FUNCTION			1
 #define FIELD_SIZEOF(t, f) (sizeof(((t*)0)->f))
@@ -305,7 +313,9 @@
 #if defined(KCLASS5A) || defined(KCLASS5B) || defined(KCLASS5C) || \
     defined(KCLASS5D) || defined(KCLASS4C) || defined(KCLASS4D) || \
     defined(RHEL8) || defined(SLES15) || defined(SLES15SP4) || \
-    defined(RHEL9) || defined(OEULER2203) || defined(KCLASS6)
+    defined(SLES15SP5) || \
+    defined(RHEL9) || defined(OEULER2203) || defined(KCLASS6) || \
+    defined(K10SP2)
 #define KFEATURE_HAS_NCQ_PRIO_SUPPORT			1
 #endif
 
@@ -390,10 +400,10 @@
 #define KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V3 		0
 #endif
 #if !defined(KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1)
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1		0
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1 		0
 #endif
 #if !defined(KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2)
-#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2		0
+#define KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2 		0
 #endif
 #if !defined(KFEATURE_HAS_NCQ_PRIO_SUPPORT)
 #define KFEATURE_HAS_NCQ_PRIO_SUPPORT			0
@@ -562,6 +572,10 @@ static inline void pqi_disable_write_same(struct scsi_device *sdev)
 
 #if !defined(PCI_VENDOR_ID_LENOVO)
 #define PCI_VENDOR_ID_LENOVO		0x1d49
+#endif
+
+#if !defined(PCI_VENDOR_ID_IBM)
+#define PCI_VENDOR_ID_IBM		0x1014
 #endif
 
 #if !defined(offsetofend)
