@@ -107,6 +107,33 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 	LINUX_VERSION_CODE >= KERNEL_VERSION(3,10,0)
 #define ENA_BUSY_POLL_SUPPORT
 #endif
+
+/* Distribution kernel version comparison macros.
+ * Distribution kernel versioning format may be A.B.C-D.E.F and standard
+ * KERNEL_VERSION macro covers only the first 3 subversions.
+ * Using 20bit per subversion, as in some cases, subversion D may be a large
+ * number (6 digits).
+ */
+#define ENA_KERNEL_VERSION_16BIT(SV1, SV2, SV3) ((SV1 << 40) | (SV2 << 20) | (SV3))
+#define ENA_KERNEL_VERSION_MAJOR(SV1, SV2, SV3) ENA_KERNEL_VERSION_16BIT(SV1, SV2, SV3)
+#define ENA_KERNEL_VERSION_MINOR(SV1, SV2, SV3) ENA_KERNEL_VERSION_16BIT(SV1, SV2, SV3)
+
+#define ENA_KERNEL_VERSION_GTE(SV1, SV2, SV3, SV4, SV5, SV6) \
+	((ENA_KERNEL_VERSION_MAJOR(ENA_KERNEL_SUBVERSION_1, ENA_KERNEL_SUBVERSION_2, ENA_KERNEL_SUBVERSION_3) > \
+	  ENA_KERNEL_VERSION_MAJOR((SV1), (SV2), (SV3))) || \
+	 (ENA_KERNEL_VERSION_MAJOR(ENA_KERNEL_SUBVERSION_1, ENA_KERNEL_SUBVERSION_2, ENA_KERNEL_SUBVERSION_3) == \
+	  ENA_KERNEL_VERSION_MAJOR((SV1), (SV2), (SV3)) && \
+	  ENA_KERNEL_VERSION_MINOR(ENA_KERNEL_SUBVERSION_4, ENA_KERNEL_SUBVERSION_5, ENA_KERNEL_SUBVERSION_6) >= \
+	  ENA_KERNEL_VERSION_MINOR((SV4), (SV5), (SV6))))
+
+#define ENA_KERNEL_VERSION_LTE(SV1, SV2, SV3, SV4, SV5, SV6) \
+	((ENA_KERNEL_VERSION_MAJOR(ENA_KERNEL_SUBVERSION_1, ENA_KERNEL_SUBVERSION_2, ENA_KERNEL_SUBVERSION_3) < \
+	  ENA_KERNEL_VERSION_MAJOR((SV1), (SV2), (SV3))) || \
+	 (ENA_KERNEL_VERSION_MAJOR(ENA_KERNEL_SUBVERSION_1, ENA_KERNEL_SUBVERSION_2, ENA_KERNEL_SUBVERSION_3) == \
+	  ENA_KERNEL_VERSION_MAJOR((SV1), (SV2), (SV3)) && \
+	  ENA_KERNEL_VERSION_MINOR(ENA_KERNEL_SUBVERSION_4, ENA_KERNEL_SUBVERSION_5, ENA_KERNEL_SUBVERSION_6) <= \
+	  ENA_KERNEL_VERSION_MINOR((SV4), (SV5), (SV6))))
+
 /******************************************************************************/
 /************************** Ubuntu macros *************************************/
 /******************************************************************************/
@@ -176,7 +203,6 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #ifndef SUSE_VERSION
 #define SUSE_VERSION 0
 #endif /* SUSE_VERSION */
-
 
 /******************************************************************************/
 /**************************** RHEL macros *************************************/
@@ -822,17 +848,32 @@ static inline void netdev_rss_key_fill(void *buffer, size_t len)
 
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(4, 6 ,0)) && \
      !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7,3)))
-/* Linux versions 4.4.216 - 4.5 (non inclusive) back propagated page_ref_count
- * function from kernel 4.6. To make things more difficult, Ubuntu didn't add
- * these changes to its 4.4.* kernels
+/* Linux versions 4.4.216 - 4.5 (non inclusive) back propagated
+ * page_ref_count() from kernel 4.6.
+ * Ubuntu didn't add these changes to its 4.4.* kernels.
+ * UEK added this function in kernel 4.1.12-124.43.1
+ * Here is a figure that shows all of the cases:
+ * Legend:
+ * -------- page_ref_count() is present in the kernel
+ * ******** page_ref_count() is missing in the kernel
+ *
+ * Distro\Kernel      4.1.12-124.43.1   4.4.216    4.5    4.6
+ *                           |              |        |      |
+ * Upstrem kernel ***********|**************|--------|******|
+ *                           |              |        |      |
+ * Ubuntu         ***********|**************|********|******|
+ *                           |              |        |      |
+ * UEK            ***********|--------------|--------|------|
  */
-#if !(KERNEL_VERSION(4, 4 ,216) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(4, 5 ,0)) ||\
-      defined(UBUNTU_VERSION_CODE)
+#if (defined(IS_UEK) && !ENA_KERNEL_VERSION_GTE(4, 1, 12, 124, 43, 1)) || \
+    (defined(ubuntu)) || \
+    (!defined(IS_UEK) && !defined(ubuntu) && \
+     !(KERNEL_VERSION(4, 4, 216) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)))
 static inline int page_ref_count(struct page *page)
 {
 	return atomic_read(&page->_count);
 }
-#endif /* !(KERNEL_VERSION(4, 4 ,216) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(4, 5 ,0)) */
+#endif /* (defined(IS_UEK) && !ENA_KERNEL_VERSION_GTE(4, 1, 12, 124, 43, 1)) ... */
 
 static inline void page_ref_inc(struct page *page)
 {
@@ -881,32 +922,16 @@ static inline int numa_mem_id(void)
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 #define ENA_LINEAR_FRAG_SUPPORTED
-static __always_inline struct sk_buff*
-ena_build_skb(void *data, unsigned int frag_size)
-{
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 12, 0)
-	return napi_build_skb(data, frag_size);
-#else
-	return build_skb(data, frag_size);
-#endif
-}
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(4, 6, 0) && \
-	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 3)) && \
-	!(defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE >= UBUNTU_VERSION(4, 2, 0, 42))
-static __always_inline
-void napi_consume_skb(struct sk_buff *skb, int budget)
-{
-	dev_kfree_skb_any(skb);
-}
 #endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0)
 #define ENA_NETDEV_LOGS_WITHOUT_RV
 #endif
 
-#if defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0)
+#if defined(ENA_XDP_SUPPORT) && \
+	(LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0) && \
+	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL == 3) && \
+	 ENA_KERNEL_VERSION_GTE(5, 3, 18, 150300, 59, 49)))
 static __always_inline void
 xdp_init_buff(struct xdp_buff *xdp, u32 frame_sz, struct xdp_rxq_info *rxq)
 {
@@ -928,7 +953,7 @@ xdp_prepare_buff(struct xdp_buff *xdp, unsigned char *hard_start,
 	xdp->data_meta = meta_valid ? data : data + 1;
 }
 
-#endif /* defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE <= KERNEL_VERSION(5, 12, 0) */
+#endif /* defined(ENA_XDP_SUPPORT) && (LINUX_VERSION_CODE <= KERNEL_VERSION(5, 12, 0) && !SUSE_VERSION(...)) */
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 13, 0)
 #define ethtool_sprintf(data, fmt, args...)			\
@@ -944,7 +969,9 @@ xdp_prepare_buff(struct xdp_buff *xdp, unsigned char *hard_start,
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) && \
 	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6)) && \
-	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4))
+	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) && \
+	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL == 3) && \
+	  ENA_KERNEL_VERSION_GTE(5, 3, 18, 150300, 59, 43))
 static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 {
 	memcpy(dev->dev_addr, addr, ETH_ALEN);
@@ -1065,7 +1092,8 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 				      struct napi_struct *napi,
 				      int (*poll)(struct napi_struct *, int))
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)) && \
+	!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 2)))
 #ifndef NAPI_POLL_WEIGHT
 #define NAPI_POLL_WEIGHT 64
 #endif
@@ -1073,6 +1101,54 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 #else
 	netif_napi_add(dev, napi, poll);
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) */
+}
+
+#if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 4))) || \
+    (defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE < UBUNTU_VERSION(4, 5, 0, 0)) || \
+    (defined(IS_UEK) && !ENA_KERNEL_VERSION_GTE(4, 1, 12, 105, 0, 0))
+static inline void dma_unmap_page_attrs(struct device *dev,
+					dma_addr_t addr, size_t size,
+					enum dma_data_direction dir,
+					struct dma_attrs *attrs)
+{
+	struct dma_map_ops *ops = get_dma_ops(dev);
+
+	BUG_ON(!valid_dma_direction(dir));
+	if (ops->unmap_page)
+		ops->unmap_page(dev, addr, size, dir, attrs);
+	debug_dma_unmap_page(dev, addr, size, dir, false);
+}
+#endif /* RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 4)) */
+
+#if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 9)) && \
+     (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 0)) && \
+     (LINUX_VERSION_CODE != KERNEL_VERSION(4, 14, 0))) || \
+    (defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE < UBUNTU_VERSION(4, 5, 0, 0)) || \
+    (defined(IS_UEK) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 13))
+#define ENA_DMA_ATTR_SKIP_CPU_SYNC (1 << DMA_ATTR_SKIP_CPU_SYNC)
+#elif (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(6, 10)))
+#define	ENA_DMA_ATTR_SKIP_CPU_SYNC 0
+#else
+#define ENA_DMA_ATTR_SKIP_CPU_SYNC DMA_ATTR_SKIP_CPU_SYNC
+#endif
+
+static inline void ena_dma_unmap_page_attrs(struct device *dev,
+					    dma_addr_t addr, size_t size,
+					    enum dma_data_direction dir,
+					    unsigned long attrs)
+{
+#if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 9)) && \
+     (LINUX_VERSION_CODE != KERNEL_VERSION(4, 14, 0))) || \
+    (defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE < UBUNTU_VERSION(4, 5, 0, 0)) || \
+    (defined(IS_UEK) && LINUX_VERSION_CODE < KERNEL_VERSION(4, 1, 13))
+	struct dma_attrs dma_attrs;
+
+	init_dma_attrs(&dma_attrs);
+	dma_attrs.flags[0] = attrs;
+	dma_unmap_page_attrs(dev, addr, size, dir, &dma_attrs);
+#else
+	dma_unmap_page_attrs(dev, addr, size, dir, attrs);
+#endif
 }
 
 #endif /* _KCOMPAT_H_ */
