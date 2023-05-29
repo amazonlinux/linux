@@ -1023,22 +1023,26 @@ EXPORT_SYMBOL(device_get_mac_address);
  * @fwnode:	Pointer to the firmware node
  * @index:	Zero-based index of the IRQ
  *
- * Returns Linux IRQ number on success. Other values are determined
- * accordingly to acpi_/of_ irq_get() operation.
+ * Return: Linux IRQ number on success. Negative errno on failure.
  */
 int fwnode_irq_get(const struct fwnode_handle *fwnode, unsigned int index)
 {
 	struct resource res;
 	int ret;
 
-	if (is_of_node(fwnode))
-		return of_irq_get(to_of_node(fwnode), index);
+	if (is_of_node(fwnode)) {
+		ret = of_irq_get(to_of_node(fwnode), index);
+	} else {
+		ret = acpi_irq_get(ACPI_HANDLE_FWNODE(fwnode), index, &res);
+		if (!ret)
+			ret = res.start;
+	}
 
-	ret = acpi_irq_get(ACPI_HANDLE_FWNODE(fwnode), index, &res);
-	if (ret)
-		return ret;
+	/* We treat mapping errors as invalid case */
+	if (ret == 0)
+		return -EINVAL;
 
-	return res.start;
+	return ret;
 }
 EXPORT_SYMBOL(fwnode_irq_get);
 
