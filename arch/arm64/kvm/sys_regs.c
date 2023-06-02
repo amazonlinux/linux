@@ -1264,16 +1264,10 @@ static u64 kvm_arm_update_id_reg(const struct kvm_vcpu *vcpu, u32 encoding, u64 
 	case SYS_ID_AA64PFR0_EL1:
 		if (!vcpu_has_sve(vcpu))
 			val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_SVE);
-		if (kvm_vgic_global_state.type == VGIC_V3) {
-			val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_GIC);
-			val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_GIC), 1);
-		}
 		break;
 	case SYS_ID_AA64PFR1_EL1:
 		if (!kvm_has_mte(vcpu->kvm))
 			val &= ~ARM64_FEATURE_MASK(ID_AA64PFR1_EL1_MTE);
-
-		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR1_EL1_SME);
 		break;
 	case SYS_ID_AA64ISAR1_EL1:
 		if (!vcpu_has_ptrauth(vcpu))
@@ -1286,8 +1280,6 @@ static u64 kvm_arm_update_id_reg(const struct kvm_vcpu *vcpu, u32 encoding, u64 
 		if (!vcpu_has_ptrauth(vcpu))
 			val &= ~(ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_APA3) |
 				 ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_GPA3));
-		if (!cpus_have_final_cap(ARM64_HAS_WFXT))
-			val &= ~ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_WFxT);
 		break;
 	}
 
@@ -1393,6 +1385,20 @@ static unsigned int sve_visibility(const struct kvm_vcpu *vcpu,
 	return REG_HIDDEN;
 }
 
+static u64 read_sanitised_id_mmfr4_el1(struct kvm_vcpu *vcpu,
+				       const struct sys_reg_desc *rd)
+{
+	u64 val;
+	u32 id = reg_to_encoding(rd);
+
+	val = read_sanitised_ftr_reg(id);
+
+	/* CCIDX is not supported */
+	val &= ~ARM64_FEATURE_MASK(ID_MMFR4_CCIDX);
+
+	return val;
+}
+
 static u64 read_sanitised_id_aa64pfr0_el1(struct kvm_vcpu *vcpu,
 					  const struct sys_reg_desc *rd)
 {
@@ -1418,6 +1424,25 @@ static u64 read_sanitised_id_aa64pfr0_el1(struct kvm_vcpu *vcpu,
 	}
 
 	val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_AMU);
+
+	if (kvm_vgic_global_state.type == VGIC_V3) {
+		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_GIC);
+		val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_GIC), 1);
+	}
+
+	return val;
+}
+
+static u64 read_sanitised_id_aa64pfr1_el1(struct kvm_vcpu *vcpu,
+					  const struct sys_reg_desc *rd)
+{
+	u64 val;
+	u32 id = reg_to_encoding(rd);
+
+	val = read_sanitised_ftr_reg(id);
+
+	/* SME is not supported */
+	val &= ~ARM64_FEATURE_MASK(ID_AA64PFR1_EL1_SME);
 
 	return val;
 }
@@ -1539,6 +1564,34 @@ static int set_id_dfr0_el1(struct kvm_vcpu *vcpu,
 	}
 
 	return pmuver_update(vcpu, rd, val, perfmon_to_pmuver(perfmon), valid_pmu);
+}
+
+static u64 read_sanitised_id_aa64isar2_el1(struct kvm_vcpu *vcpu,
+					   const struct sys_reg_desc *rd)
+{
+	u64 val;
+	u32 id = reg_to_encoding(rd);
+
+	val = read_sanitised_ftr_reg(id);
+
+	if (!cpus_have_final_cap(ARM64_HAS_WFXT))
+		val &= ~ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_WFxT);
+
+	return val;
+}
+
+static u64 read_sanitised_id_aa64mmfr2_el1(struct kvm_vcpu *vcpu,
+					   const struct sys_reg_desc *rd)
+{
+	u64 val;
+	u32 id = reg_to_encoding(rd);
+
+	val = read_sanitised_ftr_reg(id);
+
+	/* CCIDX is not supported */
+	val &= ~ID_AA64MMFR2_EL1_CCIDX_MASK;
+
+	return val;
 }
 
 /*
@@ -1814,7 +1867,13 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	AA32_ID_SANITISED(ID_ISAR3_EL1),
 	AA32_ID_SANITISED(ID_ISAR4_EL1),
 	AA32_ID_SANITISED(ID_ISAR5_EL1),
-	AA32_ID_SANITISED(ID_MMFR4_EL1),
+	{ SYS_DESC(SYS_ID_MMFR4_EL1),
+	  .access     = access_id_reg,
+	  .get_user   = get_id_reg,
+	  .set_user   = set_id_reg,
+	  .visibility = aa32_id_visibility,
+	  .reset      = read_sanitised_id_mmfr4_el1,
+	  .val        = 0, },
 	AA32_ID_SANITISED(ID_ISAR6_EL1),
 
 	/* CRm=3 */
@@ -1835,7 +1894,12 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	  .set_user = set_id_reg,
 	  .reset = read_sanitised_id_aa64pfr0_el1,
 	  .val = ID_AA64PFR0_EL1_CSV2_MASK | ID_AA64PFR0_EL1_CSV3_MASK, },
-	ID_SANITISED(ID_AA64PFR1_EL1),
+	{ SYS_DESC(SYS_ID_AA64PFR1_EL1),
+	  .access   = access_id_reg,
+	  .get_user = get_id_reg,
+	  .set_user = set_id_reg,
+	  .reset    = read_sanitised_id_aa64pfr1_el1,
+	  .val      = 0, },
 	ID_UNALLOCATED(4,2),
 	ID_UNALLOCATED(4,3),
 	ID_SANITISED(ID_AA64ZFR0_EL1),
@@ -1861,7 +1925,12 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	/* CRm=6 */
 	ID_SANITISED(ID_AA64ISAR0_EL1),
 	ID_SANITISED(ID_AA64ISAR1_EL1),
-	ID_SANITISED(ID_AA64ISAR2_EL1),
+	{ SYS_DESC(SYS_ID_AA64ISAR2_EL1),
+	  .access   = access_id_reg,
+	  .get_user = get_id_reg,
+	  .set_user = set_id_reg,
+	  .reset    = read_sanitised_id_aa64isar2_el1,
+	  .val      = 0, },
 	ID_UNALLOCATED(6,3),
 	ID_UNALLOCATED(6,4),
 	ID_UNALLOCATED(6,5),
@@ -1871,7 +1940,12 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	/* CRm=7 */
 	ID_SANITISED(ID_AA64MMFR0_EL1),
 	ID_SANITISED(ID_AA64MMFR1_EL1),
-	ID_SANITISED(ID_AA64MMFR2_EL1),
+	{ SYS_DESC(SYS_ID_AA64MMFR2_EL1),
+	  .access   = access_id_reg,
+	  .get_user = get_id_reg,
+	  .set_user = set_id_reg,
+	  .reset    = read_sanitised_id_aa64mmfr2_el1,
+	  .val      = 0, },
 	ID_UNALLOCATED(7,3),
 	ID_UNALLOCATED(7,4),
 	ID_UNALLOCATED(7,5),
