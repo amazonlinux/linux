@@ -40,6 +40,7 @@
  */
 
 static int set_id_reg(struct kvm_vcpu *vcpu, const struct sys_reg_desc *rd, u64 val);
+static u64 kvm_arm_update_id_reg(const struct kvm_vcpu *vcpu, u32 id, u64 val);
 static u64 kvm_arm_read_id_reg(const struct kvm_vcpu *vcpu, u32 encoding);
 static u64 sys_reg_to_index(const struct sys_reg_desc *reg);
 
@@ -1143,9 +1144,14 @@ static int arm64_check_features(struct kvm_vcpu *vcpu,
 	u64 limit = 0;
 	u64 mask = 0;
 
+	/* If the register is RAZ we know the only safe value is 0. */
+	if (sysreg_visible_as_raz(vcpu, rd))
+		return val ? -E2BIG : 0;
+
 	/* For hidden and unallocated idregs without reset, only val = 0 is allowed. */
 	if (rd->reset) {
 		limit = rd->reset(vcpu, rd);
+		limit = kvm_arm_update_id_reg(vcpu, id, limit);
 		ftr_reg = get_arm64_ftr_reg(id);
 		if (!ftr_reg)
 			return -EINVAL;
@@ -1252,10 +1258,8 @@ static u64 general_read_kvm_sanitised_reg(struct kvm_vcpu *vcpu, const struct sy
 	return read_sanitised_ftr_reg(reg_to_encoding(rd));
 }
 
-static u64 kvm_arm_read_id_reg(const struct kvm_vcpu *vcpu, u32 encoding)
+static u64 kvm_arm_update_id_reg(const struct kvm_vcpu *vcpu, u32 encoding, u64 val)
 {
-	u64 val = IDREG(vcpu->kvm, encoding);
-
 	switch (encoding) {
 	case SYS_ID_AA64PFR0_EL1:
 		if (!vcpu_has_sve(vcpu))
@@ -1285,6 +1289,16 @@ static u64 kvm_arm_read_id_reg(const struct kvm_vcpu *vcpu, u32 encoding)
 		if (!cpus_have_final_cap(ARM64_HAS_WFXT))
 			val &= ~ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_WFxT);
 		break;
+	}
+
+	return val;
+}
+
+static u64 kvm_arm_read_id_reg(const struct kvm_vcpu *vcpu, u32 encoding)
+{
+	u64 val = IDREG(vcpu->kvm, encoding);
+
+	switch (encoding) {
 	case SYS_ID_AA64DFR0_EL1:
 		/* Set PMUver to the required version */
 		val &= ~ARM64_FEATURE_MASK(ID_AA64DFR0_EL1_PMUVer);
@@ -1298,7 +1312,7 @@ static u64 kvm_arm_read_id_reg(const struct kvm_vcpu *vcpu, u32 encoding)
 		break;
 	}
 
-	return val;
+	return kvm_arm_update_id_reg(vcpu, encoding, val);
 }
 
 /* Read a sanitised cpufeature ID register by sys_reg_desc */
@@ -1550,6 +1564,16 @@ static int set_id_reg(struct kvm_vcpu *vcpu, const struct sys_reg_desc *rd,
 	ret = arm64_check_features(vcpu, rd, val);
 	if (!ret)
 		IDREG(vcpu->kvm, id) = val;
+
+	/*
+	 * arm64_check_features() returns -E2BIG to indicate the register's
+	 * feature set is a superset of the maximally-allowed register value.
+	 * While it would be nice to precisely describe this to userspace, the
+	 * existing UAPI for KVM_SET_ONE_REG has it that invalid register
+	 * writes return -EINVAL.
+	 */
+	if (ret == -E2BIG)
+		ret = -EINVAL;
 
 	return ret;
 }
