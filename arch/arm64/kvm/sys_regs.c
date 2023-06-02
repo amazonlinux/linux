@@ -1123,10 +1123,6 @@ static u64 kvm_arm_read_id_reg(const struct kvm_vcpu *vcpu, u32 encoding)
 		if (!vcpu_has_sve(vcpu))
 			val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_SVE);
 		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_AMU);
-		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV2);
-		val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV2), (u64)vcpu->kvm->arch.pfr0_csv2);
-		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV3);
-		val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV3), (u64)vcpu->kvm->arch.pfr0_csv3);
 		if (kvm_vgic_global_state.type == VGIC_V3) {
 			val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_GIC);
 			val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_GIC), 1);
@@ -1255,6 +1251,7 @@ static int set_id_aa64pfr0_el1(struct kvm_vcpu *vcpu,
 			       const struct sys_reg_desc *rd,
 			       u64 val)
 {
+	u64 new_val = val;
 	u8 csv2, csv3;
 
 	/*
@@ -1280,9 +1277,7 @@ static int set_id_aa64pfr0_el1(struct kvm_vcpu *vcpu,
 	if (val)
 		return -EINVAL;
 
-	vcpu->kvm->arch.pfr0_csv2 = csv2;
-	vcpu->kvm->arch.pfr0_csv3 = csv3;
-
+	IDREG(vcpu->kvm, reg_to_encoding(rd)) = new_val;
 	return 0;
 }
 
@@ -1368,9 +1363,9 @@ static int set_id_dfr0_el1(struct kvm_vcpu *vcpu,
 /*
  * cpufeature ID register user accessors
  *
- * For now, these registers are immutable for userspace, so no values
- * are stored, and for set_id_reg() we don't allow the effective value
- * to be changed.
+ * For now, only some registers or some part of registers are mutable for
+ * userspace. For those registers immutable for userspace, in set_id_reg()
+ * we don't allow the effective value to be changed.
  */
 static int get_id_reg(struct kvm_vcpu *vcpu, const struct sys_reg_desc *rd,
 		      u64 *val)
@@ -2903,12 +2898,18 @@ int kvm_sys_reg_get_user(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg,
 	if (!r)
 		return -ENOENT;
 
+	if (is_id_reg(reg_to_encoding(r)))
+		mutex_lock(&vcpu->kvm->arch.config_lock);
+
 	if (r->get_user) {
 		ret = (r->get_user)(vcpu, r, &val);
 	} else {
 		val = __vcpu_sys_reg(vcpu, r->reg);
 		ret = 0;
 	}
+
+	if (is_id_reg(reg_to_encoding(r)))
+		mutex_unlock(&vcpu->kvm->arch.config_lock);
 
 	if (!ret)
 		ret = put_user(val, uaddr);
@@ -2947,8 +2948,20 @@ int kvm_sys_reg_set_user(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg,
 	if (!r)
 		return -ENOENT;
 
+	/* Only allow userspace to change the idregs before VM running */
+	if (is_id_reg(reg_to_encoding(r)) &&
+	    test_bit(KVM_ARCH_FLAG_HAS_RAN_ONCE, &vcpu->kvm->arch.flags) ) {
+		if (val == read_id_reg(vcpu, r))
+			return 0;
+		return -EBUSY;
+	}
+
 	if (sysreg_user_write_ignore(vcpu, r))
 		return 0;
+
+	/* ID regs are global to the VM and cannot be updated concurrently */
+	if (is_id_reg(reg_to_encoding(r)))
+		mutex_lock(&vcpu->kvm->arch.config_lock);
 
 	if (r->set_user) {
 		ret = (r->set_user)(vcpu, r, val);
@@ -2956,6 +2969,9 @@ int kvm_sys_reg_set_user(struct kvm_vcpu *vcpu, const struct kvm_one_reg *reg,
 		__vcpu_sys_reg(vcpu, r->reg) = val;
 		ret = 0;
 	}
+
+	if (is_id_reg(reg_to_encoding(r)))
+		mutex_unlock(&vcpu->kvm->arch.config_lock);
 
 	return ret;
 }
@@ -3100,6 +3116,7 @@ void kvm_arm_init_id_regs(struct kvm *kvm)
 {
 	const struct sys_reg_desc *idreg = first_idreg;
 	u32 id = reg_to_encoding(idreg);
+	u64 val;
 
 	/* Initialize all idregs */
 	while (is_id_reg(id)) {
@@ -3114,6 +3131,27 @@ void kvm_arm_init_id_regs(struct kvm *kvm)
 		idreg++;
 		id = reg_to_encoding(idreg);
 	}
+
+	/*
+	 * The default is to expose CSV2 == 1 if the HW isn't affected.
+	 * Although this is a per-CPU feature, we make it global because
+	 * asymmetric systems are just a nuisance.
+	 *
+	 * Userspace can override this as long as it doesn't promise
+	 * the impossible.
+	 */
+	val = IDREG(kvm, SYS_ID_AA64PFR0_EL1);
+
+	if (arm64_get_spectre_v2_state() == SPECTRE_UNAFFECTED) {
+		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV2);
+		val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV2), 1);
+	}
+	if (arm64_get_meltdown_state() == SPECTRE_UNAFFECTED) {
+		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV3);
+		val |= FIELD_PREP(ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_CSV3), 1);
+	}
+
+	IDREG(kvm, SYS_ID_AA64PFR0_EL1) = val;
 }
 
 int kvm_sys_reg_table_init(void)
