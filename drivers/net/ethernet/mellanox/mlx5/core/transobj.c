@@ -90,14 +90,14 @@ int mlx5_core_modify_rq(struct mlx5_core_dev *dev, u32 rqn, u32 *in, int inlen)
 }
 EXPORT_SYMBOL(mlx5_core_modify_rq);
 
-void mlx5_core_destroy_rq(struct mlx5_core_dev *dev, u32 rqn)
+int mlx5_core_destroy_rq(struct mlx5_core_dev *dev, u32 rqn)
 {
 	u32 in[MLX5_ST_SZ_DW(destroy_rq_in)]   = {0};
 	u32 out[MLX5_ST_SZ_DW(destroy_rq_out)] = {0};
 
 	MLX5_SET(destroy_rq_in, in, opcode, MLX5_CMD_OP_DESTROY_RQ);
 	MLX5_SET(destroy_rq_in, in, rqn, rqn);
-	mlx5_cmd_exec(dev, in, sizeof(in), out, sizeof(out));
+	return mlx5_cmd_exec(dev, in, sizeof(in), out, sizeof(out));
 }
 EXPORT_SYMBOL(mlx5_core_destroy_rq);
 
