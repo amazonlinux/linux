@@ -1775,6 +1775,16 @@ static unsigned int mte_visibility(const struct kvm_vcpu *vcpu,
 	.val = 0,				\
 }
 
+#define ID_SANITISED_WRITABLE(name) {		\
+	SYS_DESC(SYS_##name),			\
+	.access	= access_id_reg,		\
+	.get_user = get_id_reg,			\
+	.set_user = set_id_reg,			\
+	.visibility = id_visibility,		\
+	.reset = general_read_kvm_sanitised_reg,\
+	.val = GENMASK(63, 0),			\
+}
+
 /* sys_reg_desc initialiser for known cpufeature ID registers */
 #define AA32_ID_SANITISED(name) {		\
 	SYS_DESC(SYS_##name),			\
@@ -1970,14 +1980,14 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	ID_UNALLOCATED(6,7),
 
 	/* CRm=7 */
-	ID_SANITISED(ID_AA64MMFR0_EL1),
-	ID_SANITISED(ID_AA64MMFR1_EL1),
+	ID_SANITISED_WRITABLE(ID_AA64MMFR0_EL1),
+	ID_SANITISED_WRITABLE(ID_AA64MMFR1_EL1),
 	{ SYS_DESC(SYS_ID_AA64MMFR2_EL1),
 	  .access   = access_id_reg,
 	  .get_user = get_id_reg,
 	  .set_user = set_id_reg,
 	  .reset    = read_sanitised_id_aa64mmfr2_el1,
-	  .val      = 0, },
+	  .val      = GENMASK(63, 0), },
 	ID_UNALLOCATED(7,3),
 	ID_UNALLOCATED(7,4),
 	ID_UNALLOCATED(7,5),
