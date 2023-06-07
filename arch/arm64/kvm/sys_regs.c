@@ -1444,7 +1444,34 @@ static u64 read_sanitised_id_aa64pfr1_el1(struct kvm_vcpu *vcpu,
 	/* SME is not supported */
 	val &= ~ARM64_FEATURE_MASK(ID_AA64PFR1_EL1_SME);
 
+	if (!system_supports_sve())
+		val &= ~ARM64_FEATURE_MASK(ID_AA64PFR0_EL1_SVE);
+
 	return val;
+}
+
+static int set_id_aa64pfr0_el1(struct kvm_vcpu *vcpu,
+			       const struct sys_reg_desc *rd,
+			       u64 val)
+{
+	int fp, simd;
+	bool has_sve = id_aa64pfr0_sve(val);
+
+	simd = cpuid_feature_extract_signed_field(val, ID_AA64PFR0_EL1_AdvSIMD_SHIFT);
+	fp = cpuid_feature_extract_signed_field(val, ID_AA64PFR0_EL1_FP_SHIFT);
+	/* AdvSIMD field must have the same value as FP field */
+	if (simd != fp)
+		return -EINVAL;
+
+	/* fp must be supported when sve is supported */
+	if (has_sve && (fp < 0))
+		return -EINVAL;
+
+	/* Check if there is a conflict with a request via KVM_ARM_VCPU_INIT */
+	if (vcpu_has_sve(vcpu) ^ has_sve)
+		return -EPERM;
+
+	return set_id_reg(vcpu, rd, val);
 }
 
 static u64 read_sanitised_id_aa64dfr0_el1(struct kvm_vcpu *vcpu,
@@ -1896,9 +1923,9 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	{ SYS_DESC(SYS_ID_AA64PFR0_EL1),
 	  .access = access_id_reg,
 	  .get_user = get_id_reg,
-	  .set_user = set_id_reg,
+	  .set_user = set_id_aa64pfr0_el1,
 	  .reset = read_sanitised_id_aa64pfr0_el1,
-	  .val = ID_AA64PFR0_EL1_CSV2_MASK | ID_AA64PFR0_EL1_CSV3_MASK, },
+	  .val = GENMASK(63, 0), },
 	{ SYS_DESC(SYS_ID_AA64PFR1_EL1),
 	  .access   = access_id_reg,
 	  .get_user = get_id_reg,
