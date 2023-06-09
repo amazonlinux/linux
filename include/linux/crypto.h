@@ -142,6 +142,12 @@
 /* The high bits 0xff000000 are reserved for type-specific flags. */
 
 /*
+ * Mark an algorithm as approved for FIPS 140-3. This is intended to be used
+ * for algorithms that are only approved under certain conditions
+ */
+#define CRYPTO_ALG_FIPS140_COMPLIANT	0x00040000
+
+/*
  * Transform masks and values (for crt_flags).
  */
 #define CRYPTO_TFM_NEED_KEY		0x00000001
