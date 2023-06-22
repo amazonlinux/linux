@@ -1598,6 +1598,53 @@ static int set_id_dfr0_el1(struct kvm_vcpu *vcpu,
 	return pmuver_update(vcpu, rd, val, perfmon_to_pmuver(perfmon), valid_pmu);
 }
 
+static int set_id_aa64isar0_el1(struct kvm_vcpu *vcpu,
+				const struct sys_reg_desc *rd,
+				u64 val)
+{
+	u8 sm4, sm3, sha1, sha2, sha3;
+
+	sm4 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR0_EL1_SM4), val);
+	sm3 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR0_EL1_SM3), val);
+	sha1 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR0_EL1_SHA1), val);
+	sha2 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR0_EL1_SHA2), val);
+	sha3 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR0_EL1_SHA3), val);
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.61:
+	 * SM4, bits [43:40]
+	 *   This field must have the same value as ID_AA64ISAR0_EL1.SM3.
+	 */
+	if (sm4 != sm3)
+		return -EINVAL;
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.61:
+	 * SHA1, bits [11:8]
+	 *   If the value of ID_AA64ISAR0_EL1.SHA2 is 0b0000,
+	 *   this field must have the value 0b0000.
+	 * SHA2, bits [15:12]
+	 *   If the value of this field is 0b0010,
+	 *   ID_AA64ISAR0_EL1.SHA3 must have the value 0b0001.
+	 * SHA3, bits [35:32]
+	 *   If the value of ID_AA64ISAR0_EL1.SHA1 is 0b0000,
+	 *   this field must have the value 0b0000.
+	 */
+	if (!sha1) {
+		if (sha2 || sha3)
+			return -EINVAL;
+	} else {
+		if (sha3 && (sha2 != 0b0010))
+			return -EINVAL;
+	}
+
+	return set_id_reg(vcpu, rd, val);
+}
+
 static u64 read_sanitised_id_aa64isar2_el1(struct kvm_vcpu *vcpu,
 					   const struct sys_reg_desc *rd)
 {
@@ -1965,7 +2012,12 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	ID_UNALLOCATED(5,7),
 
 	/* CRm=6 */
-	ID_SANITISED(ID_AA64ISAR0_EL1),
+	{ SYS_DESC(SYS_ID_AA64ISAR0_EL1),
+	  .access   = access_id_reg,
+	  .get_user = get_id_reg,
+	  .set_user = set_id_aa64isar0_el1,
+	  .reset    = general_read_kvm_sanitised_reg,
+	  .val      = GENMASK(63, 0), },
 	ID_SANITISED(ID_AA64ISAR1_EL1),
 	{ SYS_DESC(SYS_ID_AA64ISAR2_EL1),
 	  .access   = access_id_reg,
