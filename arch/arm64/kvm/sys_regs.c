@@ -1743,6 +1743,46 @@ static int set_id_aa64isar1_el1(struct kvm_vcpu *vcpu,
 	return set_id_reg(vcpu, rd, val);
 }
 
+static int set_id_aa64isar2_el1(struct kvm_vcpu *vcpu,
+				const struct sys_reg_desc *rd,
+				u64 val)
+{
+	u8 gpi, gpa, gpa3;
+
+	/* Fields in the register we're trying to set - ISAR2 */
+	gpa3 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_GPA3), val);
+
+	/* Fields in ISAR1 */
+	gpi = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_GPI),
+			IDREG(vcpu->kvm, SYS_ID_AA64ISAR1_EL1));
+	gpa = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_GPA),
+			IDREG(vcpu->kvm, SYS_ID_AA64ISAR1_EL1));
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.63:
+	 * GPA3, bits [11:8]
+	 *   If the value of ID_AA64ISAR1_EL1.GPI is nonzero, or the value of
+	 *   ID_AA64ISAR1_EL1.GPA is nonzero, this field must have the value
+	 *   0b0000.
+	 */
+	if (gpa3 && (gpi || gpa)) {
+		return -EINVAL;
+	}
+
+	/* Check ptrauth state matches that requested in vcpu features */
+	if ((gpi || gpa || gpa3) != vcpu_has_ptrauth(vcpu))
+		return -EINVAL;
+
+	/*
+	 * No need to validate APA3, since it is FTR_EXACT it must match the
+	 * host value. And who are we to argue if the host screwed it up.
+	 */
+
+	return set_id_reg(vcpu, rd, val);
+}
+
 static u64 read_sanitised_id_aa64isar2_el1(struct kvm_vcpu *vcpu,
 					   const struct sys_reg_desc *rd)
 {
@@ -2125,9 +2165,9 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	{ SYS_DESC(SYS_ID_AA64ISAR2_EL1),
 	  .access   = access_id_reg,
 	  .get_user = get_id_reg,
-	  .set_user = set_id_reg,
+	  .set_user = set_id_aa64isar2_el1,
 	  .reset    = read_sanitised_id_aa64isar2_el1,
-	  .val      = 0, },
+	  .val      = GENMASK(63, 0), },
 	ID_UNALLOCATED(6,3),
 	ID_UNALLOCATED(6,4),
 	ID_UNALLOCATED(6,5),
