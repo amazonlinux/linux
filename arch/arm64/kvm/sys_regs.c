@@ -1645,6 +1645,104 @@ static int set_id_aa64isar0_el1(struct kvm_vcpu *vcpu,
 	return set_id_reg(vcpu, rd, val);
 }
 
+static int set_id_aa64isar1_el1(struct kvm_vcpu *vcpu,
+				const struct sys_reg_desc *rd,
+				u64 val)
+{
+	u8 zfr0_i8mm, zfr0_bf16, gpa3, sme;
+	u8 i8mm, bf16, gpi, gpa;
+	int advsimd;
+
+	/* Fields in the register we're trying to set - ISAR1 */
+	i8mm = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_I8MM), val);
+	bf16 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_BF16), val);
+	gpi = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_GPI), val);
+	gpa = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_GPA), val);
+
+	/* Fields in ZFR0 */
+	zfr0_i8mm = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ZFR0_EL1_I8MM),
+			      IDREG(vcpu->kvm, SYS_ID_AA64ZFR0_EL1));
+	zfr0_bf16 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ZFR0_EL1_BF16),
+			      IDREG(vcpu->kvm, SYS_ID_AA64ZFR0_EL1));
+
+	/* Fields in ISAR2 */
+	gpa3 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_GPA3),
+			 IDREG(vcpu->kvm, SYS_ID_AA64ISAR2_EL1));
+
+	/* Fields in PFR1 */
+	sme = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64PFR1_EL1_SME),
+			IDREG(vcpu->kvm, SYS_ID_AA64PFR1_EL1));
+
+	/* Fields in PFR0 */
+	advsimd = cpuid_feature_extract_signed_field(IDREG(vcpu->kvm,
+							   SYS_ID_AA64PFR0_EL1),
+						     ID_AA64PFR0_EL1_AdvSIMD_SHIFT);
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.62:
+	 * I8MM, bits [55:52]
+	 *   When Advanced SIMD and SVE are both implemented, this field must
+	 *   return the same value as ID_AA64ZFR0_EL1.I8MM.
+	 */
+	if (vcpu_has_sve(vcpu) && advsimd) {
+		if (i8mm != zfr0_i8mm)
+			return -EINVAL;
+	}
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.62:
+	 * BF16, bits [47:44]
+	 *   When FEAT_SVE or FEAT_SME is implemented, this field must return
+	 *   the same value as ID_AA64ZFR0_EL1.BF16.
+	 */
+	if (vcpu_has_sve(vcpu) || sme) {
+		if (bf16 != zfr0_bf16)
+			return -EINVAL;
+	}
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.62:
+	 * GPI, bits [31:28]
+	 *   If the value of ID_AA64ISAR1_EL1.GPA is nonzero, or the value of
+	 *   ID_AA64ISAR2_EL1.GPA3 is nonzero, this field must have the value
+	 *   0b0000.
+	 */
+	if (gpi && (gpa || gpa3)) {
+		return -EINVAL;
+	}
+
+	/*
+	 * From Arm Architecture Reference Manual for A-profile architecture
+	 * (https://developer.arm.com/documentation/ddi0487/latest/)
+	 * D19.2.62:
+	 * GPA, bits [27:24]
+	 *   If the value of ID_AA64ISAR1_EL1.GPI is nonzero, or the value of
+	 *   ID_AA64ISAR2_EL1.GPA3 is nonzero, this field must have the value
+	 *   0b0000.
+	 */
+	if (gpa && (gpi || gpa3)) {
+		return -EINVAL;
+	}
+
+	/* Check ptrauth state matches that requested in vcpu features */
+	if ((gpi || gpa || gpa3) != vcpu_has_ptrauth(vcpu))
+		return -EINVAL;
+
+	/*
+	 * No need to validate API or APA, since they are FTR_EXACT they must
+	 * match the host value. And who are we to argue if the host screwed
+	 * these up.
+	 */
+
+	return set_id_reg(vcpu, rd, val);
+}
+
 static u64 read_sanitised_id_aa64isar2_el1(struct kvm_vcpu *vcpu,
 					   const struct sys_reg_desc *rd)
 {
@@ -2018,7 +2116,12 @@ static const struct sys_reg_desc sys_reg_descs[] = {
 	  .set_user = set_id_aa64isar0_el1,
 	  .reset    = general_read_kvm_sanitised_reg,
 	  .val      = GENMASK(63, 0), },
-	ID_SANITISED(ID_AA64ISAR1_EL1),
+	{ SYS_DESC(SYS_ID_AA64ISAR1_EL1),
+	  .access   = access_id_reg,
+	  .get_user = get_id_reg,
+	  .set_user = set_id_aa64isar1_el1,
+	  .reset    = general_read_kvm_sanitised_reg,
+	  .val      = GENMASK(63, 0), },
 	{ SYS_DESC(SYS_ID_AA64ISAR2_EL1),
 	  .access   = access_id_reg,
 	  .get_user = get_id_reg,
