@@ -1505,6 +1505,56 @@ int ecc_gen_privkey(unsigned int curve_id, unsigned int ndigits, u64 *privkey)
 }
 EXPORT_SYMBOL(ecc_gen_privkey);
 
+/**
+* SP800-56A section 5.6.2.1.4 Pair-Wise Consistency Test
+* ecc_pairwise_test() - Pair-wise Consistency test
+*
+* @curve: 		elliptic curve domain parameters
+* @private_key: 	pregenerated private key for the given curve
+* @pk: 		public key as a point
+* @ndigits: 		curve's number of digits
+*
+* Pair-wise Consistency test according to SP800-56A section 5.6.2.1.4
+*
+* Return: 0 if test is successful, -EINVAL if test is failed.
+*/
+static int ecc_pairwise_test(const struct ecc_curve *curve,
+		      const u64 *private_key,
+		      struct ecc_point *pk,
+		      unsigned int ndigits)
+{
+	u64 priv[ECC_MAX_DIGITS];
+	struct ecc_point *epk;
+	int ret;
+
+	ecc_swap_digits(private_key, priv, ndigits);
+
+	epk = ecc_alloc_point(ndigits);
+	if (!epk) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	ecc_point_mult(epk, &curve->g, priv, NULL, curve, ndigits);
+
+	/* check expected public key against the public_key */
+	if (vli_cmp(epk->x, pk->x, ndigits)) {
+		ret = -EINVAL;
+		goto err_free_point;
+	}
+
+	if (vli_cmp(epk->y, pk->y, ndigits)) {
+		ret = -EINVAL;
+		goto err_free_point;
+	}
+
+	ret = 0;
+err_free_point:
+	ecc_free_point(epk);
+err:
+	return ret;
+}
+
 int ecc_make_pub_key(unsigned int curve_id, unsigned int ndigits,
 		     const u64 *private_key, u64 *public_key)
 {
@@ -1532,6 +1582,12 @@ int ecc_make_pub_key(unsigned int curve_id, unsigned int ndigits,
 	if (ecc_is_pubkey_valid_full(curve, pk)) {
 		ret = -EAGAIN;
 		goto err_free_point;
+	}
+
+	if (fips_enabled &&
+	    ecc_pairwise_test(curve, private_key, pk, ndigits)) {
+		fips_fail_notify();
+		panic("ecc_pairwise_test failed");
 	}
 
 	ecc_swap_digits(pk->x, public_key, ndigits);
