@@ -2406,22 +2406,6 @@ static void io_submit_flush_completions(struct io_ring_ctx *ctx)
 	state->compl_nr = 0;
 }
 
-/*
- * Drop reference to request, return next in chain (if there is one) if this
- * was the last reference to this request.
- */
-static inline struct io_kiocb *io_put_req_find_next(struct io_kiocb *req)
-{
-	struct io_kiocb *nxt = NULL;
-
-	if (req_ref_put_and_test(req)) {
-		if (unlikely(req->flags & (REQ_F_LINK|REQ_F_HARDLINK)))
-			nxt = io_req_find_next(req);
-		__io_free_req(req);
-	}
-	return nxt;
-}
-
 static inline void io_put_req(struct io_kiocb *req)
 {
 	if (req_ref_put_and_test(req))
@@ -7057,9 +7041,14 @@ static int io_issue_sqe(struct io_kiocb *req, unsigned int issue_flags)
 static struct io_wq_work *io_wq_free_work(struct io_wq_work *work)
 {
 	struct io_kiocb *req = container_of(work, struct io_kiocb, work);
+	struct io_kiocb *nxt = NULL;
 
-	req = io_put_req_find_next(req);
-	return req ? &req->work : NULL;
+	if (req_ref_put_and_test(req)) {
+		if (req->flags & (REQ_F_LINK|REQ_F_HARDLINK))
+			nxt = io_req_find_next(req);
+		__io_free_req(req);
+	}
+	return nxt ? &nxt->work : NULL;
 }
 
 static void io_wq_submit_work(struct io_wq_work *work)
