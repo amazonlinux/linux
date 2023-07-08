@@ -175,6 +175,7 @@ GLOBAL(entry_SYSCALL_64_after_hwframe)
 
 	/* clobbers %rax, make sure it is after saving the syscall nr */
 	IBRS_ENTER
+	UNTRAIN_RET
 
 	call	do_syscall_64		/* returns with IRQs disabled */
 
@@ -746,6 +747,7 @@ native_irq_return_ldt:
 	pushq	%rdi				/* Stash user RDI */
 	SWAPGS					/* to kernel GS */
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rdi	/* to kernel CR3 */
+	UNTRAIN_RET
 
 	movq	PER_CPU_VAR(espfix_waddr), %rdi
 	movq	%rax, (0*8)(%rdi)		/* user RAX */
@@ -1256,6 +1258,7 @@ ENTRY(paranoid_entry)
 	 * CR3 above, keep the old value in a callee saved register.
 	 */
 	IBRS_ENTER save_reg=%r15
+	UNTRAIN_RET
 
 	RET
 END(paranoid_entry)
@@ -1319,6 +1322,7 @@ ENTRY(error_entry)
 	/* We have user CR3.  Change to kernel CR3. */
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
 	IBRS_ENTER
+	UNTRAIN_RET
 
 .Lerror_entry_from_usermode_after_swapgs:
 	/* Put us onto the real thread stack. */
@@ -1375,6 +1379,7 @@ ENTRY(error_entry)
 	FENCE_SWAPGS_USER_ENTRY
 	SWITCH_TO_KERNEL_CR3 scratch_reg=%rax
 	IBRS_ENTER
+	UNTRAIN_RET
 
 	/*
 	 * Pretend that the exception came from user mode: set up pt_regs
@@ -1481,6 +1486,7 @@ ENTRY(nmi)
 	ENCODE_FRAME_POINTER
 
 	IBRS_ENTER
+	UNTRAIN_RET
 
 	/*
 	 * At this point we no longer need to worry about stack damage
