@@ -58,7 +58,7 @@ static __attribute__((noreturn))
 void format(void)
 {
 	fprintf(stderr,
-		"Usage: scripts/sign-file [-dp] <hash algo> <key> <x509> <module> [<dest>]\n");
+		"Usage: scripts/sign-file [-dpc] <hash algo> <key> <x509> <module> [<dest>]\n");
 	fprintf(stderr,
 		"       scripts/sign-file -s <raw sig> <hash algo> <x509> <module> [<dest>]\n");
 	exit(2);
@@ -204,6 +204,7 @@ int main(int argc, char **argv)
 	bool save_sig = false, replace_orig;
 	bool sign_only = false;
 	bool raw_sig = false;
+	bool cert_flags = CMS_NOCERTS;
 	unsigned char buf[4096];
 	unsigned long module_size, sig_size;
 	const EVP_MD *digest_algo;
@@ -220,11 +221,12 @@ int main(int argc, char **argv)
 	key_pass = getenv("KBUILD_SIGN_PIN");
 
 	do {
-		opt = getopt(argc, argv, "sdpk");
+		opt = getopt(argc, argv, "sdpkc");
 		switch (opt) {
 		case 's': raw_sig = true; break;
 		case 'p': save_sig = true; break;
 		case 'd': sign_only = true; save_sig = true; break;
+		case 'c': cert_flags = 0; break;
 		case 'k': use_keyid = CMS_USE_KEYID; break;
 		case -1: break;
 		default: format();
@@ -272,7 +274,7 @@ int main(int argc, char **argv)
 		ERR(!digest_algo, "EVP_get_digestbyname");
 
 		unsigned int flags =
-			CMS_NOCERTS |
+			cert_flags |
 			CMS_NOATTR |
 			CMS_PARTIAL |
 			CMS_BINARY |
