@@ -1121,6 +1121,8 @@ static const __initconst struct x86_cpu_id cpu_vuln_whitelist[] = {
 #define RETBLEED	BIT(3)
 /* CPU is affected by SMT (cross-thread) return predictions */
 #define SMT_RSB		BIT(4)
+/* CPU is affected by RAS Poisoning, allowing influencing of return address prediction */
+#define RAS_POISONING	BIT(5)
 
 static const struct x86_cpu_id cpu_vuln_blacklist[] __initconst = {
 	VULNBL_INTEL_STEPPINGS(IVYBRIDGE,	X86_STEPPING_ANY,		SRBDS),
@@ -1152,8 +1154,9 @@ static const struct x86_cpu_id cpu_vuln_blacklist[] __initconst = {
 
 	VULNBL_AMD(0x15, RETBLEED),
 	VULNBL_AMD(0x16, RETBLEED),
-	VULNBL_AMD(0x17, RETBLEED | SMT_RSB),
+	VULNBL_AMD(0x17, RETBLEED | SMT_RSB | RAS_POISONING),
 	VULNBL_HYGON(0x18, RETBLEED | SMT_RSB),
+	VULNBL_AMD(0x19, RAS_POISONING),
 	{}
 };
 
@@ -1268,6 +1271,9 @@ static void __init cpu_set_bug_bits(struct cpuinfo_x86 *c)
 
 	if (cpu_matches(cpu_vuln_blacklist, SMT_RSB))
 		setup_force_cpu_bug(X86_BUG_SMT_RSB);
+
+	if (cpu_matches(cpu_vuln_blacklist, RAS_POISONING))
+		setup_force_cpu_bug(X86_BUG_RAS_POISONING);
 
 	if (cpu_matches(cpu_vuln_whitelist, NO_MELTDOWN))
 		return;
