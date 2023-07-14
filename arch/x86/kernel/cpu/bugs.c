@@ -854,12 +854,15 @@ early_param("retbleed", retbleed_parse_cmdline);
 
 #define RETBLEED_UNTRAIN_MSG "WARNING: BTB untrained return thunk mitigation is only effective on AMD/Hygon!\n"
 #define RETBLEED_INTEL_MSG "WARNING: Spectre v2 mitigation leaves CPU vulnerable to RETBleed attacks, data leaks possible!\n"
+#define RETBLEED_IBPB_MSG "WARNING: not automatically selecting RETBLEED mitigation as not affected. Use 'retbleed=ibpb' to explicitly enable\n"
 
 static void __init retbleed_select_mitigation(void)
 {
 	bool mitigate_smt = false;
 
-	if (!boot_cpu_has_bug(X86_BUG_RETBLEED) || cpu_mitigations_off())
+	if ((!boot_cpu_has_bug(X86_BUG_RETBLEED) &&
+	     !boot_cpu_has_bug(X86_BUG_RAS_POISONING)) ||
+	    cpu_mitigations_off())
 		return;
 
 	switch (retbleed_cmd) {
@@ -867,6 +870,8 @@ static void __init retbleed_select_mitigation(void)
 		return;
 
 	case RETBLEED_CMD_UNRET:
+		if (!boot_cpu_has_bug(X86_BUG_RETBLEED))
+			break;
 		if (IS_ENABLED(CONFIG_CPU_UNRET_ENTRY)) {
 			retbleed_mitigation = RETBLEED_MITIGATION_UNRET;
 		} else {
@@ -892,6 +897,10 @@ do_cmd_auto:
 	default:
 		if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD ||
 		    boot_cpu_data.x86_vendor == X86_VENDOR_HYGON) {
+			if (!boot_cpu_has_bug(X86_BUG_RETBLEED)) {
+				pr_err(RETBLEED_IBPB_MSG);
+				break;
+			}
 			if (IS_ENABLED(CONFIG_CPU_UNRET_ENTRY))
 				retbleed_mitigation = RETBLEED_MITIGATION_UNRET;
 			else if (IS_ENABLED(CONFIG_CPU_IBPB_ENTRY) && boot_cpu_has(X86_FEATURE_IBPB))
@@ -951,7 +960,8 @@ do_cmd_auto:
 		}
 	}
 
-	pr_info("%s\n", retbleed_strings[retbleed_mitigation]);
+	if (boot_cpu_has_bug(X86_BUG_RETBLEED))
+		pr_info("%s\n", retbleed_strings[retbleed_mitigation]);
 }
 
 #undef pr_fmt
@@ -2386,6 +2396,18 @@ static ssize_t srbds_show_state(char *buf)
 	return sprintf(buf, "%s\n", srbds_strings[srbds_mitigation]);
 }
 
+static char *ras_poisoning_state(void)
+{
+	if (boot_cpu_has_bug(X86_BUG_RAS_POISONING)) {
+		if (retbleed_mitigation == RETBLEED_MITIGATION_IBPB)
+			return ", RAS-Poisoning: IBPB";
+		else
+			return ", RAS-Poisoning: Vulnerable";
+	} else {
+		return "";
+	}
+}
+
 static ssize_t retbleed_show_state(char *buf)
 {
 	if (retbleed_mitigation == RETBLEED_MITIGATION_UNRET ||
@@ -2394,15 +2416,20 @@ static ssize_t retbleed_show_state(char *buf)
 		boot_cpu_data.x86_vendor != X86_VENDOR_HYGON)
 		    return sprintf(buf, "Vulnerable: untrained return thunk / IBPB on non-AMD based uarch\n");
 
-	    return sprintf(buf, "%s; SMT %s\n",
-			   retbleed_strings[retbleed_mitigation],
+	    return sprintf(buf, "%s; SMT %s%s\n",
+			   boot_cpu_has_bug(X86_BUG_RETBLEED) ?
+			   retbleed_strings[retbleed_mitigation] :
+			   "Not affected",
 			   !sched_smt_active() ? "disabled" :
 			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT ||
 			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT_PREFERRED ?
-			   "enabled with STIBP protection" : "vulnerable");
+			   "enabled with STIBP protection" : "vulnerable",
+			   ras_poisoning_state());
 	}
 
-	return sprintf(buf, "%s\n", retbleed_strings[retbleed_mitigation]);
+	return sprintf(buf, "%s%s\n", boot_cpu_has_bug(X86_BUG_RETBLEED) ?
+				      retbleed_strings[retbleed_mitigation] :
+				      "Not affected", ras_poisoning_state());
 }
 
 static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr,
@@ -2452,6 +2479,8 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
 		return mmio_stale_data_show_state(buf);
 
 	case X86_BUG_RETBLEED:
+		/* fallthrough */
+	case X86_BUG_RAS_POISONING:
 		return retbleed_show_state(buf);
 
 	default:
@@ -2516,6 +2545,9 @@ ssize_t cpu_show_mmio_stale_data(struct device *dev, struct device_attribute *at
 
 ssize_t cpu_show_retbleed(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return cpu_show_common(dev, attr, buf, X86_BUG_RETBLEED);
+	if (boot_cpu_has_bug(X86_BUG_RAS_POISONING))
+		return cpu_show_common(dev, attr, buf, X86_BUG_RAS_POISONING);
+	else
+		return cpu_show_common(dev, attr, buf, X86_BUG_RETBLEED);
 }
 #endif
