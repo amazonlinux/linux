@@ -907,7 +907,9 @@ static void __init retbleed_select_mitigation(void)
 {
 	bool mitigate_smt = false;
 
-	if (!boot_cpu_has_bug(X86_BUG_RETBLEED) || cpu_mitigations_off())
+	if ((!boot_cpu_has_bug(X86_BUG_RETBLEED) &&
+	     !boot_cpu_has_bug(X86_BUG_RAS_POISONING)) ||
+	    cpu_mitigations_off())
 		return;
 
 	switch (retbleed_cmd) {
@@ -975,7 +977,8 @@ do_cmd_auto:
 		}
 	}
 
-	pr_info("%s\n", retbleed_strings[retbleed_mitigation]);
+	if (boot_cpu_has_bug(X86_BUG_RETBLEED))
+		pr_info("%s\n", retbleed_strings[retbleed_mitigation]);
 }
 
 #undef pr_fmt
@@ -2349,21 +2352,38 @@ static ssize_t srbds_show_state(char *buf)
 	return sysfs_emit(buf, "%s\n", srbds_strings[srbds_mitigation]);
 }
 
+static char *ras_poisoning_state(void)
+{
+	if (boot_cpu_has_bug(X86_BUG_RAS_POISONING)) {
+		if (retbleed_mitigation == RETBLEED_MITIGATION_IBPB)
+			return ", RAS-Poisoning: IBPB";
+		else
+			return ", RAS-Poisoning: Vulnerable";
+	} else {
+		return "";
+	}
+}
+
 static ssize_t retbleed_show_state(char *buf)
 {
 	if (retbleed_mitigation == RETBLEED_MITIGATION_IBPB) {
 	    if (boot_cpu_data.x86_vendor != X86_VENDOR_AMD)
 		    return sprintf(buf, "Vulnerable: IBPB on non-AMD based uarch\n");
 
-	    return sysfs_emit(buf, "%s; SMT %s\n",
-			   retbleed_strings[retbleed_mitigation],
+	    return sysfs_emit(buf, "%s; SMT %s%s\n",
+			   boot_cpu_has_bug(X86_BUG_RETBLEED) ?
+			   retbleed_strings[retbleed_mitigation] :
+			   "Not affected",
 			   !sched_smt_active() ? "disabled" :
 			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT ||
 			   spectre_v2_user_stibp == SPECTRE_V2_USER_STRICT_PREFERRED ?
-			   "enabled with STIBP protection" : "vulnerable");
+			   "enabled with STIBP protection" : "vulnerable",
+			   ras_poisoning_state());
 	}
 
-	return sysfs_emit(buf, "%s\n", retbleed_strings[retbleed_mitigation]);
+	return sysfs_emit(buf, "%s%s\n", boot_cpu_has_bug(X86_BUG_RETBLEED) ?
+				      retbleed_strings[retbleed_mitigation] :
+				      "Not affected", ras_poisoning_state());
 }
 
 static ssize_t gds_show_state(char *buf)
@@ -2418,6 +2438,8 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
 		return mmio_stale_data_show_state(buf);
 
 	case X86_BUG_RETBLEED:
+		/* fallthrough */
+	case X86_BUG_RAS_POISONING:
 		return retbleed_show_state(buf);
 
 	case X86_BUG_GDS:
@@ -2485,7 +2507,10 @@ ssize_t cpu_show_mmio_stale_data(struct device *dev, struct device_attribute *at
 
 ssize_t cpu_show_retbleed(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	return cpu_show_common(dev, attr, buf, X86_BUG_RETBLEED);
+	if (boot_cpu_has_bug(X86_BUG_RAS_POISONING))
+		return cpu_show_common(dev, attr, buf, X86_BUG_RAS_POISONING);
+	else
+		return cpu_show_common(dev, attr, buf, X86_BUG_RETBLEED);
 }
 
 ssize_t cpu_show_gds(struct device *dev, struct device_attribute *attr, char *buf)
