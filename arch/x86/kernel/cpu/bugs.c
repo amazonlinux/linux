@@ -49,6 +49,7 @@ static void __init taa_select_mitigation(void);
 static void __init mmio_select_mitigation(void);
 static void __init srbds_select_mitigation(void);
 static void __init l1d_flush_select_mitigation(void);
+static void __init gds_select_mitigation(void);
 
 /* The base value of the SPEC_CTRL MSR without task-specific bits set */
 u64 x86_spec_ctrl_base;
@@ -175,6 +176,7 @@ void __init check_bugs(void)
 	md_clear_select_mitigation();
 	srbds_select_mitigation();
 	l1d_flush_select_mitigation();
+	gds_select_mitigation();
 
 	arch_smt_update();
 
@@ -692,6 +694,143 @@ static int __init l1d_flush_parse_cmdline(char *str)
 	return 0;
 }
 early_param("l1d_flush", l1d_flush_parse_cmdline);
+
+#undef pr_fmt
+#define pr_fmt(fmt)     "Gather Data Sampling: " fmt
+
+enum gds_mitigations {
+	GDS_MITIGATION_NONE,
+	GDS_MITIGATION_UCODE_NEEDED,
+	GDS_MITIGATION_SPEC_DISABLED,
+};
+
+enum gds_mitigation_cmd {
+	GDS_CMD_OFF,
+	GDS_CMD_AUTO,
+	GDS_CMD_ON,
+};
+
+static enum gds_mitigations gds_mitigation __ro_after_init = GDS_MITIGATION_NONE;
+static enum gds_mitigation_cmd gds_cmd __ro_after_init = GDS_CMD_AUTO;
+
+static const char * const gds_strings[] = {
+	[GDS_MITIGATION_NONE]		= "Vulnerable",
+	[GDS_MITIGATION_UCODE_NEEDED]	= "Vulnerable: Microcode update required",
+	[GDS_MITIGATION_SPEC_DISABLED]	= "Mitigation: Speculation disabled",
+};
+
+static int __init gds_parse_cmdline(char *str)
+{
+	if (!strcmp(str, "on"))
+		gds_cmd = GDS_CMD_ON;
+	else if (!strcmp(str, "auto"))
+		gds_cmd = GDS_CMD_AUTO;
+	else if (!strcmp(str, "off"))
+		gds_cmd = GDS_CMD_OFF;
+
+	return 0;
+}
+early_param("gather_data_sampling", gds_parse_cmdline);
+
+static void gds_mitigation_toggle(void *arg)
+{
+	int enable = *((int *) arg);
+	u64 mcu_ctrl;
+
+	rdmsrl(MSR_IA32_MCU_OPT_CTRL, mcu_ctrl);
+
+	if (enable) {
+		if (mcu_ctrl & GDS_MITG_DIS) {
+			mcu_ctrl &= ~GDS_MITG_DIS;
+			wrmsrl(MSR_IA32_MCU_OPT_CTRL, mcu_ctrl);
+		}
+	} else {
+		if (!(mcu_ctrl & GDS_MITG_DIS)) {
+			mcu_ctrl |= GDS_MITG_DIS;
+			wrmsrl(MSR_IA32_MCU_OPT_CTRL, mcu_ctrl);
+		}
+	}
+}
+
+#define GDS_DISABLE_MSG "WARNING: Unable to disable Gather Data Sampling mitigation, defaulting to on"
+#define GDS_LOCKED_MSG "WARNING: Gather Data Sampling mitigation state locked as enabled, defaulting to on"
+#define GDS_ENABLE_MSG "WARNING: Unable to enable Gather Data Sampling mitigation, defaulting to off"
+#define GDS_MODIFY_MSG "WARNING: Unable to modify Gather Data Sampling mitigation state, but it's not locked?"
+#define GDS_UCODE_MSG "WARNING: Gather Data Sampling mitigation controls not available, microcode update required"
+
+static void __init gds_select_mitigation(void)
+{
+	u64 ia32_cap, mcu_ctrl;
+	int enable = 0;
+
+	if (!boot_cpu_has_bug(X86_BUG_GDS))
+		return;
+
+	ia32_cap = x86_read_arch_cap_msr();
+
+	if (cpu_mitigations_off())
+		goto gds_off;
+
+	switch (gds_cmd) {
+	case GDS_CMD_ON:
+		fallthrough;
+	case GDS_CMD_AUTO:
+		enable = 1;
+		fallthrough;
+	case GDS_CMD_OFF:
+gds_off:
+		/*
+		 * Processor doesn't know about GDS control, must not have
+		 * updated firmware -> doesn't have the mitigation
+		 */
+		if (!(ia32_cap & ARCH_CAP_GDS_CTRL)) {
+			if (enable && (gds_cmd != GDS_CMD_AUTO)) {
+				pr_err(GDS_UCODE_MSG);
+				pr_err(GDS_ENABLE_MSG);
+			}
+			gds_mitigation = GDS_MITIGATION_UCODE_NEEDED;
+			goto print_state;
+		}
+
+		rdmsrl(MSR_IA32_MCU_OPT_CTRL, mcu_ctrl);
+		/* Mitigation state doesn't equal desired state */
+		if (!!(mcu_ctrl & GDS_MITG_DIS) == enable) {
+			/* But it's locked -> nothing we can do */
+			if (mcu_ctrl & GDS_MITG_LOCK) {
+				if (gds_cmd != GDS_CMD_AUTO)
+					pr_err(GDS_LOCKED_MSG);
+				break;
+			}
+
+			/* Toggle the mitigation state */
+			gds_mitigation_toggle(&enable);
+
+			/*
+			 * Check if we successfully updated the mitigation
+			 * state. The state isn't locked, so if we weren't
+			 * able to modify the mitigation state the hypervisor
+			 * probably blocked us?
+			 */
+			rdmsrl(MSR_IA32_MCU_OPT_CTRL, mcu_ctrl);
+			if (!!(mcu_ctrl & GDS_MITG_DIS) == enable) {
+				pr_err(GDS_MODIFY_MSG);
+				if (enable)
+					pr_err(GDS_ENABLE_MSG);
+				else
+					pr_err(GDS_DISABLE_MSG);
+			}
+		}
+
+		break;
+	}
+
+	/* Record that it's enabled */
+	if (!(mcu_ctrl & GDS_MITG_DIS))
+		gds_mitigation = GDS_MITIGATION_SPEC_DISABLED;
+
+print_state:
+	pr_info("%s\n", gds_strings[gds_mitigation]);
+}
 
 #undef pr_fmt
 #define pr_fmt(fmt)     "Spectre V1 : " fmt
@@ -1656,6 +1795,24 @@ static void update_mds_branch_idle(void)
 	}
 }
 
+static void update_gds_state(void)
+{
+	u64 ia32_cap;
+	int enable;
+
+	enable = (gds_mitigation == GDS_MITIGATION_SPEC_DISABLED);
+	ia32_cap = x86_read_arch_cap_msr();
+
+	if (!(ia32_cap & ARCH_CAP_GDS_CTRL)) {
+		if (enable)
+			pr_err(GDS_ENABLE_MSG);
+
+		return;
+	}
+
+	on_each_cpu(gds_mitigation_toggle, &enable, 1);
+}
+
 #define MDS_MSG_SMT "MDS CPU bug present and SMT on, data leak possible. See https://www.kernel.org/doc/html/latest/admin-guide/hw-vuln/mds.html for more details.\n"
 #define TAA_MSG_SMT "TAA CPU bug present and SMT on, data leak possible. See https://www.kernel.org/doc/html/latest/admin-guide/hw-vuln/tsx_async_abort.html for more details.\n"
 #define MMIO_MSG_SMT "MMIO Stale Data CPU bug present and SMT on, data leak possible. See https://www.kernel.org/doc/html/latest/admin-guide/hw-vuln/processor_mmio_stale_data.html for more details.\n"
@@ -1710,6 +1867,17 @@ void cpu_bugs_smt_update(void)
 			pr_warn_once(MMIO_MSG_SMT);
 		break;
 	case MMIO_MITIGATION_OFF:
+		break;
+	}
+
+	switch (gds_mitigation) {
+	case GDS_MITIGATION_NONE:
+		update_gds_state();
+		break;
+	case GDS_MITIGATION_UCODE_NEEDED:
+		break;
+	case GDS_MITIGATION_SPEC_DISABLED:
+		update_gds_state();
 		break;
 	}
 
@@ -2432,6 +2600,11 @@ static ssize_t retbleed_show_state(char *buf)
 				      "Not affected", ras_poisoning_state());
 }
 
+static ssize_t gds_show_state(char *buf)
+{
+	return sprintf(buf, "%s\n", gds_strings[gds_mitigation]);
+}
+
 static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr,
 			       char *buf, unsigned int bug)
 {
@@ -2482,6 +2655,9 @@ static ssize_t cpu_show_common(struct device *dev, struct device_attribute *attr
 		/* fallthrough */
 	case X86_BUG_RAS_POISONING:
 		return retbleed_show_state(buf);
+
+	case X86_BUG_GDS:
+		return gds_show_state(buf);
 
 	default:
 		break;
@@ -2549,5 +2725,10 @@ ssize_t cpu_show_retbleed(struct device *dev, struct device_attribute *attr, cha
 		return cpu_show_common(dev, attr, buf, X86_BUG_RAS_POISONING);
 	else
 		return cpu_show_common(dev, attr, buf, X86_BUG_RETBLEED);
+}
+
+ssize_t cpu_show_gds(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return cpu_show_common(dev, attr, buf, X86_BUG_GDS);
 }
 #endif

@@ -164,6 +164,17 @@
 						 * supported
 						 */
 
+#define ARCH_CAP_GDS_CTRL		BIT(25)	/*
+						 * MSR_IA32_MCU_OPT_CTRL[GDS_MITG_DIS] &
+						 * MSR_IA32_MCU_OPT_CTRL[GDS_MITG_LOCK]
+						 * bits available to control gather data
+						 * sampling mitigation behaviour.
+						 */
+#define ARCH_CAP_GDS_NO			BIT(26)	/*
+						 * Not susceptible to gather data sampling
+						 * vulnerability
+						 */
+
 #define MSR_IA32_FLUSH_CMD		0x0000010b
 #define L1D_FLUSH			BIT(0)	/*
 						 * Writeback and invalidate the
@@ -181,6 +192,8 @@
 #define RNGDS_MITG_DIS			BIT(0)	/* SRBDS support */
 #define RTM_ALLOW			BIT(1)	/* TSX development mode */
 #define FB_CLEAR_DIS			BIT(3)	/* CPU Fill buffer clear disable */
+#define GDS_MITG_DIS			BIT(4)	/* Gather Data Sampling mitigation disable */
+#define GDS_MITG_LOCK			BIT(5)	/* Gather Data Sampling mitigation locked */
 
 #define MSR_IA32_SYSENTER_CS		0x00000174
 #define MSR_IA32_SYSENTER_ESP		0x00000175
