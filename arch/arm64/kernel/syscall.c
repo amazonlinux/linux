@@ -171,12 +171,46 @@ trace_exit:
 	syscall_trace_exit(regs);
 }
 
+static unsigned int sve_syscall_regs_clear;
+
+#ifdef CONFIG_ARM64_SVE
+/*
+ * Global sysctl to control if we force the SVE register state not
+ * shared with FPSIMD to be cleared on every syscall. If this is not
+ * enabled then we will leave the state unchanged unless we need to
+ * reload from memory (eg, after a context switch).
+ */
+
+static struct ctl_table sve_syscall_sysctl_table[] = {
+	{
+		.procname	= "sve_syscall_clear_regs",
+		.mode		= 0644,
+		.data		= &sve_syscall_regs_clear,
+		.maxlen		= sizeof(int),
+		.proc_handler	= proc_dointvec_minmax,
+		.extra1		= SYSCTL_ZERO,
+		.extra2		= SYSCTL_ONE,
+	},
+	{ }
+};
+
+static int __init sve_syscall_sysctl_init(void)
+{
+	if (!register_sysctl("abi", sve_syscall_sysctl_table))
+		return -EINVAL;
+	return 0;
+}
+
+core_initcall(sve_syscall_sysctl_init);
+#endif	/* CONFIG_ARM64_SVE */
+
 static inline void sve_user_discard(void)
 {
 	if (!system_supports_sve())
 		return;
 
-	if (test_thread_flag(TIF_SVE)) {
+	if (sve_syscall_regs_clear && test_thread_flag(TIF_SVE)) {
+		sve_user_disable();
 		sve_flush_live();
 	}
 }

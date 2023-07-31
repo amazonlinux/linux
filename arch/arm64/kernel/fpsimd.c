@@ -374,7 +374,7 @@ static void fpsimd_save(void)
 	 */
 	if ((last->to_save == FP_STATE_CURRENT && test_thread_flag(TIF_SVE) &&
 	     !in_syscall(current_pt_regs())) ||
-	    last->to_save == FP_STATE_SVE) {
+	     last->to_save == FP_STATE_SVE) {
 		save_sve_regs = true;
 		vl = last->sve_vl;
 	}
@@ -392,8 +392,8 @@ static void fpsimd_save(void)
 		}
 
 		sve_save_state((char *)last->sve_state +
-					sve_ffr_offset(last->sve_vl),
-			       &last->st->fpsr);
+				sve_ffr_offset(last->sve_vl),
+				&last->st->fpsr);
 		*last->fp_type = FP_STATE_SVE;
 	} else {
 		fpsimd_save_state(last->st);
@@ -1029,6 +1029,7 @@ void do_sve_acc(unsigned int esr, struct pt_regs *regs)
 	fpsimd_flush_task_state(current);
 
 	fpsimd_to_sve(current);
+        current->thread.fp_type = FP_STATE_SVE;
 	if (test_and_set_thread_flag(TIF_SVE))
 		WARN_ON(1); /* SVE access shouldn't have trapped */
 
