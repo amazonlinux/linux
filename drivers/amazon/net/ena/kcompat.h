@@ -790,9 +790,9 @@ do {									\
 #define ENA_DEVLINK_RECEIVES_DEVICE_ON_ALLOC
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 16, 0) || \
+#if (KERNEL_VERSION(5, 16, 0) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)) || \
 	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4))  || \
-	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
+	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0) && !(defined(FEDORA_RELEASE)))
 #define ENA_DEVLINK_RELOAD_SUPPORT_ADVERTISEMENT_NEEDED
 #endif
 
@@ -866,8 +866,8 @@ static inline void netdev_rss_key_fill(void *buffer, size_t len)
  * UEK            ***********|--------------|--------|------|
  */
 #if (defined(IS_UEK) && !ENA_KERNEL_VERSION_GTE(4, 1, 12, 124, 43, 1)) || \
-    (defined(ubuntu)) || \
-    (!defined(IS_UEK) && !defined(ubuntu) && \
+    (defined(UBUNTU_VERSION_CODE)) || \
+    (!defined(IS_UEK) && !defined(UBUNTU_VERSION_CODE) && \
      !(KERNEL_VERSION(4, 4, 216) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(4, 5, 0)))
 static inline int page_ref_count(struct page *page)
 {
@@ -967,7 +967,11 @@ xdp_prepare_buff(struct xdp_buff *xdp, unsigned char *hard_start,
 #define ENA_XDP_XMIT_FREES_FAILED_DESCS_INTERNALLY
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) && \
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0) && \
+	!(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 188) && \
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 11, 0)) && \
+	!(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 251) && \
+	 LINUX_VERSION_CODE < KERNEL_VERSION(5, 5, 0))) && \
 	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 6)) && \
 	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) && \
 	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL == 3) && \
@@ -989,7 +993,8 @@ static inline void eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 17, 0) || \
 	(defined(RHEL_RELEASE_CODE) && \
 	RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 7) && \
-	RHEL_RELEASE_CODE != RHEL_RELEASE_VERSION(9, 0))
+	RHEL_RELEASE_CODE != RHEL_RELEASE_VERSION(9, 0)) || \
+	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 5))
 #define ENA_ETHTOOL_RX_BUFF_SIZE_CHANGE
 #endif
 
@@ -1062,6 +1067,10 @@ static inline bool ktime_after(const ktime_t cmp1, const ktime_t cmp2)
 #define ENA_PHC_SUPPORT_GETTIME64_EXTENDED
 #endif /* ENA_PHC_SUPPORT_GETTIME64_EXTENDED */
 
+#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)))
+#define ENA_PHC_SUPPORT_ADJFREQ
+#endif /* ENA_PHC_SUPPORT_ADJFREQ */
+
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)) && \
 	!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(6, 4))))
 #define ptp_clock_register(info, parent) ptp_clock_register(info)
@@ -1093,7 +1102,10 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 				      int (*poll)(struct napi_struct *, int))
 {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)) && \
-	!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 2)))
+	!(RHEL_RELEASE_CODE && \
+	  ((RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 8)) && \
+	   (RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0))) || \
+	  (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 2)))
 #ifndef NAPI_POLL_WEIGHT
 #define NAPI_POLL_WEIGHT 64
 #endif
@@ -1102,6 +1114,11 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 	netif_napi_add(dev, napi, poll);
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) */
 }
+
+#if defined(ENA_DEVLINK_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+#define devl_param_driverinit_value_get devlink_param_driverinit_value_get
+#define devl_param_driverinit_value_set devlink_param_driverinit_value_set
+#endif
 
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 4))) || \
     (defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE < UBUNTU_VERSION(4, 5, 0, 0)) || \
