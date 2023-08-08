@@ -29,7 +29,7 @@
 
 #define DRV_MODULE_GEN_MAJOR	2
 #define DRV_MODULE_GEN_MINOR	8
-#define DRV_MODULE_GEN_SUBMINOR 6
+#define DRV_MODULE_GEN_SUBMINOR 9
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -361,6 +361,7 @@ struct ena_stats_dev {
 	u64 admin_q_pause;
 	u64 rx_drops;
 	u64 tx_drops;
+	u64 rx_overruns;
 	u64 reset_fail;
 };
 
