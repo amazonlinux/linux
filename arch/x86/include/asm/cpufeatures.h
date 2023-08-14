@@ -411,4 +411,6 @@
 #define X86_BUG_GDS			X86_BUG(29) /* CPU is affected by Gather Data Sampling */
 #define X86_BUG_RAS_POISONING		X86_BUG(30) /* CPU is affected by RAS poisoning */
 
+/* BUG word 2 */
+#define X86_BUG_DIV0			X86_BUG(1*32 + 1) /* AMD DIV0 speculation bug */
 #endif /* _ASM_X86_CPUFEATURES_H */
