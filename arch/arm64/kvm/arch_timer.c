@@ -51,11 +51,6 @@ static u64 kvm_arm_timer_read(struct kvm_vcpu *vcpu,
 			      struct arch_timer_context *timer,
 			      enum kvm_arch_timer_regs treg);
 
-static bool has_cntpoff(void)
-{
-	return (has_vhe() && cpus_have_final_cap(ARM64_HAS_ECV_CNTPOFF));
-}
-
 u32 timer_get_ctl(struct arch_timer_context *ctxt)
 {
 	struct kvm_vcpu *vcpu = ctxt->vcpu;
@@ -141,7 +136,7 @@ u64 kvm_phys_timer_read(void)
 	return timecounter->cc->read(timecounter->cc);
 }
 
-static void get_timer_map(struct kvm_vcpu *vcpu, struct timer_map *map)
+void get_timer_map(struct kvm_vcpu *vcpu, struct timer_map *map)
 {
 	if (has_vhe()) {
 		map->direct_vtimer = vcpu_vtimer(vcpu);
@@ -455,8 +450,7 @@ static void timer_save_state(struct arch_timer_context *ctx)
 		timer_set_ctl(ctx, read_sysreg_el0(SYS_CNTP_CTL));
 		cval = read_sysreg_el0(SYS_CNTP_CVAL);
 
-		if (!has_cntpoff())
-			cval -= timer_get_offset(ctx);
+		cval -= timer_get_offset(ctx);
 
 		timer_set_cval(ctx, cval);
 
@@ -538,8 +532,7 @@ static void timer_restore_state(struct arch_timer_context *ctx)
 		cval = timer_get_cval(ctx);
 		offset = timer_get_offset(ctx);
 		set_cntpoff(offset);
-		if (!has_cntpoff())
-			cval += offset;
+		cval += offset;
 		write_sysreg_el0(cval, SYS_CNTP_CVAL);
 		isb();
 		write_sysreg_el0(timer_get_ctl(ctx), SYS_CNTP_CTL);
