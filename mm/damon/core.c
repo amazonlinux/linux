@@ -2680,6 +2680,7 @@ static void kdamond_init_ctx(struct damon_ctx *ctx)
 	ctx->next_intervals_tune_sis = ctx->next_aggregation_sis *
 		ctx->attrs.intervals_goal.aggrs;
 
+	/* todo: ensure apply_interval_us > sample_interval */
 	damon_for_each_scheme(scheme, ctx) {
 		apply_interval = scheme->apply_interval_us ?
 			scheme->apply_interval_us : ctx->attrs.aggr_interval;
