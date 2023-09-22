@@ -120,9 +120,11 @@ extern void arch_static_call_transform(void *site, void *tramp, void *func, bool
 
 #ifdef CONFIG_HAVE_STATIC_CALL_INLINE
 
-extern bool static_call_initialized;
+extern int static_call_initialized;
 
 extern int __init static_call_init(void);
+
+extern void static_call_force_reinit(void);
 
 struct static_call_mod {
 	struct static_call_mod *next;
