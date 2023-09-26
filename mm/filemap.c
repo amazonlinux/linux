@@ -1227,7 +1227,7 @@ static inline bool trylock_page_bit_common(struct page *page, int bit_nr,
 }
 
 /* How many times do we accept lock stealing from under a waiter? */
-int sysctl_page_lock_unfairness = 5;
+int sysctl_page_lock_unfairness = 0;
 
 static inline int wait_on_page_bit_common(wait_queue_head_t *q,
 	struct page *page, int bit_nr, int state, enum behavior behavior)
