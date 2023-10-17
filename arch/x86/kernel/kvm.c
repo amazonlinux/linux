@@ -81,6 +81,8 @@ static DEFINE_PER_CPU(struct kvm_vcpu_pv_apf_data, apf_reason) __aligned(64);
 static DEFINE_PER_CPU(struct kvm_steal_time, steal_time) __aligned(64);
 static int has_steal_clock = 0;
 
+static DEFINE_PER_CPU(u32, kvm_apf_int_enabled);
+
 /*
  * No need for any "IO delay" on KVM
  */
@@ -269,25 +271,47 @@ dotraplinkage void
 do_async_page_fault(struct pt_regs *regs, unsigned long error_code)
 {
 	enum ctx_state prev_state;
+	u32 reason = kvm_read_and_reset_pf_reason();
+	u32 handle_page_ready = !__this_cpu_read(kvm_apf_int_enabled);
 
-	switch (kvm_read_and_reset_pf_reason()) {
-	default:
+	if (!reason) {
+		/* This is a normal page fault */
 		do_page_fault(regs, error_code);
-		break;
-	case KVM_PV_REASON_PAGE_NOT_PRESENT:
+	} else if (reason & KVM_PV_REASON_PAGE_NOT_PRESENT) {
 		/* page is swapped out by the host. */
 		prev_state = exception_enter();
 		kvm_async_pf_task_wait((u32)read_cr2(), !user_mode(regs));
 		exception_exit(prev_state);
-		break;
-	case KVM_PV_REASON_PAGE_READY:
+	} else if (handle_page_ready && (reason & KVM_PV_REASON_PAGE_READY)) {
+		/* possible only if interrupt-based mechanism is disabled */
 		rcu_irq_enter();
 		kvm_async_pf_task_wake((u32)read_cr2());
 		rcu_irq_exit();
-		break;
+	} else {
+		WARN_ONCE(1, "Unexpected async PF flags: %x\n", reason);
 	}
 }
 NOKPROBE_SYMBOL(do_async_page_fault);
+
+__visible void __irq_entry kvm_async_pf_intr(struct pt_regs *regs)
+{
+	u32 token;
+
+	entering_ack_irq();
+
+	inc_irq_stat(irq_hv_callback_count);
+
+	if (__this_cpu_read(apf_reason.enabled)) {
+		token = __this_cpu_read(apf_reason.token);
+		rcu_irq_enter();
+		kvm_async_pf_task_wake(token);
+		rcu_irq_exit();
+		__this_cpu_write(apf_reason.token, 0);
+		wrmsrl(MSR_KVM_ASYNC_PF_ACK, 1);
+	}
+
+	exiting_irq();
+}
 
 static void __init paravirt_ops_setup(void)
 {
@@ -346,6 +370,12 @@ static void kvm_guest_cpu_init(void)
 		if (kvm_para_has_feature(KVM_FEATURE_ASYNC_PF_VMEXIT))
 			pa |= KVM_ASYNC_PF_DELIVERY_AS_PF_VMEXIT;
 
+		if (kvm_para_has_feature(KVM_FEATURE_ASYNC_PF_INT)) {
+			pa |= KVM_ASYNC_PF_DELIVERY_AS_INT;
+			wrmsrl(MSR_KVM_ASYNC_PF_INT, HYPERVISOR_CALLBACK_VECTOR);
+			__this_cpu_write(kvm_apf_int_enabled, 1);
+		}
+
 		wrmsrl(MSR_KVM_ASYNC_PF_EN, pa);
 		__this_cpu_write(apf_reason.enabled, 1);
 		printk(KERN_INFO"KVM setup async PF for cpu %d\n",
@@ -373,6 +403,7 @@ static void kvm_pv_disable_apf(void)
 
 	wrmsrl(MSR_KVM_ASYNC_PF_EN, 0);
 	__this_cpu_write(apf_reason.enabled, 0);
+	__this_cpu_write(kvm_apf_int_enabled, 0);
 
 	printk(KERN_INFO"Unregister pv shared memory for cpu %d\n",
 	       smp_processor_id());
@@ -536,6 +567,9 @@ void __init kvm_guest_init(void)
 
 	if (kvmclock_vsyscall)
 		kvm_setup_vsyscall_timeinfo();
+
+	if (kvm_para_has_feature(KVM_FEATURE_ASYNC_PF_INT) && kvmapf)
+		alloc_intr_gate(HYPERVISOR_CALLBACK_VECTOR, kvm_async_pf_vector);
 
 #ifdef CONFIG_SMP
 	smp_ops.smp_prepare_cpus = kvm_smp_prepare_cpus;
