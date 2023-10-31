@@ -42,6 +42,14 @@
 #define ADMIN_CQ_SIZE(depth)	((depth) * sizeof(struct ena_admin_acq_entry))
 #define ADMIN_AENQ_SIZE(depth)	((depth) * sizeof(struct ena_admin_aenq_entry))
 
+/* Macros used to extract LSB/MSB from the
+ * enums defining the reset reasons
+ */
+#define ENA_RESET_REASON_LSB_OFFSET			    0
+#define ENA_RESET_REASON_LSB_MASK			    0xf
+#define ENA_RESET_REASON_MSB_OFFSET			    4
+#define ENA_RESET_REASON_MSB_MASK			    0xf0
+
 #define ENA_CUSTOMER_METRICS_BUFFER_SIZE 512
 
 /*****************************************************************************/
@@ -280,6 +288,9 @@ struct ena_com_phc_info {
 	/* PHC shared memory - virtual address */
 	struct ena_admin_phc_resp *virt_addr;
 
+	/* System time of last PHC request */
+	ktime_t system_time;
+
 	/* Spin lock to ensure a single outstanding PHC read */
 	spinlock_t lock;
 
@@ -299,16 +310,17 @@ struct ena_com_phc_info {
 	 */
 	u32 block_timeout_usec;
 
+	/* PHC shared memory - physical address */
+	dma_addr_t phys_addr;
+
+	/* Cached error bound per timestamp sample */
+	u32 error_bound;
+
 	/* Request id sent to the device */
 	u16 req_id;
 
 	/* True if PHC is active in the device */
 	bool active;
-
-	/* PHC shared memory - memory handle */
-
-	/* PHC shared memory - physical address */
-	dma_addr_t phys_addr;
 };
 
 struct ena_rss {
@@ -464,12 +476,19 @@ int ena_com_phc_config(struct ena_com_dev *ena_dev);
  */
 void ena_com_phc_destroy(struct ena_com_dev *ena_dev);
 
-/* ena_com_phc_get - Retrieve PHC timestamp
+/* ena_com_phc_get_timestamp - Retrieve PHC timestamp
  * @ena_dev: ENA communication layer struct
- * @timestamp: Retrieve PHC timestamp
+ * @timestamp: Retrieved PHC timestamp
  * @return - 0 on success, negative value on failure
  */
-int ena_com_phc_get(struct ena_com_dev *ena_dev, u64 *timestamp);
+int ena_com_phc_get_timestamp(struct ena_com_dev *ena_dev, u64 *timestamp);
+
+/* ena_com_phc_get_error_bound - Retrieve cached PHC error bound
+ * @ena_dev: ENA communication layer struct
+ * @error_bound: Cached PHC error bound
+ * @return - 0 on success, negative value on failure
+ */
+int ena_com_phc_get_error_bound(struct ena_com_dev *ena_dev, u32 *error_bound);
 
 /* ena_com_set_mmio_read_mode - Enable/disable the indirect mmio reg read mechanism
  * @ena_dev: ENA communication layer struct
