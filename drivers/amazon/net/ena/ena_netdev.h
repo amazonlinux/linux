@@ -19,6 +19,9 @@
 #include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#ifdef ENA_XDP_SUPPORT
+#include <net/xdp.h>
+#endif
 #ifdef HAS_BPF_HEADER
 #include <uapi/linux/bpf.h>
 #endif
@@ -28,8 +31,8 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	8
-#define DRV_MODULE_GEN_SUBMINOR 9
+#define DRV_MODULE_GEN_MINOR	10
+#define DRV_MODULE_GEN_SUBMINOR 0
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -139,7 +142,7 @@ struct ena_irq {
 };
 
 struct ena_napi {
-	u8 first_interrupt ____cacheline_aligned;
+	unsigned long last_intr_jiffies ____cacheline_aligned;
 	u8 interrupts_masked;
 	struct napi_struct napi;
 	struct ena_ring *tx_ring;
@@ -182,7 +185,7 @@ struct ena_tx_buffer {
 	 * a given packet is not expected to be handled by ena_start_xmit
 	 * and by napi/timer_service at the same time.
 	 */
-	unsigned long last_jiffies;
+	unsigned long tx_sent_jiffies;
 	struct ena_com_buf bufs[ENA_PKT_MAX_BUFS];
 } ____cacheline_aligned;
 
@@ -363,6 +366,17 @@ struct ena_stats_dev {
 	u64 tx_drops;
 	u64 rx_overruns;
 	u64 reset_fail;
+	u64 total_resets;
+	u64 bad_tx_req_id;
+	u64 bad_rx_req_id;
+	u64 bad_rx_desc_num;
+	u64 missing_intr;
+	u64 suspected_poll_starvation;
+	u64 missing_tx_cmpl;
+	u64 rx_desc_malformed;
+	u64 tx_desc_malformed;
+	u64 invalid_state;
+	u64 os_netdev_wd;
 };
 
 enum ena_flags_t {
@@ -374,14 +388,23 @@ enum ena_flags_t {
 	ENA_FLAG_ONGOING_RESET
 };
 
+enum ena_llq_header_size_policy_t {
+	/* Intermediate policy until llq configuration is initialized
+	 * to either NORMAL or LARGE
+	 */
+	ENA_LLQ_HEADER_SIZE_POLICY_UNSPECIFIED = 0,
+	/* Policy for Normal size LLQ entry (128B) */
+	ENA_LLQ_HEADER_SIZE_POLICY_NORMAL,
+	/* Policy for Large size LLQ entry (256B) */
+	ENA_LLQ_HEADER_SIZE_POLICY_LARGE
+};
+
 /* adapter specific private data structure */
 struct ena_adapter {
 	struct ena_com_dev *ena_dev;
 	/* OS defined structs */
 	struct net_device *netdev;
 	struct pci_dev *pdev;
-
-	struct devlink *devlink;
 
 	/* rx packets that are shorter than this len will be copied to the skb
 	 * header
@@ -412,12 +435,12 @@ struct ena_adapter {
 
 	u32 msg_enable;
 
-	/* The flag is used for two purposes:
-	 * 1. Indicates that large LLQ has been requested.
+	/* The policy is used for two purposes:
+	 * 1. Indicates who decided on LLQ entry size (user / device)
 	 * 2. Indicates whether large LLQ is set or not after device
 	 *    initialization / configuration.
 	 */
-	bool large_llq_header_enabled;
+	enum ena_llq_header_size_policy_t llq_policy;
 	bool large_llq_header_supported;
 
 	u16 max_tx_sgl_size;
@@ -426,7 +449,7 @@ struct ena_adapter {
 	u8 mac_addr[ETH_ALEN];
 
 	unsigned long keep_alive_timeout;
-	unsigned long missing_tx_completion_to;
+	unsigned long missing_tx_completion_to_jiffies;
 
 	char name[ENA_NAME_MAX_LEN];
 #ifdef ENA_PHC_SUPPORT
@@ -473,6 +496,32 @@ struct ena_adapter {
 	u32 xdp_num_queues;
 };
 
+#define ENA_RESET_STATS_ENTRY(reset_reason, stat) \
+	[reset_reason] = { \
+	.stat_offset = offsetof(struct ena_stats_dev, stat) / sizeof(u64), \
+	.has_counter = true \
+}
+
+struct ena_reset_stats_offset {
+	int stat_offset;
+	bool has_counter;
+};
+
+static const struct ena_reset_stats_offset resets_to_stats_offset_map[ENA_REGS_RESET_LAST] = {
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_KEEP_ALIVE_TO, wd_expired),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_ADMIN_TO, admin_q_pause),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_MISS_TX_CMPL, missing_tx_cmpl),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_INV_RX_REQ_ID, bad_rx_req_id),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_INV_TX_REQ_ID, bad_tx_req_id),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_TOO_MANY_RX_DESCS, bad_rx_desc_num),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_DRIVER_INVALID_STATE, invalid_state),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_OS_NETDEV_WD, os_netdev_wd),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_MISS_INTERRUPT, missing_intr),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_SUSPECTED_POLL_STARVATION, suspected_poll_starvation),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_RX_DESCRIPTOR_MALFORMED, rx_desc_malformed),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_TX_DESCRIPTOR_MALFORMED, tx_desc_malformed),
+};
+
 void ena_set_ethtool_ops(struct net_device *netdev);
 
 void ena_dump_stats_to_dmesg(struct ena_adapter *adapter);
@@ -482,13 +531,23 @@ void ena_dump_stats_to_buf(struct ena_adapter *adapter, u8 *buf);
 
 int ena_set_lpc_state(struct ena_adapter *adapter, bool enabled);
 
-int ena_update_queue_sizes(struct ena_adapter *adapter,
-			   u32 new_tx_size,
-			   u32 new_rx_size);
+int ena_update_queue_params(struct ena_adapter *adapter,
+			    u32 new_tx_size,
+			    u32 new_rx_size,
+			    u32 new_llq_header_len);
 
 int ena_update_queue_count(struct ena_adapter *adapter, u32 new_channel_count);
 
 int ena_set_rx_copybreak(struct ena_adapter *adapter, u32 rx_copybreak);
+
+/* Increase a stat by cnt while holding syncp seqlock on 32bit machines */
+static inline void ena_increase_stat(u64 *statp, u64 cnt,
+			      struct u64_stats_sync *syncp)
+{
+	u64_stats_update_begin(syncp);
+	(*statp) += cnt;
+	u64_stats_update_end(syncp);
+}
 
 int ena_get_sset_count(struct net_device *netdev, int sset);
 #ifdef ENA_BUSY_POLL_SUPPORT
@@ -564,6 +623,16 @@ static inline bool ena_bp_disable(struct ena_ring *rx_ring)
 static inline void ena_reset_device(struct ena_adapter *adapter,
 				    enum ena_regs_reset_reason_types reset_reason)
 {
+	const struct ena_reset_stats_offset *ena_reset_stats_offset =
+		&resets_to_stats_offset_map[reset_reason];
+
+	if (ena_reset_stats_offset->has_counter) {
+		u64 *stat_ptr = (u64 *)&adapter->dev_stats + ena_reset_stats_offset->stat_offset;
+
+		ena_increase_stat(stat_ptr, 1, &adapter->syncp);
+	}
+
+	ena_increase_stat(&adapter->dev_stats.total_resets, 1, &adapter->syncp);
 	adapter->reset_reason = reset_reason;
 	/* Make sure reset reason is set before triggering the reset */
 	smp_mb__before_atomic();
@@ -582,15 +651,6 @@ int ena_destroy_device(struct ena_adapter *adapter, bool graceful);
 int ena_restore_device(struct ena_adapter *adapter);
 int handle_invalid_req_id(struct ena_ring *ring, u16 req_id,
 			  struct ena_tx_buffer *tx_info, bool is_xdp);
-
-/* Increase a stat by cnt while holding syncp seqlock on 32bit machines */
-static inline void ena_increase_stat(u64 *statp, u64 cnt,
-			      struct u64_stats_sync *syncp)
-{
-	u64_stats_update_begin(syncp);
-	(*statp) += cnt;
-	u64_stats_update_end(syncp);
-}
 
 static inline void ena_ring_tx_doorbell(struct ena_ring *tx_ring)
 {
