@@ -50,8 +50,7 @@ void ena_xdp_exchange_program_rx_in_range(struct ena_adapter *adapter,
 int ena_xdp_io_poll(struct napi_struct *napi, int budget);
 int ena_xdp_xmit_frame(struct ena_ring *tx_ring,
 		       struct ena_adapter *adapter,
-		       struct xdp_frame *xdpf,
-		       int flags);
+		       struct xdp_frame *xdpf);
 int ena_xdp_xmit(struct net_device *dev, int n,
 		 struct xdp_frame **frames, u32 flags);
 int ena_xdp(struct net_device *netdev, struct netdev_bpf *bpf);
@@ -147,8 +146,7 @@ static inline int ena_xdp_execute(struct ena_ring *rx_ring, struct xdp_buff *xdp
 		/* The XDP queues are shared between XDP_TX and XDP_REDIRECT */
 		spin_lock(&xdp_ring->xdp_tx_lock);
 
-		if (ena_xdp_xmit_frame(xdp_ring, rx_ring->adapter, xdpf,
-				       XDP_XMIT_FLUSH))
+		if (ena_xdp_xmit_frame(xdp_ring, rx_ring->adapter, xdpf))
 			xdp_return_frame(xdpf);
 
 		spin_unlock(&xdp_ring->xdp_tx_lock);
@@ -191,6 +189,7 @@ static inline int ena_xdp_execute(struct ena_ring *rx_ring, struct xdp_buff *xdp
 #else /* ENA_XDP_SUPPORT */
 
 #define ENA_IS_XDP_INDEX(adapter, index) (false)
+#define xdp_return_frame(frame) do {} while (0)
 
 static inline bool ena_xdp_present_ring(struct ena_ring *ring)
 {
@@ -209,6 +208,16 @@ static inline int ena_xdp_register_rxq_info(struct ena_ring *rx_ring)
 
 static inline void ena_xdp_unregister_rxq_info(struct ena_ring *rx_ring) {}
 
+static inline bool ena_xdp_legal_queue_count(struct ena_adapter *adapter,
+					     u32 queues)
+{
+	return false;
+}
+
+static inline bool ena_xdp_present(struct ena_adapter *adapter)
+{
+	return false;
+}
 #endif /* ENA_XDP_SUPPORT */
 #ifndef ENA_AF_XDP_SUPPORT /* stabs for AF XDP code */
 
