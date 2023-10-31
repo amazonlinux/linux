@@ -1,13 +1,13 @@
 #
 # Makefile for the Elastic Network Adapter (ENA) device drivers.
 # ENA Source is: https://github.com/amzn/amzn-drivers.
-# Current ENA source is based on ena_linux_2.4.0 tag.
+# Current ENA source is based on ena_linux_2.10.0 tag.
 #
 
 obj-$(CONFIG_AMAZON_ENA_ETHERNET) += ena.o
 
 ena-y := ena_netdev.o ena_ethtool.o ena_lpc.o ena_phc.o ena_xdp.o dim.o \
-	 ena_devlink.o net_dim.o ena_com.o ena_eth_com.o
+	 net_dim.o ena_com.o ena_eth_com.o
 
 ena-$(CONFIG_SYSFS) += ena_sysfs.o
 
@@ -18,3 +18,5 @@ endif
 ifdef ENA_PHC_INCLUDE
 	ccflags-y += -DENA_PHC_INCLUDE
 endif
+
+ccflags-y += -include $(srctree)/drivers/amazon/net/ena/config.h
