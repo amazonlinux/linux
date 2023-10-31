@@ -36,6 +36,8 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #ifndef _KCOMPAT_H_
 #define _KCOMPAT_H_
 
+#include "config.h"
+
 #ifndef LINUX_VERSION_CODE
 #include <linux/version.h>
 #endif
@@ -92,10 +94,6 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 
 #ifndef SZ_16K
 #define SZ_16K 0x00004000
-#endif
-
-#ifdef HAVE_POLL_CONTROLLER
-#define CONFIG_NET_POLL_CONTROLLER
 #endif
 
 #ifndef __GFP_COLD
@@ -732,8 +730,8 @@ do {									\
 #define XDP_CONVERT_TO_FRAME_NAME_CHANGED
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0)
-#define ENA_XDP_QUERY_IN_KERNEL
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+#define ENA_XDP_QUERY_IN_DRIVER
 #endif
 
 #endif
@@ -743,63 +741,6 @@ do {									\
 	(SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 3)
 
 #define HAVE_NDO_TX_TIMEOUT_STUCK_QUEUE_PARAMETER
-#endif
-
-#if defined(CONFIG_NET_DEVLINK) && LINUX_VERSION_CODE >= KERNEL_VERSION(4, 19, 0)
-#define ENA_DEVLINK_SUPPORT
-#endif
-
-#if !defined(CONFIG_NET_DEVLINK) && !defined(CONFIG_NET_DEVLINK_MODULE) && !defined(CONFIG_MAY_USE_DEVLINK)
-#define ENA_NO_DEVLINK_HEADERS
-#endif
-
-#if defined(CONFIG_NET_DEVLINK) && \
-	(KERNEL_VERSION(5, 1, 0) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) && \
-	!((SUSE_VERSION != 0) && (SUSE_VERSION == 15 && (SUSE_PATCHLEVEL < 2 || SUSE_PATCHLEVEL >= 4))) && \
-	!(defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE > UBUNTU_VERSION(5, 16, 0, 0)) && \
-	!(RHEL_RELEASE_CODE))
-#define ENA_DEVLINK_PUBLISH_REQUIRED
-#endif
-
-#if defined(CONFIG_NET_DEVLINK) &&					\
-	(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 4, 0) ||		\
-	 (SUSE_VERSION && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 18)))
-#define ENA_DEVLINK_RELOAD_UP_DOWN_SUPPORTED
-#endif
-
-#if defined(CONFIG_NET_DEVLINK) && \
-	(KERNEL_VERSION(5, 4, 0) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) && \
-	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) && \
-	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0)))
-#define ENA_DEVLINK_RELOAD_ENABLING_REQUIRED
-#endif
-
-#if defined(CONFIG_NET_DEVLINK) &&					\
-	(LINUX_VERSION_CODE >= KERNEL_VERSION(5, 5, 0) ||		\
-	 (SUSE_VERSION && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 3, 18)))
-#define ENA_DEVLINK_RELOAD_NS_CHANGE_SUPPORT
-#endif
-
-#if defined(CONFIG_NET_DEVLINK) && LINUX_VERSION_CODE >= KERNEL_VERSION(5, 10, 0)
-#define ENA_DEVLINK_RELOAD_LIMIT_AND_ACTION_SUPPORT
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0) || \
-	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) || \
-	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
-#define ENA_DEVLINK_RECEIVES_DEVICE_ON_ALLOC
-#endif
-
-#if (KERNEL_VERSION(5, 16, 0) <= LINUX_VERSION_CODE && LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)) || \
-	(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4))  || \
-	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0) && !(defined(FEDORA_RELEASE)))
-#define ENA_DEVLINK_RELOAD_SUPPORT_ADVERTISEMENT_NEEDED
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 16, 0) && \
-	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 4)) && \
-	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 0))
-#define ENA_DEVLINK_CONFIGURE_AFTER_REGISTER
 #endif
 
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,19,0) && \
@@ -1115,9 +1056,24 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) */
 }
 
-#if defined(ENA_DEVLINK_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
-#define devl_param_driverinit_value_get devlink_param_driverinit_value_get
-#define devl_param_driverinit_value_set devlink_param_driverinit_value_set
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
+#define ENA_LARGE_LLQ_ETHTOOL
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+#include <linux/bitfield.h>
+#define ENA_FIELD_GET(value, mask, offset) FIELD_GET(mask, value)
+#else
+#define ENA_FIELD_GET(value, mask, offset) ((typeof(mask))((value & mask) >> offset))
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
+#define xdp_features_set_redirect_target(netdev, xdp_xmit_supported)
+#define xdp_features_clear_redirect_target(netdev)
+#define xdp_clear_features_flag(netdev)
+#define xdp_set_features_flag(netdev, features)
+#else /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0) */
+#define ENA_XDP_NETLINK_ADVERTISEMENT
 #endif
 
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 4))) || \
@@ -1167,5 +1123,13 @@ static inline void ena_dma_unmap_page_attrs(struct device *dev,
 	dma_unmap_page_attrs(dev, addr, size, dir, attrs);
 #endif
 }
+
+#ifndef ENA_HAVE_PCI_DEV_ID
+#define pci_dev_id(pdev) ((((u16)(pdev->bus->number)) << 8) | (pdev->devfn))
+#endif /* ENA_HAVE_PCI_DEV_ID */
+
+#ifndef ENA_HAVE_XDP_DO_FLUSH
+#define xdp_do_flush xdp_do_flush_map
+#endif /* ENA_HAVE_XDP_DO_FLUSH */
 
 #endif /* _KCOMPAT_H_ */
