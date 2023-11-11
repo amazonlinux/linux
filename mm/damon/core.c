@@ -2201,6 +2201,8 @@ static void damos_set_effective_quota(struct damos_quota *quota)
 		esz = quota->sz;
 
 	quota->esz = esz;
+
+	pr_info("esz %lu\n", esz);
 }
 
 static void damos_trace_esz(struct damon_ctx *c, struct damos *s,
