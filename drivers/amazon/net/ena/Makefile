@@ -15,8 +15,6 @@ ifdef TEST_AF_XDP
 	ccflags-y += -DENA_TEST_AF_XDP
 endif
 
-ifdef ENA_PHC_INCLUDE
-	ccflags-y += -DENA_PHC_INCLUDE
-endif
+ccflags-y += -DENA_PHC_INCLUDE
 
 ccflags-y += -include $(srctree)/drivers/amazon/net/ena/config.h
