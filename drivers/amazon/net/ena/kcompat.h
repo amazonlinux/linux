@@ -531,7 +531,8 @@ static inline unsigned int u64_stats_fetch_begin_irq(const struct u64_stats_sync
 static inline bool ena_u64_stats_fetch_retry(const struct u64_stats_sync *syncp,
 					     unsigned int start)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) && \
+    !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 3))
 	return u64_stats_fetch_retry_irq(syncp, start);
 #else
 	return u64_stats_fetch_retry(syncp, start);
@@ -540,7 +541,8 @@ static inline bool ena_u64_stats_fetch_retry(const struct u64_stats_sync *syncp,
 
 static inline unsigned int ena_u64_stats_fetch_begin(const struct u64_stats_sync *syncp)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) && \
+    !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 3))
 	return u64_stats_fetch_begin_irq(syncp);
 #else
 	return u64_stats_fetch_begin(syncp);
@@ -957,7 +959,8 @@ static inline int netif_xmit_stopped(const struct netdev_queue *dev_queue)
 #define NAPIF_STATE_SCHED BIT(NAPI_STATE_SCHED)
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0) && \
+	!(defined(IS_UEK) && ENA_KERNEL_VERSION_GTE(5, 15, 0, 100, 96, 32))
 #define bpf_warn_invalid_xdp_action(netdev, xdp_prog, verdict) \
 	bpf_warn_invalid_xdp_action(verdict)
 #endif
