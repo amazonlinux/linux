@@ -1561,7 +1561,7 @@ static int ena_clean_rx_irq(struct ena_ring *rx_ring, struct napi_struct *napi,
 
 #ifdef ENA_XDP_SUPPORT
 	if (xdp_flags & ENA_XDP_REDIRECT)
-		xdp_do_flush_map();
+		xdp_do_flush();
 	if (xdp_flags & ENA_XDP_TX)
 		ena_ring_tx_doorbell(rx_ring->xdp_ring);
 #endif
@@ -3462,15 +3462,21 @@ static int ena_calc_io_queue_size(struct ena_adapter *adapter,
 {
 	struct ena_admin_feature_llq_desc *llq = &get_feat_ctx->llq;
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
-	u32 tx_queue_size = ENA_DEFAULT_RING_SIZE;
 	u32 max_tx_queue_size;
 	u32 max_rx_queue_size;
+	u32 tx_queue_size;
 
 	/* If this function is called after driver load, the ring sizes have already
 	 * been configured. Take it into account when recalculating ring size.
 	 */
-	if (adapter->tx_ring->ring_size)
+	if (adapter->tx_ring->ring_size) {
 		tx_queue_size = adapter->tx_ring->ring_size;
+	} else if (adapter->llq_policy == ENA_LLQ_HEADER_SIZE_POLICY_LARGE &&
+		   ena_dev->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
+		tx_queue_size = ENA_DEFAULT_WIDE_LLQ_RING_SIZE;
+	} else {
+		tx_queue_size = ENA_DEFAULT_RING_SIZE;
+	}
 
 	if (adapter->rx_ring->ring_size)
 		rx_queue_size = adapter->rx_ring->ring_size;
@@ -3513,6 +3519,33 @@ static int ena_calc_io_queue_size(struct ena_adapter *adapter,
 						 max_queues->max_packet_rx_descs);
 	}
 
+	if (adapter->llq_policy == ENA_LLQ_HEADER_SIZE_POLICY_LARGE) {
+		if (ena_dev->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
+			u32 max_wide_llq_size = max_tx_queue_size;
+
+			if (llq->max_wide_llq_depth == 0) {
+				/* if there is no large llq max depth from device, we divide
+				 * the queue size by 2, leaving the amount of memory
+				 * used by the queues unchanged.
+				 */
+				max_wide_llq_size /= 2;
+			} else if (llq->max_wide_llq_depth < max_wide_llq_size) {
+				max_wide_llq_size = llq->max_wide_llq_depth;
+			}
+			if (max_wide_llq_size != max_tx_queue_size) {
+				max_tx_queue_size = max_wide_llq_size;
+				dev_info(&adapter->pdev->dev,
+					 "Forcing large headers and decreasing maximum TX queue size to %d\n",
+					 max_tx_queue_size);
+			}
+		} else {
+			dev_err(&adapter->pdev->dev,
+				"Forcing large headers failed: LLQ is disabled or device does not support large headers\n");
+
+			adapter->llq_policy = ENA_LLQ_HEADER_SIZE_POLICY_NORMAL;
+		}
+	}
+
 	max_tx_queue_size = rounddown_pow_of_two(max_tx_queue_size);
 	max_rx_queue_size = rounddown_pow_of_two(max_rx_queue_size);
 
@@ -3526,23 +3559,6 @@ static int ena_calc_io_queue_size(struct ena_adapter *adapter,
 		netdev_err(adapter->netdev, "Device max RX queue size: %d < minimum: %d\n",
 			   max_rx_queue_size, ENA_MIN_RING_SIZE);
 		return -EFAULT;
-	}
-
-	/* When forcing large headers, we multiply the entry size by 2, and therefore divide
-	 * the queue size by 2, leaving the amount of memory used by the queues unchanged.
-	 */
-	if (adapter->llq_policy == ENA_LLQ_HEADER_SIZE_POLICY_LARGE) {
-		if (ena_dev->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
-			max_tx_queue_size /= 2;
-			dev_info(&adapter->pdev->dev,
-				 "Forcing large headers and decreasing maximum TX queue size to %d\n",
-				 max_tx_queue_size);
-		} else {
-			dev_err(&adapter->pdev->dev,
-				"Forcing large headers failed: LLQ is disabled or device does not support large headers\n");
-
-			adapter->llq_policy = ENA_LLQ_HEADER_SIZE_POLICY_NORMAL;
-		}
 	}
 
 	tx_queue_size = clamp_val(tx_queue_size, ENA_MIN_RING_SIZE,
@@ -3808,6 +3824,11 @@ static int ena_device_init(struct ena_adapter *adapter, struct pci_dev *pdev,
 	if (unlikely(rc))
 		goto err_admin_init;
 
+	if (ena_dev->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV)
+		dev_info(&pdev->dev, "ENA Large LLQ is %s\n",
+			adapter->llq_policy == ENA_LLQ_HEADER_SIZE_POLICY_LARGE ?
+			"enabled" : "disabled");
+
 	/* Turned on features shouldn't change due to reset. */
 	prev_netdev_features = adapter->netdev->features;
 	ena_set_dev_offloads(get_feat_ctx, adapter->netdev);
@@ -4070,11 +4091,11 @@ static int check_missing_comp_in_tx_queue(struct ena_adapter *adapter, struct en
 	struct net_device *netdev = adapter->netdev;
 	unsigned long jiffies_since_last_napi;
 	unsigned long jiffies_since_last_intr;
+	u32 missed_tx = 0, new_missed_tx = 0;
 	unsigned long graceful_timeout;
 	struct ena_tx_buffer *tx_buf;
 	unsigned long timeout;
 	int napi_scheduled;
-	u32 missed_tx = 0;
 	bool is_expired;
 	int i, rc = 0;
 
@@ -4117,20 +4138,24 @@ static int check_missing_comp_in_tx_queue(struct ena_adapter *adapter, struct en
 				reset_reason = ENA_REGS_RESET_SUSPECTED_POLL_STARVATION;
 			}
 
+			missed_tx++;
+
 			if (tx_buf->print_once)
 				continue;
+
+			/* Add new TX completions which are missed */
+			new_missed_tx++;
 
 			netif_notice(adapter, tx_err, netdev,
 				     "TX hasn't completed, qid %d, index %d. %u msecs since last interrupt, %u msecs since last napi execution, napi scheduled: %d\n",
 				     tx_ring->qid, i, jiffies_to_msecs(jiffies_since_last_intr),
 				     jiffies_to_msecs(jiffies_since_last_napi), napi_scheduled);
 
-			missed_tx++;
 			tx_buf->print_once = 1;
 		}
 	}
 
-	/* Checking if this TX ring got to max missing TX completes */
+	/* Checking if this TX ring missing TX completions have passed the threshold */
 	if (unlikely(missed_tx > missed_tx_thresh)) {
 		jiffies_since_last_intr = jiffies - READ_ONCE(ena_napi->last_intr_jiffies);
 		jiffies_since_last_napi = jiffies - READ_ONCE(tx_ring->tx_stats.last_napi_jiffies);
@@ -4156,7 +4181,8 @@ static int check_missing_comp_in_tx_queue(struct ena_adapter *adapter, struct en
 		rc = -EIO;
 	}
 
-	ena_increase_stat(&tx_ring->tx_stats.missed_tx, missed_tx, &tx_ring->syncp);
+	/* Add the newly discovered missing TX completions */
+	ena_increase_stat(&tx_ring->tx_stats.missed_tx, new_missed_tx, &tx_ring->syncp);
 
 	return rc;
 }
@@ -4288,7 +4314,12 @@ static void check_for_admin_com_state(struct ena_adapter *adapter)
 	if (unlikely(!ena_com_get_admin_running_state(adapter->ena_dev))) {
 		netif_err(adapter, drv, adapter->netdev,
 			  "ENA admin queue is not in running state!\n");
-		ena_reset_device(adapter, ENA_REGS_RESET_ADMIN_TO);
+		ena_increase_stat(&adapter->dev_stats.admin_q_pause, 1,
+				  &adapter->syncp);
+		if (ena_com_get_missing_admin_interrupt(adapter->ena_dev))
+			ena_reset_device(adapter, ENA_REGS_RESET_MISSING_ADMIN_INTERRUPT);
+		else
+			ena_reset_device(adapter, ENA_REGS_RESET_ADMIN_TO);
 	}
 }
 
