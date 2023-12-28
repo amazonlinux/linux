@@ -548,7 +548,7 @@
 #define HAVE_KEY_PAYLOAD_DATA_ARRAY 1
 
 /* key_type->instantiate has two args */
-#define HAVE_KEY_TYPE_INSTANTIATE_2ARGS 1
+/* #undef HAVE_KEY_TYPE_INSTANTIATE_2ARGS */
 
 /* key.usage is of type refcount_t */
 #define HAVE_KEY_USAGE_REFCOUNT 1
@@ -724,10 +724,10 @@
 /* #undef HAVE_OLDSIZE_TRUNCATE_PAGECACHE */
 
 /* openssl-devel is present */
-/* #undef HAVE_OPENSSL_GETSEPOL */
+#define HAVE_OPENSSL_GETSEPOL 1
 
 /* OpenSSL HMAC functions needed for SSK */
-/* #undef HAVE_OPENSSL_SSK */
+#define HAVE_OPENSSL_SSK 1
 
 /* 'pagevec_init' takes one parameter */
 #define HAVE_PAGEVEC_INIT_ONE_PARAM 1
@@ -1092,7 +1092,7 @@
 #define LUSTRE_PATCH 8
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.12.8_163_g540d104"
+#define LUSTRE_VERSION_STRING "2.12.8_198_gde6dd89_dirty"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1128,7 +1128,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.12.8_163_g540d104"
+#define PACKAGE_STRING "Lustre 2.12.8_198_gde6dd89_dirty"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1137,7 +1137,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.12.8_163_g540d104"
+#define PACKAGE_VERSION "2.12.8_198_gde6dd89_dirty"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1178,7 +1178,7 @@
 /* #undef USE_LU_REF */
 
 /* Version number of package */
-#define VERSION "2.12.8_163_g540d104"
+#define VERSION "2.12.8_198_gde6dd89_dirty"
 
 /* zfs fix version */
 /* #undef ZFS_FIX */
