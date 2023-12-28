@@ -63,6 +63,7 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/string.h>
+#include <linux/errno.h>
 
 /* Handle older distros */
 #ifndef __ALIGN_KERNEL
@@ -1385,12 +1386,14 @@ enum la_valid {
 #define MDS_OPEN_RELEASE   02000000000000ULL /* Open the file for HSM release */
 
 #define MDS_OPEN_RESYNC    04000000000000ULL /* FLR: file resync */
+#define MDS_OPEN_DEFAULT_LMV  040000000000000ULL /* open fetches default LMV */
 
 /* lustre internal open flags, which should not be set from user space */
 #define MDS_OPEN_FL_INTERNAL (MDS_OPEN_HAS_EA | MDS_OPEN_HAS_OBJS |	\
 			      MDS_OPEN_OWNEROVERRIDE | MDS_OPEN_LOCK |	\
 			      MDS_OPEN_BY_FID | MDS_OPEN_LEASE |	\
-			      MDS_OPEN_RELEASE | MDS_OPEN_RESYNC)
+			      MDS_OPEN_RELEASE | MDS_OPEN_RESYNC |	\
+			      MDS_OPEN_DEFAULT_LMV)
 
 
 /********* Changelogs **********/
@@ -1572,7 +1575,10 @@ enum changelog_send_extra_flag {
 	CHANGELOG_EXTRA_FLAG_XATTR  = 0x08,
 };
 
-#define CR_MAXSIZE __ALIGN_KERNEL(2 * NAME_MAX + 2 + \
+/* unlink/rename/rmdir would log with the full path.
+ * Set the max to use PATH_MAX
+ */
+#define CR_MAXSIZE __ALIGN_KERNEL(NAME_MAX + PATH_MAX + 2 + \
 				  changelog_rec_offset(CLF_SUPPORTED, \
 						       CLFE_SUPPORTED), 8)
 
@@ -1826,7 +1832,8 @@ static inline __kernel_size_t changelog_rec_snamelen(const struct changelog_rec 
  * @param[in]      crf_wanted  Flags describing the desired extensions.
  * @param[in]      cref_want   Flags describing the desired extra extensions.
  */
-static inline void changelog_remap_rec(struct changelog_rec *rec,
+static inline int changelog_remap_rec(struct changelog_rec *rec,
+				       __kernel_size_t rec_size,
 				       enum changelog_rec_flags crf_wanted,
 				       enum changelog_rec_extra_flags cref_want)
 {
@@ -1848,8 +1855,12 @@ static inline void changelog_remap_rec(struct changelog_rec *rec,
 		    (changelog_rec_extra_flags(rec)->cr_extra_flags &
 							CLFE_SUPPORTED) ==
 								     cref_want))
-			return;
+			return 0;
 	}
+
+	if ((changelog_rec_offset(crf_wanted, cref_want) + rec->cr_namelen) >
+	    rec_size)
+		return -EOVERFLOW;
 
 	/* First move the variable-length name field */
 	memmove((char *)rec + changelog_rec_offset(crf_wanted, cref_want),
@@ -1956,6 +1967,8 @@ static inline void changelog_remap_rec(struct changelog_rec *rec,
 		changelog_rec_extra_flags(rec)->cr_extra_flags =
 			changelog_rec_extra_flags(rec)->cr_extra_flags |
 			cref_want;
+
+	return 0;
 }
 
 enum changelog_message_type {
