@@ -59,6 +59,7 @@
 #include "lmv_internal.h"
 
 static int lmv_check_connect(struct obd_device *obd);
+static inline bool lmv_op_default_rr_mkdir(const struct md_op_data *op_data);
 
 void lmv_activate_target(struct lmv_obd *lmv, struct lmv_tgt_desc *tgt,
 			 int activate)
@@ -1457,8 +1458,8 @@ static int lmv_close(struct obd_export *exp, struct md_op_data *op_data,
 	RETURN(rc);
 }
 
-static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv, __u32 *mdt,
-					      unsigned short dir_depth)
+static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv,
+					      struct md_op_data *op_data)
 {
 	struct lu_tgt_desc *tgt, *cur = NULL;
 	__u64 total_avail = 0;
@@ -1490,23 +1491,31 @@ static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv, __u32 *mdt,
 
 		tgt->ltd_qos.ltq_usable = 1;
 		lu_tgt_qos_weight_calc(tgt);
-		if (tgt->ltd_index == *mdt)
+		if (tgt->ltd_index == op_data->op_mds)
 			cur = tgt;
 		total_avail += tgt->ltd_qos.ltq_avail;
 		total_weight += tgt->ltd_qos.ltq_weight;
 		total_usable++;
 	}
 
-	/* if current MDT has above-average space, within range of the QOS
-	 * threshold, stay on the same MDT to avoid creating needless remote
-	 * MDT directories. It's more likely for low level directories
-	 * "16 / (dir_depth + 10)" is the factor to make it more unlikely for
-	 * top level directories, while more likely for low levels.
+	/* If current MDT has above-average space and dir is not aleady using
+	 * round-robin to spread across more MDTs, stay on the parent MDT
+	 * to avoid creating needless remote MDT directories.  Remote dirs
+	 * close to the root balance space more effectively than bottom dirs,
+	 * so prefer to create remote dirs at top level of directory tree.
+	 * "16 / (dir_depth + 10)" is the factor to make it less likely
+	 * for top-level directories to stay local unless they have more than
+	 * average free space, while deep dirs prefer local until more full.
+	 *    depth=0 -> 160%, depth=3 -> 123%, depth=6 -> 100%,
+	 *    depth=9 -> 84%, depth=12 -> 73%, depth=15 -> 64%
 	 */
-	rand = total_avail * 16 / (total_usable * (dir_depth + 10));
-	if (cur && cur->ltd_qos.ltq_avail >= rand) {
-		tgt = cur;
-		GOTO(unlock, rc = 0);
+	if (!lmv_op_default_rr_mkdir(op_data)) {
+		rand = total_avail * 16 /
+			(total_usable * (op_data->op_dir_depth + 10));
+		if (cur && cur->ltd_qos.ltq_avail >= rand) {
+			tgt = cur;
+			GOTO(unlock, tgt);
+		}
 	}
 
 	rand = lu_prandom_u64_max(total_weight);
@@ -1519,7 +1528,6 @@ static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv, __u32 *mdt,
 		if (cur_weight < rand)
 			continue;
 
-		*mdt = tgt->ltd_index;
 		ltd_qos_update(&lmv->lmv_mdt_descs, tgt, &total_weight);
 		GOTO(unlock, rc = 0);
 	}
@@ -1532,7 +1540,7 @@ unlock:
 	return tgt;
 }
 
-static struct lu_tgt_desc *lmv_locate_tgt_rr(struct lmv_obd *lmv, __u32 *mdt)
+static struct lu_tgt_desc *lmv_locate_tgt_rr(struct lmv_obd *lmv)
 {
 	struct lu_tgt_desc *tgt;
 	int i;
@@ -1548,8 +1556,7 @@ static struct lu_tgt_desc *lmv_locate_tgt_rr(struct lmv_obd *lmv, __u32 *mdt)
 		if (!tgt || !tgt->ltd_exp || !tgt->ltd_active)
 			continue;
 
-		*mdt = tgt->ltd_index;
-		lmv->lmv_qos_rr_index = (*mdt + 1) %
+		lmv->lmv_qos_rr_index = (tgt->ltd_index + 1) %
 					lmv->lmv_mdt_descs.ltd_tgts_size;
 		spin_unlock(&lmv->lmv_qos.lq_rr.lqr_alloc);
 
@@ -1731,46 +1738,39 @@ int lmv_migrate_existence_check(struct lmv_obd *lmv, struct md_op_data *op_data)
 	return rc;
 }
 
-static inline bool lmv_op_user_qos_mkdir(const struct md_op_data *op_data)
-{
-	const struct lmv_user_md *lum = op_data->op_data;
-
-	return (op_data->op_cli_flags & CLI_SET_MEA) && lum &&
-	       le32_to_cpu(lum->lum_magic) == LMV_USER_MAGIC &&
-	       le32_to_cpu(lum->lum_stripe_offset) == LMV_OFFSET_DEFAULT;
-}
-
-static inline bool lmv_op_default_qos_mkdir(const struct md_op_data *op_data)
-{
-	const struct lmv_stripe_md *lsm = op_data->op_default_mea1;
-
-	return (op_data->op_flags & MF_QOS_MKDIR) ||
-	       (lsm && lsm->lsm_md_master_mdt_index == LMV_OFFSET_DEFAULT);
-}
-
-/* mkdir by QoS in three cases:
- * 1. ROOT default LMV is space balanced.
- * 2. 'lfs mkdir -i -1'
- * 3. parent default LMV master_mdt_index is -1
+/* mkdir by QoS upon 'lfs mkdir -i -1'.
  *
  * NB, mkdir by QoS only if parent is not striped, this is to avoid remote
  * directories under striped directory.
  */
-static inline bool lmv_op_qos_mkdir(const struct md_op_data *op_data)
+static inline bool lmv_op_user_qos_mkdir(const struct md_op_data *op_data)
 {
+	const struct lmv_user_md *lum = op_data->op_data;
+
 	if (op_data->op_code != LUSTRE_OPC_MKDIR)
 		return false;
 
 	if (lmv_dir_striped(op_data->op_mea1))
 		return false;
 
-	if (lmv_op_user_qos_mkdir(op_data))
-		return true;
+	return (op_data->op_cli_flags & CLI_SET_MEA) && lum &&
+	       le32_to_cpu(lum->lum_magic) == LMV_USER_MAGIC &&
+	       le32_to_cpu(lum->lum_stripe_offset) == LMV_OFFSET_DEFAULT;
+}
 
-	if (lmv_op_default_qos_mkdir(op_data))
-		return true;
+/* mkdir by QoS if either ROOT or parent default LMV is space balanced. */
+static inline bool lmv_op_default_qos_mkdir(const struct md_op_data *op_data)
+{
+	const struct lmv_stripe_md *lsm = op_data->op_default_mea1;
 
-	return false;
+	if (op_data->op_code != LUSTRE_OPC_MKDIR)
+		return false;
+
+	if (lmv_dir_striped(op_data->op_mea1))
+		return false;
+
+	return (op_data->op_flags & MF_QOS_MKDIR) ||
+	       (lsm && lsm->lsm_md_master_mdt_index == LMV_OFFSET_DEFAULT);
 }
 
 /* if parent default LMV is space balanced, and
@@ -1783,9 +1783,6 @@ static inline bool lmv_op_qos_mkdir(const struct md_op_data *op_data)
 static inline bool lmv_op_default_rr_mkdir(const struct md_op_data *op_data)
 {
 	const struct lmv_stripe_md *lsm = op_data->op_default_mea1;
-
-	if (!lmv_op_default_qos_mkdir(op_data))
-		return false;
 
 	return (op_data->op_flags & MF_RR_MKDIR) ||
 	       (lsm && lsm->lsm_md_max_inherit_rr != LMV_INHERIT_RR_NONE) ||
@@ -1812,6 +1809,38 @@ lmv_op_default_specific_mkdir(const struct md_op_data *op_data)
 	       op_data->op_default_mea1 &&
 	       op_data->op_default_mea1->lsm_md_master_mdt_index !=
 			LMV_OFFSET_DEFAULT;
+}
+
+/* locate MDT by space usage */
+static struct lu_tgt_desc *lmv_locate_tgt_by_space(struct lmv_obd *lmv,
+						   struct md_op_data *op_data,
+						   struct lmv_tgt_desc *tgt)
+{
+	struct lmv_tgt_desc *tmp = tgt;
+
+	tgt = lmv_locate_tgt_qos(lmv, op_data);
+	if (tgt == ERR_PTR(-EAGAIN)) {
+		if (ltd_qos_is_balanced(&lmv->lmv_mdt_descs) &&
+		    !lmv_op_default_rr_mkdir(op_data) &&
+		    !lmv_op_user_qos_mkdir(op_data))
+			/* if not necessary, don't create remote directory. */
+			tgt = tmp;
+		else
+			tgt = lmv_locate_tgt_rr(lmv);
+	}
+
+	/*
+	 * only update statfs after QoS mkdir, this means the cached statfs may
+	 * be stale, and current mkdir may not follow QoS accurately, but it's
+	 * not serious, and avoids periodic statfs when client doesn't mkdir by
+	 * QoS.
+	 */
+	if (!IS_ERR(tgt)) {
+		op_data->op_mds = tgt->ltd_index;
+		lmv_statfs_check_update(lmv2obd_dev(lmv), tgt);
+	}
+
+	return tgt;
 }
 
 int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
@@ -1848,6 +1877,12 @@ int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
+	/* the order to apply policy in mkdir:
+	 * 1. is "lfs mkdir -i N"? mkdir on MDT N.
+	 * 2. is "lfs mkdir -i -1"? mkdir by space usage.
+	 * 3. is starting MDT specified in default LMV? mkdir on MDT N.
+	 * 4. is default LMV space balanced? mkdir by space usage.
+	 */
 	if (lmv_op_user_specific_mkdir(op_data)) {
 		struct lmv_user_md *lum = op_data->op_data;
 
@@ -1855,38 +1890,20 @@ int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 		tgt = lmv_tgt(lmv, op_data->op_mds);
 		if (!tgt)
 			RETURN(-ENODEV);
+	} else if (lmv_op_user_qos_mkdir(op_data)) {
+		tgt = lmv_locate_tgt_by_space(lmv, op_data, tgt);
+		if (IS_ERR(tgt))
+			RETURN(PTR_ERR(tgt));
 	} else if (lmv_op_default_specific_mkdir(op_data)) {
 		op_data->op_mds =
 			op_data->op_default_mea1->lsm_md_master_mdt_index;
 		tgt = lmv_tgt(lmv, op_data->op_mds);
 		if (!tgt)
 			RETURN(-ENODEV);
-	} else if (lmv_op_qos_mkdir(op_data)) {
-		struct lmv_tgt_desc *tmp = tgt;
-
-		tgt = lmv_locate_tgt_qos(lmv, &op_data->op_mds,
-					 op_data->op_dir_depth);
-		if (tgt == ERR_PTR(-EAGAIN)) {
-			if (ltd_qos_is_balanced(&lmv->lmv_mdt_descs) &&
-			    !lmv_op_default_rr_mkdir(op_data) &&
-			    !lmv_op_user_qos_mkdir(op_data))
-				/* if it's not necessary, don't create remote
-				 * directory.
-				 */
-				tgt = tmp;
-			else
-				tgt = lmv_locate_tgt_rr(lmv, &op_data->op_mds);
-		}
+	} else if (lmv_op_default_qos_mkdir(op_data)) {
+		tgt = lmv_locate_tgt_by_space(lmv, op_data, tgt);
 		if (IS_ERR(tgt))
 			RETURN(PTR_ERR(tgt));
-
-		/*
-		 * only update statfs after QoS mkdir, this means the cached
-		 * statfs may be stale, and current mkdir may not follow QoS
-		 * accurately, but it's not serious, and avoids periodic statfs
-		 * when client doesn't mkdir by QoS.
-		 */
-		lmv_statfs_check_update(obd, tgt);
 	}
 
 	if (IS_ERR(tgt))
