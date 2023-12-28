@@ -305,6 +305,7 @@ void mdc_open_pack(struct ptlrpc_request *req, struct md_op_data *op_data,
 		tmp = req_capsule_client_get(&req->rq_pill, &RMF_EADATA);
 		memcpy(tmp, lmm, lmmlen);
 	}
+	cr_flags |= MDS_OPEN_DEFAULT_LMV;
 	set_mrc_cr_flags(rec, cr_flags);
 }
 
