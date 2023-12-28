@@ -37,6 +37,7 @@
 
 #define DEBUG_SUBSYSTEM S_OSC
 #include <lustre_osc.h>
+#include <linux/delay.h>
 
 #include "osc_internal.h"
 
@@ -357,6 +358,7 @@ int osc_object_is_contended(struct osc_object *obj)
 }
 EXPORT_SYMBOL(osc_object_is_contended);
 
+#define MAX_OSC_DLMLOCK_LOOKUP 3
 /**
  * Implementation of struct cl_object_operations::coo_req_attr_set() for osc
  * layer. osc is responsible for struct obdo::o_id and struct obdo::o_seq
@@ -404,13 +406,26 @@ static void osc_req_attr_set(const struct lu_env *env, struct cl_object *obj,
 	if (flags & OBD_MD_FLHANDLE) {
 		struct ldlm_lock *lock;
 		struct osc_page *opg;
+		int retry_cnt = 0;
 
 		opg = osc_cl_page_osc(attr->cra_page, cl2osc(obj));
+lookup:
 		lock = osc_dlmlock_at_pgoff(env, cl2osc(obj), osc_index(opg),
 				OSC_DAP_FL_TEST_LOCK | OSC_DAP_FL_CANCELING);
 		if (lock == NULL && !opg->ops_srvlock) {
 			struct ldlm_resource *res;
 			struct ldlm_res_id *resname;
+
+			if (retry_cnt < MAX_OSC_DLMLOCK_LOOKUP) {
+				/* the code is racing, delay to be sure to be
+				 * out of it and try again, value based on
+				 * debugging timing. */
+				CERROR("Uncovered page by a LDLM lock, "
+				       "retrying %d\n", ++retry_cnt);
+				smp_mb();
+				mdelay(50);
+				goto lookup;
+			}
 
 			CL_PAGE_DEBUG(D_ERROR, env, attr->cra_page,
 				      "uncovered page!\n");
@@ -420,7 +435,10 @@ static void osc_req_attr_set(const struct lu_env *env, struct cl_object *obj,
 			res = ldlm_resource_get(
 				osc_export(cl2osc(obj))->exp_obd->obd_namespace,
 				NULL, resname, LDLM_EXTENT, 0);
-			ldlm_resource_dump(D_ERROR, res);
+			if (IS_ERR(res))
+				CERROR("No lock resource\n");
+			else
+				ldlm_resource_dump(D_ERROR, res);
 
 			libcfs_debug_dumpstack(NULL);
 			LBUG();
