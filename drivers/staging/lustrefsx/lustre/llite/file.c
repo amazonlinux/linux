@@ -1386,10 +1386,10 @@ static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
 		return 1;
 
 	/*
-	 * Is the previous atime value older than a day? If yes,
+	 * Is the previous atime value older than 6 hours? If yes,
 	 * update atime:
 	 */
-	if ((long)(now.tv_sec - inode->i_atime.tv_sec) >= 24*60*60)
+	if ((long)(now.tv_sec - inode->i_atime.tv_sec) >= 6*60*60)
 		return 1;
 	/*
 	 * Good, we can skip the atime update:
