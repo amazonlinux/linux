@@ -1434,6 +1434,7 @@ static void ll_update_default_lsm_md(struct inode *inode, struct lustre_md *md)
 				lmv_free_memmd(lli->lli_default_lsm_md);
 				lli->lli_default_lsm_md = NULL;
 			}
+			lli->lli_inherit_depth = 0;
 			up_write(&lli->lli_lsm_sem);
 		}
 		RETURN_EXIT;
@@ -1464,6 +1465,7 @@ static int ll_update_lsm_md(struct inode *inode, struct lustre_md *md)
 {
 	struct ll_inode_info *lli = ll_i2info(inode);
 	struct lmv_stripe_md *lsm = md->lmv;
+	struct cl_attr	*attr;
 	int rc = 0;
 
 	ENTRY;
@@ -1489,7 +1491,7 @@ static int ll_update_lsm_md(struct inode *inode, struct lustre_md *md)
 	 */
 	down_read(&lli->lli_lsm_sem);
 
-	/* some concurrent lookup initialized lsm, and unchanged */
+	/* some current lookup initialized lsm, and unchanged */
 	if (lli->lli_lsm_md && lsm_md_eq(lli->lli_lsm_md, lsm))
 		GOTO(unlock, rc = 0);
 
@@ -1497,58 +1499,53 @@ static int ll_update_lsm_md(struct inode *inode, struct lustre_md *md)
 	 * which means layout is changed, this happens in dir split/merge and
 	 * lfsck.
 	 */
-	if (lli->lli_lsm_md && !lsm_md_eq(lli->lli_lsm_md, lsm)) {
-		if (lmv_dir_striped(lli->lli_lsm_md) &&
-		    lsm->lsm_md_layout_version <=
-		    lli->lli_lsm_md->lsm_md_layout_version) {
-			CERROR("%s: "DFID" dir layout mismatch:\n",
-			       ll_get_fsname(inode->i_sb, NULL, 0),
-			       PFID(&lli->lli_fid));
-			lsm_md_dump(D_ERROR, lli->lli_lsm_md);
-			lsm_md_dump(D_ERROR, lsm);
-			GOTO(unlock, rc = -EINVAL);
-		}
-
-		/* layout changed, switch to write lock */
-		up_read(&lli->lli_lsm_sem);
-		down_write(&lli->lli_lsm_sem);
-		ll_dir_clear_lsm_md(inode);
+	if (lli->lli_lsm_md && lmv_dir_striped(lli->lli_lsm_md) &&
+	    lsm->lsm_md_layout_version <=
+	    lli->lli_lsm_md->lsm_md_layout_version) {
+		CERROR("%s: "DFID" dir layout mismatch:\n",
+		       ll_get_fsname(inode->i_sb, NULL, 0),
+                       PFID(&lli->lli_fid));
+		lsm_md_dump(D_ERROR, lli->lli_lsm_md);
+		lsm_md_dump(D_ERROR, lsm);
+		GOTO(unlock, rc = -EINVAL);
 	}
 
-	/* set directory layout */
-	if (!lli->lli_lsm_md) {
-		struct cl_attr	*attr;
+	up_read(&lli->lli_lsm_sem);
+	down_write(&lli->lli_lsm_sem);
+	/* clear existing lsm */
+	if (lli->lli_lsm_md) {
+		lmv_free_memmd(lli->lli_lsm_md);
+		lli->lli_lsm_md = NULL;
+	}
 
-		rc = ll_init_lsm_md(inode, md);
-		up_write(&lli->lli_lsm_sem);
-		if (rc != 0)
-			RETURN(rc);
+	rc = ll_init_lsm_md(inode, md);
+	up_write(&lli->lli_lsm_sem);
 
-		/* set md->lmv to NULL, so the following free lustre_md
-		 * will not free this lsm */
-		md->lmv = NULL;
+	if (rc)
+		RETURN(rc);
 
-		/*
-		 * md_merge_attr() may take long, since lsm is already set,
-		 * switch to read lock.
-		 */
-		down_read(&lli->lli_lsm_sem);
+	/* set md->lmv to NULL, so the following free lustre_md will not free
+	 * this lsm.
+	 */
+	md->lmv = NULL;
 
-		if (!lmv_dir_striped(lli->lli_lsm_md))
-			GOTO(unlock, rc);
+	
+	/* md_merge_attr() may take long, since lsm is already set, switch to
+	 * read lock.
+	 */
+	down_read(&lli->lli_lsm_sem);
+	
+	if (!lmv_dir_striped(lli->lli_lsm_md))
+		GOTO(unlock, rc = 0);
 
-		OBD_ALLOC_PTR(attr);
-		if (attr == NULL)
-			GOTO(unlock, rc = -ENOMEM);
+	OBD_ALLOC_PTR(attr);
+	if (!attr)
+		GOTO(unlock, rc = -ENOMEM);
 
-		/* validate the lsm */
-		rc = md_merge_attr(ll_i2mdexp(inode), lsm, attr,
-				   ll_md_blocking_ast);
-		if (rc != 0) {
-			OBD_FREE_PTR(attr);
-			GOTO(unlock, rc);
-		}
-
+	/* validate the lsm */
+	rc = md_merge_attr(ll_i2mdexp(inode), lli->lli_lsm_md, attr,
+			   ll_md_blocking_ast);
+	if (!rc) {
 		if (md->body->mbo_valid & OBD_MD_FLNLINK)
 			md->body->mbo_nlink = attr->cat_nlink;
 		if (md->body->mbo_valid & OBD_MD_FLSIZE)
@@ -1559,10 +1556,10 @@ static int ll_update_lsm_md(struct inode *inode, struct lustre_md *md)
 			md->body->mbo_ctime = attr->cat_ctime;
 		if (md->body->mbo_valid & OBD_MD_FLMTIME)
 			md->body->mbo_mtime = attr->cat_mtime;
-
-		OBD_FREE_PTR(attr);
 	}
 
+	OBD_FREE_PTR(attr);
+	GOTO(unlock, rc);
 unlock:
 	up_read(&lli->lli_lsm_sem);
 
@@ -2146,9 +2143,34 @@ int ll_update_inode(struct inode *inode, struct lustre_md *md)
 	return 0;
 }
 
+/* child default LMV is inherited from parent */
+static inline bool ll_default_lmv_inherited(struct lmv_stripe_md *pdmv,
+					    struct lmv_stripe_md *cdmv)
+{
+	if (!pdmv || !cdmv)
+		return false;
+
+	if (pdmv->lsm_md_magic != cdmv->lsm_md_magic ||
+	    pdmv->lsm_md_stripe_count != cdmv->lsm_md_stripe_count ||
+	    pdmv->lsm_md_master_mdt_index != cdmv->lsm_md_master_mdt_index ||
+	    pdmv->lsm_md_hash_type != cdmv->lsm_md_hash_type)
+		return false;
+
+	if (cdmv->lsm_md_max_inherit !=
+	    lmv_inherit_next(pdmv->lsm_md_max_inherit))
+		return false;
+
+	if (cdmv->lsm_md_max_inherit_rr !=
+	    lmv_inherit_rr_next(pdmv->lsm_md_max_inherit_rr))
+		return false;
+
+	return true;
+}
+
 /* update directory depth to ROOT, called after LOOKUP lock is fetched. */
 void ll_update_dir_depth(struct inode *dir, struct inode *inode)
 {
+	struct ll_inode_info *plli;
 	struct ll_inode_info *lli;
 
 	if (!S_ISDIR(inode->i_mode))
@@ -2157,10 +2179,26 @@ void ll_update_dir_depth(struct inode *dir, struct inode *inode)
 	if (inode == dir)
 		return;
 
+	plli = ll_i2info(dir);
 	lli = ll_i2info(inode);
-	lli->lli_dir_depth = ll_i2info(dir)->lli_dir_depth + 1;
-	CDEBUG(D_INODE, DFID" depth %hu\n",
-	       PFID(&lli->lli_fid), lli->lli_dir_depth);
+	lli->lli_dir_depth = plli->lli_dir_depth + 1;
+	if (plli->lli_default_lsm_md && lli->lli_default_lsm_md) {
+		down_read(&plli->lli_lsm_sem);
+		down_read(&lli->lli_lsm_sem);
+		if (ll_default_lmv_inherited(plli->lli_default_lsm_md,
+					     lli->lli_default_lsm_md))
+			lli->lli_inherit_depth =
+				plli->lli_inherit_depth + 1;
+		else
+			lli->lli_inherit_depth = 0;
+		up_read(&lli->lli_lsm_sem);
+		up_read(&plli->lli_lsm_sem);
+	} else {
+		lli->lli_inherit_depth = 0;
+	}
+
+	CDEBUG(D_INODE, DFID" depth %hu default LMV depth %hu\n",
+	       PFID(&lli->lli_fid), lli->lli_dir_depth, lli->lli_inherit_depth);
 }
 
 int ll_read_inode2(struct inode *inode, void *opaque)
