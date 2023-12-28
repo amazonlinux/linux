@@ -848,7 +848,8 @@ static void changelog_block_trim_ext(struct llog_rec_hdr *hdr,
 			break;
 		}
 
-		changelog_remap_rec(rec, rec->cr_flags & flags, xflag);
+		changelog_remap_rec(rec, hdr->lrh_len - sizeof(struct llog_rec_hdr),
+				    rec->cr_flags & flags, xflag);
 		hdr = llog_rec_hdr_next(hdr);
 		/* Yield CPU to avoid soft-lockup if there are too many records
 		 * to be handled. */
