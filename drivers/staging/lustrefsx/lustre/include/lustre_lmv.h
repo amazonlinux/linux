@@ -50,8 +50,6 @@ struct lmv_stripe_md {
 	__u32	lsm_md_layout_version;
 	__u32	lsm_md_migrate_offset;
 	__u32	lsm_md_migrate_hash;
-	__u32	lsm_md_default_count;
-	__u32	lsm_md_default_index;
 	char	lsm_md_pool_name[LOV_MAXPOOLNAME + 1];
 	struct lmv_oinfo lsm_md_oinfo[0];
 };
@@ -234,6 +232,27 @@ static inline bool lmv_magic_supported(__u32 lum_magic)
 {
 	return lum_magic == LMV_USER_MAGIC ||
 	       lum_magic == LMV_USER_MAGIC_SPECIFIC;
+}
+
+static inline __u8 lmv_inherit_next(__u8 inherit)
+{
+	if (inherit == LMV_INHERIT_END || inherit == LMV_INHERIT_NONE)
+		return LMV_INHERIT_NONE;
+
+	if (inherit == LMV_INHERIT_UNLIMITED || inherit > LMV_INHERIT_MAX)
+		return inherit;
+
+	return inherit - 1;
+}
+
+static inline __u8 lmv_inherit_rr_next(__u8 inherit_rr)
+{
+	if (inherit_rr == LMV_INHERIT_RR_NONE ||
+	    inherit_rr == LMV_INHERIT_RR_UNLIMITED ||
+	    inherit_rr > LMV_INHERIT_RR_MAX)
+		return inherit_rr;
+
+	return inherit_rr - 1;
 }
 
 #endif
