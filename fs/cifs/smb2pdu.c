@@ -3481,7 +3481,7 @@ SMB2_query_info_init(struct cifs_tcon *tcon, struct TCP_Server_Info *server,
 
 	iov[0].iov_base = (char *)req;
 	/* 1 for Buffer */
-	iov[0].iov_len = len;
+	iov[0].iov_len = len - 1;
 	return 0;
 }
 
