@@ -232,7 +232,7 @@ static int preserve_sve_context(struct sve_context __user *ctx)
 	unsigned int vl = current->thread.sve_vl;
 	unsigned int vq = 0;
 
-	if (test_thread_flag(TIF_SVE))
+	if (current->thread.fp_type == FP_STATE_SVE)
 		vq = sve_vq_from_vl(vl);
 
 	memset(reserved, 0, sizeof(reserved));
@@ -594,7 +594,7 @@ static int setup_sigframe_layout(struct rt_sigframe_user_layout *user,
 	if (system_supports_sve()) {
 		unsigned int vq = 0;
 
-		if (add_all || test_thread_flag(TIF_SVE)) {
+		if (add_all || current->thread.fp_type == FP_STATE_SVE) {
 			int vl = sve_max_vl;
 
 			if (!add_all)
