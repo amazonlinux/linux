@@ -1,12 +1,13 @@
 /* SPDX-License-Identifier: ((GPL-2.0 WITH Linux-syscall-note) OR BSD-2-Clause) */
 /*
- * Copyright 2018-2022 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef EFA_ABI_USER_H
 #define EFA_ABI_USER_H
 
 #include <linux/types.h>
+#include <rdma/ib_user_ioctl_cmds.h>
 
 /*
  * Increment this value if any changes that break userspace ABI
@@ -120,6 +121,8 @@ enum {
 	EFA_QUERY_DEVICE_CAPS_RNR_RETRY = 1 << 1,
 	EFA_QUERY_DEVICE_CAPS_CQ_NOTIFICATIONS = 1 << 2,
 	EFA_QUERY_DEVICE_CAPS_CQ_WITH_SGID     = 1 << 3,
+	EFA_QUERY_DEVICE_CAPS_DATA_POLLING_128 = 1 << 4,
+	EFA_QUERY_DEVICE_CAPS_RDMA_WRITE = 1 << 5,
 };
 
 struct efa_ibv_ex_query_device_resp {
@@ -130,6 +133,24 @@ struct efa_ibv_ex_query_device_resp {
 	__u16 max_rq_sge;
 	__u32 max_rdma_size;
 	__u32 device_caps;
+};
+
+enum {
+	EFA_QUERY_MR_VALIDITY_RECV_IC_ID = 1 << 0,
+	EFA_QUERY_MR_VALIDITY_RDMA_READ_IC_ID = 1 << 1,
+	EFA_QUERY_MR_VALIDITY_RDMA_RECV_IC_ID = 1 << 2,
+};
+
+enum efa_query_mr_attrs {
+	EFA_IB_ATTR_QUERY_MR_HANDLE = (1U << UVERBS_ID_NS_SHIFT),
+	EFA_IB_ATTR_QUERY_MR_RESP_IC_ID_VALIDITY,
+	EFA_IB_ATTR_QUERY_MR_RESP_RECV_IC_ID,
+	EFA_IB_ATTR_QUERY_MR_RESP_RDMA_READ_IC_ID,
+	EFA_IB_ATTR_QUERY_MR_RESP_RDMA_RECV_IC_ID,
+};
+
+enum efa_mr_methods {
+	EFA_IB_METHOD_MR_QUERY = (1U << UVERBS_ID_NS_SHIFT),
 };
 
 #endif /* EFA_ABI_USER_H */
