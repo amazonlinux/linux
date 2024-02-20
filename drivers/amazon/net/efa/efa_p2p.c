@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
 /*
- * Copyright 2019-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2019-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "efa_p2p.h"
@@ -44,6 +44,23 @@ static struct efa_p2pmem *ticket_to_p2p(u64 ticket)
 	return NULL;
 }
 
+char *efa_p2p_provider_string(void)
+{
+	const struct efa_p2p_provider *prov;
+	char *prov_string;
+	int i;
+
+	for (i = 0; i < EFA_P2P_PROVIDER_MAX; i++) {
+		prov = prov_arr[i];
+		prov_string = prov->ops.get_provider_string();
+		if (prov_string[0] != '\0')
+			/* Only the first available provider is returned */
+			return prov_string;
+	}
+
+	return "";
+}
+
 int efa_p2p_put(u64 ticket, bool in_cb)
 {
 	struct efa_com_dereg_mr_params params = {};
@@ -81,6 +98,7 @@ struct efa_p2pmem *efa_p2p_get(struct efa_dev *dev, struct efa_mr *mr, u64 start
 			       u64 length)
 {
 	const struct efa_p2p_provider *prov;
+	static bool message_printed;
 	struct efa_p2pmem *p2pmem;
 	u64 ticket;
 	int i;
@@ -100,6 +118,11 @@ struct efa_p2pmem *efa_p2p_get(struct efa_dev *dev, struct efa_mr *mr, u64 start
 	p2pmem->ticket = ticket;
 	p2pmem->prov = prov;
 	mr->p2p_ticket = p2pmem->ticket;
+
+	if (!message_printed) {
+		pr_info("efa: Acquired peer memory using P2P");
+		message_printed = true;
+	}
 
 	mutex_lock(&p2p_list_lock);
 	list_add(&p2pmem->list, &p2p_list);
