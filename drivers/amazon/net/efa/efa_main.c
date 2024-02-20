@@ -1,25 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2022 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include "kcompat.h"
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/utsname.h>
 #include <linux/version.h>
 
 #include <rdma/ib_user_verbs.h>
+#include <rdma/uverbs_ioctl.h>
 
 #include "efa.h"
 #include "efa_sysfs.h"
 
-#ifdef HAVE_EFA_P2P
 #include "efa_p2p.h"
-#endif
 
-#ifndef HAVE_PCI_VENDOR_ID_AMAZON
-#define PCI_VENDOR_ID_AMAZON 0x1d0f
-#endif
 #define PCI_DEV_ID_EFA0_VF 0xefa0
 #define PCI_DEV_ID_EFA1_VF 0xefa1
 #define PCI_DEV_ID_EFA2_VF 0xefa2
@@ -32,14 +29,14 @@ static const struct pci_device_id efa_pci_tbl[] = {
 };
 
 #define DRV_MODULE_VER_MAJOR           2
-#define DRV_MODULE_VER_MINOR           1
+#define DRV_MODULE_VER_MINOR           8
 #define DRV_MODULE_VER_SUBMINOR        0
 
 #ifndef DRV_MODULE_VERSION
 #define DRV_MODULE_VERSION \
 	__stringify(DRV_MODULE_VER_MAJOR) "."   \
 	__stringify(DRV_MODULE_VER_MINOR) "."   \
-	__stringify(DRV_MODULE_VER_SUBMINOR) "g"
+	__stringify(DRV_MODULE_VER_SUBMINOR) "a"
 #endif
 
 MODULE_VERSION(DRV_MODULE_VERSION);
@@ -59,6 +56,8 @@ MODULE_DEVICE_TABLE(pci, efa_pci_tbl);
 #define EFA_AENQ_ENABLED_GROUPS \
 	(BIT(EFA_ADMIN_FATAL_ERROR) | BIT(EFA_ADMIN_WARNING) | \
 	 BIT(EFA_ADMIN_NOTIFICATION) | BIT(EFA_ADMIN_KEEP_ALIVE))
+
+extern const struct uapi_definition efa_uapi_defs[];
 
 /* This handler will called for unknown event group or unimplemented handlers */
 static void unimplemented_aenq_handler(void *data,
@@ -98,12 +97,8 @@ static void efa_process_comp_eqe(struct efa_dev *dev, struct efa_admin_eqe *eqe)
 	u16 cqn = eqe->u.comp_event.cqn;
 	struct efa_cq *cq;
 
-#ifdef HAVE_XARRAY
 	/* Safe to load as we're in irq and removal calls synchronize_irq() */
 	cq = xa_load(&dev->cqs_xa, cqn);
-#else
-	cq = dev->cqs_arr[cqn];
-#endif
 	if (unlikely(!cq)) {
 		ibdev_err_ratelimited(&dev->ibdev,
 				      "Completion event on non-existent CQ[%u]",
@@ -299,7 +294,7 @@ static void efa_set_host_info(struct efa_dev *dev)
 	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_SUB_MINOR,
 		DRV_MODULE_VER_SUBMINOR);
 	EFA_SET(&hinf->driver_ver, EFA_ADMIN_HOST_INFO_DRIVER_MODULE_TYPE,
-		"g"[0]);
+		"a"[0]);
 	EFA_SET(&hinf->bdf, EFA_ADMIN_HOST_INFO_BUS, dev->pdev->bus->number);
 	EFA_SET(&hinf->bdf, EFA_ADMIN_HOST_INFO_DEVICE,
 		PCI_SLOT(dev->pdev->devfn));
@@ -309,9 +304,8 @@ static void efa_set_host_info(struct efa_dev *dev)
 		EFA_COMMON_SPEC_VERSION_MAJOR);
 	EFA_SET(&hinf->spec_ver, EFA_ADMIN_HOST_INFO_SPEC_MINOR,
 		EFA_COMMON_SPEC_VERSION_MINOR);
-#ifdef HAVE_EFA_P2P
+	EFA_SET(&hinf->flags, EFA_ADMIN_HOST_INFO_INTREE, 1);
 	EFA_SET(&hinf->flags, EFA_ADMIN_HOST_INFO_GDR, 1);
-#endif
 
 	efa_com_set_feature_ex(&dev->edev, &resp, &cmd, EFA_ADMIN_HOST_INFO,
 			       hinf_dma, bufsz);
@@ -385,102 +379,44 @@ static void efa_destroy_eqs(struct efa_dev *dev)
 	kfree(dev->eqs);
 }
 
-#ifdef HAVE_IB_DEV_OPS
 static const struct ib_device_ops efa_dev_ops = {
-#ifdef HAVE_IB_DEVICE_OPS_COMMON
 	.owner = THIS_MODULE,
 	.driver_id = RDMA_DRIVER_EFA,
 	.uverbs_abi_ver = EFA_UVERBS_ABI_VERSION,
-#endif
 
-#ifdef HAVE_SPLIT_STATS_ALLOC
 	.alloc_hw_port_stats = efa_alloc_hw_port_stats,
 	.alloc_hw_device_stats = efa_alloc_hw_device_stats,
-#else
-	.alloc_hw_stats = efa_alloc_hw_stats,
-#endif
-#ifdef HAVE_PD_CORE_ALLOCATION
 	.alloc_pd = efa_alloc_pd,
-#else
-	.alloc_pd = efa_kzalloc_pd,
-#endif
-#ifdef HAVE_UCONTEXT_CORE_ALLOCATION
 	.alloc_ucontext = efa_alloc_ucontext,
-#else
-	.alloc_ucontext = efa_kzalloc_ucontext,
-#endif
-#ifndef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
-#ifdef HAVE_AH_CORE_ALLOCATION
-	.create_ah = efa_create_ah,
-#else
-	.create_ah = efa_kzalloc_ah,
-#endif
-#endif
-#ifdef HAVE_CQ_CORE_ALLOCATION
 	.create_cq = efa_create_cq,
-#else
-	.create_cq = efa_kzalloc_cq,
-#endif
-#ifdef HAVE_QP_CORE_ALLOCATION
 	.create_qp = efa_create_qp,
-#else
-	.create_qp = efa_kzalloc_qp,
-#endif
-#ifdef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
 	.create_user_ah = efa_create_ah,
-#endif
 	.dealloc_pd = efa_dealloc_pd,
 	.dealloc_ucontext = efa_dealloc_ucontext,
 	.dereg_mr = efa_dereg_mr,
 	.destroy_ah = efa_destroy_ah,
 	.destroy_cq = efa_destroy_cq,
 	.destroy_qp = efa_destroy_qp,
-#ifndef HAVE_NO_KVERBS_DRIVERS
-	.get_dma_mr = efa_get_dma_mr,
-#endif
 	.get_hw_stats = efa_get_hw_stats,
 	.get_link_layer = efa_port_link_layer,
 	.get_port_immutable = efa_get_port_immutable,
 	.mmap = efa_mmap,
-#ifdef HAVE_CORE_MMAP_XA
 	.mmap_free = efa_mmap_free,
-#endif
 	.modify_qp = efa_modify_qp,
-#ifndef HAVE_NO_KVERBS_DRIVERS
-	.poll_cq = efa_poll_cq,
-	.post_recv = efa_post_recv,
-	.post_send = efa_post_send,
-#endif
 	.query_device = efa_query_device,
 	.query_gid = efa_query_gid,
 	.query_pkey = efa_query_pkey,
 	.query_port = efa_query_port,
 	.query_qp = efa_query_qp,
 	.reg_user_mr = efa_reg_mr,
-#ifdef HAVE_MR_DMABUF
 	.reg_user_mr_dmabuf = efa_reg_user_mr_dmabuf,
-#endif
-#ifndef HAVE_NO_KVERBS_DRIVERS
-	.req_notify_cq = efa_req_notify_cq,
-#endif
 
-#ifdef HAVE_AH_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_ah, efa_ah, ibah),
-#endif
-#ifdef HAVE_CQ_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_cq, efa_cq, ibcq),
-#endif
-#ifdef HAVE_PD_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_pd, efa_pd, ibpd),
-#endif
-#ifdef HAVE_QP_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_qp, efa_qp, ibqp),
-#endif
-#ifdef HAVE_UCONTEXT_CORE_ALLOCATION
 	INIT_RDMA_OBJ_SIZE(ib_ucontext, efa_ucontext, ibucontext),
-#endif
 };
-#endif
 
 static int efa_ib_device_add(struct efa_dev *dev)
 {
@@ -519,89 +455,13 @@ static int efa_ib_device_add(struct efa_dev *dev)
 	dev->ibdev.node_type = RDMA_NODE_UNSPECIFIED;
 	dev->ibdev.phys_port_cnt = 1;
 	dev->ibdev.num_comp_vectors = dev->neqs ?: 1;
-#ifdef HAVE_DEV_PARENT
 	dev->ibdev.dev.parent = &pdev->dev;
-#else
-	dev->ibdev.dma_device = &pdev->dev;
-#endif
 
-#ifndef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
-	dev->ibdev.uverbs_cmd_mask |=
-		(1ull << IB_USER_VERBS_CMD_GET_CONTEXT) |
-		(1ull << IB_USER_VERBS_CMD_QUERY_DEVICE) |
-		(1ull << IB_USER_VERBS_CMD_QUERY_PORT) |
-		(1ull << IB_USER_VERBS_CMD_ALLOC_PD) |
-		(1ull << IB_USER_VERBS_CMD_DEALLOC_PD) |
-		(1ull << IB_USER_VERBS_CMD_REG_MR) |
-		(1ull << IB_USER_VERBS_CMD_DEREG_MR) |
-		(1ull << IB_USER_VERBS_CMD_CREATE_COMP_CHANNEL) |
-		(1ull << IB_USER_VERBS_CMD_CREATE_CQ) |
-		(1ull << IB_USER_VERBS_CMD_DESTROY_CQ) |
-		(1ull << IB_USER_VERBS_CMD_CREATE_QP) |
-		(1ull << IB_USER_VERBS_CMD_MODIFY_QP) |
-		(1ull << IB_USER_VERBS_CMD_QUERY_QP) |
-		(1ull << IB_USER_VERBS_CMD_DESTROY_QP) |
-		(1ull << IB_USER_VERBS_CMD_CREATE_AH) |
-		(1ull << IB_USER_VERBS_CMD_DESTROY_AH);
-#endif
-
-#ifndef HAVE_UVERBS_CMD_MASK_NOT_NEEDED
-	dev->ibdev.uverbs_ex_cmd_mask =
-		(1ull << IB_USER_VERBS_EX_CMD_QUERY_DEVICE);
-#endif
-
-#ifndef HAVE_IB_DEVICE_OPS_COMMON
-#ifdef HAVE_DRIVER_ID
-	dev->ibdev.driver_id = RDMA_DRIVER_EFA;
-#endif
-	dev->ibdev.uverbs_abi_ver = EFA_UVERBS_ABI_VERSION;
-	dev->ibdev.owner = THIS_MODULE;
-#endif
-#ifdef HAVE_IB_DEV_OPS
 	ib_set_device_ops(&dev->ibdev, &efa_dev_ops);
-#else
-	dev->ibdev.alloc_hw_stats = efa_alloc_hw_stats;
-	dev->ibdev.alloc_pd = efa_kzalloc_pd;
-	dev->ibdev.alloc_ucontext = efa_kzalloc_ucontext;
-	dev->ibdev.create_ah = efa_kzalloc_ah;
-	dev->ibdev.create_cq = efa_kzalloc_cq;
-	dev->ibdev.create_qp = efa_kzalloc_qp;
-	dev->ibdev.dealloc_pd = efa_dealloc_pd;
-	dev->ibdev.dealloc_ucontext = efa_dealloc_ucontext;
-	dev->ibdev.dereg_mr = efa_dereg_mr;
-	dev->ibdev.destroy_ah = efa_destroy_ah;
-	dev->ibdev.destroy_cq = efa_destroy_cq;
-	dev->ibdev.destroy_qp = efa_destroy_qp;
-	dev->ibdev.get_dma_mr = efa_get_dma_mr;
-	dev->ibdev.get_hw_stats = efa_get_hw_stats;
-	dev->ibdev.get_link_layer = efa_port_link_layer;
-	dev->ibdev.get_port_immutable = efa_get_port_immutable;
-	dev->ibdev.mmap = efa_mmap;
-	dev->ibdev.modify_qp = efa_modify_qp;
-	dev->ibdev.poll_cq = efa_poll_cq;
-	dev->ibdev.post_recv = efa_post_recv;
-	dev->ibdev.post_send = efa_post_send;
-	dev->ibdev.query_device = efa_query_device;
-	dev->ibdev.query_gid = efa_query_gid;
-	dev->ibdev.query_pkey = efa_query_pkey;
-	dev->ibdev.query_port = efa_query_port;
-	dev->ibdev.query_qp = efa_query_qp;
-	dev->ibdev.reg_user_mr = efa_reg_mr;
-	dev->ibdev.req_notify_cq = efa_req_notify_cq;
-#endif
 
-#ifdef HAVE_IB_REGISTER_DEVICE_DMA_DEVICE_PARAM
+	dev->ibdev.driver_def = efa_uapi_defs;
+
 	err = ib_register_device(&dev->ibdev, "efa_%d", &pdev->dev);
-#elif defined(HAVE_IB_REGISTER_DEVICE_TWO_PARAMS)
-	err = ib_register_device(&dev->ibdev, "efa_%d");
-#elif defined(HAVE_IB_REGISTER_DEVICE_NAME_PARAM)
-	err = ib_register_device(&dev->ibdev, "efa_%d", NULL);
-#else
-	strscpy(dev->ibdev.name, "efa_%d",
-		sizeof(dev->ibdev.name));
-
-	err = ib_register_device(&dev->ibdev, NULL);
-#endif
 	if (err)
 		goto err_destroy_eqs;
 
@@ -708,11 +568,7 @@ static struct efa_dev *efa_probe_device(struct pci_dev *pdev)
 
 	pci_set_master(pdev);
 
-#ifdef HAVE_SAFE_IB_ALLOC_DEVICE
 	dev = ib_alloc_device(efa_dev, ibdev);
-#else
-	dev = (struct efa_dev *)ib_alloc_device(sizeof(*dev));
-#endif
 	if (!dev) {
 		dev_err(&pdev->dev, "Device alloc failed\n");
 		err = -ENOMEM;
@@ -724,11 +580,7 @@ static struct efa_dev *efa_probe_device(struct pci_dev *pdev)
 	edev->efa_dev = dev;
 	edev->dmadev = &pdev->dev;
 	dev->pdev = pdev;
-#ifdef HAVE_XARRAY
 	xa_init(&dev->cqs_xa);
-#else
-	memset(dev->cqs_arr, 0, sizeof(dev->cqs_arr));
-#endif
 
 	bars = pci_select_bars(pdev, IORESOURCE_MEM) & EFA_BASE_BAR_MASK;
 	err = pci_request_selected_regions(pdev, bars, DRV_MODULE_NAME);
@@ -819,9 +671,7 @@ static void efa_remove_device(struct pci_dev *pdev)
 	efa_com_mmio_reg_read_destroy(edev);
 	devm_iounmap(&pdev->dev, edev->reg_bar);
 	efa_release_bars(dev, EFA_BASE_BAR_MASK);
-#ifdef HAVE_XARRAY
 	xa_destroy(&dev->cqs_xa);
-#endif
 	ib_dealloc_device(&dev->ibdev);
 	pci_disable_device(pdev);
 }
@@ -873,9 +723,7 @@ static int __init efa_init(void)
 		return err;
 	}
 
-#ifdef HAVE_EFA_P2P
 	efa_p2p_init();
-#endif
 
 	return 0;
 }
