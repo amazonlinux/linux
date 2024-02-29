@@ -520,6 +520,32 @@ static void virtballoon_changed(struct virtio_device *vdev)
 	struct virtio_balloon *vb = vdev->priv;
 	unsigned long flags;
 
+#ifdef CONFIG_ACMA_BALLOON
+	s64 target;
+	u32 num_pages;
+
+
+	/* Legacy balloon config space is LE, unlike all other devices. */
+	virtio_cread_le(vb->vdev, struct virtio_balloon_config, num_pages,
+			&num_pages);
+
+	/*
+	 * Aligned up to guest page size to avoid inflating and deflating
+	 * balloon endlessly.
+	 */
+	target = ALIGN(num_pages, VIRTIO_BALLOON_PAGES_PER_PAGE);
+
+	/*
+	 * If the given new max mem size is larger than current acma's max mem
+	 * size, same to normal max mem adjustment.
+	 * If the given new max mem size is smaller than current acma's max mem
+	 * size, strong aggressiveness is applied while memory for meeting the
+	 * new max mem is met is stolen.
+	 */
+	acma_set_max_mem_aggressive(totalram_pages() - target);
+	return;
+#endif
+
 	spin_lock_irqsave(&vb->stop_update_lock, flags);
 	if (!vb->stop_update) {
 		start_update_balloon_size(vb);
