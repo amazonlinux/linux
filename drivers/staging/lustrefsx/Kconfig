@@ -1,0 +1,3 @@
+source "drivers/staging/lustrefsx/libcfs/Kconfig"
+source "drivers/staging/lustrefsx/lnet/Kconfig"
+source "drivers/staging/lustrefsx/lustre/Kconfig"
