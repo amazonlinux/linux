@@ -80,6 +80,7 @@ static u32 psci_function_id[PSCI_FN_MAX];
 
 static u32 psci_cpu_suspend_feature;
 static bool psci_system_reset2_supported;
+static bool psci_system_off2_hibernate_supported;
 
 static inline bool psci_has_ext_power_state(void)
 {
@@ -280,6 +281,31 @@ static void psci_sys_poweroff(void)
 	invoke_psci_fn(PSCI_0_2_FN_SYSTEM_OFF, 0, 0, 0);
 }
 
+#ifdef CONFIG_HIBERNATION
+static void (*psci_orig_pm_power_off)(void);
+
+static void psci_sys_hibernate(void)
+{
+       if (system_entering_hibernation())
+               invoke_psci_fn(PSCI_FN_NATIVE(1_3, SYSTEM_OFF2),
+                              PSCI_1_3_HIBERNATE_TYPE_OFF, 0, 0);
+       if (psci_orig_pm_power_off)
+	       psci_orig_pm_power_off();
+       psci_sys_poweroff();
+}
+
+static int __init psci_hibernate_init(void)
+{
+	/* This runs *later* than efi_shutdown_init */
+	if (psci_system_off2_hibernate_supported) {
+		psci_orig_pm_power_off = pm_power_off;
+		pm_power_off = psci_sys_hibernate;
+	}
+	return 0;
+}
+late_initcall(psci_hibernate_init);
+#endif
+
 static int __init psci_features(u32 psci_func_id)
 {
 	return invoke_psci_fn(PSCI_1_0_FN_PSCI_FEATURES,
@@ -331,6 +357,18 @@ static void __init psci_init_system_reset2(void)
 
 	if (ret != PSCI_RET_NOT_SUPPORTED)
 		psci_system_reset2_supported = true;
+}
+
+static void __init psci_init_system_off2(void)
+{
+	int ret;
+
+	ret = psci_features(PSCI_FN_NATIVE(1_3, SYSTEM_OFF2));
+	if (ret < 0)
+		return;
+
+	if (ret & BIT(PSCI_1_3_HIBERNATE_TYPE_OFF))
+		psci_system_off2_hibernate_supported = true;
 }
 
 static void __init psci_init_system_suspend(void)
@@ -471,6 +509,7 @@ static int __init psci_probe(void)
 		psci_init_cpu_suspend();
 		psci_init_system_suspend();
 		psci_init_system_reset2();
+		psci_init_system_off2();
 		kvm_init_hyp_services();
 	}
 
