@@ -82,6 +82,7 @@ static const struct ena_stats ena_stats_global_strings[] = {
 	ENA_STAT_GLOBAL_ENTRY(os_netdev_wd),
 	ENA_STAT_GLOBAL_ENTRY(missing_admin_interrupt),
 	ENA_STAT_GLOBAL_ENTRY(admin_to),
+	ENA_STAT_GLOBAL_ENTRY(device_request_reset),
 	ENA_STAT_GLOBAL_ENTRY(suspend),
 	ENA_STAT_GLOBAL_ENTRY(resume),
 	ENA_STAT_GLOBAL_ENTRY(interface_down),
@@ -435,20 +436,20 @@ static void ena_metrics_stats_strings(struct ena_adapter *adapter, u8 **data)
 		for (i = 0; i < ENA_METRICS_ARRAY_ENI; i++) {
 			if (ena_com_get_customer_metric_support(dev, i)) {
 				ena_metrics = &ena_hw_stats_strings[i];
-				ethtool_sprintf(data, ena_metrics->name);
+				ethtool_puts(data, ena_metrics->name);
 			}
 		}
 	} else if (ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENI_STATS)) {
 		for (i = 0; i < ENA_STATS_ARRAY_ENI; i++) {
 			ena_stats = &ena_stats_eni_strings[i];
-			ethtool_sprintf(data, ena_stats->name);
+			ethtool_puts(data, ena_stats->name);
 		}
 	}
 
 	if (ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENA_SRD_INFO)) {
 		for (i = 0; i < ENA_STATS_ARRAY_ENA_SRD; i++) {
 			ena_stats = &ena_srd_info_strings[i];
-			ethtool_sprintf(data, ena_stats->name);
+			ethtool_puts(data, ena_stats->name);
 		}
 	}
 }
@@ -478,9 +479,7 @@ static void ena_queue_strings(struct ena_adapter *adapter, u8 **data)
 		for (j = 0; j < ENA_STATS_ARRAY_RX; j++) {
 			ena_stats = &ena_stats_rx_strings[j];
 
-			ethtool_sprintf(data,
-					"queue_%u_rx_%s", i,
-					ena_stats->name);
+			ethtool_sprintf(data, "queue_%u_rx_%s", i, ena_stats->name);
 		}
 	}
 }
@@ -505,7 +504,7 @@ static void ena_com_phc_strings(u8 **data)
 
 	for (i = 0; i < ENA_STATS_ARRAY_ENA_COM_PHC; i++) {
 		ena_stats = &ena_stats_ena_com_phc_strings[i];
-		ethtool_sprintf(data, "%s", ena_stats->name);
+		ethtool_puts(data, ena_stats->name);
 	}
 }
 
@@ -518,7 +517,7 @@ static void ena_get_strings(struct ena_adapter *adapter,
 
 	for (i = 0; i < ENA_STATS_ARRAY_GLOBAL; i++) {
 		ena_stats = &ena_stats_global_strings[i];
-		ethtool_sprintf(&data, ena_stats->name);
+		ethtool_puts(&data, ena_stats->name);
 	}
 
 	if (hw_stats_needed)
@@ -1109,12 +1108,22 @@ static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
 	return rc;
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+#ifdef ENA_HAVE_ETHTOOL_RXFH_PARAM
+static int ena_get_rxfh(struct net_device *netdev,
+			struct ethtool_rxfh_param *rxfh)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 			u8 *hfunc)
+#endif /* ENA_HAVE_ETHTOOL_RXFH_PARAM */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	enum ena_admin_hash_functions ena_func;
+#ifdef ENA_HAVE_ETHTOOL_RXFH_PARAM
+	u32 *indir = rxfh->indir;
+	u8 *hfunc = &rxfh->hfunc;
+	u8 *key = rxfh->key;
+#endif /* ENA_HAVE_ETHTOOL_RXFH_PARAM */
 	u8 func;
 	int rc;
 
@@ -1150,8 +1159,12 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key,
 		return -EOPNOTSUPP;
 	}
 
+#ifdef ENA_HAVE_ETHTOOL_RXFH_PARAM
+	*hfunc = func;
+#else
 	if (hfunc)
 		*hfunc = func;
+#endif /* ENA_HAVE_ETHTOOL_RXFH_PARAM */
 
 	return 0;
 }
@@ -1192,18 +1205,27 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir)
 }
 #endif /* >= 3.8.0 */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+#ifdef ENA_HAVE_ETHTOOL_RXFH_PARAM
+static int ena_set_rxfh(struct net_device *netdev,
+			struct ethtool_rxfh_param *rxfh,
+			struct netlink_ext_ack *extack)
+#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
 static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
 			const u8 *key, const u8 hfunc)
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
 static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
 			const u8 *key)
-#endif
+#endif /* ENA_HAVE_ETHTOOL_RXFH_PARAM */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	enum ena_admin_hash_functions func = 0;
+#ifdef ENA_HAVE_ETHTOOL_RXFH_PARAM
+	u32 *indir = rxfh->indir;
+	u8 hfunc = rxfh->hfunc;
+	u8 *key = rxfh->key;
+#endif /* ENA_HAVE_ETHTOOL_RXFH_PARAM */
 	int rc;
 
 	if (indir) {
@@ -1284,19 +1306,20 @@ static int ena_set_channels(struct net_device *netdev,
 
 		xdp_clear_features_flag(netdev);
 	} else {
-		xdp_set_features_flag(netdev,
-				      NETDEV_XDP_ACT_BASIC |
-				      NETDEV_XDP_ACT_REDIRECT);
+		xdp_set_features_flag(netdev, ENA_XDP_FEATURES);
 	}
 
 	if (count > adapter->max_num_io_queues)
 		return -EINVAL;
+
+#ifdef ENA_AF_XDP_SUPPORT
 	if (count != adapter->num_io_queues && ena_is_zc_q_exist(adapter)) {
 		netdev_err(adapter->netdev,
 			   "Changing channel count not supported with xsk pool loaded\n");
 		return -EOPNOTSUPP;
 	}
 
+#endif /* ENA_AF_XDP_SUPPORT */
 	return ena_update_queue_count(adapter, count);
 }
 #endif /* ETHTOOL_SCHANNELS */
