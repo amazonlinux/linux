@@ -71,15 +71,14 @@ static inline void ena_com_unmask_intr(struct ena_com_io_cq *io_cq,
 	writel(intr_reg->intr_control, io_cq->unmask_reg);
 }
 
+static inline u16 ena_com_used_q_entries(struct ena_com_io_sq *io_sq)
+{
+	return io_sq->tail - io_sq->next_to_comp;
+}
+
 static inline int ena_com_free_q_entries(struct ena_com_io_sq *io_sq)
 {
-	u16 tail, next_to_comp, cnt;
-
-	next_to_comp = io_sq->next_to_comp;
-	tail = io_sq->tail;
-	cnt = tail - next_to_comp;
-
-	return io_sq->q_depth - 1 - cnt;
+	return io_sq->q_depth - 1 - ena_com_used_q_entries(io_sq);
 }
 
 /* Check if the submission queue has enough space to hold required_buffers */
@@ -143,8 +142,8 @@ static inline bool ena_com_is_doorbell_needed(struct ena_com_io_sq *io_sq,
 	}
 
 	netdev_dbg(ena_com_io_sq_to_ena_dev(io_sq)->net_device,
-		   "Queue: %d num_descs: %d num_entries_needed: %d\n",
-		   io_sq->qid, num_descs, num_entries_needed);
+		   "Queue: %d num_descs: %d num_entries_needed: %d\n", io_sq->qid, num_descs,
+		   num_entries_needed);
 
 	return num_entries_needed > io_sq->entries_in_tx_burst_left;
 }
@@ -155,15 +154,14 @@ static inline int ena_com_write_sq_doorbell(struct ena_com_io_sq *io_sq)
 	u16 tail = io_sq->tail;
 
 	netdev_dbg(ena_com_io_sq_to_ena_dev(io_sq)->net_device,
-		   "Write submission queue doorbell for queue: %d tail: %d\n",
-		   io_sq->qid, tail);
+		   "Write submission queue doorbell for queue: %d tail: %d\n", io_sq->qid, tail);
 
 	writel(tail, io_sq->db_addr);
 
 	if (is_llq_max_tx_burst_exists(io_sq)) {
 		netdev_dbg(ena_com_io_sq_to_ena_dev(io_sq)->net_device,
-			   "Reset available entries in tx burst for queue %d to %d\n",
-			   io_sq->qid, max_entries_in_tx_burst);
+			   "Reset available entries in tx burst for queue %d to %d\n", io_sq->qid,
+			   max_entries_in_tx_burst);
 		io_sq->entries_in_tx_burst_left = max_entries_in_tx_burst;
 	}
 
@@ -226,8 +224,7 @@ static inline int ena_com_tx_comp_req_id_get(struct ena_com_io_cq *io_cq,
 
 	if (unlikely((flags & ENA_ETH_IO_TX_CDESC_MBZ6_MASK) &&
 		     ena_com_get_cap(dev, ENA_ADMIN_CDESC_MBZ))) {
-		netdev_err(dev->net_device,
-			   "Corrupted TX descriptor on q_id: %d, req_id: %u\n",
+		netdev_err(dev->net_device, "Corrupted TX descriptor on q_id: %d, req_id: %u\n",
 			   io_cq->qid, cdesc->req_id);
 		return -EFAULT;
 	}
@@ -236,8 +233,8 @@ static inline int ena_com_tx_comp_req_id_get(struct ena_com_io_cq *io_cq,
 
 	*req_id = READ_ONCE(cdesc->req_id);
 	if (unlikely(*req_id >= io_cq->q_depth)) {
-		netdev_err(ena_com_io_cq_to_ena_dev(io_cq)->net_device,
-			   "Invalid req id %d\n", cdesc->req_id);
+		netdev_err(ena_com_io_cq_to_ena_dev(io_cq)->net_device, "Invalid req id %d\n",
+			   cdesc->req_id);
 		return -EINVAL;
 	}
 
