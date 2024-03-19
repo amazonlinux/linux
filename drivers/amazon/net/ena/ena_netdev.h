@@ -31,8 +31,8 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	11
-#define DRV_MODULE_GEN_SUBMINOR 1
+#define DRV_MODULE_GEN_MINOR	12
+#define DRV_MODULE_GEN_SUBMINOR 0
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -169,7 +169,7 @@ struct ena_tx_buffer {
 	/* num of buffers used by this skb */
 	u32 num_of_bufs;
 
-	/* Total size of all buffers */
+	/* Total size of all buffers in bytes */
 	u32 total_tx_size;
 
 	/* Indicate if bufs[0] map the linear data of the skb. */
@@ -192,16 +192,19 @@ struct ena_tx_buffer {
 
 struct ena_rx_buffer {
 	struct sk_buff *skb;
+#ifdef ENA_AF_XDP_SUPPORT
 	union {
 		struct {
 			struct page *page;
 			dma_addr_t dma_addr;
 		};
-#ifdef ENA_XDP_SUPPORT
 		/* XSK pool buffer */
 		struct xdp_buff *xdp;
-#endif
 	};
+#else
+	struct page *page;
+	dma_addr_t dma_addr;
+#endif /* ENA_AF_XDP_SUPPORT */
 	u32 page_offset;
 	u32 buf_offset;
 	struct ena_com_buf ena_buf;
@@ -380,6 +383,7 @@ struct ena_stats_dev {
 	u64 os_netdev_wd;
 	u64 missing_admin_interrupt;
 	u64 admin_to;
+	u64 device_request_reset;
 };
 
 enum ena_flags_t {
@@ -524,6 +528,7 @@ static const struct ena_reset_stats_offset resets_to_stats_offset_map[ENA_REGS_R
 	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_RX_DESCRIPTOR_MALFORMED, rx_desc_malformed),
 	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_TX_DESCRIPTOR_MALFORMED, tx_desc_malformed),
 	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_MISSING_ADMIN_INTERRUPT, missing_admin_interrupt),
+	ENA_RESET_STATS_ENTRY(ENA_REGS_RESET_DEVICE_REQUEST, device_request_reset),
 };
 
 void ena_set_ethtool_ops(struct net_device *netdev);
@@ -546,7 +551,7 @@ int ena_set_rx_copybreak(struct ena_adapter *adapter, u32 rx_copybreak);
 
 /* Increase a stat by cnt while holding syncp seqlock on 32bit machines */
 static inline void ena_increase_stat(u64 *statp, u64 cnt,
-			      struct u64_stats_sync *syncp)
+				     struct u64_stats_sync *syncp)
 {
 	u64_stats_update_begin(syncp);
 	(*statp) += cnt;
@@ -677,13 +682,12 @@ int ena_create_io_tx_queues_in_range(struct ena_adapter *adapter,
 int ena_setup_tx_resources_in_range(struct ena_adapter *adapter,
 				    int first_index, int count);
 void ena_free_all_io_tx_resources_in_range(struct ena_adapter *adapter,
-					int first_index, int count);
+					   int first_index, int count);
 void ena_free_all_io_tx_resources(struct ena_adapter *adapter);
 void ena_down(struct ena_adapter *adapter);
 int ena_up(struct ena_adapter *adapter);
 void ena_unmask_interrupt(struct ena_ring *tx_ring, struct ena_ring *rx_ring);
-void ena_update_ring_numa_node(struct ena_ring *tx_ring,
-			       struct ena_ring *rx_ring);
+void ena_update_ring_numa_node(struct ena_ring *rx_ring);
 void ena_rx_checksum(struct ena_ring *rx_ring,
 		     struct ena_com_rx_ctx *ena_rx_ctx,
 		     struct sk_buff *skb);
