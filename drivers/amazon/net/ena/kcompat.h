@@ -370,33 +370,6 @@ static inline u32 ethtool_rxfh_indir_default(u32 index, u32 n_rx_rings)
 #endif
 #endif /* >= 3.8.0 */
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,2,0))
-#define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V3
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(4,19,0)) || \
-      (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8,0))) || \
-      (SUSE_VERSION && ((SUSE_VERSION == 12 && SUSE_PATCHLEVEL >= 5) || \
-		        (SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 1) || \
-			(SUSE_VERSION > 15)))
-#define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V2
-#else
-
-#if ((LINUX_VERSION_CODE < KERNEL_VERSION(3,11,0) && \
-      RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,2))) || \
-     (LINUX_VERSION_CODE >= KERNEL_VERSION(3,12,0) && \
-      SLE_VERSION_CODE && SLE_VERSION_CODE >= SLE_VERSION(12,0,0)) || \
-     (LINUX_VERSION_CODE >= KERNEL_VERSION(3,14,0)))
-#define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V1
-#endif
-
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3,13,0)
-#if defined(UBUNTU_VERSION_CODE) && UBUNTU_VERSION_CODE >= UBUNTU_VERSION(3,13,0,24)
-#define HAVE_NDO_SELECT_QUEUE_ACCEL_FALLBACK_V1
-#else
-#define HAVE_NDO_SELECT_QUEUE_ACCEL
-#endif
-#endif /* >= 3.13 */
-#endif /* < 4.19 */
-
 #if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0)
 #if BITS_PER_LONG == 32 && defined(CONFIG_SMP)
 # define u64_stats_init(syncp)  seqcount_init(syncp.seq)
@@ -682,10 +655,10 @@ do {									\
 #endif
 #endif
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 2, 0)) || \
-	(RHEL_RELEASE_CODE && \
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 2, 0)) && \
+	!(RHEL_RELEASE_CODE && \
 	RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 2))
-#define HAVE_NETDEV_XMIT_MORE
+#define netdev_xmit_more() (skb->xmit_more)
 #endif
 
 #ifndef mmiowb
@@ -724,15 +697,18 @@ do {									\
 
 /* values are taken from here: https://github.com/iovisor/bcc/blob/master/docs/kernel-versions.md */
 
-#if defined(CONFIG_BPF) && LINUX_VERSION_CODE >= KERNEL_VERSION(5,0,0)
+#if defined(CONFIG_BPF) && (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0) || \
+	(defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 5))))
 #define ENA_XDP_SUPPORT
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(5,8,0)) || \
-	(SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 3)
+	(SUSE_VERSION == 15 && SUSE_PATCHLEVEL >= 3) || \
+	(defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 5)))
 #define XDP_HAS_FRAME_SZ
 #define XDP_CONVERT_TO_FRAME_NAME_CHANGED
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 9, 0) && \
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 5))
 #define ENA_XDP_QUERY_IN_DRIVER
 #endif
 
@@ -859,7 +835,8 @@ static inline int numa_mem_id(void)
 #define fallthrough do {} while (0)  /* fallthrough */
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 11, 0) || \
+	(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 5))
 #define AF_XDP_BUSY_POLL_SUPPORTED
 #endif
 
@@ -874,7 +851,8 @@ static inline int numa_mem_id(void)
 #if defined(ENA_XDP_SUPPORT) && \
 	(LINUX_VERSION_CODE < KERNEL_VERSION(5, 12, 0) && \
 	!(defined(SUSE_VERSION) && (SUSE_VERSION == 15 && SUSE_PATCHLEVEL == 3) && \
-	 ENA_KERNEL_VERSION_GTE(5, 3, 18, 150300, 59, 49)))
+	 ENA_KERNEL_VERSION_GTE(5, 3, 18, 150300, 59, 49))) && \
+	!(defined(RHEL_RELEASE_CODE) && RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 5))
 static __always_inline void
 xdp_init_buff(struct xdp_buff *xdp, u32 frame_sz, struct xdp_rxq_info *rxq)
 {
@@ -959,8 +937,11 @@ static inline int netif_xmit_stopped(const struct netdev_queue *dev_queue)
 #define NAPIF_STATE_SCHED BIT(NAPI_STATE_SCHED)
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0) && \
-	!(defined(IS_UEK) && ENA_KERNEL_VERSION_GTE(5, 15, 0, 100, 96, 32))
+#if ((LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0)) && \
+	!(defined(IS_UEK) && ENA_KERNEL_VERSION_GTE(5, 15, 0, 100, 96, 32)) && \
+	!(defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 7)) && \
+	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(9, 0))) && \
+	!(defined(RHEL_RELEASE_CODE) && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(9, 1))))
 #define bpf_warn_invalid_xdp_action(netdev, xdp_prog, verdict) \
 	bpf_warn_invalid_xdp_action(verdict)
 #endif
@@ -1134,5 +1115,47 @@ static inline void ena_dma_unmap_page_attrs(struct device *dev,
 #ifndef ENA_HAVE_XDP_DO_FLUSH
 #define xdp_do_flush xdp_do_flush_map
 #endif /* ENA_HAVE_XDP_DO_FLUSH */
+
+#ifndef ENA_HAVE_CPUMASK_LOCAL_SPREAD
+static inline unsigned int cpumask_local_spread(unsigned int i, int node)
+{
+	unsigned int cpu;
+
+	/* Wrap: we always want a cpu. */
+	i %= num_online_cpus();
+
+	if (node == NUMA_NO_NODE) {
+		for_each_cpu(cpu, cpu_online_mask)
+			if (i-- == 0)
+				return cpu;
+	} else {
+		/* NUMA first. */
+		for_each_cpu_and(cpu, cpumask_of_node(node), cpu_online_mask)
+			if (i-- == 0)
+				return cpu;
+
+		for_each_cpu(cpu, cpu_online_mask) {
+			/* Skip NUMA nodes, done above. */
+			if (cpumask_test_cpu(cpu, cpumask_of_node(node)))
+				continue;
+
+			if (i-- == 0)
+				return cpu;
+		}
+	}
+	return 0;
+}
+#endif /* ENA_HAVE_CPUMASK_LOCAL_SPREAD */
+
+#ifndef ENA_HAVE_UPDATE_AFFINITY_HINT
+static inline int irq_update_affinity_hint(unsigned int irq, const struct cpumask *m)
+{
+	return 0;
+}
+#endif /* ENA_HAVE_UPDATE_AFFINITY_HINT */
+
+#ifndef ENA_HAVE_ETHTOOL_PUTS
+#define ethtool_puts ethtool_sprintf
+#endif /* ENA_HAVE_ETHTOOL_PUTS */
 
 #endif /* _KCOMPAT_H_ */
