@@ -826,6 +826,7 @@ struct cifs_ses {
 	struct list_head smb_ses_list;
 	struct list_head tcon_list;
 	struct cifs_tcon *tcon_ipc;
+	spinlock_t ses_lock;  /* protect anything here that is not protected */
 	struct mutex session_mutex;
 	struct TCP_Server_Info *server;	/* pointer to server info */
 	int ses_count;		/* reference counter */
