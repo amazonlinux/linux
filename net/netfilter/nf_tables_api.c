@@ -774,7 +774,7 @@ err:
 	return ret;
 }
 
-static bool nft_supported_family(u8 family)
+static bool nft_supported_family(int family)
 {
 	return false
 #ifdef CONFIG_NF_TABLES_INET
