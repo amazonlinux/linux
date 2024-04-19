@@ -1239,8 +1239,12 @@ static bool is_dsc_need_re_compute(
 			continue;
 
 		/*
-		 *	check if cached virtual MST DSC caps are available and DSC is supported
-		 *	as per specifications in their Virtual DPCD registers.
+		 *	Check if cached virtual MST DSC caps are available and DSC is supported
+		 *	this change takes care of newer MST DSC capable devices that report their
+		 *	DPCD caps as per specifications in their Virtual DPCD registers.
+
+		 *	TODO: implement the check for older MST DSC devices that do not conform to
+		 *	specifications.
 		*/
 		if (!(aconnector->dc_sink->dsc_caps.dsc_dec_caps.is_dsc_supported ||
 			aconnector->dc_link->dpcd_caps.dsc_caps.dsc_basic_caps.fields.dsc_support.DSC_PASSTHROUGH_SUPPORT))
