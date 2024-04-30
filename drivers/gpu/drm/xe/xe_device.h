@@ -167,5 +167,6 @@ static inline bool xe_device_wedged(struct xe_device *xe)
 }
 
 void xe_device_declare_wedged(struct xe_device *xe);
+void xe_device_td_flush(struct xe_device *xe);
 
 #endif
