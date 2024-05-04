@@ -349,6 +349,33 @@ err_out:
 static DEFINE_MUTEX(page_reporting_mutex);
 DEFINE_STATIC_KEY_FALSE(page_reporting_enabled);
 
+#ifdef CONFIG_ACMA
+
+int page_report(unsigned long pfn, unsigned long nr_pages)
+{
+	struct page_reporting_dev_info *prdev;
+	struct scatterlist sgl;
+	int err;
+
+	rcu_read_lock();
+
+	prdev = rcu_dereference(pr_dev_info);
+	if (!prdev || !prdev->report) {
+		rcu_read_unlock();
+		return -ENOENT;
+	}
+
+	sg_init_table(&sgl, 1);
+	sg_set_page(&sgl, NULL, nr_pages << PAGE_SHIFT, 0);
+	sgl.dma_address = PFN_PHYS(pfn);
+
+	err = prdev->report(prdev, sgl, 1);
+	rcu_read_unlock();
+	return err;
+}
+
+#endif
+
 int page_reporting_register(struct page_reporting_dev_info *prdev)
 {
 	int err = 0;
