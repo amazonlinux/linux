@@ -141,6 +141,11 @@ struct damon_access_report {
  * @DAMOS_LRU_DEPRIO:	Deprioritize the region on its LRU lists.
  * @DAMOS_MIGRATE_HOT:  Migrate the regions prioritizing warmer regions.
  * @DAMOS_MIGRATE_COLD:	Migrate the regions prioritizing colder regions.
+#ifdef CONFIG_ACMA
+ * @DAMOS_ALLOC:	Allocate pages in the region,
+ *			&struct damos->alloc_order pages at once.
+ * @DAMOS_FREE:		Return DAMOS_ALLOC-ed pages back to the system.
+#endif
  * @DAMOS_STAT:		Do nothing but count the stat.
  * @NR_DAMOS_ACTIONS:	Total number of DAMOS actions
  *
@@ -160,6 +165,10 @@ enum damos_action {
 	DAMOS_LRU_DEPRIO,
 	DAMOS_MIGRATE_HOT,
 	DAMOS_MIGRATE_COLD,
+#ifdef CONFIG_ACMA
+	DAMOS_ALLOC,
+	DAMOS_FREE,
+#endif
 	DAMOS_STAT,		/* Do nothing but only record the stat */
 	NR_DAMOS_ACTIONS,
 };
@@ -491,6 +500,11 @@ struct damos_migrate_dests {
  * struct damos - Represents a Data Access Monitoring-based Operation Scheme.
  * @pattern:		Access pattern of target regions.
  * @action:		&damos_action to be applied to the target regions.
+#ifdef CONFIG_ACMA
+ * @alloc_order:	DAMOS_ALLOC/FREE applying granularity.
+ * @alloc_callback:	DAMOS_ALLOC success callback.
+ * @free_callback:	DAMOS_FREE callback.
+#endif
  * @apply_interval_us:	The time between applying the @action.
  * @quota:		Control the aggressiveness of this scheme.
  * @wmarks:		Watermarks for automated (in)activation of this scheme.
@@ -507,6 +521,18 @@ struct damos_migrate_dests {
  * CPU time or IO resources for the &action, &quota is used.
  *
  * If @apply_interval_us is zero, &damon_attrs->aggr_interval is used instead.
+#ifdef CONFIG_ACMA
+ *
+ * If @action is CONFIG_ALLOC or CONFIG_FREE, the action is applied to
+ * @alloc_order pages of the region at once.  For example, if the region has
+ * 1024 pages, and @alloc_order is 9, DAMOS tries to allocate or free first 512
+ * (2^9) contiguous pages at once, and then next 512 pages.
+ *
+ * For each success of such allocation attemp, @alloc_callback is called back.
+ * For each attempt of deallocation, @free_callback is called back first,
+ * before trying the deallocation.  If @free_callback returns non-zero, the
+ * deallocation attempt is aborted.
+#endif
  *
  * To do the work only when needed, schemes can be activated for specific
  * system situations using &wmarks.  If all schemes that registered to the
@@ -540,6 +566,11 @@ struct damos_migrate_dests {
 struct damos {
 	struct damos_access_pattern pattern;
 	enum damos_action action;
+#ifdef CONFIG_ACMA
+	unsigned int alloc_order;
+	int (*alloc_callback)(unsigned long start_addr);
+	int (*free_callback)(unsigned long start_addr);
+#endif
 	unsigned long apply_interval_us;
 /* private: internal use only */
 	/*
@@ -1002,6 +1033,12 @@ void damon_report_access(struct damon_access_report *report);
 
 int damon_set_region_biggest_system_ram_default(struct damon_target *t,
 				unsigned long *start, unsigned long *end);
+
+#ifdef CONFIG_ACMA
+
+unsigned long damon_alloced_bytes(void);
+
+#endif
 
 #else	/* CONFIG_DAMON */
 

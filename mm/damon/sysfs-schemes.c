@@ -1919,6 +1919,16 @@ static struct damos_sysfs_action_name damos_sysfs_action_names[] = {
 		.action = DAMOS_STAT,
 		.name = "stat",
 	},
+#ifdef CONFIG_ACMA
+	{
+		.action = DAMOS_ALLOC,
+		.name = "damos_alloc",
+	},
+	{
+		.action = DAMOS_FREE,
+		.name = "damos_free",
+	},
+#endif
 };
 
 static struct damon_sysfs_scheme *damon_sysfs_scheme_alloc(

@@ -400,6 +400,93 @@ static unsigned long damon_pa_stat(struct damon_region *r,
 	return 0;
 }
 
+#ifdef CONFIG_ACMA
+
+static bool damon_pa_preempted(unsigned long pfn)
+{
+	/* todo: implement */
+}
+
+/* always success for preempted=false */
+static int damon_pa_set_preempted(unsigned long pfn, bool preempted)
+{
+	/* todo: implement */
+}
+
+/*
+ * Return ownership of the memory to the system.  At the moment, only user of
+ * this function is virtio-balloon.  They could use page fault-based mechanisms
+ * to catch returned ownership.  Therefore this function doesn't notify this
+ * event to the report subscribers.  In future, we could add some notification
+ * system of this event for more users such as contig memory allocator.
+ */
+static int damon_pa_free(unsigned long pfn, struct damos *scheme)
+{
+	if (!damon_pa_preemted(pfn))
+		return -EINVAL;
+
+	free_contig_range(pfn, DAMON_MEM_PREEMPT_PAGES);
+	damon_pa_set_preempted(pfn, false);
+	/*
+	 * We intentionally do not report this event to the preempted memory
+	 * report subscriber.  They could use page fault handler like
+	 * mechanisms.
+	 */
+	return 0;
+}
+
+/*
+ * Pass ownership of the memory to page reporting subscribers.  The subscribers
+ * can use the reported memory for their purpose, e.g., letting Host
+ * re-allocate it to other guest, or use as contig allocation memory pool.
+ */
+static int damon_pa_alloc(unsigned long pfn, struct damos *scheme)
+{
+	int err;
+
+	if (damon_pa_preempted(pfn))
+		return -EINVAL;
+	if (alloc_contig_range(pfn, pfn + DAMON_MEM_PREEMPT_PAGES,
+				MIGRATE_MOVABLE, GFP_KERNEL))
+		return -ENOMEM;
+	err = damon_pa_set_preempted(pfn, true);
+	if (err) {
+		free_contig_range(pfn, DAMON_MEM_PREEMPT_PAGES);
+		return err;
+	}
+	if (!scheme->alloc_callback)
+		return 0;
+	err = scheme->alloc_callback(PFN_PHYS(pfn));
+	if (err) {
+		damon_pa_free(pfn);
+		return err;
+	}
+	return 0;
+}
+
+/* Preempt or yield memory regions from system */
+static unsigned long damon_pa_alloc_or_free(
+		struct damon_region *r, struct damos *s, bool alloc)
+{
+	unsigned long pfn;
+	unsigned long applied = 0;
+
+	for (pfn = PHYS_PFN(r->start); pfn < PHYS_PFN(r->end);
+			pfn += DAMON_MEM_PREEMPT_PAGES) {
+		if (alloc) {
+			if (damon_pa_alloc(pfn, s))
+				continue;
+		} else {
+			if (damon_pa_free(pfn, s))
+				continue;
+		}
+		applied += 1;
+	}
+	return applied * PAGE_SIZE * DAMON_MEM_PREEMPT_PAGES;
+}
+
+#endif
+
 static unsigned long damon_pa_apply_scheme(struct damon_ctx *ctx,
 		struct damon_target *t, struct damon_region *r,
 		struct damos *scheme, unsigned long *sz_filter_passed)
@@ -418,6 +505,12 @@ static unsigned long damon_pa_apply_scheme(struct damon_ctx *ctx,
 	case DAMOS_MIGRATE_HOT:
 	case DAMOS_MIGRATE_COLD:
 		return damon_pa_migrate(r, aunit, scheme, sz_filter_passed);
+#ifdef CONFIG_ACMA
+	case DAMOS_ALLOC:
+		return damon_pa_alloc_or_free(r, scheme, true);
+	case DAMOS_FREE:
+		return damon_pa_alloc_or_free(r, scheme, false);
+#endif
 	case DAMOS_STAT:
 		return damon_pa_stat(r, aunit, scheme, sz_filter_passed);
 	default:
