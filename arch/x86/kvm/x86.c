@@ -4695,6 +4695,7 @@ int kvm_vm_ioctl_check_extension(struct kvm *kvm, long ext)
 	case KVM_CAP_VM_DISABLE_NX_HUGE_PAGES:
 	case KVM_CAP_IRQFD_RESAMPLE:
 	case KVM_CAP_MEMORY_FAULT_INFO:
+	case KVM_CAP_X86_GUEST_MODE:
 		r = 1;
 		break;
 	case KVM_CAP_PRE_FAULT_MEMORY:
@@ -10282,6 +10283,8 @@ static void post_kvm_run_save(struct kvm_vcpu *vcpu)
 
 	if (is_smm(vcpu))
 		kvm_run->flags |= KVM_RUN_X86_SMM;
+	if (is_guest_mode(vcpu))
+		kvm_run->flags |= KVM_RUN_X86_GUEST_MODE;
 }
 
 static void update_cr8_intercept(struct kvm_vcpu *vcpu)
