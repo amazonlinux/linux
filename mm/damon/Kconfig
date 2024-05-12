@@ -110,4 +110,14 @@ config DAMON_STAT_ENABLED_DEFAULT
 	  Whether to enable DAMON_STAT by default.  Users can disable it in
 	  boot or runtime using its 'enabled' parameter.
 
+config DAMON_ACMA
+	bool "Build Access/Contiguity-aware Memory Auto-scaling (DAMON_ACMA)"
+	depends on DAMON_PADDR
+	help
+	  This builds the DAMON-based Access/Contiguity-aware Memory
+	  Auto-scaling subsystem.  It preempts unnecessary memory from the
+	  system and report it to the host while respecting user-specified
+	  min/max memory for the system and maximum memory pressure stall time
+	  ratio.
+
 endmenu
