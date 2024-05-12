@@ -58,6 +58,13 @@ static unsigned long min_mem_kb __read_mostly;
 module_param(min_mem, ulong, 0600);
 
 /*
+ * Maximum amount of memory to be guaranteed to the system.  In other words,
+ * the upper limit of the scaling.
+ */
+static unsigned long max_mem_kb __read_mostly;
+module_param(max_mem, ulong, 0600);
+
+/*
  * Desired level of memory pressure-stall time in microseconds.
  *
  * While keeping the caps that set by other quotas, DAMON_RECLAIM automatically
@@ -147,6 +154,11 @@ DEFINE_DAMON_MODULES_DAMOS_STATS_PARAMS(damon_acma_scale_down_stat,
 		acma_scale_down_tried_regions, acma_scale_down_succ_regions,
 		acma_scale_down_quota_exceeds);
 
+static struct damos_stat damon_acma_scale_up_stat;
+DEFINE_DAMON_MODULES_DAMOS_STATS_PARAMS(damon_acma_scale_up_stat,
+		acma_scale_up_tried_regions, acma_scale_up_succ_regions,
+		acma_scale_up_quota_exceeds);
+
 static struct damos_access_pattern damon_acma_stub_pattern = {
 	/* Find regions having PAGE_SIZE or larger size */
 	.min_sz_region = PAGE_SIZE,
@@ -167,8 +179,8 @@ static struct damos *damon_acma_new_scheme(
 {
 	struct damos_quota quota = damon_acma_quota;
 
-	/* Use 1/2 of total quota for hot/cold pages sorting */
-	quota.ms = quota.ms / 2;
+	/* Use 1/3 of total quota for hot/cold pages sorting */
+	quota.ms = quota.ms / 3;
 
 	return damon_new_scheme(
 			pattern,
@@ -224,7 +236,7 @@ static int damon_acma_set_scheme_quota(struct damos *scheme, struct damos *old,
 static int damon_acma_set_scale_down_region_filter(struct damos *scheme)
 {
 	struct damos_filter *filter = damos_new_filter(
-			DAMOS_FILTER_TYPE_ADDR, false);
+			DAMOS_FILTER_TYPE_ADDR, false, false);
 	unsigned long end;
 	unsigned long start_limit, end_limit;
 
@@ -244,6 +256,36 @@ static int damon_acma_set_scale_down_region_filter(struct damos *scheme)
 	}
 	filter->addr_range.start = max(start_limit, end - SCALE_WINDOW);
 	filter->addr_range.end = end;
+
+	damos_add_filter(scheme, filter);
+	return 0;
+}
+
+/*
+ * Similar to damon_acma_set_scale_down_region_filter() but for scaling up.
+ */
+static int damon_acma_set_scale_up_region_filter(struct damos *scheme)
+{
+	struct damos_filter *filter = damos_new_filter(
+			DAMOS_FILTER_TYPE_ADDR, false, false);
+	unsigned long start;
+	unsigned long start_limit, end_limit;
+
+	if (!filter)
+		return -ENOMEM;
+
+	/* scale up no above max_mem_kb */
+	start_limit = monitor_region_start;
+	end_limit = start_limit + max_mem_kb * KB;
+
+	/* not-completely-free-ed SCALE_WINDOW region of lowest address */
+	for (start = start_limit; start <= end_limit - SCALE_WINDOW;
+			start += SCALE_WINDOW) {
+		if (damon_alloced_bytes(end - SCALE_WINDOW))
+			break;
+	}
+	filter->addr_range.start = start;
+	filter->addr_range.end = min(end_limit, start + SCALE_WINDOW);
 
 	damos_add_filter(scheme, filter);
 	return 0;
@@ -310,11 +352,40 @@ static struct damos *damon_acma_new_scale_down_scheme(struct damos *old)
 	return scheme;
 }
 
+/*
+ * Scale up scheme
+ */
+static struct damos *damon_acma_new_scale_up_scheme(void)
+{
+	struct damos_access_pattern pattern = damon_acma_stub_pattern;
+	struct damos *scheme;
+	int err;
+
+	scheme = damon_acma_new_scheme(&pattern, DAMOS_FREE);
+	if (!scheme)
+		return NULL;
+	err = damon_acma_set_scheme_quota(scheme, old,
+			DAMOS_QUOTA_SOME_MEM_PUSI_US);
+	if (err) {
+		damon_destroy_scheme(scheme);
+		return NULL;
+	}
+	scheme->alloc_order = scale_pg_order;
+	scheme->alloc_callback = NULL;
+	err = damon_acma_set_scale_up_region_filter(scale_up_scheme);
+	if (err) {
+		damon_destroy_scheme(scale_down_scheme);
+		return NULL;
+	}
+	return scheme;
+}
+
 static int damon_acma_apply_parameters(void)
 {
 	struct damos *scheme, *reclaim_scheme;
-	struct damos *scale_down_scheme;
+	struct damos *scale_down_scheme, *scale_up_scheme;
 	struct damos *old_reclaim_scheme = NULL, *old_scale_down_scheme = NULL;
+	struct damos *old_scale_up_scheme = NULL;
 	struct damos_quota_goal *goal;
 	int err = 0;
 
@@ -327,7 +398,11 @@ static int damon_acma_apply_parameters(void)
 			old_reclaim_scheme = scheme;
 			continue;
 		}
-		old_scale_down_scheme = scheme;
+		if (!old_scale_down_scheme) {
+			old_scale_down_scheme = scheme;
+			continue;
+		}
+		old_scale_up_scheme = scheme;
 	}
 
 	reclaim_scheme = damon_acma_new_reclaim_scheme(old_reclaim_scheme);
@@ -342,6 +417,14 @@ static int damon_acma_apply_parameters(void)
 		return -ENOMEM;
 	}
 	damon_add_scheme(ctx, scale_down_scheme);
+
+	scale_up_scheme = damon_acma_new_scale_up_scheme(old_scale_up_scheme);
+	if (!scale_up_scheme) {
+		damon_destroy_scheme(scale_down_scheme);
+		damon_destroy_scheme(reclaim_scheme);
+		return -ENOMEM;
+	}
+	damon_add_scheme(ctx, scale_up_scheme);
 
 	return damon_set_region_biggest_system_ram_default(target,
 					&monitor_region_start,
@@ -430,6 +513,9 @@ static int damon_acma_after_aggregation(struct damon_ctx *c)
 			break;
 		case DAMOS_ALLOC:
 			damon_acma_scale_down_stat = s->stat;
+			break;
+		case DAMOS_FREE:
+			damon_acma_scale_up_stat = s->stat;
 			break;
 		default:
 			break;
