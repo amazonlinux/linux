@@ -8,9 +8,6 @@
  * and report it to the host when the system is having memory pressure level
  * under the threshold, and vice versa, respectively.
  *
- * At this moment, the scaling is not implemented, hence this is just a memory
- * pressure-aware proactive reclamation module.
- *
  * Author: SeongJae Park <sj@kernel.org>
  */
 
@@ -54,6 +51,13 @@ static bool commit_inputs __read_mostly;
 module_param(commit_inputs, bool, 0600);
 
 /*
+ * Minimum amount of memory to be guaranteed to the system.  In other words,
+ * the lower limit of the scaling.
+ */
+static unsigned long min_mem_kb __read_mostly;
+module_param(min_mem, ulong, 0600);
+
+/*
  * Desired level of memory pressure-stall time in microseconds.
  *
  * While keeping the caps that set by other quotas, DAMON_RECLAIM automatically
@@ -68,6 +72,18 @@ module_param(commit_inputs, bool, 0600);
  */
 static unsigned long quota_mem_pressure_us __read_mostly = 1000;
 module_param(quota_mem_pressure_us, ulong, 0600);
+
+/*
+ * Basic scale down/up granularity.  ACMA will allocate and report contiguous
+ * pages of this size at once.  512 pages (2 MiB for 4 KiB page setup) by
+ * default.
+ *
+ * To minimize DAMON-internal ALLOC-ed memory management overhead, we further
+ * apply SCALE_WINDOW.  Refer to damon_acma_set_scale_down_region_filter() for
+ * more detail about it.
+ */
+static unsigned int scale_pg_order __read_mostly = 9;
+module_param(scale_pg_order, uint, 0600);
 
 static struct damos_quota damon_acma_quota = {
 	/* Use up to 15 ms per 1 sec for scaling, by default */
@@ -126,6 +142,11 @@ DEFINE_DAMON_MODULES_DAMOS_STATS_PARAMS(damon_acma_reclaim_stat,
 		acma_reclaim_tried_regions, acma_reclaim_succ_regions,
 		acma_reclaim_quota_exceeds);
 
+static struct damos_stat damon_acma_scale_down_stat;
+DEFINE_DAMON_MODULES_DAMOS_STATS_PARAMS(damon_acma_scale_down_stat,
+		acma_scale_down_tried_regions, acma_scale_down_succ_regions,
+		acma_scale_down_quota_exceeds);
+
 static struct damos_access_pattern damon_acma_stub_pattern = {
 	/* Find regions having PAGE_SIZE or larger size */
 	.min_sz_region = PAGE_SIZE,
@@ -145,6 +166,9 @@ static struct damos *damon_acma_new_scheme(
 		struct damos_access_pattern *pattern, enum damos_action action)
 {
 	struct damos_quota quota = damon_acma_quota;
+
+	/* Use 1/2 of total quota for hot/cold pages sorting */
+	quota.ms = quota.ms / 2;
 
 	return damon_new_scheme(
 			pattern,
@@ -181,6 +205,61 @@ static int damon_acma_set_scheme_quota(struct damos *scheme, struct damos *old,
 }
 
 /*
+ * scale_pg_order is for basic scaling granularity.  Have a larger granularity
+ * to limit DAMON-internal alloc-ed pages management overhead.
+ */
+#define SCALE_WINDOW	(128 * MB)
+
+/*
+ * Set scale_down scheme's address range type filter to apply scaling down to
+ * only current scaling window.  Scaling window is SCALE_WINDOW size contiguous
+ * memory region of highest address that not yet completely DAMOS_ALLOC-ed and
+ * reported.
+ *
+ * TODO: Apply 'struct page' reduction in SCALE_WINDOW or lower granularity.
+ * E.g., hot-unplug the memory block, or apply vmemmap remapping-based approach
+ * like hugetlb vmemmap optimization
+ * (https://docs.kernel.org/mm/vmemmap_dedup.html).
+ */
+static int damon_acma_set_scale_down_region_filter(struct damos *scheme)
+{
+	struct damos_filter *filter = damos_new_filter(
+			DAMOS_FILTER_TYPE_ADDR, false);
+	unsigned long end;
+	unsigned long start_limit, end_limit;
+
+	if (!filter)
+		return -ENOMEM;
+
+	/* scale down no below min_mem_kb */
+	end_limit = monitor_region_end;
+	start_limit = monitor_region_start + min_mem_kb * KB;
+
+	/* not-completely-alloc-ed SCALE_WINDOW region of highest address */
+	for (end = end_limit; end >= start_limit + SCALE_WINDOW;
+			end -= SCALE_WINDOW) {
+		if (damon_alloced_bytes(end, end - SCALE_WINDOW)
+				!= SCALE_WINDOW)
+			break;
+	}
+	filter->addr_range.start = max(start_limit, end - SCALE_WINDOW);
+	filter->addr_range.end = end;
+
+	damos_add_filter(scheme, filter);
+	return 0;
+}
+
+/*
+ * Called back from DAMOS for every damos->alloc_order contig pages that
+ * just successfully DAMOS_ALLOC-ed.
+ */
+static int damon_acma_alloc_callback(unsigned long start_addr)
+{
+	/* For non-zero return value, DAMOS free the pages. */
+	return page_report(PHYS_PFN(addr), 1 << scale_pg_order);
+}
+
+/*
  * Reclaim cold pages on entire physical address space
  */
 static struct damos *damon_acma_new_reclaim_scheme(struct damos *old)
@@ -202,10 +281,40 @@ static struct damos *damon_acma_new_reclaim_scheme(struct damos *old)
 	return scheme;
 }
 
+/*
+ * Scale down scheme
+ */
+static struct damos *damon_acma_new_scale_down_scheme(struct damos *old)
+{
+	struct damos_access_pattern pattern = damon_acma_stub_pattern;
+	struct damos *scheme;
+	int err;
+
+	scheme = damon_acma_new_scheme(&pattern, DAMOS_ALLOC);
+	if (!scheme)
+		return NULL;
+	err = damon_acma_set_scheme_quota(scheme, old,
+			DAMOS_QUOTA_SOME_MEM_PSI_US);
+	if (err) {
+		damon_destroy_scheme(scheme);
+		return NULL;
+	}
+	/* alloc in 512 pages granularity */
+	scheme->alloc_order = scale_pg_order;
+	scheme->alloc_callback = damon_acma_alloc_callback;
+	err = damon_acma_set_scale_down_region_filter(scale_down_scheme);
+	if (err) {
+		damon_destroy_scheme(scheme);
+		return NULL;
+	}
+	return scheme;
+}
+
 static int damon_acma_apply_parameters(void)
 {
 	struct damos *scheme, *reclaim_scheme;
-	struct damos *old_reclaim_scheme = NULL;
+	struct damos *scale_down_scheme;
+	struct damos *old_reclaim_scheme = NULL, *old_scale_down_scheme = NULL;
 	struct damos_quota_goal *goal;
 	int err = 0;
 
@@ -213,13 +322,26 @@ static int damon_acma_apply_parameters(void)
 	if (err)
 		return err;
 
-	damon_for_each_scheme(scheme, ctx)
-		old_reclaim_scheme = scheme;
+	damon_for_each_scheme(scheme, ctx) {
+		if (!old_reclaim_scheme) {
+			old_reclaim_scheme = scheme;
+			continue;
+		}
+		old_scale_down_scheme = scheme;
+	}
 
 	reclaim_scheme = damon_acma_new_reclaim_scheme(old_reclaim_scheme);
 	if (!reclaim_scheme)
 		return -ENOMEM;
 	damon_set_schemes(ctx, &reclaim_scheme, 1);
+
+	scale_down_scheme = damon_acma_new_scale_down_scheme(
+			old_scale_down_scheme);
+	if (!scale_down_scheme) {
+		damon_destroy_scheme(reclaim_scheme);
+		return -ENOMEM;
+	}
+	damon_add_scheme(ctx, scale_down_scheme);
 
 	return damon_set_region_biggest_system_ram_default(target,
 					&monitor_region_start,
@@ -305,6 +427,9 @@ static int damon_acma_after_aggregation(struct damon_ctx *c)
 		switch (s->action) {
 		case DAMOS_LRU_RECLAIM:
 			damon_acma_reclaim_stat = s->stat;
+			break;
+		case DAMOS_ALLOC:
+			damon_acma_scale_down_stat = s->stat;
 			break;
 		default:
 			break;
