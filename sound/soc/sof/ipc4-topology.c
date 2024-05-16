@@ -1502,7 +1502,7 @@ snd_sof_get_nhlt_endpoint_data(struct snd_sof_dev *sdev, struct snd_sof_dai *dai
 			bit_depth = params_width(params);
 			format_change = false;
 			get_new_blob = true;
-		} else if (linktype == SOF_DAI_INTEL_DMIC && !single_bitdepth) {
+		} else if (linktype == SOF_DAI_INTEL_DMIC && !single_format) {
 			/*
 			 * The requested 32-bit blob (no format change for the
 			 * blob request) was not found in NHLT table, try to
