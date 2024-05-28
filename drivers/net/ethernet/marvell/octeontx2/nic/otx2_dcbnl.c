@@ -54,7 +54,7 @@ int otx2_pfc_txschq_config(struct otx2_nic *pfvf)
 
 	return 0;
 }
-EXPORT_SYMBOL(otx2_pfc_txschq_config);
+EXPORT_SYMBOL_GPL(otx2_pfc_txschq_config);
 
 static int otx2_pfc_txschq_alloc_one(struct otx2_nic *pfvf, u8 prio)
 {
@@ -123,7 +123,7 @@ int otx2_pfc_txschq_alloc(struct otx2_nic *pfvf)
 
 	return 0;
 }
-EXPORT_SYMBOL(otx2_pfc_txschq_alloc);
+EXPORT_SYMBOL_GPL(otx2_pfc_txschq_alloc);
 
 static int otx2_pfc_txschq_stop_one(struct otx2_nic *pfvf, u8 prio)
 {
@@ -262,7 +262,7 @@ update_sq_smq_map:
 
 	return 0;
 }
-EXPORT_SYMBOL(otx2_pfc_txschq_update);
+EXPORT_SYMBOL_GPL(otx2_pfc_txschq_update);
 
 int otx2_pfc_txschq_stop(struct otx2_nic *pfvf)
 {
@@ -285,7 +285,7 @@ int otx2_pfc_txschq_stop(struct otx2_nic *pfvf)
 
 	return 0;
 }
-EXPORT_SYMBOL(otx2_pfc_txschq_stop);
+EXPORT_SYMBOL_GPL(otx2_pfc_txschq_stop);
 
 int otx2_config_priority_flow_ctrl(struct otx2_nic *pfvf)
 {
@@ -325,7 +325,7 @@ unlock:
 	mutex_unlock(&pfvf->mbox.lock);
 	return err;
 }
-EXPORT_SYMBOL(otx2_config_priority_flow_ctrl);
+EXPORT_SYMBOL_GPL(otx2_config_priority_flow_ctrl);
 
 void otx2_update_bpid_in_rqctx(struct otx2_nic *pfvf, int vlan_prio, int qidx,
 			       bool pfc_enable)
@@ -390,7 +390,7 @@ out:
 			 "Updating BPIDs in CQ and Aura contexts of RQ%d failed with err %d\n",
 			 qidx, err);
 }
-EXPORT_SYMBOL(otx2_update_bpid_in_rqctx);
+EXPORT_SYMBOL_GPL(otx2_update_bpid_in_rqctx);
 
 static int otx2_dcbnl_ieee_getpfc(struct net_device *dev, struct ieee_pfc *pfc)
 {
@@ -478,4 +478,8 @@ int otx2_dcbnl_set_ops(struct net_device *dev)
 
 	return 0;
 }
-EXPORT_SYMBOL(otx2_dcbnl_set_ops);
+EXPORT_SYMBOL_GPL(otx2_dcbnl_set_ops);
+
+MODULE_LICENSE("GPL");
+MODULE_DESCRIPTION("Marvell RVU dcbnl");
+MODULE_AUTHOR("Sunil Goutham <sgoutham@marvell.com>");
