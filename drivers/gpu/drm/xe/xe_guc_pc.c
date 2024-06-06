@@ -895,6 +895,7 @@ int xe_guc_pc_stop(struct xe_guc_pc *pc)
 static void xe_guc_pc_fini_hw(void *arg)
 {
 	struct xe_guc_pc *pc = arg;
+	struct xe_device *xe = pc_to_xe(pc);
 
 	if (xe_device_wedged(xe))
 		return;
