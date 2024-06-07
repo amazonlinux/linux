@@ -513,7 +513,7 @@ void __thermal_zone_device_update(struct thermal_zone_device *tz,
 	if (tz->temperature == THERMAL_TEMP_INVALID)
 		goto monitor;
 
-	__thermal_zone_set_trips(tz);
+	thermal_zone_set_trips(tz);
 
 	tz->notify_event = event;
 
