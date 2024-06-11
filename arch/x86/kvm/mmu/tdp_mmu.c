@@ -1403,7 +1403,6 @@ static int tdp_mmu_split_huge_pages_root(struct kvm *kvm,
 {
 	struct kvm_mmu_page *sp = NULL;
 	struct tdp_iter iter;
-	int ret = 0;
 
 	rcu_read_lock();
 
@@ -1441,15 +1440,14 @@ retry:
 			else
 				write_lock(&kvm->mmu_lock);
 
-			rcu_read_lock();
-
 			if (!sp) {
-				ret = -ENOMEM;
 				trace_kvm_mmu_split_huge_page(iter.gfn,
 							      iter.old_spte,
-							      iter.level, ret);
-				break;
+							      iter.level, -ENOMEM);
+				return -ENOMEM;
 			}
+
+			rcu_read_lock();
 
 			iter.yielded = true;
 			continue;
@@ -1473,7 +1471,7 @@ retry:
 	if (sp)
 		tdp_mmu_free_sp(sp);
 
-	return ret;
+	return 0;
 }
 
 
