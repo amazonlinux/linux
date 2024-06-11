@@ -1340,7 +1340,7 @@ bool kvm_tdp_mmu_wrprot_slot(struct kvm *kvm,
 	return spte_set;
 }
 
-static struct kvm_mmu_page *__tdp_mmu_alloc_sp_for_split(void)
+static struct kvm_mmu_page *tdp_mmu_alloc_sp_for_split(void)
 {
 	struct kvm_mmu_page *sp;
 
@@ -1353,34 +1353,6 @@ static struct kvm_mmu_page *__tdp_mmu_alloc_sp_for_split(void)
 		kmem_cache_free(mmu_page_header_cache, sp);
 		return NULL;
 	}
-
-	return sp;
-}
-
-static struct kvm_mmu_page *tdp_mmu_alloc_sp_for_split(struct kvm *kvm,
-						       struct tdp_iter *iter,
-						       bool shared)
-{
-	struct kvm_mmu_page *sp;
-
-	kvm_lockdep_assert_mmu_lock_held(kvm, shared);
-
-	rcu_read_unlock();
-
-	if (shared)
-		read_unlock(&kvm->mmu_lock);
-	else
-		write_unlock(&kvm->mmu_lock);
-
-	iter->yielded = true;
-	sp = __tdp_mmu_alloc_sp_for_split();
-
-	if (shared)
-		read_lock(&kvm->mmu_lock);
-	else
-		write_lock(&kvm->mmu_lock);
-
-	rcu_read_lock();
 
 	return sp;
 }
@@ -1455,7 +1427,22 @@ retry:
 			continue;
 
 		if (!sp) {
-			sp = tdp_mmu_alloc_sp_for_split(kvm, &iter, shared);
+			rcu_read_unlock();
+
+			if (shared)
+				read_unlock(&kvm->mmu_lock);
+			else
+				write_unlock(&kvm->mmu_lock);
+
+			sp = tdp_mmu_alloc_sp_for_split();
+
+			if (shared)
+				read_lock(&kvm->mmu_lock);
+			else
+				write_lock(&kvm->mmu_lock);
+
+			rcu_read_lock();
+
 			if (!sp) {
 				ret = -ENOMEM;
 				trace_kvm_mmu_split_huge_page(iter.gfn,
@@ -1464,6 +1451,7 @@ retry:
 				break;
 			}
 
+			iter.yielded = true;
 			continue;
 		}
 
