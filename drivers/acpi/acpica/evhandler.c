@@ -26,7 +26,9 @@ acpi_ev_install_handler(acpi_handle obj_handle,
 u8 acpi_gbl_default_address_spaces[ACPI_NUM_DEFAULT_SPACES] = {
 	ACPI_ADR_SPACE_SYSTEM_MEMORY,
 	ACPI_ADR_SPACE_SYSTEM_IO,
+#ifdef ACPI_PCI_CONFIGURED
 	ACPI_ADR_SPACE_PCI_CONFIG,
+#endif
 	ACPI_ADR_SPACE_DATA_TABLE
 };
 
