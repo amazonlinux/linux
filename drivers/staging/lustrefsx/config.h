@@ -736,7 +736,7 @@
 /* #undef HAVE_PANIC_NOTIFIER_H */
 
 /* 'param_set_uint_minmax' is available */
-/* #undef HAVE_PARAM_SET_UINT_MINMAX */
+#define HAVE_PARAM_SET_UINT_MINMAX 1
 
 /* have PCLMULQDQ instruction */
 #define HAVE_PCLMULQDQ 1
