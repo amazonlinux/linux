@@ -30,6 +30,7 @@ pub mod alloc;
 #[cfg(CONFIG_BLOCK)]
 pub mod block;
 mod build_assert;
+pub mod device;
 pub mod error;
 pub mod init;
 pub mod ioctl;
