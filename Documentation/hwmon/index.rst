@@ -166,6 +166,7 @@ Hardware Monitoring Kernel Drivers
    mlxreg-fan
    mp2856
    mp2888
+   mp2891
    mp2975
    mp2993
    mp5023
