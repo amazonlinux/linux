@@ -17,6 +17,7 @@ struct fs_context;
 struct pipe_inode_info;
 struct iov_iter;
 struct mnt_idmap;
+struct ns_common;
 
 /*
  * block/bdev.c
@@ -335,3 +336,4 @@ static inline bool path_mounted(const struct path *path)
 {
 	return path->mnt->mnt_root == path->dentry;
 }
+int open_namespace(struct ns_common *ns);
