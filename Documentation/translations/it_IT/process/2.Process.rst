@@ -308,7 +308,7 @@ patch andrà nel ramo principale attraverso -mm.
 La patch -mm correnti sono disponibili nella cartella "mmotm" (-mm of
 the moment) all'indirizzo:
 
-      http://www.ozlabs.org/~akpm/mmotm/
+      https://git.kernel.org/pub/scm/linux/kernel/git/akpm/25-new.git/tree/pc/devel-series
 
 È molto probabile che l'uso dei sorgenti MMOTM diventi un'esperienza
 frustrante; ci sono buone probabilità che non compili nemmeno.

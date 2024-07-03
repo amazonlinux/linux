@@ -221,7 +221,7 @@ Next 樹
 
 當前-mm 補丁可在“mmotm”（-mm of the moment）目錄中找到：
 
-        https://www.ozlabs.org/~akpm/mmotm/
+        https://git.kernel.org/pub/scm/linux/kernel/git/akpm/25-new.git/tree/pc/devel-series
 
 然而，使用MMOTM樹可能會十分令人頭疼；它甚至可能無法編譯。
 

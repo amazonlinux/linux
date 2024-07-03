@@ -316,7 +316,7 @@ a través de -mm.
 El parche -mm actual está disponible en el directorio “mmotm” (-mm
 del momento) en:
 
-	https://www.ozlabs.org/~akpm/mmotm/
+	https://git.kernel.org/pub/scm/linux/kernel/git/akpm/25-new.git/tree/pc/devel-series
 
 Sin embargo, es probable que el uso del árbol MMOTM sea una experiencia
 frustrante; existe una posibilidad definitiva de que ni siquiera se
