@@ -5700,9 +5700,6 @@ struct workqueue_struct *alloc_workqueue(const char *fmt,
 	if (alloc_and_link_pwqs(wq) < 0)
 		goto err_free_node_nr_active;
 
-	if (wq_online && init_rescuer(wq) < 0)
-		goto err_destroy;
-
 	/*
 	 * wq_pool_mutex protects global freeze state and workqueues list.
 	 * Grab it, adjust max_active and add the new @wq to workqueues
@@ -5717,6 +5714,9 @@ struct workqueue_struct *alloc_workqueue(const char *fmt,
 	list_add_tail_rcu(&wq->list, &workqueues);
 
 	mutex_unlock(&wq_pool_mutex);
+
+	if (wq_online && init_rescuer(wq) < 0)
+		goto err_destroy;
 
 	if ((wq->flags & WQ_SYSFS) && workqueue_sysfs_register(wq))
 		goto err_destroy;
