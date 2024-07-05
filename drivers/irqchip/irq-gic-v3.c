@@ -47,7 +47,7 @@ static u8 dist_prio_nmi __ro_after_init = GICV3_PRIO_NMI;
 
 #define GIC_IRQ_TYPE_PARTITION	(GIC_IRQ_TYPE_LPI + 1)
 
-static struct cpumask broken_rdists __read_mostly;
+static struct cpumask broken_rdists __read_mostly __maybe_unused;
 
 struct redist_region {
 	void __iomem		*redist_base;
