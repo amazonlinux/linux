@@ -13644,6 +13644,11 @@ R:	schalla@marvell.com
 R:	vattunuru@marvell.com
 F:	drivers/vdpa/octeon_ep/
 
+MARVELL OCTEON CN10K DPI DRIVER
+M:	Vamsi Attunuru <vattunuru@marvell.com>
+S:	Supported
+F:	drivers/misc/mrvl_cn10k_dpi.c
+
 MATROX FRAMEBUFFER DRIVER
 L:	linux-fbdev@vger.kernel.org
 S:	Orphan
