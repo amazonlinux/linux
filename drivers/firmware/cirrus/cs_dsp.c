@@ -1057,7 +1057,7 @@ static int cs_dsp_create_control(struct cs_dsp *dsp,
 
 	ctl->fw_name = dsp->fw_name;
 	ctl->alg_region = *alg_region;
-	if (subname && dsp->fw_ver >= 2) {
+	if (subname && dsp->wmfw_ver >= 2) {
 		ctl->subname_len = subname_len;
 		ctl->subname = kasprintf(GFP_KERNEL, "%.*s", subname_len, subname);
 		if (!ctl->subname) {
@@ -1184,7 +1184,7 @@ static int cs_dsp_coeff_parse_alg(struct cs_dsp *dsp,
 
 	raw = (const struct wmfw_adsp_alg_data *)region->data;
 
-	switch (dsp->fw_ver) {
+	switch (dsp->wmfw_ver) {
 	case 0:
 	case 1:
 		if (sizeof(*raw) > data_len)
@@ -1261,7 +1261,7 @@ static int cs_dsp_coeff_parse_coeff(struct cs_dsp *dsp,
 	blk->offset = le16_to_cpu(raw->hdr.offset);
 	blk->mem_type = le16_to_cpu(raw->hdr.type);
 
-	switch (dsp->fw_ver) {
+	switch (dsp->wmfw_ver) {
 	case 0:
 	case 1:
 		if (sizeof(*raw) > (data_len - pos))
@@ -1508,7 +1508,7 @@ static int cs_dsp_load(struct cs_dsp *dsp, const struct firmware *firmware,
 		goto out_fw;
 	}
 
-	dsp->fw_ver = header->ver;
+	dsp->wmfw_ver = header->ver;
 
 	if (header->core != dsp->type) {
 		cs_dsp_err(dsp, "%s: invalid core %d != %d\n",
@@ -1788,7 +1788,7 @@ static struct cs_dsp_alg_region *cs_dsp_create_region(struct cs_dsp *dsp,
 
 	list_add_tail(&alg_region->list, &dsp->alg_regions);
 
-	if (dsp->fw_ver > 0)
+	if (dsp->wmfw_ver > 0)
 		cs_dsp_ctl_fixup_base(dsp, alg_region);
 
 	return alg_region;
@@ -1911,7 +1911,7 @@ static int cs_dsp_adsp1_setup_algs(struct cs_dsp *dsp)
 			ret = PTR_ERR(alg_region);
 			goto out;
 		}
-		if (dsp->fw_ver == 0) {
+		if (dsp->wmfw_ver == 0) {
 			if (i + 1 < n_algs) {
 				len = be32_to_cpu(adsp1_alg[i + 1].dm);
 				len -= be32_to_cpu(adsp1_alg[i].dm);
@@ -1933,7 +1933,7 @@ static int cs_dsp_adsp1_setup_algs(struct cs_dsp *dsp)
 			ret = PTR_ERR(alg_region);
 			goto out;
 		}
-		if (dsp->fw_ver == 0) {
+		if (dsp->wmfw_ver == 0) {
 			if (i + 1 < n_algs) {
 				len = be32_to_cpu(adsp1_alg[i + 1].zm);
 				len -= be32_to_cpu(adsp1_alg[i].zm);
@@ -2024,7 +2024,7 @@ static int cs_dsp_adsp2_setup_algs(struct cs_dsp *dsp)
 			ret = PTR_ERR(alg_region);
 			goto out;
 		}
-		if (dsp->fw_ver == 0) {
+		if (dsp->wmfw_ver == 0) {
 			if (i + 1 < n_algs) {
 				len = be32_to_cpu(adsp2_alg[i + 1].xm);
 				len -= be32_to_cpu(adsp2_alg[i].xm);
@@ -2046,7 +2046,7 @@ static int cs_dsp_adsp2_setup_algs(struct cs_dsp *dsp)
 			ret = PTR_ERR(alg_region);
 			goto out;
 		}
-		if (dsp->fw_ver == 0) {
+		if (dsp->wmfw_ver == 0) {
 			if (i + 1 < n_algs) {
 				len = be32_to_cpu(adsp2_alg[i + 1].ym);
 				len -= be32_to_cpu(adsp2_alg[i].ym);
@@ -2068,7 +2068,7 @@ static int cs_dsp_adsp2_setup_algs(struct cs_dsp *dsp)
 			ret = PTR_ERR(alg_region);
 			goto out;
 		}
-		if (dsp->fw_ver == 0) {
+		if (dsp->wmfw_ver == 0) {
 			if (i + 1 < n_algs) {
 				len = be32_to_cpu(adsp2_alg[i + 1].zm);
 				len -= be32_to_cpu(adsp2_alg[i].zm);
