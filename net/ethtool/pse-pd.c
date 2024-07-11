@@ -261,6 +261,11 @@ ethnl_set_pse(struct ethnl_req_info *req_info, struct genl_info *info)
 	int ret = 0;
 
 	phydev = dev->phydev;
+	/* These values are already validated by the ethnl_pse_set_policy */
+	if (tb[ETHTOOL_A_PODL_PSE_ADMIN_CONTROL])
+		config.podl_admin_control = nla_get_u32(tb[ETHTOOL_A_PODL_PSE_ADMIN_CONTROL]);
+	if (tb[ETHTOOL_A_C33_PSE_ADMIN_CONTROL])
+		config.c33_admin_control = nla_get_u32(tb[ETHTOOL_A_C33_PSE_ADMIN_CONTROL]);
 
 	if (tb[ETHTOOL_A_C33_PSE_AVAIL_PW_LIMIT]) {
 		unsigned int pw_limit;
