@@ -2,4 +2,5 @@
 #define _ENA_CONFIG_H_
 #define ENA_HAVE_PCI_DEV_ID 1
 #define ENA_HAVE_CPUMASK_LOCAL_SPREAD 1
+#define ENA_HAVE_ETH_HW_ADDR_SET 1
 #endif /* _ENA_CONFIG_H_ */
