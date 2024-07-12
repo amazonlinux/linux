@@ -1198,6 +1198,11 @@ static struct sk_buff *ena_rx_skb(struct ena_ring *rx_ring,
 		rx_ring->free_ids[*next_to_clean] = req_id;
 		*next_to_clean = ENA_RX_RING_IDX_ADD(*next_to_clean, descs,
 						     rx_ring->ring_size);
+
+		/* Don't reuse the RX page if we're on the wrong NUMA */
+		if (page_to_nid(rx_info->page) != numa_mem_id())
+			ena_free_rx_page(rx_ring, rx_info);
+
 		return skb;
 	}
 
@@ -2516,11 +2521,11 @@ int ena_up(struct ena_adapter *adapter)
 	 */
 	ena_init_napi_in_range(adapter, 0, io_queue_count);
 
-	/* Enabling DIM needs to happen before enabling IRQs since DIM
-	 * is run from napi routine
+	/* If the device stopped supporting interrupt moderation, need
+	 * to disable adaptive interrupt moderation.
 	 */
-	if (ena_com_interrupt_moderation_supported(adapter->ena_dev))
-		ena_com_enable_adaptive_moderation(adapter->ena_dev);
+	if (!ena_com_interrupt_moderation_supported(adapter->ena_dev))
+		ena_com_disable_adaptive_moderation(adapter->ena_dev);
 
 	rc = ena_request_io_irq(adapter);
 	if (rc)
@@ -4037,8 +4042,8 @@ static int check_for_rx_interrupt_queue(struct ena_adapter *adapter,
 	return 0;
 }
 
-enum ena_regs_reset_reason_types check_cdesc_in_tx_cq(struct ena_adapter *adapter,
-						      struct ena_ring *tx_ring)
+static enum ena_regs_reset_reason_types check_cdesc_in_tx_cq(struct ena_adapter *adapter,
+							     struct ena_ring *tx_ring)
 {
 	struct net_device *netdev = adapter->netdev;
 	u16 req_id;
@@ -4752,6 +4757,12 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			"Failed to query interrupt moderation feature\n");
 		goto err_device_destroy;
 	}
+
+	/* Enabling DIM needs to happen before enabling IRQs since DIM
+	 * is run from napi routine.
+	 */
+	if (ena_com_interrupt_moderation_supported(adapter->ena_dev))
+		ena_com_enable_adaptive_moderation(adapter->ena_dev);
 
 	ena_init_io_rings(adapter,
 			  0,
