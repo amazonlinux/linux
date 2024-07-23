@@ -34,6 +34,7 @@
 #include <linux/dma-map-ops.h>
 #include "direct.h"
 #include <linux/moduleparam.h>
+#include <linux/dmi.h>
 
 /*
  * A wrapper around dma_direct which does a readb on the memory being mapped
@@ -132,3 +133,23 @@ void setup_dma_page_touching_ops(struct device *dev)
 	dev_info(dev, "binding to page touching DMA ops\n");
 	dev->dma_ops = &page_touching_dma_ops;
 }
+
+static const struct dmi_system_id pt_enable_table[] __initconst = {
+	{
+		.matches = {
+			DMI_EXACT_MATCH(DMI_SYS_VENDOR, "Amazon EC2"),
+			DMI_MATCH(DMI_PRODUCT_NAME, "caspian"),
+		},
+	},
+	{},
+};
+
+static int __init dmi_enable_pt(void)
+{
+	if (dmi_check_system(pt_enable_table)) {
+		pr_info("Automatically enabling page touching for Caspian\n");
+		dma_page_touching_enable = 1;
+	}
+	return 0;
+}
+arch_initcall(dmi_enable_pt)
