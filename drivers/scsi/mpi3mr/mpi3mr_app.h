@@ -375,7 +375,7 @@ struct mpi3mr_bsg_in_reply_buf {
 	uint8_t mpi_reply_type;
 	uint8_t rsvd1;
 	uint16_t rsvd2;
-	uint8_t reply_buf[1]; /*Variable Length buffer based on mpi reply type*/
+	uint8_t reply_buf[]; /*Variable Length buffer based on mpi reply type*/
 };
 /**
  * struct mpi3mr_buf_entry - User buffer descriptor for MPI
