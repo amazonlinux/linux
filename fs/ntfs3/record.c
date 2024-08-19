@@ -195,6 +195,7 @@ struct ATTRIB *mi_enum_attr(struct mft_inode *mi, struct ATTRIB *attr)
 	u32 used = le32_to_cpu(rec->used);
 	u32 t32, off, asize;
 	u16 t16;
+	u64 alloc_size;
 
 	if (!attr) {
 		u32 total = le32_to_cpu(rec->total);
@@ -281,11 +282,16 @@ struct ATTRIB *mi_enum_attr(struct mft_inode *mi, struct ATTRIB *attr)
 		return NULL;
 	}
 
+	alloc_size = le64_to_cpu(attr->nres.alloc_size);
+
 	if (attr->nres.svcn || !is_attr_ext(attr)) {
 		if (asize + 8 < SIZEOF_NONRESIDENT)
 			return NULL;
 
 		if (attr->nres.c_unit)
+			return NULL;
+
+		if (alloc_size > mi->sbi->volume.size)
 			return NULL;
 	} else if (asize + 8 < SIZEOF_NONRESIDENT_EX)
 		return NULL;
