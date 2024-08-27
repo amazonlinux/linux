@@ -875,6 +875,9 @@
 /* sock_create_kern use net as first parameter */
 #undef HAVE_SOCK_CREATE_KERN_USE_NET
 
+/* sock_not_owned_by_me defined in sock.h */
+#undef HAVE_SOCK_NOT_OWNED_BY_ME
+
 /* Have spa_maxblocksize in ZFS */
 #undef HAVE_SPA_MAXBLOCKSIZE
 
