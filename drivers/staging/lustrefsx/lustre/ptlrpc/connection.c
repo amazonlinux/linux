@@ -48,6 +48,7 @@ ptlrpc_connection_get(struct lnet_process_id peer, lnet_nid_t self,
 	ENTRY;
 
 	peer.nid = LNetPrimaryNID(peer.nid);
+	CDEBUG(D_INFO, "Found correct NID -> %s\n", libcfs_nid2str(peer.nid));
 	conn = cfs_hash_lookup(conn_hash, &peer);
 	if (conn)
 		GOTO(out, conn);
@@ -60,8 +61,11 @@ ptlrpc_connection_get(struct lnet_process_id peer, lnet_nid_t self,
 	conn->c_self = self;
 	INIT_HLIST_NODE(&conn->c_hash);
 	atomic_set(&conn->c_refcount, 1);
-	if (uuid)
-		obd_str2uuid(&conn->c_remote_uuid, uuid->uuid);
+	if (uuid) {
+		obd_str2uuid(&conn->c_remote_uuid, libcfs_nid2str(peer.nid));
+		obd_str2uuid(uuid, libcfs_nid2str(peer.nid));
+		CDEBUG(D_INFO, "New UUID -> %s\n", uuid->uuid);
+	}
 
 	/*
 	 * Add the newly created conn to the hash, on key collision we
