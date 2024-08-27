@@ -514,6 +514,7 @@ int ptlrpc_uuid_to_peer(struct obd_uuid *uuid,
 	__u32 order;
 	lnet_nid_t dst_nid;
 	lnet_nid_t src_nid;
+	lnet_nid_t real_nid;
 
 	peer->pid = LNET_PID_LUSTRE;
 
@@ -543,6 +544,13 @@ int ptlrpc_uuid_to_peer(struct obd_uuid *uuid,
 			*self = src_nid;
 			rc = 0;
 		}
+	}
+
+	real_nid = LNetPrimaryNID(peer->nid);
+	CDEBUG(D_INFO, "Found correct NID -> %s\n", libcfs_nid2str(real_nid));
+	if (uuid) {
+		obd_str2uuid(uuid, libcfs_nid2str(real_nid));
+		CDEBUG(D_INFO, "New UUID -> %s\n", uuid->uuid);
 	}
 
 	CDEBUG(D_NET, "%s->%s\n", uuid->uuid, libcfs_id2str(*peer));
