@@ -1244,6 +1244,10 @@ static int ptlrpc_import_delay_req(struct obd_import *imp,
 			   imp->imp_state == LUSTRE_IMP_REPLAY_WAIT ||
 			   imp->imp_state == LUSTRE_IMP_RECOVER)) {
 			DEBUG_REQ(D_HA, req, "allow during recovery.\n");
+		} else if (req->rq_send_state == LUSTRE_IMP_REPLAY_LOCKS) {
+			DEBUG_REQ(D_ERROR, req, "imp state %s != REPLAY_LOCKS",
+				  ptlrpc_import_state_name(imp->imp_state));
+			*status = -EIO;
 		} else {
 			delay = 1;
 		}
