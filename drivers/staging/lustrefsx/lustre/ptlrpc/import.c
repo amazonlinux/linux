@@ -940,6 +940,8 @@ static int ptlrpc_connect_set_flags(struct obd_import *imp,
 		ns->ns_connect_flags = (ns->ns_connect_flags & changed_flags) |
 				      (ocd->ocd_connect_flags & ~changed_flags);
 		ns->ns_orig_connect_flags = ocd->ocd_connect_flags;
+		/* Disable LRU_RESIZE by default */
+		ns->ns_connect_flags &= ~OBD_CONNECT_LRU_RESIZE;
 	}
 
 	if (ocd->ocd_connect_flags & OBD_CONNECT_AT)
