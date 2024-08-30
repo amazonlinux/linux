@@ -46,7 +46,7 @@ struct fou_net {
 
 static inline struct fou *fou_from_sock(struct sock *sk)
 {
-	return sk->sk_user_data;
+	return rcu_dereference_sk_user_data(sk);
 }
 
 static int fou_recv_pull(struct sk_buff *skb, struct fou *fou, size_t len)
@@ -230,10 +230,16 @@ static struct sk_buff **fou_gro_receive(struct sock *sk,
 					struct sk_buff **head,
 					struct sk_buff *skb)
 {
+	const struct net_offload **offloads;
+	struct fou *fou = fou_from_sock(sk);
 	const struct net_offload *ops;
 	struct sk_buff **pp = NULL;
-	u8 proto = fou_from_sock(sk)->protocol;
-	const struct net_offload **offloads;
+	u8 proto;
+
+	if (!fou)
+		goto out_unlock;
+
+	proto = fou->protocol;
 
 	/* We can clear the encap_mark for FOU as we are essentially doing
 	 * one of two possible things.  We are either adding an L4 tunnel
@@ -263,16 +269,26 @@ out_unlock:
 static int fou_gro_complete(struct sock *sk, struct sk_buff *skb,
 			    int nhoff)
 {
-	const struct net_offload *ops;
-	u8 proto = fou_from_sock(sk)->protocol;
-	int err = -ENOSYS;
 	const struct net_offload **offloads;
+	struct fou *fou = fou_from_sock(sk);
+	const struct net_offload *ops;
+	u8 proto;
+	int err;
+
+	if (!fou) {
+		err = -ENOENT;
+		goto out_unlock;
+	}
+
+	proto = fou->protocol;
 
 	rcu_read_lock();
 	offloads = NAPI_GRO_CB(skb)->is_ipv6 ? inet6_offloads : inet_offloads;
 	ops = rcu_dereference(offloads[proto]);
-	if (WARN_ON(!ops || !ops->callbacks.gro_complete))
+	if (WARN_ON(!ops || !ops->callbacks.gro_complete)) {
+		err = -ENOSYS;
 		goto out_unlock;
+	}
 
 	err = ops->callbacks.gro_complete(skb, nhoff);
 
@@ -323,6 +339,9 @@ static struct sk_buff **gue_gro_receive(struct sock *sk,
 	struct fou *fou = fou_from_sock(sk);
 	struct gro_remcsum grc;
 	u8 proto;
+
+	if (!fou)
+		goto out;
 
 	skb_gro_remcsum_init(&grc);
 
