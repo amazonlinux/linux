@@ -5,6 +5,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <assert.h>
+#include <linux/align.h>
 #include <linux/build_bug.h>
 #include <linux/compiler.h>
 #include <endian.h>
@@ -141,7 +142,6 @@ int scnprintf_pad(char * buf, size_t size, const char * fmt, ...);
 /* Inspired from ALIGN_*_KERNEL */
 #define __ALIGN_MASK(x, mask)	(((x) + (mask)) & ~(mask))
 #define __ALIGN(x, a)		__ALIGN_MASK(x, (typeof(x))(a) - 1)
-#define ALIGN_DOWN(x, a)	__ALIGN((x) - ((a) - 1), (a))
 
 #define current_gfp_context(k) 0
 #define synchronize_rcu()
