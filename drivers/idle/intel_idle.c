@@ -121,6 +121,12 @@ static unsigned int mwait_substates __initdata;
 #define CPUIDLE_FLAG_INIT_XSTATE	BIT(17)
 
 /*
+ * Ignore the sub-state when matching mwait hints between the ACPI _CST and
+ * custom tables.
+ */
+#define CPUIDLE_FLAG_PARTIAL_HINT_MATCH	BIT(18)
+
+/*
  * MWAIT takes an 8-bit "hint" in EAX "suggesting"
  * the C-state (top nibble) and sub-state (bottom nibble)
  * 0x00 means "MWAIT(C1)", 0x10 means "MWAIT(C2)" etc.
@@ -1025,7 +1031,8 @@ static struct cpuidle_state gnr_cstates[] __initdata = {
 		.name = "C6",
 		.desc = "MWAIT 0x20",
 		.flags = MWAIT2flg(0x20) | CPUIDLE_FLAG_TLB_FLUSHED |
-					   CPUIDLE_FLAG_INIT_XSTATE,
+					   CPUIDLE_FLAG_INIT_XSTATE |
+					   CPUIDLE_FLAG_PARTIAL_HINT_MATCH,
 		.exit_latency = 170,
 		.target_residency = 650,
 		.enter = &intel_idle,
@@ -1034,7 +1041,8 @@ static struct cpuidle_state gnr_cstates[] __initdata = {
 		.name = "C6P",
 		.desc = "MWAIT 0x21",
 		.flags = MWAIT2flg(0x21) | CPUIDLE_FLAG_TLB_FLUSHED |
-					   CPUIDLE_FLAG_INIT_XSTATE,
+					   CPUIDLE_FLAG_INIT_XSTATE |
+					   CPUIDLE_FLAG_PARTIAL_HINT_MATCH,
 		.exit_latency = 210,
 		.target_residency = 1000,
 		.enter = &intel_idle,
@@ -1638,7 +1646,7 @@ static void __init intel_idle_init_cstates_acpi(struct cpuidle_driver *drv)
 	}
 }
 
-static bool __init intel_idle_off_by_default(u32 mwait_hint)
+static bool __init intel_idle_off_by_default(unsigned int flags, u32 mwait_hint)
 {
 	int cstate, limit;
 
@@ -1655,7 +1663,15 @@ static bool __init intel_idle_off_by_default(u32 mwait_hint)
 	 * the interesting states are ACPI_CSTATE_FFH.
 	 */
 	for (cstate = 1; cstate < limit; cstate++) {
-		if (acpi_state_table.states[cstate].address == mwait_hint)
+		u32 acpi_hint = acpi_state_table.states[cstate].address;
+		u32 table_hint = mwait_hint;
+
+		if (flags & CPUIDLE_FLAG_PARTIAL_HINT_MATCH) {
+			acpi_hint &= ~MWAIT_SUBSTATE_MASK;
+			table_hint &= ~MWAIT_SUBSTATE_MASK;
+		}
+
+		if (acpi_hint == table_hint)
 			return false;
 	}
 	return true;
@@ -1665,7 +1681,10 @@ static bool __init intel_idle_off_by_default(u32 mwait_hint)
 
 static inline bool intel_idle_acpi_cst_extract(void) { return false; }
 static inline void intel_idle_init_cstates_acpi(struct cpuidle_driver *drv) { }
-static inline bool intel_idle_off_by_default(u32 mwait_hint) { return false; }
+static inline bool intel_idle_off_by_default(unsigned int flags, u32 mwait_hint)
+{
+	return false;
+}
 #endif /* !CONFIG_ACPI_PROCESSOR_CSTATE */
 
 /**
@@ -1961,7 +1980,7 @@ static void __init intel_idle_init_cstates_icpu(struct cpuidle_driver *drv)
 
 		if ((disabled_states_mask & BIT(drv->state_count)) ||
 		    ((icpu->use_acpi || force_use_acpi) &&
-		     intel_idle_off_by_default(mwait_hint) &&
+		     intel_idle_off_by_default(cpuidle_state_table[cstate].flags, mwait_hint) &&
 		     !(cpuidle_state_table[cstate].flags & CPUIDLE_FLAG_ALWAYS_ENABLE)))
 			drv->states[drv->state_count].flags |= CPUIDLE_FLAG_OFF;
 
