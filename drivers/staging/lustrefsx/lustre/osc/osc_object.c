@@ -421,7 +421,6 @@ lookup:
 			else
 				ldlm_resource_dump(D_ERROR, res);
 
-			libcfs_debug_dumpstack(NULL);
 			LBUG();
 		}
 

@@ -465,7 +465,7 @@ int client_obd_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 
 	cli->cl_supp_cksum_types = OBD_CKSUM_CRC32;
 	cli->cl_preferred_cksum_type = 0;
-#ifdef ENABLE_CHECKSUM
+#ifdef CONFIG_ENABLE_CHECKSUM
 	/* Turn on checksumming by default. */
 	cli->cl_checksum = 1;
 	/*
@@ -1116,7 +1116,7 @@ int target_handle_connect(struct ptlrpc_request *req)
 		GOTO(out, rc = -EINVAL);
 	}
 
-	target = class_dev_by_str(str);
+	target = class_str2obd(str);
 	if (!target) {
 		deuuidify(str, NULL, &target_start, &target_len);
 		LCONSOLE_ERROR_MSG(0x137,
