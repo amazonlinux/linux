@@ -576,8 +576,8 @@ repeat:
 			GOTO(out, rc = 0);
 		/* we`ve tried to reread the chunk, but there is no
 		 * new records */
-		if (rc == -EIO && repeated && (chunk_offset + buf_offset) ==
-		    cur_offset)
+		if (repeated && (chunk_offset + buf_offset) == cur_offset &&
+		    (rc == -EBADR || rc == -EIO))
 			GOTO(out, rc = 0);
 		if (rc != 0)
 			GOTO(out, rc);
@@ -736,7 +736,8 @@ repeat:
 					lgc->lgc_index = tmp_idx;
 				}
 
-				if (rc == LLOG_PROC_BREAK) {
+				if (rc == LLOG_PROC_BREAK ||
+				    rc == LLOG_SKIP_PLAIN) {
 					GOTO(out, rc);
 				} else if (rc == LLOG_DEL_RECORD) {
 					rc = llog_cancel_rec(lpi->lpi_env,
@@ -1005,7 +1006,8 @@ int llog_reverse_process(const struct lu_env *env,
 				      sizeof(*tail);
 
 				rc = cb(env, loghandle, rec, data);
-				if (rc == LLOG_PROC_BREAK) {
+				if (rc == LLOG_PROC_BREAK ||
+				    rc == LLOG_SKIP_PLAIN) {
 					GOTO(out, rc);
 				} else if (rc == LLOG_DEL_RECORD) {
 					rc = llog_cancel_rec(env, loghandle,
