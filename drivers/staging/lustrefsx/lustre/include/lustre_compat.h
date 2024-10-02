@@ -43,6 +43,7 @@
 #include <linux/blkdev.h>
 #include <linux/slab.h>
 #include <linux/security.h>
+#include <linux/pagevec.h>
 #include <libcfs/linux/linux-fs.h>
 #include <obd_support.h>
 
@@ -116,6 +117,11 @@ static inline int d_in_lookup(struct dentry *dentry)
 #define vfs_unlink(ns, dir, de) vfs_unlink(dir, de)
 #endif
 
+#ifndef HAVE_MNT_IDMAP_ARG
+#define mnt_idmap	user_namespace
+#define nop_mnt_idmap	init_user_ns
+#endif
+
 static inline int ll_vfs_getattr(struct path *path, struct kstat *st,
 				 u32 request_mask, unsigned int flags)
 {
@@ -164,6 +170,18 @@ static inline void truncate_inode_pages_final(struct address_space *map)
 }
 #endif
 
+#ifdef HAVE_U64_CAPABILITY
+#define ll_capability_u32(kcap) \
+	((kcap).val & 0xFFFFFFFF)
+#define ll_set_capability_u32(kcap, val32) \
+	((kcap)->val = ((kcap)->val & 0xffffffff00000000ull) | (val32))
+#else
+#define ll_capability_u32(kcap) \
+	((kcap).cap[0])
+#define ll_set_capability_u32(kcap, val32) \
+	((kcap)->cap[0] = val32)
+#endif
+
 #ifndef HAVE_PTR_ERR_OR_ZERO
 static inline int __must_check PTR_ERR_OR_ZERO(__force const void *ptr)
 {
@@ -208,7 +226,9 @@ static inline int __must_check PTR_ERR_OR_ZERO(__force const void *ptr)
 
 #ifdef HAVE_IOP_SET_ACL
 #ifdef CONFIG_LUSTRE_FS_POSIX_ACL
-#if !defined(HAVE_USER_NAMESPACE_ARG) && !defined(HAVE_POSIX_ACL_UPDATE_MODE)
+#if !defined(HAVE_USER_NAMESPACE_ARG) \
+ && !defined(HAVE_POSIX_ACL_UPDATE_MODE) \
+ && !defined(HAVE_MNT_IDMAP_ARG)
 static inline int posix_acl_update_mode(struct inode *inode, umode_t *mode_p,
 			  struct posix_acl **acl)
 {
@@ -258,19 +278,21 @@ static inline void iov_iter_truncate(struct iov_iter *i, u64 count)
 # define SB_NODIRATIME MS_NODIRATIME
 #endif
 
+#ifndef HAVE_IOV_ITER_IOVEC
+static inline struct iovec iov_iter_iovec(const struct iov_iter *iter)
+{
+	return (struct iovec) {
+		.iov_base = iter->__iov->iov_base + iter->iov_offset,
+		.iov_len = min(iter->count,
+			       iter->__iov->iov_len - iter->iov_offset),
+	};
+}
+#endif
+
 #ifndef HAVE_FILE_OPERATIONS_READ_WRITE_ITER
 static inline void iov_iter_reexpand(struct iov_iter *i, size_t count)
 {
 	i->count = count;
-}
-
-static inline struct iovec iov_iter_iovec(const struct iov_iter *iter)
-{
-	return (struct iovec) {
-		.iov_base = iter->iov->iov_base + iter->iov_offset,
-		.iov_len = min(iter->count,
-			       iter->iov->iov_len - iter->iov_offset),
-	};
 }
 
 #define iov_for_each(iov, iter, start)					\
@@ -404,12 +426,6 @@ static inline struct timespec current_time(struct inode *inode)
 #define smp_store_mb(var, value)	set_mb(var, value)
 #endif
 
-#ifdef HAVE_PAGEVEC_INIT_ONE_PARAM
-#define ll_pagevec_init(pvec, n) pagevec_init(pvec)
-#else
-#define ll_pagevec_init(pvec, n) pagevec_init(pvec, n)
-#endif
-
 #ifdef HAVE_D_COUNT
 #  define ll_d_count(d)		d_count(d)
 #else
@@ -463,8 +479,8 @@ static inline int ll_vfs_getxattr(struct dentry *dentry, struct inode *inode,
 				  const char *name,
 				  void *value, size_t size)
 {
-#ifdef HAVE_USER_NAMESPACE_ARG
-	return vfs_getxattr(&init_user_ns, dentry, name, value, size);
+#if defined(HAVE_MNT_IDMAP_ARG) || defined(HAVE_USER_NAMESPACE_ARG)
+	return vfs_getxattr(&nop_mnt_idmap, dentry, name, value, size);
 #elif defined(HAVE_VFS_SETXATTR)
 	return __vfs_getxattr(dentry, inode, name, value, size);
 #else
@@ -479,8 +495,8 @@ static inline int ll_vfs_setxattr(struct dentry *dentry, struct inode *inode,
 				  const char *name,
 				  const void *value, size_t size, int flags)
 {
-#ifdef HAVE_USER_NAMESPACE_ARG
-	return vfs_setxattr(&init_user_ns, dentry, name,
+#if defined(HAVE_MNT_IDMAP_ARG) || defined(HAVE_USER_NAMESPACE_ARG)
+	return vfs_setxattr(&nop_mnt_idmap, dentry, name,
 			    VFS_SETXATTR_VALUE(value), size, flags);
 #elif defined(HAVE_VFS_SETXATTR)
 	return __vfs_setxattr(dentry, inode, name, value, size, flags);
@@ -495,8 +511,8 @@ static inline int ll_vfs_setxattr(struct dentry *dentry, struct inode *inode,
 static inline int ll_vfs_removexattr(struct dentry *dentry, struct inode *inode,
 				     const char *name)
 {
-#ifdef HAVE_USER_NAMESPACE_ARG
-	return vfs_removexattr(&init_user_ns, dentry, name);
+#if defined(HAVE_MNT_IDMAP_ARG) || defined(HAVE_USER_NAMESPACE_ARG)
+	return vfs_removexattr(&nop_mnt_idmap, dentry, name);
 #elif defined(HAVE_VFS_SETXATTR)
 	return __vfs_removexattr(dentry, name);
 #else
@@ -582,7 +598,7 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen,
 #endif
 }
 
-#ifndef HAVE_USER_NAMESPACE_ARG
+#if !defined(HAVE_USER_NAMESPACE_ARG) && !defined(HAVE_MNT_IDMAP_ARG)
 #define posix_acl_update_mode(ns, inode, mode, acl) \
 	posix_acl_update_mode(inode, mode, acl)
 #define notify_change(ns, de, attr, inode)	notify_change(de, attr, inode)
@@ -633,5 +649,42 @@ static inline struct page *ll_read_cache_page(struct address_space *mapping,
 	return read_cache_page(mapping, index, filler, data);
 #endif /* HAVE_READ_CACHE_PAGE_WANTS_FILE */
 }
+
+#ifdef HAVE_FOLIO_BATCH
+# define ll_folio_batch_init(batch, n)	folio_batch_init(batch)
+# define fbatch_at(fbatch, f)		((fbatch)->folios[(f)])
+# define fbatch_at_npgs(fbatch, f)	folio_nr_pages((fbatch)->folios[(f)])
+# define fbatch_at_pg(fbatch, f, pg)	folio_page((fbatch)->folios[(f)], (pg))
+# define folio_batch_add_page(fbatch, page) \
+	 folio_batch_add(fbatch, page_folio(page))
+# ifndef HAVE_FOLIO_BATCH_REINIT
+static inline void folio_batch_reinit(struct folio_batch *fbatch)
+{
+	fbatch->nr = 0;
+}
+# endif /* HAVE_FOLIO_BATCH_REINIT */
+
+#else /* !HAVE_FOLIO_BATCH */
+
+# ifdef HAVE_PAGEVEC
+#  define folio_batch			pagevec
+# endif
+# define folio_batch_init(pvec)		pagevec_init(pvec)
+# define folio_batch_reinit(pvec)	pagevec_reinit(pvec)
+# define folio_batch_count(pvec)	pagevec_count(pvec)
+# define folio_batch_space(pvec)	pagevec_space(pvec)
+# define folio_batch_add_page(pvec, page) \
+	 pagevec_add(pvec, page)
+# define folio_batch_release(pvec) \
+	 pagevec_release(((struct pagevec *)pvec))
+# ifdef HAVE_PAGEVEC_INIT_ONE_PARAM
+#  define ll_folio_batch_init(pvec, n)	pagevec_init(pvec)
+# else
+#  define ll_folio_batch_init(pvec, n)	pagevec_init(pvec, n)
+# endif
+# define fbatch_at(pvec, n)		((pvec)->pages[(n)])
+# define fbatch_at_npgs(pvec, n)	1
+# define fbatch_at_pg(pvec, n, pg)	((pvec)->pages[(n)])
+#endif /* HAVE_FOLIO_BATCH */
 
 #endif /* _LUSTRE_COMPAT_H */
