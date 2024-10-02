@@ -1248,7 +1248,7 @@ static void ptlrpc_at_set_timer(struct ptlrpc_service_part *svcpt)
 	time64_t next;
 
 	if (array->paa_count == 0) {
-		del_timer(&svcpt->scp_at_timer);
+		timer_delete(&svcpt->scp_at_timer);
 		return;
 	}
 
@@ -1673,7 +1673,9 @@ found:
 #ifdef HAVE_SERVER_SUPPORT
 static void ptlrpc_server_mark_obsolete(struct ptlrpc_request *req)
 {
+	spin_lock(&req->rq_lock);
 	req->rq_obsolete = 1;
+	spin_unlock(&req->rq_lock);
 }
 
 static void
@@ -1860,7 +1862,9 @@ static int ptlrpc_server_request_add(struct ptlrpc_service_part *svcpt,
 			ptlrpc_nrs_req_finalize(req);
 
 			/* don't mark slot unused for resend in progress */
+			spin_lock(&req->rq_lock);
 			req->rq_obsolete = 1;
+			spin_unlock(&req->rq_lock);
 
 			RETURN(-EBUSY);
 		}
@@ -3390,7 +3394,7 @@ ptlrpc_service_del_atimer(struct ptlrpc_service *svc)
 	/* early disarm AT timer... */
 	ptlrpc_service_for_each_part(svcpt, i, svc) {
 		if (svcpt->scp_service != NULL)
-			del_timer(&svcpt->scp_at_timer);
+			timer_delete(&svcpt->scp_at_timer);
 	}
 }
 
@@ -3558,7 +3562,7 @@ ptlrpc_service_free(struct ptlrpc_service *svc)
 			break;
 
 		/* In case somebody rearmed this in the meantime */
-		del_timer(&svcpt->scp_at_timer);
+		timer_delete(&svcpt->scp_at_timer);
 		array = &svcpt->scp_at_array;
 
 		if (array->paa_reqs_array != NULL) {

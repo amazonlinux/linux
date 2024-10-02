@@ -163,10 +163,10 @@ static struct ll_sb_info *ll_init_sbi(void)
 	atomic_set(&sbi->ll_ra_info.ra_async_inflight, 0);
 
 	set_bit(LL_SBI_VERBOSE, sbi->ll_flags);
-#ifdef ENABLE_CHECKSUM
+#ifdef CONFIG_ENABLE_CHECKSUM
 	set_bit(LL_SBI_CHECKSUM, sbi->ll_flags);
 #endif
-#ifdef ENABLE_FLOCK
+#ifdef CONFIG_ENABLE_FLOCK
 	set_bit(LL_SBI_FLOCK, sbi->ll_flags);
 #endif
 
@@ -1481,10 +1481,12 @@ void ll_put_super(struct super_block *sb)
 	struct obd_device *obd;
 	struct lustre_sb_info *lsi = s2lsi(sb);
 	struct ll_sb_info *sbi = ll_s2sbi(sb);
+	unsigned long dev_no = 0;
 	char *profilenm = get_profile_name(sb);
 	unsigned long cfg_instance = ll_get_cfg_instance(sb);
 	long ccc_count;
-	int next, force = 1, rc = 0;
+	int force = 1, rc = 0;
+
 	ENTRY;
 
 	if (IS_ERR(sbi))
@@ -1521,11 +1523,10 @@ void ll_put_super(struct super_block *sb)
 	 * lustre_common_put_super, since l_d cleans up osc's as well.
 	 */
 	if (force) {
-		next = 0;
-		while ((obd = class_devices_in_group(&sbi->ll_sb_uuid,
-						     &next)) != NULL) {
+		obd_device_lock();
+		obd_device_for_each_uuid(dev_no, obd, &sbi->ll_sb_uuid)
 			obd->obd_force = force;
-		}
+		obd_device_unlock();
 	}
 
 	if (sbi->ll_client_common_fill_super_succeeded) {
@@ -1533,8 +1534,12 @@ void ll_put_super(struct super_block *sb)
 		client_common_put_super(sb);
 	}
 
-	next = 0;
-	while ((obd = class_devices_in_group(&sbi->ll_sb_uuid, &next)))
+	/*
+	 * Cleanup, detach OBD devices, and remove them from Xarray.
+	 * We don't grab the xa_lock() since class_manual_cleanup()
+	 * uses the lock internally.
+	 */
+	obd_device_for_each_uuid(dev_no, obd, &sbi->ll_sb_uuid)
 		class_manual_cleanup(obd);
 
 	if (test_bit(LL_SBI_VERBOSE, sbi->ll_flags))
@@ -1960,7 +1965,7 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 			    !S_ISDIR(inode->i_mode)) {
 				ia_valid = op_data->op_attr.ia_valid;
 				op_data->op_attr.ia_valid &= ~TIMES_SET_FLAGS;
-				rc = simple_setattr(&init_user_ns, dentry,
+				rc = simple_setattr(&nop_mnt_idmap, dentry,
 						    &op_data->op_attr);
 				op_data->op_attr.ia_valid = ia_valid;
 			}
@@ -1983,7 +1988,7 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 	op_data->op_attr.ia_valid &= ~(TIMES_SET_FLAGS | ATTR_SIZE);
 	if (S_ISREG(inode->i_mode))
 		inode_lock(inode);
-	rc = simple_setattr(&init_user_ns, dentry, &op_data->op_attr);
+	rc = simple_setattr(&nop_mnt_idmap, dentry, &op_data->op_attr);
 	if (S_ISREG(inode->i_mode))
 		inode_unlock(inode);
 	op_data->op_attr.ia_valid = ia_valid;
@@ -2462,12 +2467,15 @@ out:
 	RETURN(rc);
 }
 
-int ll_setattr(struct user_namespace *mnt_userns, struct dentry *de,
-	       struct iattr *attr)
+int ll_setattr(struct mnt_idmap *map, struct dentry *de, struct iattr *attr)
 {
 	int mode = de->d_inode->i_mode;
 	enum op_xvalid xvalid = 0;
 	int rc;
+
+	rc = setattr_prepare(map, de, attr);
+	if (rc)
+		return rc;
 
 	rc = llcrypt_prepare_setattr(de, attr);
 	if (rc)
