@@ -1278,6 +1278,10 @@ static int ptlrpc_import_delay_req(struct obd_import *imp,
 		if (atomic_read(&imp->imp_inval_count) != 0) {
 			DEBUG_REQ(D_ERROR, req, "invalidate in flight");
 			*status = -EIO;
+		} else if (req->rq_send_state == LUSTRE_IMP_REPLAY_LOCKS) {
+			DEBUG_REQ(D_ERROR, req, "imp state %s != REPLAY_LOCKS",
+				  ptlrpc_import_state_name(imp->imp_state));
+			*status = -EIO;
 		} else if (req->rq_no_delay &&
 			   imp->imp_generation != imp->imp_initiated_at) {
 			/* ignore nodelay for requests initiating connections */
@@ -1659,6 +1663,11 @@ static int ptlrpc_send_new_req(struct ptlrpc_request *req)
 	if (!req->rq_generation_set)
 		req->rq_import_generation = imp->imp_generation;
 
+	/* LU-18154 sanity recovery-small test_161 */
+	if (CFS_FAIL_CHECK(OBD_FAIL_PTLRPC_FAIL_REPLAY) &&
+	    req->rq_send_state == LUSTRE_IMP_REPLAY_LOCKS)
+		imp->imp_state = LUSTRE_IMP_DISCON;
+
 	if (ptlrpc_import_delay_req(imp, req, &rc)) {
 		spin_lock(&req->rq_lock);
 		req->rq_waiting = 1;
@@ -1673,6 +1682,11 @@ static int ptlrpc_send_new_req(struct ptlrpc_request *req)
 		spin_unlock(&imp->imp_lock);
 		RETURN(0);
 	}
+
+	/* LU-18154 sanity recovery-small test_161 */
+	if (CFS_FAIL_CHECK(OBD_FAIL_PTLRPC_FAIL_REPLAY) &&
+	    req->rq_send_state == LUSTRE_IMP_REPLAY_LOCKS)
+		imp->imp_state = LUSTRE_IMP_REPLAY_LOCKS;
 
 	if (rc != 0) {
 		spin_unlock(&imp->imp_lock);
