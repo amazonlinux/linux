@@ -1102,9 +1102,10 @@ struct req_msg_field RMF_CONNECT_DATA =
 EXPORT_SYMBOL(RMF_CONNECT_DATA);
 
 struct req_msg_field RMF_DLM_REQ =
-        DEFINE_MSGF("dlm_req", RMF_F_NO_SIZE_CHECK /* ldlm_request_bufsize */,
-                    sizeof(struct ldlm_request),
-                    lustre_swab_ldlm_request, NULL);
+	DEFINE_MSGF("dlm_req", RMF_F_NO_SIZE_CHECK /* ldlm_request_bufsize */,
+		    offsetof(struct ldlm_request,
+			     lock_handle[LDLM_LOCKREQ_HANDLES]),
+		    lustre_swab_ldlm_request, NULL);
 EXPORT_SYMBOL(RMF_DLM_REQ);
 
 struct req_msg_field RMF_DLM_REP =
