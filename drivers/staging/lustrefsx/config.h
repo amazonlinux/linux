@@ -10,6 +10,12 @@
 /* enable page state tracking code */
 /* #undef CONFIG_DEBUG_PAGESTATE_TRACKING */
 
+/* do data checksums */
+#define CONFIG_ENABLE_CHECKSUM 1
+
+/* enable flock by default */
+#define CONFIG_ENABLE_FLOCK 1
+
 /* enable encryption for ldiskfs */
 /* #undef CONFIG_LDISKFS_FS_ENCRYPTION */
 
@@ -54,12 +60,6 @@
 
 /* name of ldiskfs label program */
 #define E2LABEL "e2label"
-
-/* do data checksums */
-#define ENABLE_CHECKSUM 1
-
-/* enable flock by default */
-#define ENABLE_FLOCK 1
 
 /* filldir_t return type is bool or int */
 #define FILLDIR_TYPE bool
@@ -271,7 +271,7 @@
 /* quotactl_ops.set_dqblk takes struct qc_dqblk */
 #define HAVE_DQUOT_QC_DQBLK 1
 
-/* dquot_transfer() has user_ns argument */
+/* use mnt_idmap with dquot_transfer */
 #define HAVE_DQUOT_TRANSFER_WITH_USER_NS 1
 
 /* Have dsl_pool_config_enter/exit in ZFS */
@@ -301,6 +301,9 @@
 /* Define to 1 if you have the <endian.h> header file. */
 #define HAVE_ENDIAN_H 1
 
+/* enum iter_type has member 'iter_pipe' */
+#define HAVE_ENUM_ITER_PIPE 1
+
 /* ethtool_link_settings is defined */
 #define HAVE_ETHTOOL_LINK_SETTINGS 1
 
@@ -328,6 +331,9 @@
 /* filemap_get_folios_contig() is available */
 #define HAVE_FILEMAP_GET_FOLIOS_CONTIG 1
 
+/* 'filemap_splice_read' is available */
+/* #undef HAVE_FILEMAP_SPLICE_READ */
+
 /* kernel has file_dentry */
 #define HAVE_FILE_DENTRY 1
 
@@ -342,6 +348,12 @@
 
 /* FMR pool API is available */
 /* #undef HAVE_FMR_POOL_API */
+
+/* 'struct folio_batch' is available */
+#define HAVE_FOLIO_BATCH 1
+
+/* 'folio_batch_reinit' is available */
+/* #undef HAVE_FOLIO_BATCH_REINIT */
 
 /* file_operations has iterate_shared */
 #define HAVE_FOP_ITERATE_SHARED 1
@@ -373,6 +385,9 @@
 /* 'get_acl' has a rcu argument */
 #define HAVE_GET_ACL_RCU_ARG 1
 
+/* 'get_expiry' takes time64_t */
+/* #undef HAVE_GET_EXPIRY_2ARGS */
+
 /* get_inode_usage function exists */
 #define HAVE_GET_INODE_USAGE 1
 
@@ -390,6 +405,9 @@
 
 /* get_user_pages takes gup_flags in arguments */
 #define HAVE_GET_USER_PAGES_GUP_FLAGS 1
+
+/* get_user_pages removed 'vma' parameter */
+/* #undef HAVE_GET_USER_PAGES_WITHOUT_VMA */
 
 /* glob_match() is available */
 #define HAVE_GLOB 1
@@ -523,6 +541,9 @@
 /* iov_iter_init handles directional tag */
 #define HAVE_IOV_ITER_INIT_DIRECTION 1
 
+/* 'iov_iter_iovec' is available */
+#define HAVE_IOV_ITER_IOVEC 1
+
 /* iov_iter_rw exist */
 #define HAVE_IOV_ITER_RW 1
 
@@ -537,6 +558,9 @@
 
 /* 'iter_file_splice_write' exists */
 #define HAVE_ITER_FILE_SPLICE_WRITE 1
+
+/* iter_iov() is available */
+/* #undef HAVE_ITER_IOV */
 
 /* struct address_space has i_pages */
 #define HAVE_I_PAGES 1
@@ -689,6 +713,9 @@
 /* linux/blk-integrity.h is present */
 #define HAVE_LINUX_BLK_INTEGRITY_HEADER 1
 
+/* linux/filelock.h is present */
+/* #undef HAVE_LINUX_FILELOCK_HEADER */
+
 /* linux/fortify-string.h header available */
 #define HAVE_LINUX_FORTIFY_STRING_HEADER 1
 
@@ -701,7 +728,7 @@
 /* lock_manager_operations has lm_compare_owner */
 /* #undef HAVE_LM_COMPARE_OWNER */
 
-/* kernel has locks_lock_file_wait */
+/* kernel has locks_lock_file_wait in filelock.h */
 #define HAVE_LOCKS_LOCK_FILE_WAIT 1
 
 /* lock_page_memcg is defined */
@@ -737,6 +764,9 @@
 
 /* mmap_lock API is available. */
 #define HAVE_MMAP_LOCK 1
+
+/* 'inode_operations' members have mnt_idmap argument */
+/* #undef HAVE_MNT_IDMAP_ARG */
 
 /* kernel module loading is possible */
 #define HAVE_MODULE_LOADING_SUPPORT 1
@@ -793,13 +823,16 @@
 /* #undef HAVE_OPENSSL_EVP_PKEY */
 
 /* openssl-devel is present */
-/* #undef HAVE_OPENSSL_GETSEPOL */
+#define HAVE_OPENSSL_GETSEPOL 1
 
 /* OpenSSL HMAC functions needed for SSK */
 /* #undef HAVE_OPENSSL_SSK */
 
 /* if Oracle OFED Extensions are enabled */
 /* #undef HAVE_ORACLE_OFED_EXTENSIONS */
+
+/* 'struct pagevec' is available */
+#define HAVE_PAGEVEC 1
 
 /* 'pagevec_init' takes one parameter */
 #define HAVE_PAGEVEC_INIT_ONE_PARAM 1
@@ -809,6 +842,9 @@
 
 /* 'param_set_uint_minmax' is available */
 #define HAVE_PARAM_SET_UINT_MINMAX 1
+
+/* 'percpu_counter_add_batch()' exists */
+#define HAVE_PERCPU_COUNTER_ADD_BATCH 1
 
 /* percpu_counter_init uses GFP_* flag */
 #define HAVE_PERCPU_COUNTER_INIT_GFP_FLAG 1
@@ -925,6 +961,9 @@
 /* sock_create_kern use net as first parameter */
 #define HAVE_SOCK_CREATE_KERN_USE_NET 1
 
+/* sock_not_owned_by_me defined in sock.h */
+#define HAVE_SOCK_NOT_OWNED_BY_ME 1
+
 /* Have spa_maxblocksize in ZFS */
 /* #undef HAVE_SPA_MAXBLOCKSIZE */
 
@@ -1000,6 +1039,12 @@
 /* 'tcp_sock_set_quickack()' exists */
 #define HAVE_TCP_SOCK_SET_QUICKACK 1
 
+/* timer_delete() is available */
+#define HAVE_TIMER_DELETE 1
+
+/* timer_delete_sync() is available */
+#define HAVE_TIMER_DELETE_SYNC 1
+
 /* timer_setup has replaced setup_timer */
 #define HAVE_TIMER_SETUP 1
 
@@ -1021,13 +1066,16 @@
 /* kernel has truncate_inode_pages_final */
 #define HAVE_TRUNCATE_INODE_PAGES_FINAL 1
 
+/* 'kernel_cap_t' has u64 val */
+/* #undef HAVE_U64_CAPABILITY */
+
 /* if MS_RDONLY was moved to uapi/linux/mount.h */
 #define HAVE_UAPI_LINUX_MOUNT_H 1
 
 /* Define to 1 if you have the <unistd.h> header file. */
 #define HAVE_UNISTD_H 1
 
-/* 'inode_operations' members have user namespace argument */
+/* use mnt_idmap in place of user_namespace argument */
 #define HAVE_USER_NAMESPACE_ARG 1
 
 /* 'enum nlmsgerr_attrs' exists */
@@ -1123,6 +1171,9 @@
 /* struct bio has __bi_cnt */
 #define HAVE___BI_CNT 1
 
+/* 'struct iov_iter' has '__iov' member */
+/* #undef HAVE___IOV_MEMBER */
+
 /* if __ldiskfs_find_entry is available */
 /* #undef HAVE___LDISKFS_FIND_ENTRY */
 
@@ -1154,10 +1205,10 @@
 #define LUSTRE_MINOR 15
 
 /* Third number in the Lustre version */
-#define LUSTRE_PATCH 3
+#define LUSTRE_PATCH 4
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.3_114_gb61b66c_dirty"
+#define LUSTRE_VERSION_STRING "2.15.4_139_gdac5f27_dirty"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1187,7 +1238,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.3_114_gb61b66c_dirty"
+#define PACKAGE_STRING "Lustre 2.15.4_139_gdac5f27_dirty"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1196,7 +1247,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.3_114_gb61b66c_dirty"
+#define PACKAGE_VERSION "2.15.4_139_gdac5f27_dirty"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1231,7 +1282,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.3_114_gb61b66c_dirty"
+#define VERSION "2.15.4_139_gdac5f27_dirty"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) (value)
@@ -1248,11 +1299,26 @@
 /* zfs patch version */
 /* #undef ZFS_PATCH */
 
+/* 'struct iov_iter' has 'iov' member */
+#define __iov iov
+
 /* get_random_u32() is not available, use prandom_u32 */
 /* #undef get_random_u32 */
 
 /* get_random_u32_below() is not available */
 /* #undef get_random_u32_below */
 
+/* 'iov_iter()' provides iov */
+#define iter_iov(iter) (iter)->__iov
+
+/* 'class_create' expects module arg */
+#define ll_class_create(name) class_create(THIS_MODULE, (name))
+
 /* function pde_data() unavailable */
 /* #undef pde_data */
+
+/* timer_delete() not is available */
+/* #undef timer_delete */
+
+/* timer_delete_sync() not is available */
+/* #undef timer_delete_sync */
