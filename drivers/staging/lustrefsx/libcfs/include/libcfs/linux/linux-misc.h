@@ -42,12 +42,32 @@
 #include <linux/uio.h>
 #include <linux/kallsyms.h>
 
-#ifndef HAVE_IOV_ITER_TYPE
+
+/*
+ * Since 4.20 commit 00e23707442a75b404392cef1405ab4fd498de6b
+ * iov_iter: Use accessor functions to access an iterator's type and direction.
+ * iter_is_iovec() and iov_iter_is_* are available, supply the missing
+ * functionality for older kernels.
+ */
+#ifdef HAVE_IOV_ITER_TYPE
+#ifndef HAVE_ENUM_ITER_PIPE
+#define iov_iter_is_pipe(iter)	0
+#endif
+#else
+/*
+ * Since 3.15-rc4 commit 71d8e532b1549a478e6a6a8a44f309d050294d00
+ * The iov iterator has a type and can iterate over numerous vector types.
+ * Prior to this only iovec is supported, so all iov_iter_is_* are false.
+ */
 #ifdef HAVE_IOV_ITER_HAS_TYPE_MEMBER
 #define iter_is_iovec(iter)		((iter)->type & ITER_IOVEC)
 #define iov_iter_is_kvec(iter)		((iter)->type & ITER_KVEC)
 #define iov_iter_is_bvec(iter)		((iter)->type & ITER_BVEC)
+#if defined HAVE_ENUM_ITER_PIPE
 #define iov_iter_is_pipe(iter)		((iter)->type & ITER_PIPE)
+#else
+#define iov_iter_is_pipe(iter)		0
+#endif
 #define iov_iter_is_discard(iter)	((iter)->type & ITER_DISCARD)
 #else
 #define iter_is_iovec(iter)		1
@@ -123,6 +143,7 @@ do {									\
 #endif
 
 void cfs_arch_init(void);
+void cfs_arch_exit(void);
 
 #ifndef container_of_safe
 /**
@@ -152,6 +173,26 @@ void cfs_arch_init(void);
 
 #ifndef HAVE_TASK_IS_RUNNING
 #define task_is_running(task)		(task->state == TASK_RUNNING)
+#endif
+
+/* interval tree */
+#ifdef HAVE_INTERVAL_TREE_CACHED
+#define interval_tree_root rb_root_cached
+#define interval_tree_first rb_first_cached
+#define INTERVAL_TREE_ROOT RB_ROOT_CACHED
+#else
+#define interval_tree_root rb_root
+#define interval_tree_first rb_first
+#define INTERVAL_TREE_ROOT RB_ROOT
+#endif /* HAVE_INTERVAL_TREE_CACHED */
+
+/* Linux v5.1-rc5 214d8ca6ee ("stacktrace: Provide common infrastructure")
+ * CONFIG_ARCH_STACKWALK indicates that save_stack_trace_tsk symbol is not
+ * exported. Use symbol_get() to find if save_stack_trace_tsk is available.
+ */
+#ifdef CONFIG_ARCH_STACKWALK
+int cfs_stack_trace_save_tsk(struct task_struct *task, unsigned long *store,
+			     unsigned int size, unsigned int skipnr);
 #endif
 
 #ifndef memset_startat
