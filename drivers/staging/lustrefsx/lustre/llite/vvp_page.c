@@ -54,7 +54,7 @@
  */
 static void vvp_page_fini(const struct lu_env *env,
 			  struct cl_page_slice *slice,
-			  struct pagevec *pvec)
+			  struct folio_batch *fbatch)
 {
 	struct vvp_page *vpg     = cl2vvp_page(slice);
 	struct page     *vmpage  = vpg->vpg_page;
@@ -64,10 +64,10 @@ static void vvp_page_fini(const struct lu_env *env,
 	 * VPG_FREEING state.
 	 */
 	LASSERT((struct cl_page *)vmpage->private != slice->cpl_page);
-	LASSERT(vmpage != NULL);
-	if (pvec) {
-		if (!pagevec_add(pvec, vmpage))
-			pagevec_release(pvec);
+	LASSERT(vmpage);
+	if (fbatch != NULL) {
+		if (!folio_batch_add_page(fbatch, vmpage))
+			folio_batch_release(fbatch);
 	} else {
 		put_page(vmpage);
 	}
