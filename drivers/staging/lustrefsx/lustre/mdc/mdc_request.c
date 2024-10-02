@@ -419,7 +419,7 @@ static int mdc_xattr_common(struct obd_export *exp,const struct req_format *fmt,
 		rec->sx_opcode = REINT_SETXATTR;
 		rec->sx_fsuid  = from_kuid(&init_user_ns, current_fsuid());
 		rec->sx_fsgid  = from_kgid(&init_user_ns, current_fsgid());
-		rec->sx_cap = current_cap().cap[0];
+		rec->sx_cap = ll_capability_u32(current_cap());
 		rec->sx_suppgid1 = suppgid;
 		rec->sx_suppgid2 = -1;
 		rec->sx_fid    = *fid;
@@ -3040,7 +3040,7 @@ static int __init mdc_init(void)
 	if (rc)
 		return rc;
 
-	mdc_changelog_class = class_create(THIS_MODULE, MDC_CHANGELOG_DEV_NAME);
+	mdc_changelog_class = ll_class_create(MDC_CHANGELOG_DEV_NAME);
 	if (IS_ERR(mdc_changelog_class)) {
 		rc = PTR_ERR(mdc_changelog_class);
 		goto out_dev;

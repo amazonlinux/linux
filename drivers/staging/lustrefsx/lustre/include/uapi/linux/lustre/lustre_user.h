@@ -750,6 +750,30 @@ static inline bool lov_pattern_supported_normal_comp(__u32 pattern)
 
 #define LOV_MAXPOOLNAME 15
 #define LOV_POOLNAMEF "%.15s"
+/* The poolname "ignore" is used to force a component creation without pool */
+#define LOV_POOL_IGNORE "ignore"
+/* The poolname "inherit" is used to force a component to inherit the pool from
+ * parent or root directory
+ */
+#define LOV_POOL_INHERIT "inherit"
+/* The poolname "none" is deprecated in 2.15 (same behavior as "inherit") */
+#define LOV_POOL_NONE "none"
+
+static inline bool lov_pool_is_ignored(const char *pool)
+{
+	return pool && strncmp(pool, LOV_POOL_IGNORE, LOV_MAXPOOLNAME) == 0;
+}
+
+static inline bool lov_pool_is_inherited(const char *pool)
+{
+	return pool && (strncmp(pool, LOV_POOL_INHERIT, LOV_MAXPOOLNAME) == 0 ||
+			strncmp(pool, LOV_POOL_NONE, LOV_MAXPOOLNAME) == 0);
+}
+
+static inline bool lov_pool_is_reserved(const char *pool)
+{
+	return lov_pool_is_ignored(pool) || lov_pool_is_inherited(pool);
+}
 
 #define LOV_MIN_STRIPE_BITS 16   /* maximum PAGE_SIZE (ia64), power of 2 */
 #define LOV_MIN_STRIPE_SIZE (1 << LOV_MIN_STRIPE_BITS)
@@ -1049,6 +1073,16 @@ static inline bool lmv_is_known_hash_type(__u32 type)
 	(LMV_HASH_FLAG_MIGRATION | LMV_HASH_FLAG_SPLIT | LMV_HASH_FLAG_MERGE)
 
 #define LMV_HASH_FLAG_KNOWN		0xbe000000
+
+/* migration failure may leave hash type as
+ * LMV_HASH_TYPE_UNKNOWN|LMV_HASH_FLAG_BAD_TYPE, which should be treated as
+ * sane, so such directory can be accessed (resume migration or unlink).
+ */
+static inline bool lmv_is_sane_hash_type(__u32 type)
+{
+	return lmv_is_known_hash_type(type) ||
+	       type == (LMV_HASH_TYPE_UNKNOWN | LMV_HASH_FLAG_BAD_TYPE);
+}
 
 /* both SPLIT and MIGRATION are set for directory split */
 static inline bool lmv_hash_is_splitting(__u32 hash)
@@ -1464,8 +1498,9 @@ struct if_quotactl {
 #define SWAP_LAYOUTS_KEEP_ATIME		(1 << 3)
 #define SWAP_LAYOUTS_CLOSE		(1 << 4)
 
-/* Swap XATTR_NAME_HSM as well, only on the MDT so far */
-#define SWAP_LAYOUTS_MDS_HSM		(1 << 31)
+/* Skip the UID/GID check before a swap layout for a release (server only) */
+#define SWAP_LAYOUTS_MDS_RELEASE	(1 << 31)
+
 struct lustre_swap_layouts {
 	__u64	sl_flags;
 	__u32	sl_fd;
