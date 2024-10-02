@@ -243,6 +243,11 @@ module_param_call(lnet_response_tracking, response_tracking_set, param_get_int,
 MODULE_PARM_DESC(lnet_response_tracking,
 		 "(0|1|2|3) LNet Internal Only|GET Reply only|PUT ACK only|Full Tracking (default)");
 
+int lock_prim_nid = 1;
+module_param(lock_prim_nid, int, 0444);
+MODULE_PARM_DESC(lock_prim_nid,
+		 "Whether nid passed down by Lustre is locked as primary");
+
 #define LNET_LND_TIMEOUT_DEFAULT ((LNET_TRANSACTION_TIMEOUT_DEFAULT - 1) / \
 				  (LNET_RETRY_COUNT_DEFAULT + 1))
 unsigned int lnet_lnd_timeout = LNET_LND_TIMEOUT_DEFAULT;
@@ -4204,9 +4209,11 @@ LNetCtl(unsigned int cmd, void *arg)
 			return -EINVAL;
 
 		mutex_lock(&the_lnet.ln_api_mutex);
-		rc = lnet_add_peer_ni(cfg->prcfg_prim_nid,
-				      cfg->prcfg_cfg_nid,
-				      cfg->prcfg_mr, false);
+		lnet_nid4_to_nid(cfg->prcfg_cfg_nid, &nid);
+		rc = lnet_user_add_peer_ni(cfg->prcfg_prim_nid,
+					   &nid,
+					   cfg->prcfg_mr,
+					   cfg->prcfg_count == 1);
 		mutex_unlock(&the_lnet.ln_api_mutex);
 		return rc;
 	}
@@ -4219,7 +4226,8 @@ LNetCtl(unsigned int cmd, void *arg)
 
 		mutex_lock(&the_lnet.ln_api_mutex);
 		rc = lnet_del_peer_ni(cfg->prcfg_prim_nid,
-				      cfg->prcfg_cfg_nid);
+				      cfg->prcfg_cfg_nid,
+				      cfg->prcfg_count);
 		mutex_unlock(&the_lnet.ln_api_mutex);
 		return rc;
 	}
