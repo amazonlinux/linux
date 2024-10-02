@@ -83,27 +83,29 @@ static inline timeout_t ldlm_get_rq_timeout(void)
 }
 
 struct ldlm_bl_pool {
-	spinlock_t blp_lock;
+	spinlock_t		blp_lock;
 
 	/*
 	 * blp_prio_list is used for callbacks that should be handled
 	 * as a priority. It is used for LDLM_FL_DISCARD_DATA requests.
 	 * see b=13843
 	 */
-	struct list_head blp_prio_list;
+	struct list_head	blp_prio_list;
 
 	/*
 	 * blp_list is used for all other callbacks which are likely
 	 * to take longer to process.
 	 */
-	struct list_head blp_list;
+	struct list_head	blp_list;
 
-	wait_queue_head_t blp_waitq;
-	struct completion blp_comp;
-	atomic_t blp_num_threads;
-	atomic_t blp_busy_threads;
-	int blp_min_threads;
-	int blp_max_threads;
+	wait_queue_head_t	blp_waitq;
+	struct completion	blp_comp;
+	atomic_t		blp_num_threads;
+	atomic_t		blp_busy_threads;
+	int			blp_min_threads;
+	int			blp_max_threads;
+	int			blp_total_locks;
+	int			blp_total_blwis;
 };
 
 struct ldlm_bl_work_item {
@@ -463,7 +465,7 @@ static int ldlm_add_waiting_lock(struct ldlm_lock *lock, timeout_t timeout)
 		LDLM_ERROR(lock, "not waiting on destroyed lock (b=5653)");
 		if (ktime_get_seconds() > next) {
 			next = ktime_get_seconds() + 14400;
-			libcfs_debug_dumpstack(NULL);
+			dump_stack();
 		}
 		return 0;
 	}
@@ -509,7 +511,7 @@ static int __ldlm_del_waiting_lock(struct ldlm_lock *lock)
 		/* Removing the head of the list, adjust timer. */
 		if (list_next == &waiting_locks_list) {
 			/* No more, just cancel. */
-			del_timer(&waiting_locks_timer);
+			timer_delete(&waiting_locks_timer);
 		} else {
 			time64_t now = ktime_get_seconds();
 			struct ldlm_lock *next;
@@ -1696,9 +1698,8 @@ int ldlm_request_cancel(struct ptlrpc_request *req,
 	ENTRY;
 
 	size = req_capsule_get_size(&req->rq_pill, &RMF_DLM_REQ, RCL_CLIENT);
-	if (size <= offsetof(struct ldlm_request, lock_handle) ||
-	    (size - offsetof(struct ldlm_request, lock_handle)) /
-	     sizeof(struct lustre_handle) < dlm_req->lock_count)
+	if (size <= sizeof(*dlm_req) || dlm_req->lock_count >
+	    (size - sizeof(*dlm_req)) / sizeof(struct lustre_handle))
 		RETURN(0);
 
 	count = dlm_req->lock_count ? dlm_req->lock_count : 1;
@@ -2116,21 +2117,40 @@ static int __ldlm_bl_to_thread(struct ldlm_bl_work_item *blwi,
 			       enum ldlm_cancel_flags cancel_flags)
 {
 	struct ldlm_bl_pool *blp = ldlm_state->ldlm_bl_pool;
+	char *prio = "regular";
+	int count;
 
 	ENTRY;
 
 	spin_lock(&blp->blp_lock);
+	/* cannot access blwi after added to list and lock is dropped */
+	count = blwi->blwi_lock ? 1 : blwi->blwi_count;
+
+	/* if the server is waiting on a lock to be cancelled (bl_ast), this is
+	 * an urgent request and should go in the priority queue so it doesn't
+	 * get stuck behind non-priority work (eg, lru size management)
+	 *
+	 * We also prioritize discard_data, which is for eviction handling
+	 */
 	if (blwi->blwi_lock &&
-	    ldlm_is_discard_data(blwi->blwi_lock)) {
-		/* add LDLM_FL_DISCARD_DATA requests to the priority list */
+	    (ldlm_is_discard_data(blwi->blwi_lock) ||
+	     ldlm_is_bl_ast(blwi->blwi_lock))) {
 		list_add_tail(&blwi->blwi_entry, &blp->blp_prio_list);
+		prio = "priority";
 	} else {
 		/* other blocking callbacks are added to the regular list */
 		list_add_tail(&blwi->blwi_entry, &blp->blp_list);
 	}
+	blp->blp_total_locks += count;
+	blp->blp_total_blwis++;
 	spin_unlock(&blp->blp_lock);
 
 	wake_up(&blp->blp_waitq);
+
+	/* unlocked read of blp values is intentional - OK for debug */
+	CDEBUG(D_DLMTRACE,
+	       "added %d/%d locks to %s blp list, %d blwis in pool\n",
+	       count, blp->blp_total_locks, prio, blp->blp_total_blwis);
 
 	/*
 	 * can not check blwi->blwi_flags as blwi could be already freed in
@@ -2749,9 +2769,22 @@ static int ldlm_bl_get_work(struct ldlm_bl_pool *blp,
 		if (++num_bl >= num_th)
 			num_bl = 0;
 		list_del(&blwi->blwi_entry);
+		blp->blp_total_locks -= blwi->blwi_lock ? 1 : blwi->blwi_count;
+		blp->blp_total_blwis--;
 	}
 	spin_unlock(&blp->blp_lock);
 	*p_blwi = blwi;
+
+	/* intentional unlocked read of blp values - OK for debug */
+	if (blwi) {
+		CDEBUG(D_DLMTRACE,
+		       "Got %d locks of %d total in blp.  (%d blwis in pool)\n",
+		       blwi->blwi_lock ? 1 : blwi->blwi_count,
+		       blp->blp_total_locks, blp->blp_total_blwis);
+	} else {
+		CDEBUG(D_DLMTRACE,
+		       "No blwi found in queue (no bl locks in queue)\n");
+	}
 
 	if (*p_exp != NULL && *p_blwi != NULL) {
 		obd_stale_export_put(*p_exp);
@@ -3293,6 +3326,8 @@ static int ldlm_setup(void)
 	init_waitqueue_head(&blp->blp_waitq);
 	atomic_set(&blp->blp_num_threads, 0);
 	atomic_set(&blp->blp_busy_threads, 0);
+	blp->blp_total_locks = 0;
+	blp->blp_total_blwis = 0;
 
 	if (ldlm_num_threads == 0) {
 		blp->blp_min_threads = LDLM_NTHRS_INIT;
