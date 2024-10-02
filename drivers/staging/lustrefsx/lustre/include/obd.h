@@ -55,8 +55,6 @@
 #include <lustre_intent.h>
 #include <lvfs.h>
 
-#define MAX_OBD_DEVICES 8192
-
 struct osc_async_rc {
         int     ar_rc;
         int     ar_force_sync;
@@ -921,8 +919,9 @@ struct md_op_data {
 	 * see enum op_cli_flags */
 	enum md_cli_flags	op_cli_flags;
 
-	/* File object data version for HSM release, on client */
+	/* File object data version for HSM release or migrate, on client */
 	__u64			op_data_version;
+	__u64			op_data_version2;
 	struct lustre_handle	op_lease_handle;
 
 	/* File security context, for creates/metadata ops */
