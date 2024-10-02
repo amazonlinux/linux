@@ -334,7 +334,7 @@ static void echo_page_completion(const struct lu_env *env,
 
 static void echo_page_fini(const struct lu_env *env,
 			   struct cl_page_slice *slice,
-			   struct pagevec *pvec)
+			   struct folio_batch *fbatch)
 {
 	struct echo_object *eco = cl2echo_obj(slice->cpl_obj);
 
@@ -1313,10 +1313,13 @@ static int cl_echo_cancel0(struct lu_env *env, struct echo_device *ed,
 }
 
 static void echo_commit_callback(const struct lu_env *env, struct cl_io *io,
-				 struct pagevec *pvec)
+				 struct folio_batch *fbatch)
 {
 	struct echo_thread_info *info;
 	struct cl_2queue        *queue;
+	struct page *vmpage;
+	struct cl_page *page;
+	int pg, npgs;
 	int i = 0;
 
 	info = echo_env_info(env);
@@ -1324,11 +1327,13 @@ static void echo_commit_callback(const struct lu_env *env, struct cl_io *io,
 
 	queue = &info->eti_queue;
 
-	for (i = 0; i < pagevec_count(pvec); i++) {
-		struct page *vmpage = pvec->pages[i];
-		struct cl_page *page = (struct cl_page *)vmpage->private;
-
-		cl_page_list_add(&queue->c2_qout, page, true);
+	for (i = 0; i < folio_batch_count(fbatch); i++) {
+	    npgs = fbatch_at_npgs(fbatch, i);
+	    for (pg = 0; pg < npgs; pg++) {
+	        vmpage = fbatch_at_pg(fbatch, i, pg);
+	        page = (struct cl_page *) vmpage->private;
+	        cl_page_list_add(&queue->c2_qout, page, true);
+	    }
 	}
 }
 
