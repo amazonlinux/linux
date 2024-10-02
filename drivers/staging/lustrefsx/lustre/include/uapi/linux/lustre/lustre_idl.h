@@ -1980,6 +1980,9 @@ enum mds_op_bias {
 	MDS_FID_OP		= 1 << 22,
 	/* migrate dirent only */
 	MDS_MIGRATE_NSONLY	= 1 << 23,
+	/* Compat flag with clients that do not send old and new data version
+	 * after swap layout */
+	MDS_CLOSE_LAYOUT_SWAP_HSM	= 1 << 25,
 };
 
 #define MDS_CLOSE_INTENT (MDS_HSM_RELEASE | MDS_CLOSE_LAYOUT_SWAP |         \
@@ -2558,7 +2561,7 @@ struct ldlm_request {
 	__u32 lock_flags;		/* LDLM_FL_*, see lustre_dlm_flags.h */
 	__u32 lock_count;		/* number of locks in lock_handle[] */
 	struct ldlm_lock_desc lock_desc;/* lock descriptor */
-	struct lustre_handle lock_handle[LDLM_LOCKREQ_HANDLES];
+	struct lustre_handle lock_handle[]; /* was LDLM_LOCKREQ_HANDLES */
 };
 
 struct ldlm_reply {
@@ -3533,6 +3536,8 @@ struct close_data {
 		__u16				cd_mirror_id;
 		/* PCC release */
 		__u32				cd_archive_id;
+		/* migrate swap layout */
+		__u64				cd_data_version2;
 	};
 };
 
