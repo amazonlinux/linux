@@ -109,6 +109,25 @@ ksocknal_lib_send_hdr(struct ksock_conn *conn, struct ksock_tx *tx,
 	return rc;
 }
 
+static int
+ksocknal_lib_sendpage(struct socket *sock, struct bio_vec *kiov, int msgflg)
+{
+#ifdef MSG_SPLICE_PAGES
+	struct msghdr msg = {.msg_flags = msgflg | MSG_SPLICE_PAGES};
+
+	iov_iter_bvec(&msg.msg_iter, ITER_SOURCE, kiov, 1, kiov->bv_len);
+
+	return sock_sendmsg(sock, &msg);
+#else
+	struct sock   *sk = sock->sk;
+	struct page *page = kiov->bv_page;
+	int offset = kiov->bv_offset;
+	int fragsize = kiov->bv_len;
+
+	return sk->sk_prot->sendpage(sk, page, offset, fragsize, msgflg);
+#endif
+}
+
 int
 ksocknal_lib_send_kiov(struct ksock_conn *conn, struct ksock_tx *tx,
 		       struct kvec *scratchiov)
@@ -125,21 +144,16 @@ ksocknal_lib_send_kiov(struct ksock_conn *conn, struct ksock_tx *tx,
 	 * or leave them alone. */
 	if (tx->tx_msg.ksm_zc_cookies[0] != 0) {
 		/* Zero copy is enabled */
-		struct sock   *sk = sock->sk;
-		struct page   *page = kiov->bv_page;
-		int            offset = kiov->bv_offset;
-		int            fragsize = kiov->bv_len;
 		int            msgflg = MSG_DONTWAIT;
 
 		CDEBUG(D_NET, "page %p + offset %x for %d\n",
-			       page, offset, kiov->bv_len);
+			       kiov->bv_page, kiov->bv_offset, kiov->bv_len);
 
 		if (!list_empty(&conn->ksnc_tx_queue) ||
-		    fragsize < tx->tx_resid)
+		    kiov->bv_len < tx->tx_resid)
 			msgflg |= MSG_MORE;
 
-		rc = sk->sk_prot->sendpage(sk, page,
-					   offset, fragsize, msgflg);
+		rc = ksocknal_lib_sendpage(sock, kiov, msgflg);
 	} else {
 #if SOCKNAL_SINGLE_FRAG_TX || !SOCKNAL_RISK_KMAP_DEADLOCK
 		struct kvec	scratch;
@@ -434,8 +448,18 @@ ksocknal_lib_setup_sock (struct socket *sock)
 	int keep_count;
 	int do_keepalive;
 	struct tcp_sock *tp = tcp_sk(sock->sk);
+	struct sock     *sk = sock->sk;
+#ifdef HAVE_SOCK_NOT_OWNED_BY_ME
+	struct net      *net = sock_net(sk);
+	/*
+	 * Increment sk_net_refcnt and net namespace for tcp socket cleanup.
+	 * LU-18137.
+	 */
+	sk->sk_net_refcnt = 1;
+	get_net(net);
+#endif
 
-	sock->sk->sk_allocation = GFP_NOFS;
+	sk->sk_allocation = GFP_NOFS;
 
 	/* Ensure this socket aborts active sends immediately when closed. */
 	sock_reset_flag(sock->sk, SOCK_LINGER);
