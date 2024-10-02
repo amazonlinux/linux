@@ -44,9 +44,13 @@
 #include <linux/uidgid.h>
 #include <linux/falloc.h>
 #include <linux/ktime.h>
+#ifdef HAVE_LINUX_FILELOCK_HEADER
+#include <linux/filelock.h>
+#endif
 
 #include <uapi/linux/lustre/lustre_ioctl.h>
 #include <lustre_swab.h>
+#include <libcfs/linux/linux-misc.h>
 
 #include "cl_object.h"
 #include "llite_internal.h"
@@ -61,6 +65,12 @@ struct pcc_param {
 	__u64	pa_data_version;
 	__u32	pa_archive_id;
 	__u32	pa_layout_gen;
+};
+
+struct swap_layouts_param {
+	struct inode *slp_inode;
+	__u64         slp_dv1;
+	__u64         slp_dv2;
 };
 
 static int
@@ -138,8 +148,9 @@ static void ll_prepare_close(struct inode *inode, struct md_op_data *op_data,
  * The meaning of "data" depends on the value of "bias".
  *
  * If \a bias is MDS_HSM_RELEASE then \a data is a pointer to the data version.
- * If \a bias is MDS_CLOSE_LAYOUT_SWAP then \a data is a pointer to the inode to
- * swap layouts with.
+ * If \a bias is MDS_CLOSE_LAYOUT_SWAP then \a data is a pointer to a
+ * struct swap_layouts_param containing the inode to swap with and the old and
+ * new dataversion
  */
 static int ll_close_inode_openhandle(struct inode *inode,
 				     struct obd_client_handle *och,
@@ -172,8 +183,7 @@ static int ll_close_inode_openhandle(struct inode *inode,
 		op_data->op_attr.ia_valid |= ATTR_SIZE;
 		op_data->op_xvalid |= OP_XVALID_BLOCKS;
 		fallthrough;
-	case MDS_CLOSE_LAYOUT_SPLIT:
-	case MDS_CLOSE_LAYOUT_SWAP: {
+	case MDS_CLOSE_LAYOUT_SPLIT: {
 		struct split_param *sp = data;
 
 		LASSERT(data != NULL);
@@ -183,9 +193,20 @@ static int ll_close_inode_openhandle(struct inode *inode,
 		if (bias == MDS_CLOSE_LAYOUT_SPLIT) {
 			op_data->op_fid2 = *ll_inode2fid(sp->sp_inode);
 			op_data->op_mirror_id = sp->sp_mirror_id;
-		} else {
+		} else { /* MDS_CLOSE_LAYOUT_MERGE */
 			op_data->op_fid2 = *ll_inode2fid(data);
 		}
+		break;
+	}
+	case MDS_CLOSE_LAYOUT_SWAP: {
+		struct swap_layouts_param *slp = data;
+
+		LASSERT(data != NULL);
+		op_data->op_bias |= (bias | MDS_CLOSE_LAYOUT_SWAP_HSM);
+		op_data->op_lease_handle = och->och_lease_handle;
+		op_data->op_fid2 = *ll_inode2fid(slp->slp_inode);
+		op_data->op_data_version = slp->slp_dv1;
+		op_data->op_data_version2 = slp->slp_dv2;
 		break;
 	}
 
@@ -1300,8 +1321,8 @@ static int ll_check_swap_layouts_validity(struct inode *inode1,
 	if (!S_ISREG(inode1->i_mode) || !S_ISREG(inode2->i_mode))
 		return -EINVAL;
 
-	if (inode_permission(&init_user_ns, inode1, MAY_WRITE) ||
-	    inode_permission(&init_user_ns, inode2, MAY_WRITE))
+	if (inode_permission(&nop_mnt_idmap, inode1, MAY_WRITE) ||
+	    inode_permission(&nop_mnt_idmap, inode2, MAY_WRITE))
 		return -EPERM;
 
 	if (inode1->i_sb != inode2->i_sb)
@@ -1311,11 +1332,13 @@ static int ll_check_swap_layouts_validity(struct inode *inode1,
 }
 
 static int ll_swap_layouts_close(struct obd_client_handle *och,
-				 struct inode *inode, struct inode *inode2)
+				 struct inode *inode, struct inode *inode2,
+				 struct lustre_swap_layouts *lsl)
 {
-	const struct lu_fid	*fid1 = ll_inode2fid(inode);
-	const struct lu_fid	*fid2;
-	int			 rc;
+	const struct lu_fid *fid1 = ll_inode2fid(inode);
+	struct swap_layouts_param slp;
+	const struct lu_fid *fid2;
+	int  rc;
 	ENTRY;
 
 	CDEBUG(D_INODE, "%s: biased close of file "DFID"\n",
@@ -1335,8 +1358,10 @@ static int ll_swap_layouts_close(struct obd_client_handle *och,
 	/* Close the file and {swap,merge} layouts between inode & inode2.
 	 * NB: lease lock handle is released in mdc_close_layout_swap_pack()
 	 * because we still need it to pack l_remote_handle to MDT. */
-	rc = ll_close_inode_openhandle(inode, och, MDS_CLOSE_LAYOUT_SWAP,
-				       inode2);
+	slp.slp_inode = inode2;
+	slp.slp_dv1 = lsl->sl_dv1;
+	slp.slp_dv2 = lsl->sl_dv2;
+	rc = ll_close_inode_openhandle(inode, och, MDS_CLOSE_LAYOUT_SWAP, &slp);
 
 	och = NULL; /* freed in ll_close_inode_openhandle() */
 
@@ -1726,7 +1751,7 @@ ll_file_io_generic(const struct lu_env *env, struct vvp_io_args *args,
 		 * to pipes
 		 */
 		is_parallel_dio = !iov_iter_is_pipe(args->u.normal.via_iter) &&
-			       !is_aio;
+				  !is_aio;
 
 		if (!ll_sbi_has_parallel_dio(sbi))
 			is_parallel_dio = false;
@@ -2886,7 +2911,7 @@ static int ll_do_fiemap(struct inode *inode, struct fiemap *fiemap,
 			GOTO(out, rc);
 	}
 
-	fmkey.lfik_oa.o_valid = OBD_MD_FLID | OBD_MD_FLGROUP;
+	fmkey.lfik_oa.o_valid = OBD_MD_FLID | OBD_MD_FLGROUP | OBD_MD_FLPROJID;
 	obdo_from_inode(&fmkey.lfik_oa, inode, OBD_MD_FLSIZE);
 	obdo_set_parent_fid(&fmkey.lfik_oa, &ll_i2info(inode)->lli_fid);
 
@@ -3658,8 +3683,8 @@ int ll_ioctl_check_project(struct inode *inode, __u32 xflags,
 
 static int ll_set_project(struct inode *inode, __u32 xflags, __u32 projid)
 {
-	struct md_op_data *op_data;
 	struct ptlrpc_request *req = NULL;
+	struct md_op_data *op_data;
 	struct cl_object *obj;
 	unsigned int inode_flags;
 	int rc = 0;
@@ -3677,7 +3702,10 @@ static int ll_set_project(struct inode *inode, __u32 xflags, __u32 projid)
 	op_data->op_attr_flags = ll_inode_to_ext_flags(inode_flags);
 	if (xflags & FS_XFLAG_PROJINHERIT)
 		op_data->op_attr_flags |= LUSTRE_PROJINHERIT_FL;
+
+	/* pass projid to md_op_data */
 	op_data->op_projid = projid;
+
 	op_data->op_xvalid |= OP_XVALID_PROJID | OP_XVALID_FLAGS;
 	rc = md_setattr(ll_i2sbi(inode)->ll_md_exp, op_data, NULL, 0, &req);
 	ptlrpc_req_finished(req);
@@ -4131,7 +4159,7 @@ ll_file_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			if (och == NULL)
 				GOTO(out, rc = -ENOLCK);
 			inode2 = file_inode(file2);
-			rc = ll_swap_layouts_close(och, inode, inode2);
+			rc = ll_swap_layouts_close(och, inode, inode2, &lsl);
 		} else {
 			rc = ll_swap_layouts(file, file2, &lsl);
 		}
@@ -4499,7 +4527,7 @@ out_ladvise:
 		if (!S_ISREG(inode->i_mode))
 			GOTO(out_detach_free, rc = -EINVAL);
 
-		if (!inode_owner_or_capable(&init_user_ns, inode))
+		if (!inode_owner_or_capable(&nop_mnt_idmap, inode))
 			GOTO(out_detach_free, rc = -EPERM);
 
 		rc = pcc_ioctl_detach(inode, detach->pccd_opt);
@@ -5520,7 +5548,7 @@ fill_attr:
 }
 
 #if defined(HAVE_USER_NAMESPACE_ARG) || defined(HAVE_INODEOPS_ENHANCED_GETATTR)
-int ll_getattr(struct user_namespace *mnt_userns, const struct path *path,
+int ll_getattr(struct mnt_idmap *map, const struct path *path,
 	       struct kstat *stat, u32 request_mask, unsigned int flags)
 {
 	return ll_getattr_dentry(path->dentry, stat, request_mask, flags,
@@ -5537,11 +5565,11 @@ int ll_getattr(struct vfsmount *mnt, struct dentry *de, struct kstat *stat)
 int cl_falloc(struct file *file, struct inode *inode, int mode, loff_t offset,
 	      loff_t len)
 {
+	loff_t size = i_size_read(inode);
 	struct lu_env *env;
 	struct cl_io *io;
 	__u16 refcheck;
 	int rc;
-	loff_t size = i_size_read(inode);
 
 	ENTRY;
 
@@ -5560,12 +5588,14 @@ int cl_falloc(struct file *file, struct inode *inode, int mode, loff_t offset,
 	io->u.ci_setattr.sa_falloc_end = offset + len;
 	io->u.ci_setattr.sa_subtype = CL_SETATTR_FALLOCATE;
 
-	CDEBUG(D_INODE, "UID %u GID %u\n",
+	CDEBUG(D_INODE, "UID %u GID %u PRJID %u\n",
 	       from_kuid(&init_user_ns, inode->i_uid),
-	       from_kgid(&init_user_ns, inode->i_gid));
+	       from_kgid(&init_user_ns, inode->i_gid),
+	       ll_i2info(inode)->lli_projid);
 
 	io->u.ci_setattr.sa_falloc_uid = from_kuid(&init_user_ns, inode->i_uid);
 	io->u.ci_setattr.sa_falloc_gid = from_kgid(&init_user_ns, inode->i_gid);
+	io->u.ci_setattr.sa_falloc_projid = ll_i2info(inode)->lli_projid;
 
 	if (io->u.ci_setattr.sa_falloc_end > size) {
 		loff_t newsize = io->u.ci_setattr.sa_falloc_end;
@@ -5684,8 +5714,7 @@ out:
 	return rc;
 }
 
-int ll_inode_permission(struct user_namespace *mnt_userns, struct inode *inode,
-			int mask)
+int ll_inode_permission(struct mnt_idmap *idmap, struct inode *inode, int mask)
 {
 	int rc = 0;
 	struct ll_sb_info *sbi;
@@ -5741,7 +5770,7 @@ int ll_inode_permission(struct user_namespace *mnt_userns, struct inode *inode,
 		old_cred = override_creds(cred);
 	}
 
-	rc = generic_permission(mnt_userns, inode, mask);
+	rc = generic_permission(idmap, inode, mask);
 	/* restore current process's credentials and FS capability */
 	if (squash_id) {
 		revert_creds(old_cred);
@@ -5754,6 +5783,14 @@ int ll_inode_permission(struct user_namespace *mnt_userns, struct inode *inode,
 
 	RETURN(rc);
 }
+
+#if defined(HAVE_FILEMAP_SPLICE_READ)
+# define ll_splice_read		filemap_splice_read
+#elif !defined(HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT)
+# define ll_splice_read		generic_file_splice_read
+#else
+# define ll_splice_read		pcc_file_splice_read
+#endif
 
 /* -o localflock - only provides locally consistent flock locks */
 static const struct file_operations ll_file_operations = {
@@ -5775,11 +5812,7 @@ static const struct file_operations ll_file_operations = {
 	.release	= ll_file_release,
 	.mmap		= ll_file_mmap,
 	.llseek		= ll_file_seek,
-#ifndef HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT
-	.splice_read	= generic_file_splice_read,
-#else
-	.splice_read	= pcc_file_splice_read,
-#endif
+	.splice_read	= ll_splice_read,
 #ifdef HAVE_ITER_FILE_SPLICE_WRITE
 	.splice_write	= iter_file_splice_write,
 #endif
@@ -5807,11 +5840,7 @@ static const struct file_operations ll_file_operations_flock = {
 	.release	= ll_file_release,
 	.mmap		= ll_file_mmap,
 	.llseek		= ll_file_seek,
-#ifndef HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT
-	.splice_read	= generic_file_splice_read,
-#else
-	.splice_read	= pcc_file_splice_read,
-#endif
+	.splice_read	= ll_splice_read,
 #ifdef HAVE_ITER_FILE_SPLICE_WRITE
 	.splice_write	= iter_file_splice_write,
 #endif
@@ -5842,11 +5871,7 @@ static const struct file_operations ll_file_operations_noflock = {
 	.release	= ll_file_release,
 	.mmap		= ll_file_mmap,
 	.llseek		= ll_file_seek,
-#ifndef HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT
-	.splice_read	= generic_file_splice_read,
-#else
-	.splice_read	= pcc_file_splice_read,
-#endif
+	.splice_read	= ll_splice_read,
 #ifdef HAVE_ITER_FILE_SPLICE_WRITE
 	.splice_write	= iter_file_splice_write,
 #endif
