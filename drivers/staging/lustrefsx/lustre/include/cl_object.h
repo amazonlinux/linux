@@ -100,6 +100,7 @@
 #include <linux/pagevec.h>
 #include <libcfs/linux/linux-misc.h>
 #include <lustre_dlm.h>
+#include <lustre_compat.h>
 
 struct obd_info;
 struct inode;
@@ -923,7 +924,7 @@ struct cl_page_operations {
         /** Destructor. Frees resources and slice itself. */
         void (*cpo_fini)(const struct lu_env *env,
 			 struct cl_page_slice *slice,
-			 struct pagevec *pvec);
+			 struct folio_batch *fbatch);
         /**
          * Optional debugging helper. Prints given page slice.
          *
@@ -1472,7 +1473,7 @@ struct cl_io_slice {
 };
 
 typedef void (*cl_commit_cbt)(const struct lu_env *, struct cl_io *,
-			      struct pagevec *);
+			      struct folio_batch *);
 
 struct cl_read_ahead {
 	/* Maximum page index the readahead window will end.
@@ -1874,6 +1875,7 @@ struct cl_io {
 			loff_t			 sa_falloc_end;
 			uid_t			 sa_falloc_uid;
 			gid_t			 sa_falloc_gid;
+			__u32			 sa_falloc_projid;
 		} ci_setattr;
 		struct cl_data_version_io {
 			u64 dv_data_version;
@@ -2261,9 +2263,9 @@ struct cl_page *cl_page_alloc       (const struct lu_env *env,
 void            cl_page_get         (struct cl_page *page);
 void            cl_page_put         (const struct lu_env *env,
                                      struct cl_page *page);
-void		cl_pagevec_put      (const struct lu_env *env,
+void		cl_batch_put      (const struct lu_env *env,
 				     struct cl_page *page,
-				     struct pagevec *pvec);
+				     struct folio_batch *fbatch);
 void            cl_page_print       (const struct lu_env *env, void *cookie,
                                      lu_printer_t printer,
                                      const struct cl_page *pg);
