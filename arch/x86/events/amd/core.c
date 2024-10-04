@@ -569,8 +569,12 @@ static void amd_pmu_cpu_reset(int cpu)
 	 * Clear freeze and overflow bits i.e. PerfCntrGLobalStatus.LbrFreeze
 	 * and PerfCntrGLobalStatus.PerfCntrOvfl
 	 */
+	/*
+	 * Setting and clearing of the LBR Freeze bit is currently
+	 * unsupported in EC2.
+	 */
 	wrmsrl(MSR_AMD64_PERF_CNTR_GLOBAL_STATUS_CLR,
-	       GLOBAL_STATUS_LBRS_FROZEN | amd_pmu_global_cntr_mask);
+	       /* GLOBAL_STATUS_LBRS_FROZEN | */ amd_pmu_global_cntr_mask);
 }
 
 static int amd_pmu_cpu_prepare(int cpu)
