@@ -857,6 +857,7 @@ struct uprobe_cpu_buffer {
 };
 static struct uprobe_cpu_buffer __percpu *uprobe_cpu_buffer;
 static int uprobe_buffer_refcnt;
+#define MAX_UCB_BUFFER_SIZE PAGE_SIZE
 
 static int uprobe_buffer_init(void)
 {
@@ -956,9 +957,6 @@ static void __uprobe_trace_func(struct trace_uprobe *tu,
 	struct trace_event_call *call = trace_probe_event_call(&tu->tp);
 
 	WARN_ON(call != trace_file->event_call);
-
-	if (WARN_ON_ONCE(tu->tp.size + dsize > PAGE_SIZE))
-		return;
 
 	if (trace_trigger_soft_disabled(trace_file))
 		return;
@@ -1503,6 +1501,11 @@ static int uprobe_dispatcher(struct uprobe_consumer *con, struct pt_regs *regs)
 	esize = SIZEOF_TRACE_ENTRY(is_ret_probe(tu));
 
 	ucb = uprobe_buffer_get();
+
+	if (WARN_ON_ONCE(tu->tp.size + dsize > MAX_UCB_BUFFER_SIZE)) {
+		dsize = MAX_UCB_BUFFER_SIZE - tu->tp.size;
+	}
+
 	store_trace_args(ucb->buf, &tu->tp, regs, esize, dsize);
 
 	flags = trace_probe_load_flag(&tu->tp);
@@ -1540,6 +1543,11 @@ static int uretprobe_dispatcher(struct uprobe_consumer *con,
 	esize = SIZEOF_TRACE_ENTRY(is_ret_probe(tu));
 
 	ucb = uprobe_buffer_get();
+
+	if (WARN_ON_ONCE(tu->tp.size + dsize > MAX_UCB_BUFFER_SIZE)) {
+		dsize = MAX_UCB_BUFFER_SIZE - tu->tp.size;
+	}
+
 	store_trace_args(ucb->buf, &tu->tp, regs, esize, dsize);
 
 	flags = trace_probe_load_flag(&tu->tp);
