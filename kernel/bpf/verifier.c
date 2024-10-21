@@ -4412,7 +4412,8 @@ mark:
 }
 
 static int check_helper_mem_access(struct bpf_verifier_env *env, int regno,
-				   int access_size, bool zero_size_allowed,
+				   int access_size, enum bpf_access_type access_type,
+				   bool zero_size_allowed,
 				   struct bpf_call_arg_meta *meta)
 {
 	struct bpf_reg_state *regs = cur_regs(env), *reg = &regs[regno];
@@ -4425,9 +4426,7 @@ static int check_helper_mem_access(struct bpf_verifier_env *env, int regno,
 		return check_packet_access(env, regno, reg->off, access_size,
 					   zero_size_allowed);
 	case PTR_TO_MAP_VALUE:
-		if (check_map_access_type(env, regno, reg->off, access_size,
-					  meta && meta->raw_mode ? BPF_WRITE :
-					  BPF_READ))
+		if (check_map_access_type(env, regno, reg->off, access_size, access_type))
 			return -EACCES;
 		return check_map_access(env, regno, reg->off, access_size,
 					zero_size_allowed);
@@ -4437,7 +4436,7 @@ static int check_helper_mem_access(struct bpf_verifier_env *env, int regno,
 					       zero_size_allowed);
 	case PTR_TO_BUF:
 		if (type_is_rdonly_mem(reg->type)) {
-			if (meta && meta->raw_mode)
+			if (access_type == BPF_WRITE)
 				return -EACCES;
 
 			buf_info = "rdonly";
@@ -4855,9 +4854,8 @@ skip_type_check:
 			verbose(env, "invalid map_ptr to access map->key\n");
 			return -EACCES;
 		}
-		err = check_helper_mem_access(env, regno,
-					      meta->map_ptr->key_size, false,
-					      NULL);
+		err = check_helper_mem_access(env, regno, meta->map_ptr->key_size,
+					      BPF_READ, false,  NULL);
 	} else if (base_type(arg_type) == ARG_PTR_TO_MAP_VALUE) {
 		if (type_may_be_null(arg_type) && register_is_null(reg))
 			return 0;
@@ -4871,9 +4869,9 @@ skip_type_check:
 			return -EACCES;
 		}
 		meta->raw_mode = arg_type & MEM_UNINIT;
-		err = check_helper_mem_access(env, regno,
-					      meta->map_ptr->value_size, false,
-					      meta);
+		err = check_helper_mem_access(env, regno, meta->map_ptr->value_size,
+					      arg_type & MEM_WRITE ? BPF_WRITE : BPF_READ,
+					      false, meta);
 	} else if (arg_type == ARG_PTR_TO_PERCPU_BTF_ID) {
 		if (!reg->btf_id) {
 			verbose(env, "Helper has invalid btf_id in R%d\n", regno);
@@ -4897,7 +4895,9 @@ skip_type_check:
 		 */
 		meta->raw_mode = arg_type & MEM_UNINIT;
 		if (arg_type & MEM_FIXED_SIZE) {
-			err = check_helper_mem_access(env, regno, fn->arg_size[arg], false, meta);
+			err = check_helper_mem_access(env, regno, fn->arg_size[arg],
+						      arg_type & MEM_WRITE ? BPF_WRITE : BPF_READ,
+						      false, meta);
 			if (err)
 				return err;
 			if (arg_type & MEM_ALIGNED)
@@ -4935,6 +4935,8 @@ skip_type_check:
 
 		if (reg->umin_value == 0) {
 			err = check_helper_mem_access(env, regno - 1, 0,
+						      fn->arg_type[arg - 1] & MEM_WRITE ?
+						      BPF_WRITE : BPF_READ,
 						      zero_size_allowed,
 						      meta);
 			if (err)
@@ -4948,6 +4950,8 @@ skip_type_check:
 		}
 		err = check_helper_mem_access(env, regno - 1,
 					      reg->umax_value,
+					      fn->arg_type[arg - 1] & MEM_WRITE ?
+					      BPF_WRITE : BPF_READ,
 					      zero_size_allowed, meta);
 		if (!err)
 			err = mark_chain_precision(env, regno);
