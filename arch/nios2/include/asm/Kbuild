@@ -8,3 +8,4 @@ generic-y += mcs_spinlock.h
 generic-y += ring_buffer.h
 generic-y += spinlock.h
 generic-y += user.h
+generic-y += text-patching.h
