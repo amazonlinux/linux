@@ -12,3 +12,4 @@ generic-y += parport.h
 generic-y += ring_buffer.h
 generic-y += user.h
 generic-y += vmlinux.lds.h
+generic-y += text-patching.h
