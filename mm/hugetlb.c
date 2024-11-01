@@ -4580,36 +4580,35 @@ vm_fault_t hugetlb_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 	struct address_space *mapping;
 	int need_wait_lock = 0;
 	unsigned long haddr = address & huge_page_mask(h);
-
-	ptep = huge_pte_offset(mm, haddr, huge_page_size(h));
-	if (ptep) {
-		/*
-		 * Since we hold no locks, ptep could be stale.  That is
-		 * OK as we are only making decisions based on content and
-		 * not actually modifying content here.
-		 */
-		entry = huge_ptep_get(ptep);
-		if (unlikely(is_hugetlb_entry_migration(entry))) {
-			migration_entry_wait_huge(vma, mm, ptep);
-			return 0;
-		} else if (unlikely(is_hugetlb_entry_hwpoisoned(entry)))
-			return VM_FAULT_HWPOISON_LARGE |
-				VM_FAULT_SET_HINDEX(hstate_index(h));
-	}
+	mapping = vma->vm_file->f_mapping;
 
 	/*
-	 * Acquire i_mmap_rwsem before calling huge_pte_alloc and hold
+	 * Acquire i_mmap_rwsem before calling huge_pte_offset and hold
 	 * until finished with ptep.  This serves two purposes:
 	 * 1) It prevents huge_pmd_unshare from being called elsewhere
 	 *    and making the ptep no longer valid.
 	 * 2) It synchronizes us with i_size modifications during truncation.
-	 *
+	 */
+	i_mmap_lock_read(mapping);
+	ptep = huge_pte_offset(mm, haddr, huge_page_size(h));
+	if (ptep) {
+		entry = huge_ptep_get(ptep);
+		if (unlikely(is_hugetlb_entry_migration(entry))) {
+			migration_entry_wait_huge(vma, mm, ptep);
+			i_mmap_unlock_read(mapping);
+			return 0;
+		} else if (unlikely(is_hugetlb_entry_hwpoisoned(entry))) {
+			i_mmap_unlock_read(mapping);
+			return VM_FAULT_HWPOISON_LARGE |
+				VM_FAULT_SET_HINDEX(hstate_index(h));
+		}
+	}
+
+	/*
 	 * ptep could have already be assigned via huge_pte_offset.  That
 	 * is OK, as huge_pte_alloc will return the same value unless
 	 * something has changed.
 	 */
-	mapping = vma->vm_file->f_mapping;
-	i_mmap_lock_read(mapping);
 	ptep = huge_pte_alloc(mm, haddr, huge_page_size(h));
 	if (!ptep) {
 		i_mmap_unlock_read(mapping);
