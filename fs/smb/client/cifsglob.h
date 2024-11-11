@@ -152,6 +152,12 @@ enum securityEnum {
 	IAKerb,			/* Kerberos proxy */
 };
 
+enum upcall_target_enum {
+	UPTARGET_UNSPECIFIED, /* not specified, defaults to app */
+	UPTARGET_MOUNT, /* upcall to the mount namespace */
+	UPTARGET_APP, /* upcall to the application namespace which did the mount */
+};
+
 struct session_key {
 	unsigned int len;
 	char *response;
@@ -1018,6 +1024,7 @@ struct cifs_ses {
 	struct session_key auth_key;
 	struct ntlmssp_auth *ntlmssp; /* ciphertext, flags, server challenge */
 	enum securityEnum sectype; /* what security flavor was specified? */
+	enum upcall_target_enum upcall_target; /* what upcall target was specified? */
 	bool sign;		/* is signing required? */
 	bool domainAuto:1;
 	__u16 session_flags;
