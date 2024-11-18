@@ -28,6 +28,7 @@ config NEED_SG_DMA_FLAGS
 
 config DMA_PAGE_TOUCHING
 	bool "Support touching pages when allocated for DMA"
+	select ARCH_HAS_DMA_OPS
 	help
 	  Builds in support for binding page touching DMA ops to devices which
 	  don't have an IOMMU. Memory mapped for DMA by those devices will be
