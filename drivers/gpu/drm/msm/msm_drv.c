@@ -1105,7 +1105,7 @@ static void msm_pdev_remove(struct platform_device *pdev)
 
 static struct platform_driver msm_platform_driver = {
 	.probe      = msm_pdev_probe,
-	.remove_new = msm_pdev_remove,
+	.remove     = msm_pdev_remove,
 	.driver     = {
 		.name   = "msm",
 	},
