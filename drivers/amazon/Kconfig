@@ -39,4 +39,6 @@ config AMAZON_IGB_UIO
 	  To compile this driver as a module, choose M here.
 	  The module will be called igb_uio.
 
+source "drivers/amazon/media/v4l2-loopback/Kconfig"
+
 endif # AMAZON_DRIVER_UPDATES
