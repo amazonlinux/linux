@@ -1,0 +1,7 @@
+# v4l2loopback config states
+
+config V4L2_LOOPBACK
+    tristate "Enable v4l2-loopback"
+    depends on VIDEO_DEV
+    help
+      Say M here to enable v4l2-loopback as module.
