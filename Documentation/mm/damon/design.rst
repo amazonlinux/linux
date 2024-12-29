@@ -4,6 +4,8 @@
 Design
 ======
 
+.. contents:: :local:
+   :depth:2
 
 .. _damon_design_execution_model_and_data_structures:
 
@@ -428,6 +430,7 @@ To know how user-space can set ``apply_interval`` via :ref:`DAMON sysfs
 interface <sysfs_interface>`, refer to :ref:`apply_interval_us <sysfs_scheme>`
 part of the documentation.
 
+.. contents:: :local:
 
 .. _damon_design_damos_action:
 
