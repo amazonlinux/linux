@@ -53,8 +53,6 @@
 #include <lvfs.h>
 #include <lustre_quota.h>
 
-#define MAX_OBD_DEVICES 8192
-
 struct osc_async_rc {
         int     ar_rc;
         int     ar_force_sync;
