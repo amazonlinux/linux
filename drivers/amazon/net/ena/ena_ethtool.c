@@ -239,34 +239,37 @@ static void ena_metrics_stats(struct ena_adapter *adapter, u64 **data)
 		(*data) += supported_metrics_count;
 
 	} else if (ena_com_get_cap(dev, ENA_ADMIN_ENI_STATS)) {
-		ena_com_get_eni_stats(dev, &adapter->eni_stats);
+		struct ena_admin_eni_stats eni_stats;
+
+		ena_com_get_eni_stats(dev, &eni_stats);
 		/* Updating regardless of rc - once we told ethtool how many stats we have
 		 * it will print that much stats. We can't leave holes in the stats
 		 */
 		for (i = 0; i < ENA_STATS_ARRAY_ENI; i++) {
 			ena_stats = &ena_stats_eni_strings[i];
-
-			ptr = (u64 *)&adapter->eni_stats +
-				ena_stats->stat_offset;
-
-			ena_safe_update_stat(ptr, (*data)++, &adapter->syncp);
+			ptr = (u64 *)&eni_stats + ena_stats->stat_offset;
+			**data = *ptr;
+			(*data)++;
 		}
 	}
 
 	if (ena_com_get_cap(dev, ENA_ADMIN_ENA_SRD_INFO)) {
-		ena_com_get_ena_srd_info(dev, &adapter->ena_srd_info);
+		struct ena_admin_ena_srd_info ena_srd_info;
+
+		ena_com_get_ena_srd_info(dev, &ena_srd_info);
 		/* Get ENA SRD mode */
-		ptr = (u64 *)&adapter->ena_srd_info;
-		ena_safe_update_stat(ptr, (*data)++, &adapter->syncp);
+		ena_stats = &ena_srd_info_strings[0];
+		ptr = (u64 *)&ena_srd_info + ena_stats->stat_offset;
+		**data = *ptr;
+		(*data)++;
 		for (i = 1; i < ENA_STATS_ARRAY_ENA_SRD; i++) {
 			ena_stats = &ena_srd_info_strings[i];
 			/* Wrapped within an outer struct - need to accommodate an
 			 * additional offset of the ENA SRD mode that was already processed
 			 */
-			ptr = (u64 *)&adapter->ena_srd_info +
-				ena_stats->stat_offset + 1;
-
-			ena_safe_update_stat(ptr, (*data)++, &adapter->syncp);
+			ptr = (u64 *)&ena_srd_info + ena_stats->stat_offset + 1;
+			**data = *ptr;
+			(*data)++;
 		}
 	}
 }
@@ -373,16 +376,22 @@ static void ena_get_ethtool_stats(struct net_device *netdev,
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 #ifdef ENA_HAVE_KERNEL_ETHTOOL_TS_INFO
-static int ena_get_ts_info(struct net_device *netdev, struct kernel_ethtool_ts_info *info)
+static int ena_get_ts_info(struct net_device *netdev,
+			   struct kernel_ethtool_ts_info *info)
 #else
-static int ena_get_ts_info(struct net_device *netdev, struct ethtool_ts_info *info)
+static int ena_get_ts_info(struct net_device *netdev,
+			   struct ethtool_ts_info *info)
 #endif /* ENA_HAVE_KERNEL_ETHTOOL_TS_INFO */
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
 				SOF_TIMESTAMPING_RX_SOFTWARE |
 				SOF_TIMESTAMPING_SOFTWARE;
+#else
+	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0) */
 
 	info->phc_index = ena_phc_get_index(adapter);
 
@@ -654,7 +663,7 @@ static void ena_update_tx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 
 	val = ena_com_get_nonadaptive_moderation_interval_tx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_io_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues + adapter->xdp_num_queues; i++) {
 		adapter->tx_ring[i].interrupt_interval_changed |=
 			(adapter->tx_ring[i].interrupt_interval != val);
 		adapter->tx_ring[i].interrupt_interval = val;
@@ -668,7 +677,7 @@ static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 
 	val = ena_com_get_nonadaptive_moderation_interval_rx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_io_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues + adapter->xdp_num_queues; i++) {
 		adapter->rx_ring[i].interrupt_interval_changed |=
 			(adapter->rx_ring[i].interrupt_interval != val);
 		adapter->rx_ring[i].interrupt_interval = val;
@@ -1151,7 +1160,7 @@ static int ena_get_steering_rules_cnt(struct ena_com_dev *ena_dev, struct ethtoo
 		return -EOPNOTSUPP;
 
 	info->rule_cnt = ena_dev->flow_steering.active_rules_cnt;
-	info->data = ena_dev->flow_steering.tbl_size;
+	info->data = ena_dev->flow_steering.tbl_size | RX_CLS_LOC_SPECIAL;
 
 	return 0;
 }
@@ -1329,7 +1338,9 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
 static u32 ena_get_rxfh_indir_size(struct net_device *netdev)
 {
-	return ENA_RX_RSS_TABLE_SIZE;
+	struct ena_adapter *adapter = netdev_priv(netdev);
+
+	return get_rss_indirection_table_size(adapter);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
@@ -1342,10 +1353,14 @@ static u32 ena_get_rxfh_key_size(struct net_device *netdev)
 static int ena_indirection_table_set(struct ena_adapter *adapter,
 				     const u32 *indir)
 {
+	u32 table_size = get_rss_indirection_table_size(adapter);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int i, rc;
 
-	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++) {
+	if (table_size == 0)
+		return -EOPNOTSUPP;
+
+	for (i = 0; i < table_size; i++) {
 		rc = ena_com_indirect_table_fill_entry(ena_dev,
 						       i,
 						       ENA_IO_RXQ_IDX(indir[i]));
@@ -1367,8 +1382,12 @@ static int ena_indirection_table_set(struct ena_adapter *adapter,
 
 static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
 {
+	u32 table_size = get_rss_indirection_table_size(adapter);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int i, rc;
+
+	if (table_size == 0)
+		return -EOPNOTSUPP;
 
 	if (!indir)
 		return 0;
@@ -1381,7 +1400,7 @@ static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
 	 * for Tx and uneven indices for Rx. We need to convert the Rx
 	 * indices to be consecutive
 	 */
-	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++)
+	for (i = 0; i < table_size; i++)
 		indir[i] = ENA_IO_RXQ_IDX_TO_COMBINED_IDX(indir[i]);
 
 	return rc;
@@ -1739,22 +1758,18 @@ static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 		return;
 	}
 
-	strings_buf = devm_kcalloc(&adapter->pdev->dev,
-				   ETH_GSTRING_LEN, strings_num,
-				   GFP_ATOMIC);
+	strings_buf = kcalloc(strings_num, ETH_GSTRING_LEN, GFP_ATOMIC);
 	if (!strings_buf) {
 		netif_err(adapter, drv, netdev,
 			  "Failed to allocate strings_buf\n");
 		return;
 	}
 
-	data_buf = devm_kcalloc(&adapter->pdev->dev,
-				strings_num, sizeof(u64),
-				GFP_ATOMIC);
+	data_buf = kcalloc(strings_num, sizeof(u64), GFP_ATOMIC);
 	if (!data_buf) {
 		netif_err(adapter, drv, netdev,
 			  "Failed to allocate data buf\n");
-		devm_kfree(&adapter->pdev->dev, strings_buf);
+		kfree(strings_buf);
 		return;
 	}
 
@@ -1776,8 +1791,8 @@ static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 				  strings_buf + i * ETH_GSTRING_LEN,
 				  data_buf[i]);
 
-	devm_kfree(&adapter->pdev->dev, strings_buf);
-	devm_kfree(&adapter->pdev->dev, data_buf);
+	kfree(strings_buf);
+	kfree(data_buf);
 }
 
 void ena_dump_stats_to_buf(struct ena_adapter *adapter, u8 *buf)
