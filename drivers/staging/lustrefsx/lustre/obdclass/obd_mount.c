@@ -114,8 +114,7 @@ out:
                                    "information.\n", mgc->obd_name, logname,
                                    rc);
 
-        /* class_obd_list(); */
-        RETURN(rc);
+	RETURN(rc);
 }
 EXPORT_SYMBOL(lustre_process_log);
 
