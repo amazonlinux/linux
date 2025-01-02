@@ -425,15 +425,6 @@ static inline int pci_enable_msix_range(struct pci_dev *dev,
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && \
-    !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,1))
-static inline void *devm_kcalloc(struct device *dev,
-				 size_t n, size_t size, gfp_t flags)
-{
-	return devm_kzalloc(dev, n * size, flags | __GFP_ZERO);
-}
-#endif
-
 /*****************************************************************************/
 #if (( LINUX_VERSION_CODE < KERNEL_VERSION(3,13,8) ) && \
      !RHEL_RELEASE_CODE && \
@@ -986,10 +977,6 @@ static inline bool ktime_after(const ktime_t cmp1, const ktime_t cmp2)
 #define ENA_PHC_SUPPORT_GETTIME64_EXTENDED
 #endif /* ENA_PHC_SUPPORT_GETTIME64_EXTENDED */
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)))
-#define ENA_PHC_SUPPORT_ADJFREQ
-#endif /* ENA_PHC_SUPPORT_ADJFREQ */
-
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)) && \
 	!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(6, 4))))
 #define ptp_clock_register(info, parent) ptp_clock_register(info)
@@ -1044,15 +1031,6 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 #endif
 #ifndef FIELD_PREP
 #define FIELD_PREP(mask, value) ((typeof(mask))(((value) << (__builtin_ffsll(mask) - 1)) & (mask)))
-#endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
-#define xdp_features_set_redirect_target(netdev, xdp_xmit_supported)
-#define xdp_features_clear_redirect_target(netdev)
-#define xdp_clear_features_flag(netdev)
-#define xdp_set_features_flag(netdev, features)
-#else /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0) */
-#define ENA_XDP_NETLINK_ADVERTISEMENT
 #endif
 
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 4))) || \
@@ -1165,5 +1143,55 @@ static inline int irq_update_affinity_hint(unsigned int irq, const struct cpumas
 #ifndef RX_CLS_FLOW_WAKE
 #define RX_CLS_FLOW_WAKE	0xfffffffffffffffeULL
 #endif /* RX_CLS_FLOW_WAKE */
+
+#ifndef ENA_HAVE_XDP_FEATURES_SET_REDIRECT_TARGET
+#define xdp_features_set_redirect_target(netdev, xdp_xmit_supported)
+#define xdp_features_clear_redirect_target(netdev)
+#endif /* ENA_HAVE_XDP_FEATURES_SET_REDIRECT_TARGET */
+
+#ifndef ENA_HAVE_XDP_SET_FEATURES_FLAG
+#define xdp_clear_features_flag(netdev)
+#define xdp_set_features_flag(netdev, features)
+#endif /* ENA_HAVE_XDP_SET_FEATURES_FLAG */
+
+#if defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
+#ifdef ENA_AF_XDP_SUPPORT
+#include <net/xdp_sock_drv.h>
+#endif /* ENA_AF_XDP_SUPPORT */
+static inline int ena_xdp_return_buff(struct xdp_buff *xdp)
+{
+	struct xdp_frame *xdpf;
+
+#ifdef ENA_AF_XDP_SUPPORT
+	if (xdp->rxq->mem.type == MEM_TYPE_XSK_BUFF_POOL) {
+		xsk_buff_free(xdp);
+		return 0;
+	}
+#endif
+	/* Non zero-copy pages should be safe to convert to
+	 * an xdp_frame, which has xdp_return_frame() function exported
+	 * to all kernels that support XDP
+	 */
+#ifdef XDP_CONVERT_TO_FRAME_NAME_CHANGED
+	xdpf = xdp_convert_buff_to_frame(xdp);
+#else
+	xdpf = convert_to_xdp_frame(xdp);
+#endif /* XDP_CONVERT_TO_FRAME_NAME_CHANGED */
+	if (!xdpf)
+		return -EOVERFLOW;
+
+	xdp_return_frame(xdpf);
+
+	return 0;
+}
+#elif defined(ENA_XDP_SUPPORT)
+static inline int ena_xdp_return_buff(struct xdp_buff *xdp)
+{
+	/* If xdp_return_buff() is defined it cannot fail */
+	xdp_return_buff(xdp);
+
+	return 0;
+}
+#endif /* defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0) */
 
 #endif /* _KCOMPAT_H_ */
