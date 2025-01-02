@@ -40,6 +40,8 @@
 
 #define ENA_MAX_ADMIN_POLL_US 5000
 
+#define ENA_MAX_INDIR_TABLE_LOG_SIZE 16
+
 /* PHC definitions */
 #define ENA_PHC_DEFAULT_EXPIRE_TIMEOUT_USEC 10
 #define ENA_PHC_DEFAULT_BLOCK_TIMEOUT_USEC 1000
@@ -989,6 +991,12 @@ static bool ena_com_check_supported_feature_id(struct ena_com_dev *ena_dev,
 	return true;
 }
 
+bool ena_com_indirection_table_config_supported(struct ena_com_dev *ena_dev)
+{
+	return ena_com_check_supported_feature_id(ena_dev,
+						  ENA_ADMIN_RSS_INDIRECTION_TABLE_CONFIG);
+}
+
 static int ena_com_get_feature_ex(struct ena_com_dev *ena_dev,
 				  struct ena_admin_get_feat_resp *get_resp,
 				  enum ena_admin_aq_feature_id feature_id,
@@ -1122,50 +1130,52 @@ static void ena_com_hash_ctrl_destroy(struct ena_com_dev *ena_dev)
 	rss->hash_ctrl = NULL;
 }
 
-static int ena_com_indirect_table_allocate(struct ena_com_dev *ena_dev,
-					   u16 log_size)
+static int ena_com_indirect_table_allocate(struct ena_com_dev *ena_dev)
 {
-	struct ena_rss *rss = &ena_dev->rss;
 	struct ena_admin_get_feat_resp get_resp;
-	size_t tbl_size;
+	struct ena_rss *rss = &ena_dev->rss;
+	u16 requested_log_tbl_size;
+	int requested_tbl_size;
 	int ret;
 
 	ret = ena_com_get_feature(ena_dev, &get_resp,
-				  ENA_ADMIN_RSS_INDIRECTION_TABLE_CONFIG, 0);
+				  ENA_ADMIN_RSS_INDIRECTION_TABLE_CONFIG,
+				  ENA_ADMIN_RSS_FEATURE_VERSION_1);
+
 	if (unlikely(ret))
 		return ret;
 
-	if ((get_resp.u.ind_table.min_size > log_size) ||
-	    (get_resp.u.ind_table.max_size < log_size)) {
+	requested_log_tbl_size = get_resp.u.ind_table.max_size;
+
+	if (requested_log_tbl_size > ENA_MAX_INDIR_TABLE_LOG_SIZE) {
 		netdev_err(ena_dev->net_device,
-			   "Indirect table size doesn't fit. requested size: %d while min is:%d and max %d\n",
-			   1 << log_size, 1 << get_resp.u.ind_table.min_size,
-			   1 << get_resp.u.ind_table.max_size);
+			   "Requested indirect table size too large. Requested log size: %u.\n",
+			   requested_log_tbl_size);
 		return -EINVAL;
 	}
 
-	tbl_size = (1ULL << log_size) *
-		sizeof(struct ena_admin_rss_ind_table_entry);
-
-	rss->rss_ind_tbl = dma_zalloc_coherent(ena_dev->dmadev, tbl_size,
+	requested_tbl_size =
+		(1ULL << requested_log_tbl_size) * sizeof(struct ena_admin_rss_ind_table_entry);
+	rss->rss_ind_tbl = dma_zalloc_coherent(ena_dev->dmadev, requested_tbl_size,
 					       &rss->rss_ind_tbl_dma_addr, GFP_KERNEL);
 	if (unlikely(!rss->rss_ind_tbl))
 		goto mem_err1;
 
-	tbl_size = (1ULL << log_size) * sizeof(u16);
-	rss->host_rss_ind_tbl = devm_kzalloc(ena_dev->dmadev, tbl_size, GFP_KERNEL);
+	requested_tbl_size = (1ULL << requested_log_tbl_size) *
+			     sizeof(u16);
+	rss->host_rss_ind_tbl = devm_kzalloc(ena_dev->dmadev, requested_tbl_size, GFP_KERNEL);
 	if (unlikely(!rss->host_rss_ind_tbl))
 		goto mem_err2;
 
-	rss->tbl_log_size = log_size;
+	rss->tbl_log_size = requested_log_tbl_size;
 
 	return 0;
 
 mem_err2:
-	tbl_size = (1ULL << log_size) *
-		sizeof(struct ena_admin_rss_ind_table_entry);
-
-	dma_free_coherent(ena_dev->dmadev, tbl_size, rss->rss_ind_tbl, rss->rss_ind_tbl_dma_addr);
+	dma_free_coherent(ena_dev->dmadev,
+			  (1ULL << requested_log_tbl_size) *
+				  sizeof(struct ena_admin_rss_ind_table_entry),
+			  rss->rss_ind_tbl, rss->rss_ind_tbl_dma_addr);
 	rss->rss_ind_tbl = NULL;
 mem_err1:
 	rss->tbl_log_size = 0;
@@ -1715,15 +1725,21 @@ int ena_com_phc_config(struct ena_com_dev *ena_dev)
 		return -EOPNOTSUPP;
 	}
 
-	/* Update PHC doorbell offset according to device value, used to write req_id to PHC bar */
+	/* Update PHC doorbell offset according to device value,
+	 * used to write req_id to PHC bar
+	 */
 	phc->doorbell_offset = get_feat_resp.u.phc.doorbell_offset;
 
-	/* Update PHC expire timeout according to device or default driver value */
+	/* Update PHC expire timeout according to device
+	 * or default driver value
+	 */
 	phc->expire_timeout_usec = (get_feat_resp.u.phc.expire_timeout_usec) ?
 				    get_feat_resp.u.phc.expire_timeout_usec :
 				    ENA_PHC_DEFAULT_EXPIRE_TIMEOUT_USEC;
 
-	/* Update PHC block timeout according to device or default driver value */
+	/* Update PHC block timeout according to device
+	 * or default driver value
+	 */
 	phc->block_timeout_usec = (get_feat_resp.u.phc.block_timeout_usec) ?
 				   get_feat_resp.u.phc.block_timeout_usec :
 				   ENA_PHC_DEFAULT_BLOCK_TIMEOUT_USEC;
@@ -1737,7 +1753,9 @@ int ena_com_phc_config(struct ena_com_dev *ena_dev)
 	set_feat_cmd.aq_common_descriptor.opcode = ENA_ADMIN_SET_FEATURE;
 	set_feat_cmd.feat_common.feature_id = ENA_ADMIN_PHC_CONFIG;
 	set_feat_cmd.u.phc.output_length = sizeof(*phc->virt_addr);
-	ret = ena_com_mem_addr_set(ena_dev, &set_feat_cmd.u.phc.output_address, phc->phys_addr);
+	ret = ena_com_mem_addr_set(ena_dev,
+				   &set_feat_cmd.u.phc.output_address,
+				   phc->phys_addr);
 	if (unlikely(ret)) {
 		netdev_err(ena_dev->net_device, "Failed setting PHC output address, error: %d\n",
 			   ret);
@@ -1807,15 +1825,19 @@ int ena_com_phc_get_timestamp(struct ena_com_dev *ena_dev, u64 *timestamp)
 			goto skip;
 		}
 
-		/* PHC is in active state, update statistics according to req_id and error_flags */
+		/* PHC is in active state, update statistics according
+		 * to req_id and error_flags
+		 */
 		if ((READ_ONCE(read_resp->req_id) != phc->req_id) ||
 		    (read_resp->error_flags & ENA_PHC_ERROR_FLAGS))
-			/* Device didn't update req_id during blocking time or timestamp is invalid,
-			 * this indicates on a device error
+			/* Device didn't update req_id during blocking time or
+			 * timestamp is invalid, this indicates on a device error
 			 */
 			phc->stats.phc_err++;
 		else
-			/* Device updated req_id during blocking time with valid timestamp */
+			/* Device updated req_id during blocking time
+			 * with valid timestamp
+			 */
 			phc->stats.phc_exp++;
 	}
 
@@ -1824,11 +1846,13 @@ int ena_com_phc_get_timestamp(struct ena_com_dev *ena_dev, u64 *timestamp)
 	block_time = ktime_add_us(phc->system_time, phc->block_timeout_usec);
 	expire_time = ktime_add_us(phc->system_time, phc->expire_timeout_usec);
 
-	/* We expect the device to return this req_id once the new PHC timestamp is updated */
+	/* We expect the device to return this req_id once
+	 * the new PHC timestamp is updated
+	 */
 	phc->req_id++;
 
-	/* Initialize PHC shared memory with different req_id value to be able to identify once the
-	 * device changes it to req_id
+	/* Initialize PHC shared memory with different req_id value
+	 * to be able to identify once the device changes it to req_id
 	 */
 	read_resp->req_id = phc->req_id + ENA_PHC_REQ_ID_OFFSET;
 
@@ -1838,9 +1862,10 @@ int ena_com_phc_get_timestamp(struct ena_com_dev *ena_dev, u64 *timestamp)
 	/* Stalling until the device updates req_id */
 	while (1) {
 		if (unlikely(ktime_after(ktime_get(), expire_time))) {
-			/* Gave up waiting for updated req_id, PHC enters into blocked state until
-			 * passing blocking time, during this time any get PHC timestamp or
-			 * error bound requests will fail with device busy error
+			/* Gave up waiting for updated req_id,
+			 * PHC enters into blocked state until passing blocking time,
+			 * during this time any get PHC timestamp or error bound
+			 * requests will fail with device busy error
 			 */
 			phc->error_bound = ENA_PHC_MAX_ERROR_BOUND;
 			ret = -EBUSY;
@@ -1849,18 +1874,22 @@ int ena_com_phc_get_timestamp(struct ena_com_dev *ena_dev, u64 *timestamp)
 
 		/* Check if req_id was updated by the device */
 		if (READ_ONCE(read_resp->req_id) != phc->req_id) {
-			/* req_id was not updated by the device yet, check again on next loop */
+			/* req_id was not updated by the device yet,
+			 * check again on next loop
+			 */
 			continue;
 		}
 
-		/* req_id was updated by the device which indicates that PHC timestamp, error_bound
-		 * and error_flags are updated too, checking errors before retrieving timestamp and
+		/* req_id was updated by the device which indicates that
+		 * PHC timestamp, error_bound and error_flags are updated too,
+		 * checking errors before retrieving timestamp and
 		 * error_bound values
 		 */
 		if (unlikely(read_resp->error_flags & ENA_PHC_ERROR_FLAGS)) {
-			/* Retrieved timestamp or error bound errors, PHC enters into blocked state
-			 * until passing blocking time, during this time any get PHC timestamp or
-			 * error bound requests will fail with device busy error
+			/* Retrieved timestamp or error bound errors,
+			 * PHC enters into blocked state until passing blocking time,
+			 * during this time any get PHC timestamp or error bound
+			 * requests will fail with device busy error
 			 */
 			phc->error_bound = ENA_PHC_MAX_ERROR_BOUND;
 			ret = -EBUSY;
@@ -1982,6 +2011,7 @@ int ena_com_admin_init(struct ena_com_dev *ena_dev,
 	admin_queue->q_depth = ENA_ADMIN_QUEUE_DEPTH;
 
 	admin_queue->bus = ena_dev->bus;
+	admin_queue->ena_dev = ena_dev;
 	admin_queue->q_dmadev = ena_dev->dmadev;
 	admin_queue->polling = false;
 	admin_queue->curr_cmd_id = 0;
@@ -2033,7 +2063,6 @@ int ena_com_admin_init(struct ena_com_dev *ena_dev,
 	if (unlikely(ret))
 		goto error;
 
-	admin_queue->ena_dev = ena_dev;
 	admin_queue->running_state = true;
 	admin_queue->is_missing_admin_interrupt = false;
 
@@ -2601,24 +2630,6 @@ int ena_com_set_dev_mtu(struct ena_com_dev *ena_dev, u32 mtu)
 	return ret;
 }
 
-int ena_com_get_offload_settings(struct ena_com_dev *ena_dev,
-				 struct ena_admin_feature_offload_desc *offload)
-{
-	int ret;
-	struct ena_admin_get_feat_resp resp;
-
-	ret = ena_com_get_feature(ena_dev, &resp,
-				  ENA_ADMIN_STATELESS_OFFLOAD_CONFIG, 0);
-	if (unlikely(ret)) {
-		netdev_err(ena_dev->net_device, "Failed to get offload capabilities %d\n", ret);
-		return ret;
-	}
-
-	memcpy(offload, &resp.u.offload, sizeof(resp.u.offload));
-
-	return 0;
-}
-
 int ena_com_set_hash_function(struct ena_com_dev *ena_dev)
 {
 	struct ena_com_admin_queue *admin_queue = &ena_dev->admin_queue;
@@ -3030,13 +3041,13 @@ int ena_com_indirect_table_get(struct ena_com_dev *ena_dev, u32 *ind_tbl)
 	return 0;
 }
 
-int ena_com_rss_init(struct ena_com_dev *ena_dev, u16 indr_tbl_log_size)
+int ena_com_rss_init(struct ena_com_dev *ena_dev)
 {
 	int rc;
 
 	memset(&ena_dev->rss, 0x0, sizeof(ena_dev->rss));
 
-	rc = ena_com_indirect_table_allocate(ena_dev, indr_tbl_log_size);
+	rc = ena_com_indirect_table_allocate(ena_dev);
 	if (unlikely(rc))
 		goto err_indr_tbl;
 
