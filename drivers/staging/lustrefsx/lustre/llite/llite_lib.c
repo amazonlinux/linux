@@ -1193,10 +1193,12 @@ void ll_put_super(struct super_block *sb)
 	struct obd_device *obd;
 	struct lustre_sb_info *lsi = s2lsi(sb);
 	struct ll_sb_info *sbi = ll_s2sbi(sb);
+	unsigned long dev_no = 0;
 	char *profilenm = get_profile_name(sb);
 	unsigned long cfg_instance = ll_get_cfg_instance(sb);
 	long ccc_count;
-	int next, force = 1, rc = 0;
+	int force = 1, rc = 0;
+
 	ENTRY;
 
 	if (!sbi)
@@ -1230,25 +1232,28 @@ void ll_put_super(struct super_block *sb)
 	if (force == 0 && rc != -EINTR)
 		LASSERTF(ccc_count == 0, "count: %li\n", ccc_count);
 
-        /* We need to set force before the lov_disconnect in
-           lustre_common_put_super, since l_d cleans up osc's as well. */
-        if (force) {
-                next = 0;
-                while ((obd = class_devices_in_group(&sbi->ll_sb_uuid,
-                                                     &next)) != NULL) {
-                        obd->obd_force = force;
-                }
-        }
+	/* We need to set force before the lov_disconnect in
+	 * lustre_common_put_super, since l_d cleans up osc's as well.
+	 */
+	if (force) {
+		obd_device_lock();
+		obd_device_for_each_uuid(dev_no, obd, &sbi->ll_sb_uuid)
+			obd->obd_force = force;
+		obd_device_unlock();
+	}
 
 	if (sbi->ll_client_common_fill_super_succeeded) {
 		/* Only if client_common_fill_super succeeded */
 		client_common_put_super(sb);
 	}
 
-        next = 0;
-        while ((obd = class_devices_in_group(&sbi->ll_sb_uuid, &next)) !=NULL) {
-                class_manual_cleanup(obd);
-        }
+	/*
+	 * Cleanup, detach OBD devices, and remove them from Xarray.
+	 * We don't grab the xa_lock() since class_manual_cleanup()
+	 * uses the lock internally.
+	 */
+	obd_device_for_each_uuid(dev_no, obd, &sbi->ll_sb_uuid)
+		class_manual_cleanup(obd);
 
         if (sbi->ll_flags & LL_SBI_VERBOSE)
                 LCONSOLE_WARN("Unmounted %s\n", profilenm ? profilenm : "");
@@ -1529,12 +1534,12 @@ static int ll_update_lsm_md(struct inode *inode, struct lustre_md *md)
 	 */
 	md->lmv = NULL;
 
-	
+
 	/* md_merge_attr() may take long, since lsm is already set, switch to
 	 * read lock.
 	 */
 	down_read(&lli->lli_lsm_sem);
-	
+
 	if (!lmv_dir_striped(lli->lli_lsm_md))
 		GOTO(unlock, rc = 0);
 
