@@ -31,7 +31,7 @@
 
 #include "ena_phc.h"
 
-static char version[] = DEVICE_NAME " v" DRV_MODULE_GENERATION "\n";
+static char driver_info[] = DEVICE_NAME " v" DRV_MODULE_GENERATION "\n";
 
 MODULE_AUTHOR("Amazon.com, Inc. or its affiliates");
 MODULE_DESCRIPTION(DEVICE_NAME);
@@ -408,7 +408,6 @@ static int ena_setup_tx_resources(struct ena_adapter *adapter, int qid)
 	tx_ring->next_to_use = 0;
 	tx_ring->next_to_clean = 0;
 	tx_ring->cpu = ena_irq->cpu;
-	tx_ring->numa_node = node;
 	return 0;
 
 err_push_buf_intermediate_buf:
@@ -653,6 +652,7 @@ static int ena_alloc_rx_buffer(struct ena_ring *rx_ring,
 			return -ENOMEM;
 
 		ena_buf = &rx_info->ena_buf;
+		/* returned dma contains XDP_PACKET_HEADROOM and pool's headroom */
 		ena_buf->paddr = xsk_buff_xdp_get_dma(xdp);
 		ena_buf->len = xsk_pool_get_rx_frame_size(rx_ring->xsk_pool);
 
@@ -1407,7 +1407,7 @@ static int ena_xdp_handle_buff(struct ena_ring *rx_ring, struct xdp_buff *xdp, u
 		netdev_err_once(rx_ring->adapter->netdev,
 				"xdp: dropped unsupported multi-buffer packets\n");
 		ena_increase_stat(&rx_ring->rx_stats.xdp_drop, 1, &rx_ring->syncp);
-		return ENA_XDP_DROP;
+		return ENA_XDP_RECYCLE;
 	}
 
 	rx_info = &rx_ring->rx_buffer_info[rx_ring->ena_bufs[0].req_id];
@@ -1520,7 +1520,8 @@ static int ena_clean_rx_irq(struct ena_ring *rx_ring, struct napi_struct *napi,
 				/* Packets was passed for transmission, unmap it
 				 * from RX side.
 				 */
-				if (xdp_verdict & ENA_XDP_FORWARDED) {
+				if (xdp_verdict &
+				    (ENA_XDP_FORWARDED | ENA_XDP_DROP)) {
 					ena_unmap_rx_buff_attrs(rx_ring,
 								&rx_ring->rx_buffer_info[req_id],
 								ENA_DMA_ATTR_SKIP_CPU_SYNC);
@@ -1645,7 +1646,11 @@ static void ena_adjust_adaptive_rx_intr_moderation(struct ena_napi *ena_napi)
 			  rx_ring->rx_stats.bytes,
 			  &dim_sample);
 
+#ifdef ENA_NET_DIM_SAMPLE_PARAM_BY_REF
+	net_dim(&ena_napi->dim, &dim_sample);
+#else
 	net_dim(&ena_napi->dim, dim_sample);
+#endif /* ENA_NET_DIM_SAMPLE_PARAM_BY_REF */
 
 	rx_ring->per_napi_packets = 0;
 }
@@ -2168,10 +2173,23 @@ static void ena_napi_disable_in_range(struct ena_adapter *adapter,
 				      int first_index,
 				      int count)
 {
+	struct napi_struct *napi;
 	int i;
 
-	for (i = first_index; i < first_index + count; i++)
-		napi_disable(&adapter->ena_napi[i].napi);
+	for (i = first_index; i < first_index + count; i++) {
+		napi = &adapter->ena_napi[i].napi;
+#ifdef ENA_NAPI_IRQ_AND_QUEUE_ASSOC
+		if (!ENA_IS_XDP_INDEX(adapter, i)) {
+			/* This API is supported for non-XDP queues only */
+			netif_queue_set_napi(adapter->netdev, i,
+					     NETDEV_QUEUE_TYPE_TX, NULL);
+			netif_queue_set_napi(adapter->netdev, i,
+					     NETDEV_QUEUE_TYPE_RX, NULL);
+		}
+
+#endif /* ENA_NAPI_IRQ_AND_QUEUE_ASSOC */
+		napi_disable(napi);
+	}
 }
 #endif
 
@@ -2179,10 +2197,22 @@ static void ena_napi_enable_in_range(struct ena_adapter *adapter,
 				     int first_index,
 				     int count)
 {
+	struct napi_struct *napi;
 	int i;
 
-	for (i = first_index; i < first_index + count; i++)
-		napi_enable(&adapter->ena_napi[i].napi);
+	for (i = first_index; i < first_index + count; i++) {
+		napi = &adapter->ena_napi[i].napi;
+		napi_enable(napi);
+#ifdef ENA_NAPI_IRQ_AND_QUEUE_ASSOC
+		if (!ENA_IS_XDP_INDEX(adapter, i)) {
+			/* This API is supported for non-XDP queues only */
+			netif_queue_set_napi(adapter->netdev, i,
+					     NETDEV_QUEUE_TYPE_RX, napi);
+			netif_queue_set_napi(adapter->netdev, i,
+					     NETDEV_QUEUE_TYPE_TX, napi);
+		}
+#endif /* ENA_NAPI_IRQ_AND_QUEUE_ASSOC */
+	}
 }
 
 /* Configure the Rx forwarding */
@@ -2284,7 +2314,6 @@ static int ena_create_io_tx_queue(struct ena_adapter *adapter, int qid)
 	ctx.mem_queue_type = ena_dev->tx_mem_queue_type;
 	ctx.msix_vector = msix_vector;
 	ctx.queue_size = tx_ring->ring_size;
-	ctx.numa_node = tx_ring->numa_node;
 
 	rc = ena_com_create_io_queue(ena_dev, &ctx);
 	if (unlikely(rc)) {
@@ -2351,7 +2380,6 @@ static int ena_create_io_rx_queue(struct ena_adapter *adapter, int qid)
 	ctx.mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_HOST;
 	ctx.msix_vector = msix_vector;
 	ctx.queue_size = rx_ring->ring_size;
-	ctx.numa_node = rx_ring->numa_node;
 
 	rc = ena_com_create_io_queue(ena_dev, &ctx);
 	if (unlikely(rc)) {
@@ -2371,7 +2399,7 @@ static int ena_create_io_rx_queue(struct ena_adapter *adapter, int qid)
 		goto err;
 	}
 
-	ena_com_update_numa_node(rx_ring->ena_com_io_cq, ctx.numa_node);
+	ena_com_update_numa_node(rx_ring->ena_com_io_cq, rx_ring->numa_node);
 
 	return rc;
 err:
@@ -2516,6 +2544,24 @@ err_setup_tx:
 	}
 }
 
+#ifdef ENA_NAPI_IRQ_AND_QUEUE_ASSOC
+static void ena_associate_irq_and_napi(struct ena_adapter *adapter)
+{
+	u32 io_queue_count = adapter->num_io_queues + adapter->xdp_num_queues;
+	struct ena_irq *irq;
+	int irq_idx, i;
+
+	/* Note that the mgmnt IRQ does not have a NAPI,
+	 * so care must be taken to correctly map IRQs to NAPIs.
+	 */
+	for (i = 0; i < io_queue_count; i++) {
+		irq_idx = ENA_IO_IRQ_IDX(i);
+		irq = &adapter->irq_tbl[irq_idx];
+		netif_napi_set_irq(&adapter->ena_napi[i].napi, irq->vector);
+	}
+}
+
+#endif
 int ena_up(struct ena_adapter *adapter)
 {
 	int io_queue_count, rc, i;
@@ -2542,6 +2588,10 @@ int ena_up(struct ena_adapter *adapter)
 	if (rc)
 		goto err_req_irq;
 
+#ifdef ENA_NAPI_IRQ_AND_QUEUE_ASSOC
+	ena_associate_irq_and_napi(adapter);
+
+#endif
 	rc = create_queues_with_size_backoff(adapter);
 	if (rc)
 		goto err_create_queues_with_backoff;
@@ -3463,6 +3513,16 @@ static int ena_busy_poll(struct napi_struct *napi)
 }
 #endif
 
+#ifdef CONFIG_RFS_ACCEL
+static int ena_rx_flow_steer(struct net_device *dev,
+			     const struct sk_buff *skb,
+			     u16 rxq_index,
+			     u32 flow_id)
+{
+	return -EOPNOTSUPP;
+}
+
+#endif /* CONFIG_RFS_ACCEL */
 static const struct net_device_ops ena_netdev_ops = {
 	.ndo_open		= ena_open,
 	.ndo_stop		= ena_close,
@@ -3492,6 +3552,9 @@ static const struct net_device_ops ena_netdev_ops = {
 	.ndo_xsk_wakeup         = ena_xdp_xsk_wakeup,
 #endif /* ENA_AF_XDP_SUPPORT */
 #endif /* ENA_XDP_SUPPORT */
+#ifdef CONFIG_RFS_ACCEL
+	.ndo_rx_flow_steer	= ena_rx_flow_steer,
+#endif /* CONFIG_RFS_ACCEL */
 };
 
 static int ena_calc_io_queue_size(struct ena_adapter *adapter,
@@ -4065,8 +4128,8 @@ static void ena_fw_reset_device(struct work_struct *work)
 		adapter->dev_stats.reset_fail += !!rc;
 
 		dev_err(&adapter->pdev->dev,
-			"Device reset completed successfully, Driver info: %s\n",
-			version);
+			"Device reset completed, status: %d, Driver info: %s\n",
+			rc, driver_info);
 	}
 
 	rtnl_unlock();
@@ -4589,16 +4652,21 @@ static int ena_rss_init_default(struct ena_adapter *adapter)
 {
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	struct device *dev = &adapter->pdev->dev;
+	u32 table_size;
 	int rc, i;
 	u32 val;
 
-	rc = ena_com_rss_init(ena_dev, ENA_RX_RSS_TABLE_LOG_SIZE);
+	rc = ena_com_rss_init(ena_dev);
 	if (unlikely(rc)) {
 		dev_err(dev, "Cannot init indirect table\n");
 		goto err_rss_init;
 	}
 
-	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++) {
+	table_size = get_rss_indirection_table_size(adapter);
+	if (table_size == 0)
+		return -EOPNOTSUPP;
+
+	for (i = 0; i < table_size; i++) {
 		val = ethtool_rxfh_indir_default(i, adapter->num_io_queues);
 		rc = ena_com_indirect_table_fill_entry(ena_dev, i,
 						       ENA_IO_RXQ_IDX(val));
@@ -4660,7 +4728,7 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	dev_dbg(&pdev->dev, "%s\n", __func__);
 
-	dev_info_once(&pdev->dev, "%s", version);
+	dev_info_once(&pdev->dev, "%s", driver_info);
 
 	rc = pci_enable_device_mem(pdev);
 	if (rc) {
@@ -4873,7 +4941,7 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_rss;
 	}
 
-#ifdef ENA_XDP_NETLINK_ADVERTISEMENT
+#ifdef ENA_HAVE_NETDEV_XDP_FEATURES
 	if (ena_xdp_legal_queue_count(adapter, adapter->num_io_queues))
 		netdev->xdp_features = ENA_XDP_FEATURES;
 
