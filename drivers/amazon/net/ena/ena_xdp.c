@@ -387,7 +387,7 @@ static bool ena_can_queue_have_xsk_pool(struct ena_adapter *adapter, u16 qid)
 		return false;
 	}
 
-	if (qid > adapter->num_io_queues) {
+	if (qid >= adapter->num_io_queues) {
 		netdev_err(adapter->netdev,
 			   "UMEM queue id %d is higher than number of queues",
 			   qid);
@@ -879,7 +879,8 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 		/* First descriptor might have an offset set by the device */
 		rx_info = &rx_ring->rx_buffer_info[ena_rx_ctx.ena_bufs[0].req_id];
 		xdp = rx_info->xdp;
-		xdp->data = xdp->data_hard_start + rx_ring->rx_headroom +
+		/* hard_data_start contains UMEM pool's headroom */
+		xdp->data = xdp->data_hard_start + XDP_PACKET_HEADROOM +
 			    ena_rx_ctx.pkt_offset;
 		xdp->data_end = xdp->data + ena_rx_ctx.ena_bufs[0].len;
 		xsk_buff_dma_sync_for_cpu(xdp, rx_ring->xsk_pool);
@@ -889,7 +890,7 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 			netdev_err_once(rx_ring->adapter->netdev,
 					"xdp: dropped unsupported multi-buffer packets\n");
 			ena_increase_stat(&rx_ring->rx_stats.xdp_drop, 1, &rx_ring->syncp);
-			xdp_verdict = ENA_XDP_DROP;
+			xdp_verdict = ENA_XDP_RECYCLE;
 		} else if (likely(xdp_prog_present)) {
 			xdp_verdict = ena_xdp_execute(rx_ring, xdp);
 		}
@@ -910,8 +911,8 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 			total_len += ena_rx_ctx.ena_bufs[0].len;
 			xdp_flags |= xdp_verdict;
 
-			/* Mark buffer as consumed when it is redirected */
-			if (likely(xdp_verdict & ENA_XDP_FORWARDED))
+			/* Mark buffer as consumed when it is redirected or freed */
+			if (likely(xdp_verdict & (ENA_XDP_FORWARDED | ENA_XDP_DROP)))
 				rx_info->xdp = NULL;
 
 			continue;
@@ -1014,6 +1015,7 @@ int ena_xdp_io_poll(struct napi_struct *napi, int budget)
 #else
 	if (!ENA_IS_XSK_RING(tx_ring)) {
 		work_done = ena_clean_xdp_irq(tx_ring, budget);
+		needs_wakeup &= work_done < budget;
 	} else {
 		needs_wakeup &= ena_xdp_clean_tx_zc(tx_ring, budget);
 
