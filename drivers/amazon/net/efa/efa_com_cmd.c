@@ -31,6 +31,10 @@ int efa_com_create_qp(struct efa_com_dev *edev,
 	create_qp_cmd.qp_alloc_size.recv_queue_depth =
 			params->rq_depth;
 	create_qp_cmd.uar = params->uarn;
+	create_qp_cmd.sl = params->sl;
+
+	if (params->unsolicited_write_recv)
+		EFA_SET(&create_qp_cmd.flags, EFA_ADMIN_CREATE_QP_CMD_UNSOLICITED_WRITE_RECV, 1);
 
 	err = efa_com_cmd_exec(aq,
 			       (struct efa_admin_aq_entry *)&create_qp_cmd,
@@ -160,7 +164,7 @@ int efa_com_create_cq(struct efa_com_dev *edev,
 	EFA_SET(&create_cmd.cq_caps_2,
 		EFA_ADMIN_CREATE_CQ_CMD_CQ_ENTRY_SIZE_WORDS,
 		params->entry_size_in_bytes / 4);
-	create_cmd.cq_depth = params->cq_depth;
+	create_cmd.sub_cq_depth = params->sub_cq_depth;
 	create_cmd.num_sub_cqs = params->num_sub_cqs;
 	create_cmd.uar = params->uarn;
 	if (params->interrupt_mode_enabled) {
@@ -188,7 +192,7 @@ int efa_com_create_cq(struct efa_com_dev *edev,
 	}
 
 	result->cq_idx = cmd_completion.cq_idx;
-	result->actual_depth = params->cq_depth;
+	result->actual_depth = params->sub_cq_depth;
 	result->db_off = cmd_completion.db_offset;
 	result->db_valid = EFA_GET(&cmd_completion.flags,
 				   EFA_ADMIN_CREATE_CQ_RESP_DB_VALID);
@@ -244,6 +248,8 @@ int efa_com_register_mr(struct efa_com_dev *edev,
 		memcpy(mr_cmd.pbl.inline_pbl_array,
 		       params->pbl.inline_pbl_array,
 		       sizeof(mr_cmd.pbl.inline_pbl_array));
+	} else if (params->page_num == 0) {
+		EFA_SET(&mr_cmd.flags, EFA_ADMIN_REG_MR_CMD_MEM_ADDR_PHY_MODE_EN, 1);
 	} else {
 		mr_cmd.pbl.pbl.length = params->pbl.pbl.length;
 		mr_cmd.pbl.pbl.address.mem_addr_low =
@@ -300,12 +306,41 @@ int efa_com_dereg_mr(struct efa_com_dev *edev,
 			       (struct efa_admin_acq_entry *)&cmd_completion,
 			       sizeof(cmd_completion));
 	if (err) {
-		ibdev_err_ratelimited(
-			edev->efa_dev,
-			"Failed to de-register mr(lkey-%u) [%d]\n",
-			mr_cmd.l_key, err);
+		ibdev_err_ratelimited(edev->efa_dev,
+				      "Failed to de-register mr(lkey-%u) [%d]\n",
+				      mr_cmd.l_key, err);
 		return err;
 	}
+
+	return 0;
+}
+
+int efa_com_alloc_mr(struct efa_com_dev *edev,
+		     struct efa_com_alloc_mr_params *params,
+		     struct efa_com_alloc_mr_result *result)
+{
+	struct efa_admin_alloc_mr_resp cmd_completion;
+	struct efa_com_admin_queue *aq = &edev->aq;
+	struct efa_admin_alloc_mr_cmd mr_cmd = {};
+	int err;
+
+	mr_cmd.aq_common_desc.opcode = EFA_ADMIN_ALLOC_MR;
+	mr_cmd.pd = params->pd;
+	mr_cmd.max_pages = params->max_pages;
+
+	err = efa_com_cmd_exec(aq,
+			       (struct efa_admin_aq_entry *)&mr_cmd,
+			       sizeof(mr_cmd),
+			       (struct efa_admin_acq_entry *)&cmd_completion,
+			       sizeof(cmd_completion));
+	if (err) {
+		ibdev_err_ratelimited(edev->efa_dev,
+				      "Failed to allocate mr [%d]\n", err);
+		return err;
+	}
+
+	result->l_key = cmd_completion.l_key;
+	result->r_key = cmd_completion.r_key;
 
 	return 0;
 }
@@ -463,6 +498,8 @@ int efa_com_get_device_attr(struct efa_com_dev *edev,
 	result->db_bar = resp.u.device_attr.db_bar;
 	result->max_rdma_size = resp.u.device_attr.max_rdma_size;
 	result->device_caps = resp.u.device_attr.device_caps;
+	result->guid = resp.u.device_attr.guid;
+	result->max_link_speed_gbps = resp.u.device_attr.max_link_speed_gbps;
 
 	if (result->admin_api_version < 1) {
 		ibdev_err_ratelimited(
