@@ -44,6 +44,8 @@ struct efa_stats {
 	atomic64_t create_ah_err;
 	atomic64_t mmap_err;
 	atomic64_t keep_alive_rcvd;
+	atomic64_t alloc_mr_err;
+	atomic64_t get_dma_mr_err;
 };
 
 struct efa_dev {
@@ -58,7 +60,10 @@ struct efa_dev {
 	u64 mem_bar_len;
 	u64 db_bar_addr;
 	u64 db_bar_len;
+	u8 __iomem *mem_bar;
+	u8 __iomem *db_bar;
 
+	unsigned int num_irq_vectors;
 	int admin_msix_vector_idx;
 	struct efa_irq admin_irq;
 
@@ -70,6 +75,11 @@ struct efa_dev {
 
 	/* Only stores CQs with interrupts enabled */
 	struct xarray cqs_xa;
+	u16 uarn;
+	struct efa_qp **qp_table;
+	/* Protects against simultaneous QPs insertion or removal */
+	spinlock_t qp_table_lock;
+	u32 qp_table_mask;
 };
 
 struct efa_ucontext {
@@ -93,10 +103,32 @@ struct efa_mr_interconnect_info {
 
 struct efa_mr {
 	struct ib_mr ibmr;
-	struct ib_umem *umem;
-	struct efa_mr_interconnect_info ic_info;
-	struct efa_p2pmem *p2pmem;
-	u64 p2p_ticket;
+	union {
+		/* Used only by kernel MRs */
+		struct {
+			u64 *pages_list;
+			u32 pages_list_length;
+			dma_addr_t pages_list_dma_addr;
+			u32 num_pages;
+		};
+
+		/* Used only by User MRs */
+		struct {
+			struct ib_umem *umem;
+			struct efa_mr_interconnect_info ic_info;
+			struct efa_p2pmem *p2pmem;
+			u64 p2p_ticket;
+		};
+	};
+};
+
+struct efa_sub_cq {
+	u8 *buf;
+	u32 cqe_size;
+	u32 queue_mask;
+	u32 ref_cnt;
+	u32 consumed_cnt;
+	int phase;
 };
 
 struct efa_cq {
@@ -110,6 +142,57 @@ struct efa_cq {
 	u16 cq_idx;
 	/* NULL when no interrupts requested */
 	struct efa_eq *eq;
+	u8 *buf;
+	size_t buf_size;
+	struct efa_sub_cq *sub_cq_arr;
+	u16 num_sub_cqs;
+	u32 *db;
+	/* Index of next sub cq idx to poll. This is used to guarantee fairness for sub cqs */
+	u16 next_poll_idx;
+	/* Protects the access to the CQ and CQ to QP association */
+	u16 cc; /* Consumer Counter */
+	u8 cmd_sn;
+	spinlock_t lock;
+};
+
+struct efa_wq {
+	u64 *wrid;
+	/* wrid_idx_pool: Pool of free indexes in the wrid array, used to select the
+	 * wrid entry to be used to hold the next tx packet's context.
+	 * At init time, entry N will hold value N, as OOO tx-completions arrive,
+	 * the value stored in a given entry might not equal the entry's index.
+	 */
+	u32 *wrid_idx_pool;
+	/* wrid_idx_pool_next: Index of the next entry to use in wrid_idx_pool. */
+	u32 wrid_idx_pool_next;
+	u32 max_sge;
+	u32 max_wqes;
+	u32 queue_mask;
+	u32 *db;
+	u32 wqes_posted;
+	u32 wqes_completed;
+	/* Producer counter */
+	u32 pc;
+	int phase;
+	u16 sub_cq_idx;
+	/* Synchronizes access to the WQ on datapath */
+	spinlock_t lock;
+};
+
+struct efa_rq {
+	struct efa_wq wq;
+	u8 *buf;
+	size_t buf_size;
+};
+
+struct efa_sq {
+	struct efa_wq wq;
+	u8 *desc;
+	u32 desc_offset;
+	u32 max_inline_data;
+	u32 max_rdma_sges;
+	u32 max_batch_wr;
+	enum ib_sig_type sig_type;
 };
 
 struct efa_qp {
@@ -131,6 +214,8 @@ struct efa_qp {
 	u32 max_send_sge;
 	u32 max_recv_sge;
 	u32 max_inline_data;
+	struct efa_sq sq;
+	struct efa_rq rq;
 };
 
 struct efa_ah {
@@ -169,6 +254,9 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 			 u64 virt_addr, int access_flags,
 			 struct ib_udata *udata);
+struct ib_mr *efa_get_dma_mr(struct ib_pd *pd, int mr_access_flags);
+struct ib_mr *efa_alloc_fast_mr(struct ib_pd *ibpd, enum ib_mr_type mr_type,
+				u32 max_num_sg);
 int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata);
 int efa_get_port_immutable(struct ib_device *ibdev, port_t port_num,
 			   struct ib_port_immutable *immutable);
@@ -181,6 +269,16 @@ int efa_create_ah(struct ib_ah *ibah,
 		  struct rdma_ah_init_attr *init_attr,
 		  struct ib_udata *udata);
 int efa_destroy_ah(struct ib_ah *ibah, u32 flags);
+int efa_post_send(struct ib_qp *ibqp,
+		  const struct ib_send_wr *wr,
+		  const struct ib_send_wr **bad_wr);
+int efa_post_recv(struct ib_qp *ibqp,
+		  const struct ib_recv_wr *wr,
+		  const struct ib_recv_wr **bad_wr);
+int efa_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc);
+int efa_req_notify_cq(struct ib_cq *ibcq, enum ib_cq_notify_flags flags);
+int efa_map_mr_sg(struct ib_mr *ibmr, struct scatterlist *sg, int sg_nents,
+		  unsigned int *sg_offset);
 int efa_modify_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 		  int qp_attr_mask, struct ib_udata *udata);
 enum rdma_link_layer efa_port_link_layer(struct ib_device *ibdev,
