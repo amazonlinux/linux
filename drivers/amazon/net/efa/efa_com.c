@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2021 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "efa_com.h"
@@ -406,8 +406,8 @@ static struct efa_comp_ctx *efa_com_submit_admin_cmd(struct efa_com_admin_queue 
 	return comp_ctx;
 }
 
-static void efa_com_handle_single_admin_completion(struct efa_com_admin_queue *aq,
-						   struct efa_admin_acq_entry *cqe)
+static int efa_com_handle_single_admin_completion(struct efa_com_admin_queue *aq,
+						  struct efa_admin_acq_entry *cqe)
 {
 	struct efa_comp_ctx *comp_ctx;
 	u16 cmd_id;
@@ -416,12 +416,11 @@ static void efa_com_handle_single_admin_completion(struct efa_com_admin_queue *a
 			 EFA_ADMIN_ACQ_COMMON_DESC_COMMAND_ID);
 
 	comp_ctx = efa_com_get_comp_ctx(aq, cmd_id, false);
-	if (!comp_ctx) {
-		ibdev_err(
-			aq->efa_dev,
-			"comp_ctx is NULL. Changing the admin queue running state\n");
-		clear_bit(EFA_AQ_STATE_RUNNING_BIT, &aq->state);
-		return;
+	if (comp_ctx->status != EFA_CMD_SUBMITTED) {
+		ibdev_err(aq->efa_dev,
+			  "Received completion with unexpected command id[%d], sq producer: %d, sq consumer: %d, cq consumer: %d\n",
+			  cmd_id, aq->sq.pc, aq->sq.cc, aq->cq.cc);
+		return -EINVAL;
 	}
 
 	comp_ctx->status = EFA_CMD_COMPLETED;
@@ -429,14 +428,17 @@ static void efa_com_handle_single_admin_completion(struct efa_com_admin_queue *a
 
 	if (!test_bit(EFA_AQ_STATE_POLLING_BIT, &aq->state))
 		complete(&comp_ctx->wait_event);
+
+	return 0;
 }
 
 static void efa_com_handle_admin_completion(struct efa_com_admin_queue *aq)
 {
 	struct efa_admin_acq_entry *cqe;
 	u16 queue_size_mask;
-	u16 comp_num = 0;
+	u16 comp_cmds = 0;
 	u8 phase;
+	int err;
 	u16 ci;
 
 	queue_size_mask = aq->depth - 1;
@@ -454,10 +456,12 @@ static void efa_com_handle_admin_completion(struct efa_com_admin_queue *aq)
 		 * phase bit was validated
 		 */
 		dma_rmb();
-		efa_com_handle_single_admin_completion(aq, cqe);
+		err = efa_com_handle_single_admin_completion(aq, cqe);
+		if (!err)
+			comp_cmds++;
 
+		aq->cq.cc++;
 		ci++;
-		comp_num++;
 		if (ci == aq->depth) {
 			ci = 0;
 			phase = !phase;
@@ -466,10 +470,9 @@ static void efa_com_handle_admin_completion(struct efa_com_admin_queue *aq)
 		cqe = &aq->cq.entries[ci];
 	}
 
-	aq->cq.cc += comp_num;
 	aq->cq.phase = phase;
-	aq->sq.cc += comp_num;
-	atomic64_add(comp_num, &aq->stats.completed_cmd);
+	aq->sq.cc += comp_cmds;
+	atomic64_add(comp_cmds, &aq->stats.completed_cmd);
 }
 
 static int efa_com_comp_status_to_errno(u8 comp_status)
@@ -949,20 +952,18 @@ int efa_com_validate_version(struct efa_com_dev *edev)
 	EFA_SET(&min_ver, EFA_REGS_VERSION_MINOR_VERSION,
 		EFA_ADMIN_API_VERSION_MINOR);
 	if (ver < min_ver) {
-		ibdev_err(
-			edev->efa_dev,
-			"EFA version is lower than the minimal version the driver supports\n");
+		ibdev_err(edev->efa_dev,
+			  "EFA version is lower than the minimal version the driver supports\n");
 		return -EOPNOTSUPP;
 	}
 
-	ibdev_dbg(
-		edev->efa_dev,
-		"efa controller version: %d.%d.%d implementation version %d\n",
-		EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_MAJOR_VERSION),
-		EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_MINOR_VERSION),
-		EFA_GET(&ctrl_ver,
-			EFA_REGS_CONTROLLER_VERSION_SUBMINOR_VERSION),
-		EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_IMPL_ID));
+	ibdev_dbg(edev->efa_dev,
+		  "efa controller version: %d.%d.%d implementation version %d\n",
+		  EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_MAJOR_VERSION),
+		  EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_MINOR_VERSION),
+		  EFA_GET(&ctrl_ver,
+			  EFA_REGS_CONTROLLER_VERSION_SUBMINOR_VERSION),
+		  EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_IMPL_ID));
 
 	ctrl_ver_masked =
 		EFA_GET(&ctrl_ver, EFA_REGS_CONTROLLER_VERSION_MAJOR_VERSION) |
@@ -978,9 +979,8 @@ int efa_com_validate_version(struct efa_com_dev *edev)
 		EFA_CTRL_SUB_MINOR);
 	/* Validate the ctrl version without the implementation ID */
 	if (ctrl_ver_masked < min_ctrl_ver) {
-		ibdev_err(
-			edev->efa_dev,
-			"EFA ctrl version is lower than the minimal ctrl version the driver supports\n");
+		ibdev_err(edev->efa_dev,
+			  "EFA ctrl version is lower than the minimal ctrl version the driver supports\n");
 		return -EOPNOTSUPP;
 	}
 
@@ -1006,8 +1006,7 @@ int efa_com_get_dma_width(struct efa_com_dev *edev)
 	ibdev_dbg(edev->efa_dev, "DMA width: %d\n", width);
 
 	if (width < 32 || width > 64) {
-		ibdev_err(edev->efa_dev, "DMA width illegal value: %d\n",
-			  width);
+		ibdev_err(edev->efa_dev, "DMA width illegal value: %d\n", width);
 		return -EINVAL;
 	}
 
