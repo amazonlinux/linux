@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
-/*
- * Copyright 2015-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+/* Copyright (c) Amazon.com, Inc. or its affiliates.
+ * All rights reserved.
  */
 
 #include <linux/ethtool.h>
@@ -83,6 +83,7 @@ static const struct ena_stats ena_stats_global_strings[] = {
 	ENA_STAT_GLOBAL_ENTRY(missing_admin_interrupt),
 	ENA_STAT_GLOBAL_ENTRY(admin_to),
 	ENA_STAT_GLOBAL_ENTRY(device_request_reset),
+	ENA_STAT_GLOBAL_ENTRY(missing_first_intr),
 	ENA_STAT_GLOBAL_ENTRY(suspend),
 	ENA_STAT_GLOBAL_ENTRY(resume),
 	ENA_STAT_GLOBAL_ENTRY(interface_down),
@@ -134,6 +135,8 @@ static const struct ena_stats ena_stats_tx_strings[] = {
 	ENA_STAT_TX_ENTRY(missed_tx),
 	ENA_STAT_TX_ENTRY(unmask_interrupt),
 #ifdef ENA_AF_XDP_SUPPORT
+	ENA_STAT_TX_ENTRY(xsk_cnt),
+	ENA_STAT_TX_ENTRY(xsk_bytes),
 	ENA_STAT_TX_ENTRY(xsk_need_wakeup_set),
 	ENA_STAT_TX_ENTRY(xsk_wakeup_request),
 #endif /* ENA_AF_XDP_SUPPORT */
@@ -217,7 +220,6 @@ static void ena_safe_update_stat(u64 *src, u64 *dst,
 	} while (ena_u64_stats_fetch_retry(syncp, start));
 }
 
-
 static void ena_metrics_stats(struct ena_adapter *adapter, u64 **data)
 {
 	struct ena_com_dev *dev = adapter->ena_dev;
@@ -233,38 +235,41 @@ static void ena_metrics_stats(struct ena_adapter *adapter, u64 **data)
 		len = supported_metrics_count * sizeof(u64);
 
 		/* Fill the data buffer, and advance its pointer */
-		ena_com_get_customer_metrics(adapter->ena_dev, (char *)(*data), len);
+		ena_com_get_customer_metrics(dev, (char *)(*data), len);
 		(*data) += supported_metrics_count;
 
-	} else if (ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENI_STATS)) {
-		ena_com_get_eni_stats(adapter->ena_dev, &adapter->eni_stats);
+	} else if (ena_com_get_cap(dev, ENA_ADMIN_ENI_STATS)) {
+		struct ena_admin_eni_stats eni_stats;
+
+		ena_com_get_eni_stats(dev, &eni_stats);
 		/* Updating regardless of rc - once we told ethtool how many stats we have
 		 * it will print that much stats. We can't leave holes in the stats
 		 */
 		for (i = 0; i < ENA_STATS_ARRAY_ENI; i++) {
 			ena_stats = &ena_stats_eni_strings[i];
-
-			ptr = (u64 *)&adapter->eni_stats +
-				ena_stats->stat_offset;
-
-			ena_safe_update_stat(ptr, (*data)++, &adapter->syncp);
+			ptr = (u64 *)&eni_stats + ena_stats->stat_offset;
+			**data = *ptr;
+			(*data)++;
 		}
 	}
 
-	if (ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENA_SRD_INFO)) {
-		ena_com_get_ena_srd_info(adapter->ena_dev, &adapter->ena_srd_info);
+	if (ena_com_get_cap(dev, ENA_ADMIN_ENA_SRD_INFO)) {
+		struct ena_admin_ena_srd_info ena_srd_info;
+
+		ena_com_get_ena_srd_info(dev, &ena_srd_info);
 		/* Get ENA SRD mode */
-		ptr = (u64 *)&adapter->ena_srd_info;
-		ena_safe_update_stat(ptr, (*data)++, &adapter->syncp);
+		ena_stats = &ena_srd_info_strings[0];
+		ptr = (u64 *)&ena_srd_info + ena_stats->stat_offset;
+		**data = *ptr;
+		(*data)++;
 		for (i = 1; i < ENA_STATS_ARRAY_ENA_SRD; i++) {
 			ena_stats = &ena_srd_info_strings[i];
 			/* Wrapped within an outer struct - need to accommodate an
 			 * additional offset of the ENA SRD mode that was already processed
 			 */
-			ptr = (u64 *)&adapter->ena_srd_info +
-				ena_stats->stat_offset + 1;
-
-			ena_safe_update_stat(ptr, (*data)++, &adapter->syncp);
+			ptr = (u64 *)&ena_srd_info + ena_stats->stat_offset + 1;
+			**data = *ptr;
+			(*data)++;
 		}
 	}
 }
@@ -305,7 +310,7 @@ static void ena_queue_stats(struct ena_adapter *adapter, u64 **data)
 	}
 }
 
-static void ena_com_admin_queue_stats(struct ena_adapter *adapter, u64 **data)
+static void ena_get_admin_queue_stats(struct ena_adapter *adapter, u64 **data)
 {
 	const struct ena_stats *ena_stats;
 	u64 *ptr;
@@ -321,7 +326,7 @@ static void ena_com_admin_queue_stats(struct ena_adapter *adapter, u64 **data)
 	}
 }
 
-static void ena_com_phc_stats(struct ena_adapter *adapter, u64 **data)
+static void ena_get_phc_stats(struct ena_adapter *adapter, u64 **data)
 {
 	const struct ena_stats *ena_stats;
 	u64 *ptr;
@@ -354,10 +359,10 @@ static void ena_get_stats(struct ena_adapter *adapter,
 		ena_metrics_stats(adapter, &data);
 
 	ena_queue_stats(adapter, &data);
-	ena_com_admin_queue_stats(adapter, &data);
+	ena_get_admin_queue_stats(adapter, &data);
 
 	if (ena_phc_is_active(adapter))
-		ena_com_phc_stats(adapter, &data);
+		ena_get_phc_stats(adapter, &data);
 }
 
 static void ena_get_ethtool_stats(struct net_device *netdev,
@@ -370,13 +375,23 @@ static void ena_get_ethtool_stats(struct net_device *netdev,
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
-static int ena_get_ts_info(struct net_device *netdev, struct kernel_ethtool_ts_info *info)
+#ifdef ENA_HAVE_KERNEL_ETHTOOL_TS_INFO
+static int ena_get_ts_info(struct net_device *netdev,
+			   struct kernel_ethtool_ts_info *info)
+#else
+static int ena_get_ts_info(struct net_device *netdev,
+			   struct ethtool_ts_info *info)
+#endif /* ENA_HAVE_KERNEL_ETHTOOL_TS_INFO */
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0)
 	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE |
 				SOF_TIMESTAMPING_RX_SOFTWARE |
 				SOF_TIMESTAMPING_SOFTWARE;
+#else
+	info->so_timestamping = SOF_TIMESTAMPING_TX_SOFTWARE;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 12, 0) */
 
 	info->phc_index = ena_phc_get_index(adapter);
 
@@ -399,8 +414,9 @@ static int ena_get_sw_stats_count(struct ena_adapter *adapter)
 static int ena_get_hw_stats_count(struct ena_adapter *adapter)
 {
 	struct ena_com_dev *dev = adapter->ena_dev;
-	int count = ENA_STATS_ARRAY_ENA_SRD *
-			ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENA_SRD_INFO);
+	int count;
+
+	count = ENA_STATS_ARRAY_ENA_SRD * ena_com_get_cap(dev, ENA_ADMIN_ENA_SRD_INFO);
 
 	if (ena_com_get_cap(dev, ENA_ADMIN_CUSTOMER_METRICS))
 		count += ena_com_get_customer_metric_count(dev);
@@ -439,14 +455,14 @@ static void ena_metrics_stats_strings(struct ena_adapter *adapter, u8 **data)
 				ethtool_puts(data, ena_metrics->name);
 			}
 		}
-	} else if (ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENI_STATS)) {
+	} else if (ena_com_get_cap(dev, ENA_ADMIN_ENI_STATS)) {
 		for (i = 0; i < ENA_STATS_ARRAY_ENI; i++) {
 			ena_stats = &ena_stats_eni_strings[i];
 			ethtool_puts(data, ena_stats->name);
 		}
 	}
 
-	if (ena_com_get_cap(adapter->ena_dev, ENA_ADMIN_ENA_SRD_INFO)) {
+	if (ena_com_get_cap(dev, ENA_ADMIN_ENA_SRD_INFO)) {
 		for (i = 0; i < ENA_STATS_ARRAY_ENA_SRD; i++) {
 			ena_stats = &ena_srd_info_strings[i];
 			ethtool_puts(data, ena_stats->name);
@@ -484,7 +500,7 @@ static void ena_queue_strings(struct ena_adapter *adapter, u8 **data)
 	}
 }
 
-static void ena_com_admin_strings(u8 **data)
+static void ena_get_admin_strings(u8 **data)
 {
 	const struct ena_stats *ena_stats;
 	int i;
@@ -497,7 +513,7 @@ static void ena_com_admin_strings(u8 **data)
 	}
 }
 
-static void ena_com_phc_strings(u8 **data)
+static void ena_get_phc_strings(u8 **data)
 {
 	const struct ena_stats *ena_stats;
 	int i;
@@ -524,10 +540,10 @@ static void ena_get_strings(struct ena_adapter *adapter,
 		ena_metrics_stats_strings(adapter, &data);
 
 	ena_queue_strings(adapter, &data);
-	ena_com_admin_strings(&data);
+	ena_get_admin_strings(&data);
 
 	if (ena_phc_is_active(adapter))
-		ena_com_phc_strings(&data);
+		ena_get_phc_strings(&data);
 }
 
 static void ena_get_ethtool_strings(struct net_device *netdev,
@@ -647,7 +663,7 @@ static void ena_update_tx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 
 	val = ena_com_get_nonadaptive_moderation_interval_tx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_io_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues + adapter->xdp_num_queues; i++) {
 		adapter->tx_ring[i].interrupt_interval_changed |=
 			(adapter->tx_ring[i].interrupt_interval != val);
 		adapter->tx_ring[i].interrupt_interval = val;
@@ -661,7 +677,7 @@ static void ena_update_rx_rings_nonadaptive_intr_moderation(struct ena_adapter *
 
 	val = ena_com_get_nonadaptive_moderation_interval_rx(adapter->ena_dev);
 
-	for (i = 0; i < adapter->num_io_queues; i++) {
+	for (i = 0; i < adapter->num_io_queues + adapter->xdp_num_queues; i++) {
 		adapter->rx_ring[i].interrupt_interval_changed |=
 			(adapter->rx_ring[i].interrupt_interval != val);
 		adapter->rx_ring[i].interrupt_interval = val;
@@ -740,7 +756,7 @@ static void ena_get_drvinfo(struct net_device *dev,
 			  "module version will be truncated, status = %zd\n", ret);
 
 	ret = strscpy(info->bus_info, pci_name(adapter->pdev),
-		sizeof(info->bus_info));
+		      sizeof(info->bus_info));
 	if (ret < 0)
 		netif_dbg(adapter, drv, dev,
 			  "bus info will be truncated, status = %zd\n", ret);
@@ -995,6 +1011,125 @@ static int ena_set_rss_hash(struct ena_com_dev *ena_dev,
 	return ena_com_fill_hash_ctrl(ena_dev, proto, hash_fields);
 }
 
+static int ena_set_steering_rule(struct ena_com_dev *ena_dev, struct ethtool_rxnfc *info)
+{
+	struct ena_com_flow_steering_rule_params rule_params = {};
+	struct ena_admin_flow_steering_rule_params *flow_params;
+	struct ethtool_rx_flow_spec *fs = &info->fs;
+	struct ethtool_tcpip4_spec *tcp_ip4;
+	struct ethtool_usrip4_spec *usr_ip4;
+#ifdef ENA_ETHTOOL_NFC_IPV6_SUPPORTED
+	struct ethtool_tcpip6_spec *tcp_ip6;
+	struct ethtool_usrip6_spec *usr_ip6;
+#endif
+	u32 flow_type = info->fs.flow_type;
+	u16 rule_idx;
+	int rc;
+
+	flow_params = &rule_params.flow_params;
+
+	/* no support for wake-on-lan or packets drop for rule matching */
+	if ((fs->ring_cookie == RX_CLS_FLOW_DISC) || (fs->ring_cookie == RX_CLS_FLOW_WAKE))
+		return -EOPNOTSUPP;
+
+	/* no support for any special rule placement */
+	if (fs->location & RX_CLS_LOC_SPECIAL)
+		return -EOPNOTSUPP;
+
+	switch (flow_type) {
+	case TCP_V4_FLOW:
+	case UDP_V4_FLOW:
+		if (flow_type == TCP_V4_FLOW)
+			rule_params.flow_type = ENA_ADMIN_FLOW_IPV4_TCP;
+		else
+			rule_params.flow_type = ENA_ADMIN_FLOW_IPV4_UDP;
+
+		tcp_ip4 = &fs->h_u.tcp_ip4_spec;
+		memcpy(flow_params->src_ip, &tcp_ip4->ip4src, sizeof(tcp_ip4->ip4src));
+		memcpy(flow_params->dst_ip, &tcp_ip4->ip4dst, sizeof(tcp_ip4->ip4dst));
+		flow_params->src_port = htons(tcp_ip4->psrc);
+		flow_params->dst_port = htons(tcp_ip4->pdst);
+		flow_params->tos = tcp_ip4->tos;
+
+		tcp_ip4 = &fs->m_u.tcp_ip4_spec;
+		memcpy(flow_params->src_ip_mask, &tcp_ip4->ip4src, sizeof(tcp_ip4->ip4src));
+		memcpy(flow_params->dst_ip_mask, &tcp_ip4->ip4dst, sizeof(tcp_ip4->ip4dst));
+		flow_params->src_port_mask = htons(tcp_ip4->psrc);
+		flow_params->dst_port_mask = htons(tcp_ip4->pdst);
+		flow_params->tos_mask = tcp_ip4->tos;
+		break;
+	case IP_USER_FLOW:
+		rule_params.flow_type = ENA_ADMIN_FLOW_IPV4;
+
+		usr_ip4 = &fs->h_u.usr_ip4_spec;
+		memcpy(flow_params->src_ip, &usr_ip4->ip4src, sizeof(usr_ip4->ip4src));
+		memcpy(flow_params->dst_ip, &usr_ip4->ip4dst, sizeof(usr_ip4->ip4dst));
+		flow_params->tos = usr_ip4->tos;
+
+		usr_ip4 = &fs->m_u.usr_ip4_spec;
+		memcpy(flow_params->src_ip_mask, &usr_ip4->ip4src, sizeof(usr_ip4->ip4src));
+		memcpy(flow_params->dst_ip_mask, &usr_ip4->ip4dst, sizeof(usr_ip4->ip4dst));
+		flow_params->tos_mask = usr_ip4->tos;
+		break;
+#ifdef ENA_ETHTOOL_NFC_IPV6_SUPPORTED
+	case TCP_V6_FLOW:
+	case UDP_V6_FLOW:
+		if (flow_type == TCP_V6_FLOW)
+			rule_params.flow_type = ENA_ADMIN_FLOW_IPV6_TCP;
+		else
+			rule_params.flow_type = ENA_ADMIN_FLOW_IPV6_UDP;
+
+		tcp_ip6 = &fs->h_u.tcp_ip6_spec;
+		memcpy(flow_params->src_ip, &tcp_ip6->ip6src, sizeof(tcp_ip6->ip6src));
+		memcpy(flow_params->dst_ip, &tcp_ip6->ip6dst, sizeof(tcp_ip6->ip6dst));
+		flow_params->src_port = htons(tcp_ip6->psrc);
+		flow_params->dst_port = htons(tcp_ip6->pdst);
+
+		tcp_ip6 = &fs->m_u.tcp_ip6_spec;
+		memcpy(flow_params->src_ip_mask, &tcp_ip6->ip6src, sizeof(tcp_ip6->ip6src));
+		memcpy(flow_params->dst_ip_mask, &tcp_ip6->ip6dst, sizeof(tcp_ip6->ip6dst));
+		flow_params->src_port_mask = htons(tcp_ip6->psrc);
+		flow_params->dst_port_mask = htons(tcp_ip6->pdst);
+		break;
+	case IPV6_USER_FLOW:
+		rule_params.flow_type = ENA_ADMIN_FLOW_IPV6;
+
+		usr_ip6 = &fs->h_u.usr_ip6_spec;
+		memcpy(flow_params->src_ip, &usr_ip6->ip6src, sizeof(usr_ip6->ip6src));
+		memcpy(flow_params->dst_ip, &usr_ip6->ip6dst, sizeof(usr_ip6->ip6dst));
+
+		usr_ip6 = &fs->m_u.usr_ip6_spec;
+		memcpy(flow_params->src_ip_mask, &usr_ip6->ip6src, sizeof(usr_ip6->ip6src));
+		memcpy(flow_params->dst_ip_mask, &usr_ip6->ip6dst, sizeof(usr_ip6->ip6dst));
+		break;
+#endif
+	case SCTP_V4_FLOW:
+	case AH_V4_FLOW:
+	case SCTP_V6_FLOW:
+	case AH_V6_FLOW:
+	case ESP_V4_FLOW:
+	case ESP_V6_FLOW:
+	case ETHER_FLOW:
+		return -EOPNOTSUPP;
+	default:
+		return -EINVAL;
+	}
+
+	rule_params.qid = fs->ring_cookie;
+	rule_idx = fs->location;
+
+	rc = ena_com_flow_steering_add_rule(ena_dev, &rule_params, &rule_idx);
+	if (unlikely(rc < 0))
+		return rc;
+
+	return 0;
+}
+
+static int ena_delete_steering_rule(struct ena_com_dev *ena_dev, struct ethtool_rxnfc *info)
+{
+	return ena_com_flow_steering_remove_rule(ena_dev, info->fs.location);
+}
+
 static int ena_set_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
@@ -1004,8 +1139,12 @@ static int ena_set_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info)
 	case ETHTOOL_SRXFH:
 		rc = ena_set_rss_hash(adapter->ena_dev, info);
 		break;
-	case ETHTOOL_SRXCLSRLDEL:
 	case ETHTOOL_SRXCLSRLINS:
+		rc = ena_set_steering_rule(adapter->ena_dev, info);
+		break;
+	case ETHTOOL_SRXCLSRLDEL:
+		rc = ena_delete_steering_rule(adapter->ena_dev, info);
+		break;
 	default:
 		netif_err(adapter, drv, netdev,
 			  "Command parameter %d is not supported\n", info->cmd);
@@ -1013,6 +1152,149 @@ static int ena_set_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info)
 	}
 
 	return rc;
+}
+
+static int ena_get_steering_rules_cnt(struct ena_com_dev *ena_dev, struct ethtool_rxnfc *info)
+{
+	if (!(ena_dev->supported_features & BIT(ENA_ADMIN_FLOW_STEERING_CONFIG)))
+		return -EOPNOTSUPP;
+
+	info->rule_cnt = ena_dev->flow_steering.active_rules_cnt;
+	info->data = ena_dev->flow_steering.tbl_size | RX_CLS_LOC_SPECIAL;
+
+	return 0;
+}
+
+static int ena_get_steering_rule(struct ena_com_dev *ena_dev, struct ethtool_rxnfc *info)
+{
+	struct ena_com_flow_steering_rule_params rule_params = {};
+	struct ena_admin_flow_steering_rule_params *flow_params;
+	struct ethtool_rx_flow_spec *fs = &info->fs;
+	struct ethtool_tcpip4_spec *tcp_ip4;
+	struct ethtool_usrip4_spec *usr_ip4;
+#ifdef ENA_ETHTOOL_NFC_IPV6_SUPPORTED
+	struct ethtool_tcpip6_spec *tcp_ip6;
+	struct ethtool_usrip6_spec *usr_ip6;
+#endif
+	u32 flow_type;
+	int rc = 0;
+
+	flow_params = &rule_params.flow_params;
+
+	rc = ena_com_flow_steering_get_rule(ena_dev, &rule_params, fs->location);
+	if (unlikely(rc))
+		return rc;
+
+	flow_type = rule_params.flow_type;
+
+	switch (flow_type) {
+	case ENA_ADMIN_FLOW_IPV4_TCP:
+	case ENA_ADMIN_FLOW_IPV4_UDP:
+		if (flow_type == ENA_ADMIN_FLOW_IPV4_TCP)
+			fs->flow_type = TCP_V4_FLOW;
+		else
+			fs->flow_type = UDP_V4_FLOW;
+
+		tcp_ip4 = &fs->h_u.tcp_ip4_spec;
+		memcpy(&tcp_ip4->ip4src, flow_params->src_ip, sizeof(tcp_ip4->ip4src));
+		memcpy(&tcp_ip4->ip4dst, flow_params->dst_ip, sizeof(tcp_ip4->ip4dst));
+		tcp_ip4->psrc = ntohs(flow_params->src_port);
+		tcp_ip4->pdst = ntohs(flow_params->dst_port);
+		tcp_ip4->tos = flow_params->tos;
+
+		tcp_ip4 = &fs->m_u.tcp_ip4_spec;
+		memcpy(&tcp_ip4->ip4src, flow_params->src_ip_mask, sizeof(tcp_ip4->ip4src));
+		memcpy(&tcp_ip4->ip4dst, flow_params->dst_ip_mask, sizeof(tcp_ip4->ip4dst));
+		tcp_ip4->psrc = ntohs(flow_params->src_port_mask);
+		tcp_ip4->pdst = ntohs(flow_params->dst_port_mask);
+		tcp_ip4->tos = flow_params->tos_mask;
+		break;
+	case ENA_ADMIN_FLOW_IPV4:
+		fs->flow_type = IP_USER_FLOW;
+
+		usr_ip4 = &fs->h_u.usr_ip4_spec;
+		memcpy(&usr_ip4->ip4src, flow_params->src_ip, sizeof(usr_ip4->ip4src));
+		memcpy(&usr_ip4->ip4dst, flow_params->dst_ip, sizeof(usr_ip4->ip4dst));
+		usr_ip4->tos = flow_params->tos;
+		usr_ip4->ip_ver = ETH_RX_NFC_IP4;
+
+		usr_ip4 = &fs->m_u.usr_ip4_spec;
+		memcpy(&usr_ip4->ip4src, flow_params->src_ip_mask, sizeof(usr_ip4->ip4src));
+		memcpy(&usr_ip4->ip4dst, flow_params->dst_ip_mask, sizeof(usr_ip4->ip4dst));
+		usr_ip4->tos = flow_params->tos_mask;
+		break;
+#ifdef ENA_ETHTOOL_NFC_IPV6_SUPPORTED
+	case ENA_ADMIN_FLOW_IPV6_TCP:
+	case ENA_ADMIN_FLOW_IPV6_UDP:
+		if (flow_type == ENA_ADMIN_FLOW_IPV6_TCP)
+			fs->flow_type = TCP_V6_FLOW;
+		else
+			fs->flow_type = UDP_V6_FLOW;
+
+		tcp_ip6 = &fs->h_u.tcp_ip6_spec;
+		memcpy(&tcp_ip6->ip6src, flow_params->src_ip, sizeof(tcp_ip6->ip6src));
+		memcpy(&tcp_ip6->ip6dst, flow_params->dst_ip, sizeof(tcp_ip6->ip6dst));
+		tcp_ip6->psrc = ntohs(flow_params->src_port);
+		tcp_ip6->pdst = ntohs(flow_params->dst_port);
+
+		tcp_ip6 = &fs->m_u.tcp_ip6_spec;
+		memcpy(&tcp_ip6->ip6src, flow_params->src_ip_mask, sizeof(tcp_ip6->ip6src));
+		memcpy(&tcp_ip6->ip6dst, flow_params->dst_ip_mask, sizeof(tcp_ip6->ip6dst));
+		tcp_ip6->psrc = ntohs(flow_params->src_port_mask);
+		tcp_ip6->pdst = ntohs(flow_params->dst_port_mask);
+		break;
+	case ENA_ADMIN_FLOW_IPV6:
+		fs->flow_type = IPV6_USER_FLOW;
+
+		usr_ip6 = &fs->h_u.usr_ip6_spec;
+		memcpy(&usr_ip6->ip6src, flow_params->src_ip, sizeof(usr_ip6->ip6src));
+		memcpy(&usr_ip6->ip6dst, flow_params->dst_ip, sizeof(usr_ip6->ip6dst));
+
+		usr_ip6 = &fs->m_u.usr_ip6_spec;
+		memcpy(&usr_ip6->ip6src, flow_params->src_ip_mask, sizeof(usr_ip6->ip6src));
+		memcpy(&usr_ip6->ip6dst, flow_params->dst_ip_mask, sizeof(usr_ip6->ip6dst));
+		break;
+#endif
+	default:
+		netdev_err(ena_dev->net_device,
+			   "Flow steering rule received has invalid flow type %u\n",
+			   flow_type);
+		rc = -EINVAL;
+		break;
+	}
+
+	fs->ring_cookie = rule_params.qid;
+
+	return rc;
+}
+
+static int ena_get_all_steering_rules(struct ena_com_dev *ena_dev, struct ethtool_rxnfc *info,
+				      u32 *rules)
+{
+	struct ena_com_flow_steering *flow_steering = &ena_dev->flow_steering;
+	int i, loc_idx = 0;
+
+	if (!(ena_dev->supported_features & BIT(ENA_ADMIN_FLOW_STEERING_CONFIG)))
+		return -EOPNOTSUPP;
+
+	info->data = flow_steering->tbl_size;
+	for (i = 0; i < flow_steering->tbl_size; i++) {
+		if (flow_steering->flow_steering_tbl[i].in_use) {
+			/* to avoid access out of bounds index in case
+			 * the rules buf provided is too small
+			 */
+			if (loc_idx >= info->rule_cnt)
+				return -EMSGSIZE;
+
+			/* the loop iterator represents the rule location */
+			rules[loc_idx++] = i;
+
+		}
+	}
+
+	info->rule_cnt = loc_idx;
+
+	return 0;
 }
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(3, 2, 0)
@@ -1035,8 +1317,14 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 		rc = ena_get_rss_hash(adapter->ena_dev, info);
 		break;
 	case ETHTOOL_GRXCLSRLCNT:
+		rc = ena_get_steering_rules_cnt(adapter->ena_dev, info);
+		break;
 	case ETHTOOL_GRXCLSRULE:
+		rc = ena_get_steering_rule(adapter->ena_dev, info);
+		break;
 	case ETHTOOL_GRXCLSRLALL:
+		rc = ena_get_all_steering_rules(adapter->ena_dev, info, rules);
+		break;
 	default:
 		netif_err(adapter, drv, netdev,
 			  "Command parameter %d is not supported\n", info->cmd);
@@ -1050,7 +1338,9 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
 static u32 ena_get_rxfh_indir_size(struct net_device *netdev)
 {
-	return ENA_RX_RSS_TABLE_SIZE;
+	struct ena_adapter *adapter = netdev_priv(netdev);
+
+	return get_rss_indirection_table_size(adapter);
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
@@ -1063,10 +1353,14 @@ static u32 ena_get_rxfh_key_size(struct net_device *netdev)
 static int ena_indirection_table_set(struct ena_adapter *adapter,
 				     const u32 *indir)
 {
+	u32 table_size = get_rss_indirection_table_size(adapter);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int i, rc;
 
-	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++) {
+	if (table_size == 0)
+		return -EOPNOTSUPP;
+
+	for (i = 0; i < table_size; i++) {
 		rc = ena_com_indirect_table_fill_entry(ena_dev,
 						       i,
 						       ENA_IO_RXQ_IDX(indir[i]));
@@ -1088,8 +1382,12 @@ static int ena_indirection_table_set(struct ena_adapter *adapter,
 
 static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
 {
+	u32 table_size = get_rss_indirection_table_size(adapter);
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	int i, rc;
+
+	if (table_size == 0)
+		return -EOPNOTSUPP;
 
 	if (!indir)
 		return 0;
@@ -1102,7 +1400,7 @@ static int ena_indirection_table_get(struct ena_adapter *adapter, u32 *indir)
 	 * for Tx and uneven indices for Rx. We need to convert the Rx
 	 * indices to be consecutive
 	 */
-	for (i = 0; i < ENA_RX_RSS_TABLE_SIZE; i++)
+	for (i = 0; i < table_size; i++)
 		indir[i] = ENA_IO_RXQ_IDX_TO_COMBINED_IDX(indir[i]);
 
 	return rc;
@@ -1386,7 +1684,7 @@ static int ena_set_priv_flags(struct net_device *netdev, u32 priv_flags)
 }
 
 static const struct ethtool_ops ena_ethtool_ops = {
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0)
+#ifdef ENA_HAVE_ETHTOOL_OPS_SUPPORTED_COALESCE_PARAMS
 	.supported_coalesce_params = ETHTOOL_COALESCE_USECS |
 				     ETHTOOL_COALESCE_USE_ADAPTIVE_RX,
 #endif
@@ -1450,10 +1748,9 @@ void ena_set_ethtool_ops(struct net_device *netdev)
 static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 {
 	struct net_device *netdev = adapter->netdev;
+	int strings_num, i, rc;
 	u8 *strings_buf;
 	u64 *data_buf;
-	int strings_num;
-	int i, rc;
 
 	strings_num = ena_get_sw_stats_count(adapter);
 	if (strings_num <= 0) {
@@ -1461,22 +1758,18 @@ static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 		return;
 	}
 
-	strings_buf = devm_kcalloc(&adapter->pdev->dev,
-				   ETH_GSTRING_LEN, strings_num,
-				   GFP_ATOMIC);
+	strings_buf = kcalloc(strings_num, ETH_GSTRING_LEN, GFP_ATOMIC);
 	if (!strings_buf) {
 		netif_err(adapter, drv, netdev,
 			  "Failed to allocate strings_buf\n");
 		return;
 	}
 
-	data_buf = devm_kcalloc(&adapter->pdev->dev,
-				strings_num, sizeof(u64),
-				GFP_ATOMIC);
+	data_buf = kcalloc(strings_num, sizeof(u64), GFP_ATOMIC);
 	if (!data_buf) {
 		netif_err(adapter, drv, netdev,
 			  "Failed to allocate data buf\n");
-		devm_kfree(&adapter->pdev->dev, strings_buf);
+		kfree(strings_buf);
 		return;
 	}
 
@@ -1498,8 +1791,8 @@ static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 				  strings_buf + i * ETH_GSTRING_LEN,
 				  data_buf[i]);
 
-	devm_kfree(&adapter->pdev->dev, strings_buf);
-	devm_kfree(&adapter->pdev->dev, data_buf);
+	kfree(strings_buf);
+	kfree(data_buf);
 }
 
 void ena_dump_stats_to_buf(struct ena_adapter *adapter, u8 *buf)
