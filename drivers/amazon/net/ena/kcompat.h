@@ -1,6 +1,6 @@
 /*******************************************************************************
-Modified by Amazon 2015-2016.
-Copyright 2015-2016, Amazon.com, Inc. or its affiliates. All Rights Reserved.
+Modified by Amazon.
+Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 
 Modifications subject to the terms and conditions of the GNU General
 Public License, version 2.
@@ -76,6 +76,9 @@ Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 #include <linux/vmalloc.h>
 #include <linux/udp.h>
 #include <linux/u64_stats_sync.h>
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
+#include <linux/bitfield.h>
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3,6,0)
 #include <linux/sizes.h>
@@ -422,15 +425,6 @@ static inline int pci_enable_msix_range(struct pci_dev *dev,
 }
 #endif
 
-#if LINUX_VERSION_CODE < KERNEL_VERSION(3,13,0) && \
-    !(RHEL_RELEASE_CODE && RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(7,1))
-static inline void *devm_kcalloc(struct device *dev,
-				 size_t n, size_t size, gfp_t flags)
-{
-	return devm_kzalloc(dev, n * size, flags | __GFP_ZERO);
-}
-#endif
-
 /*****************************************************************************/
 #if (( LINUX_VERSION_CODE < KERNEL_VERSION(3,13,8) ) && \
      !RHEL_RELEASE_CODE && \
@@ -600,7 +594,6 @@ static inline void ioremap_release(struct device *dev, void *res)
 {
 	iounmap(*(void __iomem **)res);
 }
-
 
 static inline void __iomem *devm_ioremap_wc(struct device *dev,
 					    resource_size_t offset,
@@ -984,10 +977,6 @@ static inline bool ktime_after(const ktime_t cmp1, const ktime_t cmp2)
 #define ENA_PHC_SUPPORT_GETTIME64_EXTENDED
 #endif /* ENA_PHC_SUPPORT_GETTIME64_EXTENDED */
 
-#if ((LINUX_VERSION_CODE >= KERNEL_VERSION(3, 0, 0)) && (LINUX_VERSION_CODE < KERNEL_VERSION(6, 2, 0)))
-#define ENA_PHC_SUPPORT_ADJFREQ
-#endif /* ENA_PHC_SUPPORT_ADJFREQ */
-
 #if ((LINUX_VERSION_CODE < KERNEL_VERSION(3, 7, 0)) && \
 	!(RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(6, 4))))
 #define ptp_clock_register(info, parent) ptp_clock_register(info)
@@ -998,10 +987,11 @@ static inline bool ktime_after(const ktime_t cmp1, const ktime_t cmp2)
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 19, 0)) && \
 	!(RHEL_RELEASE_CODE && \
 	(RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(7, 2)))
+#define ENA_KCOMAPT_NAPI_ALLOC_SKB
 static inline struct sk_buff *napi_alloc_skb(struct napi_struct *napi,
 					     unsigned int length)
 {
-	return netdev_alloc_skb_ip_align(napi->dev, length);
+	return __netdev_alloc_skb_ip_align(napi->dev, length, GFP_ATOMIC | __GFP_NOWARN);
 }
 #endif
 
@@ -1036,20 +1026,11 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 #define ENA_LARGE_LLQ_ETHTOOL
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 9, 0)
-#include <linux/bitfield.h>
-#define ENA_FIELD_GET(value, mask, offset) FIELD_GET(mask, value)
-#else
-#define ENA_FIELD_GET(value, mask, offset) ((typeof(mask))((value & mask) >> offset))
+#ifndef FIELD_GET
+#define FIELD_GET(mask, value) ((typeof(mask))(((value) & (mask)) >> (__builtin_ffsll(mask) - 1)))
 #endif
-
-#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0)
-#define xdp_features_set_redirect_target(netdev, xdp_xmit_supported)
-#define xdp_features_clear_redirect_target(netdev)
-#define xdp_clear_features_flag(netdev)
-#define xdp_set_features_flag(netdev, features)
-#else /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 3, 0) */
-#define ENA_XDP_NETLINK_ADVERTISEMENT
+#ifndef FIELD_PREP
+#define FIELD_PREP(mask, value) ((typeof(mask))(((value) << (__builtin_ffsll(mask) - 1)) & (mask)))
 #endif
 
 #if (RHEL_RELEASE_CODE && (RHEL_RELEASE_CODE <= RHEL_RELEASE_VERSION(7, 4))) || \
@@ -1149,5 +1130,68 @@ static inline int irq_update_affinity_hint(unsigned int irq, const struct cpumas
 #ifndef ENA_HAVE_ETHTOOL_PUTS
 #define ethtool_puts ethtool_sprintf
 #endif /* ENA_HAVE_ETHTOOL_PUTS */
+
+#ifdef ENA_XSK_BUFF_DMA_SYNC_SINGLE_ARG
+#include <net/xdp_sock_drv.h>
+#define xsk_buff_dma_sync_for_cpu(xdp, xsk_pool) xsk_buff_dma_sync_for_cpu(xdp)
+#endif /* ENA_XSK_BUFF_DMA_SYNC_SINGLE_ARG */
+
+#if defined(ENA_NAPI_ALLOC_SKB_EXPLICIT_GFP_MASK) && !defined(ENA_KCOMAPT_NAPI_ALLOC_SKB)
+#define napi_alloc_skb(napi, len) __napi_alloc_skb(napi, len, GFP_ATOMIC | __GFP_NOWARN)
+#endif /* ENA_NAPI_ALLOC_SKB_EXPLICIT_GFP_MASK && !ENA_KCOMAPT_NAPI_ALLOC_SKB*/
+
+#ifndef RX_CLS_FLOW_WAKE
+#define RX_CLS_FLOW_WAKE	0xfffffffffffffffeULL
+#endif /* RX_CLS_FLOW_WAKE */
+
+#ifndef ENA_HAVE_XDP_FEATURES_SET_REDIRECT_TARGET
+#define xdp_features_set_redirect_target(netdev, xdp_xmit_supported)
+#define xdp_features_clear_redirect_target(netdev)
+#endif /* ENA_HAVE_XDP_FEATURES_SET_REDIRECT_TARGET */
+
+#ifndef ENA_HAVE_XDP_SET_FEATURES_FLAG
+#define xdp_clear_features_flag(netdev)
+#define xdp_set_features_flag(netdev, features)
+#endif /* ENA_HAVE_XDP_SET_FEATURES_FLAG */
+
+#if defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 18, 0)
+#ifdef ENA_AF_XDP_SUPPORT
+#include <net/xdp_sock_drv.h>
+#endif /* ENA_AF_XDP_SUPPORT */
+static inline int ena_xdp_return_buff(struct xdp_buff *xdp)
+{
+	struct xdp_frame *xdpf;
+
+#ifdef ENA_AF_XDP_SUPPORT
+	if (xdp->rxq->mem.type == MEM_TYPE_XSK_BUFF_POOL) {
+		xsk_buff_free(xdp);
+		return 0;
+	}
+#endif
+	/* Non zero-copy pages should be safe to convert to
+	 * an xdp_frame, which has xdp_return_frame() function exported
+	 * to all kernels that support XDP
+	 */
+#ifdef XDP_CONVERT_TO_FRAME_NAME_CHANGED
+	xdpf = xdp_convert_buff_to_frame(xdp);
+#else
+	xdpf = convert_to_xdp_frame(xdp);
+#endif /* XDP_CONVERT_TO_FRAME_NAME_CHANGED */
+	if (!xdpf)
+		return -EOVERFLOW;
+
+	xdp_return_frame(xdpf);
+
+	return 0;
+}
+#elif defined(ENA_XDP_SUPPORT)
+static inline int ena_xdp_return_buff(struct xdp_buff *xdp)
+{
+	/* If xdp_return_buff() is defined it cannot fail */
+	xdp_return_buff(xdp);
+
+	return 0;
+}
+#endif /* defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0) */
 
 #endif /* _KCOMPAT_H_ */
