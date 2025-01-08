@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB */
-/*
- * Copyright 2015-2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+/* Copyright (c) Amazon.com, Inc. or its affiliates.
+ * All rights reserved.
  */
 
 #ifndef ENA_COM
@@ -121,7 +121,6 @@ struct ena_com_io_cq {
 
 	/* Interrupt unmask register */
 	u32 __iomem *unmask_reg;
-
 
 	/* numa configuration register (for TPH) */
 	u32 __iomem *numa_node_cfg_reg;
@@ -302,15 +301,16 @@ struct ena_com_phc_info {
 	u32 doorbell_offset;
 
 	/* Shared memory read expire timeout (usec)
-	 * Max time for valid PHC retrieval, passing this threshold will fail the get time request
-	 * and block new PHC requests for block_timeout_usec in order to prevent floods on busy
-	 * device
+	 * Max time for valid PHC retrieval, passing this threshold will fail
+	 * the get time request and block new PHC requests for block_timeout_usec
+	 * in order to prevent floods on busy device
 	 */
 	u32 expire_timeout_usec;
 
 	/* Shared memory read abort timeout (usec)
-	 * PHC requests block period, blocking starts once PHC request expired in order to prevent
-	 * floods on busy device, any PHC requests during block period will be skipped
+	 * PHC requests block period, blocking starts once PHC request expired
+	 * in order to prevent floods on busy device,
+	 * any PHC requests during block period will be skipped
 	 */
 	u32 block_timeout_usec;
 
@@ -367,6 +367,27 @@ struct ena_host_attribute {
 	dma_addr_t host_info_dma_addr;
 };
 
+struct ena_com_flow_steering_rule_params {
+	struct ena_admin_flow_steering_rule_params flow_params;
+	u16 qid;
+	/* Specific flow type as defined in enum ena_admin_flow_steering_type */
+	u8 flow_type;
+};
+
+struct ena_com_flow_steering_table_entry {
+	struct ena_com_flow_steering_rule_params rule_params;
+	bool in_use;
+};
+
+struct ena_com_flow_steering {
+	struct ena_com_flow_steering_table_entry *flow_steering_tbl;
+	u16 tbl_size;
+	u16 active_rules_cnt;
+
+	struct ena_admin_flow_steering_rule_params *requested_rule;
+	dma_addr_t requested_rule_dma_addr;
+};
+
 /* Each ena_dev is a PCI function. */
 struct ena_com_dev {
 	struct ena_com_admin_queue admin_queue;
@@ -409,6 +430,8 @@ struct ena_com_dev {
 	struct ena_com_llq_info llq_info;
 
 	struct ena_customer_metrics customer_metrics;
+
+	struct ena_com_flow_steering flow_steering;
 };
 
 struct ena_com_dev_get_features_ctx {
@@ -766,18 +789,8 @@ int ena_com_get_customer_metrics(struct ena_com_dev *ena_dev, char *buffer, u32 
  */
 int ena_com_set_dev_mtu(struct ena_com_dev *ena_dev, u32 mtu);
 
-/* ena_com_get_offload_settings - Retrieve the device offloads capabilities
- * @ena_dev: ENA communication layer struct
- * @offlad: offload return value
- *
- * @return: 0 on Success and negative value otherwise.
- */
-int ena_com_get_offload_settings(struct ena_com_dev *ena_dev,
-				 struct ena_admin_feature_offload_desc *offload);
-
 /* ena_com_rss_init - Init RSS
  * @ena_dev: ENA communication layer struct
- * @log_size: indirection log size
  *
  * Allocate RSS/RFS resources.
  * The caller then can configure rss using ena_com_set_hash_function,
@@ -785,7 +798,7 @@ int ena_com_get_offload_settings(struct ena_com_dev *ena_dev,
  *
  * @return: 0 on Success and negative value otherwise.
  */
-int ena_com_rss_init(struct ena_com_dev *ena_dev, u16 log_size);
+int ena_com_rss_init(struct ena_com_dev *ena_dev);
 
 /* ena_com_rss_destroy - Destroy rss
  * @ena_dev: ENA communication layer struct
@@ -793,6 +806,23 @@ int ena_com_rss_init(struct ena_com_dev *ena_dev, u16 log_size);
  * Free all the RSS/RFS resources.
  */
 void ena_com_rss_destroy(struct ena_com_dev *ena_dev);
+
+/* ena_com_flow_steering_init - Init Flow steering
+ * @ena_dev: ENA communication layer struct
+ * @flow_steering_entries: Number of Flow steering entries to use.
+ *
+ * Allocate the table to hold the steering rules context.
+ *
+ * @return: 0 on success and negative value otherwise.
+ */
+int ena_com_flow_steering_init(struct ena_com_dev *ena_dev, u16 flow_steering_entries);
+
+/* ena_com_flow_steering_destroy - Destroy flow steering
+ * @ena_dev: ENA communication layer struct
+ *
+ * Free the flow steering allocated resources.
+ */
+void ena_com_flow_steering_destroy(struct ena_com_dev *ena_dev);
 
 /* ena_com_get_current_hash_function - Get RSS hash function
  * @ena_dev: ENA communication layer struct
@@ -1115,6 +1145,50 @@ static inline bool ena_com_get_missing_admin_interrupt(struct ena_com_dev *ena_d
 	return ena_dev->admin_queue.is_missing_admin_interrupt;
 }
 
+/* ena_com_flow_steering_add_rule - configure new Rx flow steering rule
+ * @ena_dev: ENA communication layer struct
+ * @configure_params: Steering rule params, including queue and flow type.
+ * @rule_idx: Index in rules table to configure the rule into, on return
+ * it will hold the actual index of the configured rule.
+ *
+ * @return - 0 on success, negative value on failure.
+ */
+int ena_com_flow_steering_add_rule(struct ena_com_dev *ena_dev,
+				   struct ena_com_flow_steering_rule_params *configure_params,
+				   u16 *rule_idx);
+
+/* ena_com_flow_steering_remove_rule - Remove an existing RX flow steering rule
+ * @ena_dev: ENA communication layer struct
+ * @rule_idx: Rule table index to delete
+ *
+ * @return - 0 on success, negative value on failure.
+ */
+int ena_com_flow_steering_remove_rule(struct ena_com_dev *ena_dev, u16 rule_idx);
+
+/* ena_com_flow_steering_remove_all_rules - Remove all flow steering rules
+ * @ena_dev: ENA communication layer struct
+ *
+ * @return - 0 on success, negative value on failure.
+ */
+int ena_com_flow_steering_remove_all_rules(struct ena_com_dev *ena_dev);
+
+/* ena_com_flow_steering_get_rule - retrieve info about specific steering rule
+ * @ena_dev: ENA communication layer struct
+ * @configure_params: pointer to be filled with the steering rule parmeters.
+ * @rule_idx: Rule index to get info about.
+ *
+ * @return - 0 on success, negative value on failure.
+ */
+int ena_com_flow_steering_get_rule(struct ena_com_dev *ena_dev,
+				   struct ena_com_flow_steering_rule_params *configure_params,
+				   u16 rule_idx);
+
+/* ena_com_flow_steering_restore_device_rules - reconfigure the existing rules to the device
+ * after resets caused by errors
+ * @ena_dev: ENA communication layer struct
+ */
+int ena_com_flow_steering_restore_device_rules(struct ena_com_dev *ena_dev);
+
 /* ena_com_io_sq_to_ena_dev - Extract ena_com_dev using contained field io_sq.
  * @io_sq: IO submit queue struct
  *
@@ -1149,6 +1223,8 @@ static inline void ena_com_disable_adaptive_moderation(struct ena_com_dev *ena_d
 {
 	ena_dev->adaptive_coalescing = false;
 }
+
+bool ena_com_indirection_table_config_supported(struct ena_com_dev *ena_dev);
 
 /* ena_com_get_cap - query whether device supports a capability.
  * @ena_dev: ENA communication layer struct
@@ -1205,15 +1281,13 @@ static inline void ena_com_update_intr_reg(struct ena_eth_io_intr_reg *intr_reg,
 		ENA_ETH_IO_INTR_REG_RX_INTR_DELAY_MASK;
 
 	intr_reg->intr_control |=
-		(tx_delay_interval << ENA_ETH_IO_INTR_REG_TX_INTR_DELAY_SHIFT)
-		& ENA_ETH_IO_INTR_REG_TX_INTR_DELAY_MASK;
+		FIELD_PREP(ENA_ETH_IO_INTR_REG_TX_INTR_DELAY_MASK, tx_delay_interval);
 
 	if (unmask)
 		intr_reg->intr_control |= ENA_ETH_IO_INTR_REG_INTR_UNMASK_MASK;
 
-	intr_reg->intr_control |=
-		(((u32)no_moderation_update) << ENA_ETH_IO_INTR_REG_NO_MODERATION_UPDATE_SHIFT) &
-			ENA_ETH_IO_INTR_REG_NO_MODERATION_UPDATE_MASK;
+	intr_reg->intr_control |= FIELD_PREP(ENA_ETH_IO_INTR_REG_NO_MODERATION_UPDATE_MASK,
+					     ((u32)no_moderation_update));
 }
 
 static inline u8 *ena_com_get_next_bounce_buffer(struct ena_com_io_bounce_buffer_control *bounce_buf_ctrl)
