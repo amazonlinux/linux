@@ -1034,9 +1034,55 @@ static int __init parse_spectre_bhb_param(char *str)
 }
 early_param("nospectre_bhb", parse_spectre_bhb_param);
 
-void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
+static void spectre_bhb_enable_fw_mitigation(void)
 {
 	bp_hardening_cb_t cpu_cb;
+	struct bp_hardening_data *data = this_cpu_ptr(&bp_hardening_data);
+
+	/*
+	 * Ensure KVM uses one of the spectre bp_hardening
+	 * vectors. The indirect vector doesn't include the EL3
+	 * call, so needs upgrading to
+	 * HYP_VECTOR_SPECTRE_INDIRECT.
+	 */
+	if (!data->slot || data->slot == HYP_VECTOR_INDIRECT)
+		data->slot += 1;
+
+	this_cpu_set_vectors(EL1_VECTOR_BHB_FW);
+
+	/*
+	 * The WA3 call in the vectors supersedes the WA1 call
+	 * made during context-switch. Uninstall any firmware
+	 * bp_hardening callback.
+	 */
+	cpu_cb = spectre_v2_get_sw_mitigation_cb();
+	if (__this_cpu_read(bp_hardening_data.fn) != cpu_cb) {
+		pr_info("setting bp_hadening_data.fn to NULL");
+		__this_cpu_write(bp_hardening_data.fn, NULL);
+	}
+
+	set_bit(BHB_FW, &system_bhb_mitigations);
+}
+
+static void spectre_bhb_enable_loop_mitigation(void)
+{
+	struct bp_hardening_data *data = this_cpu_ptr(&bp_hardening_data);
+
+	/*
+	 * Ensure KVM uses the indirect vector which will have the
+	 * branchy-loop added. A57/A72-r0 will already have selected
+	 * the spectre-indirect vector, which is sufficient for BHB
+	 * too.
+	 */
+	if (!data->slot)
+		data->slot = HYP_VECTOR_INDIRECT;
+
+	this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
+	set_bit(BHB_LOOP, &system_bhb_mitigations);
+}
+
+void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
+{
 	enum mitigation_state state = SPECTRE_VULNERABLE;
 	struct bp_hardening_data *data = this_cpu_ptr(&bp_hardening_data);
 
@@ -1064,41 +1110,11 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 		state = SPECTRE_MITIGATED;
 		set_bit(BHB_INSN, &system_bhb_mitigations);
 	} else if (spectre_bhb_loop_affected()) {
-		/*
-		 * Ensure KVM uses the indirect vector which will have the
-		 * branchy-loop added. A57/A72-r0 will already have selected
-		 * the spectre-indirect vector, which is sufficient for BHB
-		 * too.
-		 */
-		if (!data->slot)
-			data->slot = HYP_VECTOR_INDIRECT;
-
-		this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
+		spectre_bhb_enable_loop_mitigation();
 		state = SPECTRE_MITIGATED;
-		set_bit(BHB_LOOP, &system_bhb_mitigations);
 	} else if (has_spectre_bhb_fw_mitigation()) {
-		/*
-		 * Ensure KVM uses one of the spectre bp_hardening
-		 * vectors. The indirect vector doesn't include the EL3
-		 * call, so needs upgrading to
-		 * HYP_VECTOR_SPECTRE_INDIRECT.
-		 */
-		if (!data->slot || data->slot == HYP_VECTOR_INDIRECT)
-			data->slot += 1;
-
-		this_cpu_set_vectors(EL1_VECTOR_BHB_FW);
-
-		/*
-		 * The WA3 call in the vectors supersedes the WA1 call
-		 * made during context-switch. Uninstall any firmware
-		 * bp_hardening callback.
-		 */
-		cpu_cb = spectre_v2_get_sw_mitigation_cb();
-		if (__this_cpu_read(bp_hardening_data.fn) != cpu_cb)
-			__this_cpu_write(bp_hardening_data.fn, NULL);
-
+		spectre_bhb_enable_fw_mitigation();
 		state = SPECTRE_MITIGATED;
-		set_bit(BHB_FW, &system_bhb_mitigations);
 	}
 
 	update_mitigation_state(&spectre_bhb_state, state);
