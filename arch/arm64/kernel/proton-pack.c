@@ -866,7 +866,8 @@ enum mitigation_state arm64_get_spectre_bhb_state(void)
 
 enum bhb_mitigation_bits {
 	BHB_LOOP,
-	BHB_FW,
+	BHB_FW_WA3,
+	BHB_FW_WA1,
 	BHB_HW,
 	BHB_INSN,
 };
@@ -933,13 +934,17 @@ u8 spectre_bhb_loop_affected(int scope)
 	return k;
 }
 
-static enum mitigation_state spectre_bhb_get_cpu_fw_mitigation_state(void)
+static enum mitigation_state
+spectre_bhb_get_cpu_fw_mitigation_state(enum bhb_mitigation_bits fw_wa)
 {
 	int ret;
 	struct arm_smccc_res res;
+	u64 imm = ARM_SMCCC_ARCH_WORKAROUND_3;
 
-	arm_smccc_1_1_invoke(ARM_SMCCC_ARCH_FEATURES_FUNC_ID,
-			     ARM_SMCCC_ARCH_WORKAROUND_3, &res);
+	if (fw_wa == BHB_FW_WA1)
+		imm = ARM_SMCCC_ARCH_WORKAROUND_1;
+
+	arm_smccc_1_1_invoke(ARM_SMCCC_ARCH_FEATURES_FUNC_ID, imm, &res);
 
 	ret = res.a0;
 	switch (ret) {
@@ -958,9 +963,10 @@ static enum mitigation_state spectre_bhb_get_cpu_fw_mitigation_state(void)
  * For a core affected by BSE, get the WA3 state and handle the 'unaffected'
  * case from unaware firmware.
  */
-static enum mitigation_state spectre_bse_get_cpu_fw_mitigation_state(void)
+static enum mitigation_state
+spectre_bse_get_cpu_fw_mitigation_state(enum bhb_mitigation_bits fw_wa)
 {
-	enum mitigation_state state = spectre_bhb_get_cpu_fw_mitigation_state();
+	enum mitigation_state state = spectre_bhb_get_cpu_fw_mitigation_state(fw_wa);
 
 	switch (state) {
 		case SPECTRE_MITIGATED:
@@ -994,7 +1000,7 @@ static bool is_spectre_bhb_fw_affected(int scope)
 	if (scope != SCOPE_LOCAL_CPU)
 		return system_affected;
 
-	fw_state = spectre_bhb_get_cpu_fw_mitigation_state();
+	fw_state = spectre_bhb_get_cpu_fw_mitigation_state(BHB_FW_WA3);
 	if (cpu_in_list || (has_smccc && fw_state == SPECTRE_MITIGATED)) {
 		system_affected = true;
 		return true;
@@ -1079,7 +1085,7 @@ static void this_cpu_set_vectors(enum arm64_bp_harden_el1_vectors slot)
 	isb();
 }
 
-static void spectre_bhb_enable_fw_mitigation(void)
+static void spectre_bhb_enable_fw_mitigation(enum bhb_mitigation_bits fw_wa)
 {
 	bp_hardening_cb_t cpu_cb;
 	struct bp_hardening_data *data = this_cpu_ptr(&bp_hardening_data);
@@ -1106,7 +1112,7 @@ static void spectre_bhb_enable_fw_mitigation(void)
 		__this_cpu_write(bp_hardening_data.fn, NULL);
 	}
 
-	set_bit(BHB_FW, &system_bhb_mitigations);
+	set_bit(fw_wa, &system_bhb_mitigations);
 }
 
 static void spectre_bhb_enable_loop_mitigation(void)
@@ -1165,9 +1171,9 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 			bse_upgrade_loop_mitigation = true;
 		}
 	} else if (is_spectre_bhb_fw_affected(SCOPE_LOCAL_CPU)) {
-		fw_state = spectre_bhb_get_cpu_fw_mitigation_state();
+		fw_state = spectre_bhb_get_cpu_fw_mitigation_state(BHB_FW_WA3);
 		if (fw_state == SPECTRE_MITIGATED) {
-			spectre_bhb_enable_fw_mitigation();
+			spectre_bhb_enable_fw_mitigation(BHB_FW_WA3);
 			state = SPECTRE_MITIGATED;
 
 			if (is_spectre_bse_affected(SCOPE_LOCAL_CPU))
@@ -1177,9 +1183,16 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 
 	/* Spectre BSE needs to upgrade the BHB mitigation to use firmware */
 	if (bse_upgrade_loop_mitigation) {
-		bse_state = spectre_bse_get_cpu_fw_mitigation_state();
+		bse_state = spectre_bse_get_cpu_fw_mitigation_state(BHB_FW_WA1);
 		if (bse_state == SPECTRE_MITIGATED) {
-			spectre_bhb_enable_fw_mitigation();
+			/*
+			 * For affected cores the firmware implementions of WA1
+			 * and WA3 are both sufficient for BSE, but what about
+			 * hypervisors? It's possible the hypervisor implements
+			 * WA3 with the branchy-loop, which is not sufficient.
+			 * Use the WA1 call instead.
+			 */
+			spectre_bhb_enable_fw_mitigation(BHB_FW_WA1);
 			state = SPECTRE_MITIGATED;
 			bse_state = SPECTRE_MITIGATED;
 		} else {
@@ -1213,7 +1226,7 @@ void noinstr spectre_bhb_patch_fw_mitigation_enabled(struct alt_instr *alt,
 {
 	BUG_ON(nr_inst != 1);
 
-	if (test_bit(BHB_FW, &system_bhb_mitigations))
+	if (test_bit(BHB_FW_WA3, &system_bhb_mitigations))
 		*updptr++ = cpu_to_le32(aarch64_insn_gen_nop());
 }
 
@@ -1238,26 +1251,33 @@ void noinstr spectre_bhb_patch_loop_iter(struct alt_instr *alt,
 	*updptr++ = cpu_to_le32(insn);
 }
 
-/* Patched to mov WA3 when supported */
+/* Patched to mov WA1 or WA3 when supported */
 void noinstr spectre_bhb_patch_wa3(struct alt_instr *alt,
 				   __le32 *origptr, __le32 *updptr, int nr_inst)
 {
 	u8 rd;
 	u32 insn;
+	u64 imm = ARM_SMCCC_ARCH_WORKAROUND_3;
 
 	BUG_ON(nr_inst != 1); /* MOV -> MOV */
 
-	if (!IS_ENABLED(CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY) ||
-	    !test_bit(BHB_FW, &system_bhb_mitigations))
+	if (!IS_ENABLED(CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY))
 		return;
+
+	if (!test_bit(BHB_FW_WA1, &system_bhb_mitigations) &&
+			!test_bit(BHB_FW_WA3, &system_bhb_mitigations))
+		return;
+
+	/* If both WA1 and WA3 are selected, WA1 must be used */
+	if (test_bit(BHB_FW_WA1, &system_bhb_mitigations))
+		imm = ARM_SMCCC_ARCH_WORKAROUND_1;
 
 	insn = le32_to_cpu(*origptr);
 	rd = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, insn);
 
 	insn = aarch64_insn_gen_logical_immediate(AARCH64_INSN_LOGIC_ORR,
 						  AARCH64_INSN_VARIANT_32BIT,
-						  AARCH64_INSN_REG_ZR, rd,
-						  ARM_SMCCC_ARCH_WORKAROUND_3);
+						  AARCH64_INSN_REG_ZR, rd, imm);
 	if (WARN_ON_ONCE(insn == AARCH64_BREAK_FAULT))
 		return;
 
