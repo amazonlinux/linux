@@ -1636,9 +1636,9 @@ static struct inode *ll_iget_anon_dir(struct super_block *sb,
 		LASSERTF(S_ISDIR(inode->i_mode), "Not slave inode "DFID"\n",
 			 PFID(fid));
 
-		inode->i_mtime.tv_sec = 0;
-		inode->i_atime.tv_sec = 0;
-		inode->i_ctime.tv_sec = 0;
+		inode_set_mtime(inode, 0, 0);
+		inode_set_atime(inode, 0, 0);
+		inode_set_ctime(inode, 0, 0);
 		inode->i_rdev = 0;
 
 #ifdef HAVE_BACKING_DEV_INFO
@@ -2018,8 +2018,8 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
  * \retval 0		on success
  * \retval negative	errno on failure
  */
-int ll_io_zero_page(struct inode *inode, pgoff_t index, pgoff_t offset,
-		    unsigned len)
+static int ll_io_zero_page(struct inode *inode, pgoff_t index, pgoff_t offset,
+			   unsigned int len)
 {
 	struct ll_inode_info *lli = ll_i2info(inode);
 	struct cl_object *clob = lli->lli_clob;
@@ -2134,7 +2134,7 @@ int ll_io_zero_page(struct inode *inode, pgoff_t index, pgoff_t offset,
 queuefini2:
 		cl_2queue_discard(env, io, queue);
 queuefini1:
-		cl_2queue_disown(env, io, queue);
+		cl_2queue_disown(env, queue);
 		cl_2queue_fini(env, queue);
 	}
 
@@ -2708,25 +2708,25 @@ int ll_update_inode(struct inode *inode, struct lustre_md *md)
 	inode->i_generation = cl_fid_build_gen(&body->mbo_fid1);
 
 	if (body->mbo_valid & OBD_MD_FLATIME) {
-		if (body->mbo_atime > inode->i_atime.tv_sec)
-			inode->i_atime.tv_sec = body->mbo_atime;
+		if (body->mbo_atime > inode_get_atime_sec(inode))
+			inode_set_atime(inode, body->mbo_atime, 0);
 		lli->lli_atime = body->mbo_atime;
 	}
 
 	if (body->mbo_valid & OBD_MD_FLMTIME) {
-		if (body->mbo_mtime > inode->i_mtime.tv_sec) {
+		if (body->mbo_mtime > inode_get_mtime_sec(inode)) {
 			CDEBUG(D_INODE,
 			       "setting ino %lu mtime from %lld to %llu\n",
-			       inode->i_ino, (s64)inode->i_mtime.tv_sec,
+			       inode->i_ino, (s64) inode_get_mtime_sec(inode),
 			       body->mbo_mtime);
-			inode->i_mtime.tv_sec = body->mbo_mtime;
+			inode_set_mtime(inode, body->mbo_mtime, 0);
 		}
 		lli->lli_mtime = body->mbo_mtime;
 	}
 
 	if (body->mbo_valid & OBD_MD_FLCTIME) {
-		if (body->mbo_ctime > inode->i_ctime.tv_sec)
-			inode->i_ctime.tv_sec = body->mbo_ctime;
+		if (body->mbo_ctime > inode_get_ctime_sec(inode))
+			inode_set_ctime(inode, body->mbo_ctime, 0);
 		lli->lli_ctime = body->mbo_ctime;
 	}
 
@@ -2914,9 +2914,9 @@ int ll_read_inode2(struct inode *inode, void *opaque)
          * it ourselves.  They will be overwritten by either MDS or OST
 	 * attributes - we just need to make sure they aren't newer.
 	 */
-	inode->i_mtime.tv_sec = 0;
-	inode->i_atime.tv_sec = 0;
-	inode->i_ctime.tv_sec = 0;
+	inode_set_mtime(inode, 0, 0);
+	inode_set_atime(inode, 0, 0);
+	inode_set_ctime(inode, 0, 0);
 	inode->i_rdev = 0;
 	rc = ll_update_inode(inode, md);
 	if (rc != 0)

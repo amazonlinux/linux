@@ -35,3 +35,15 @@ config LUSTREFSX_LNET_XPRT_IB
 	  called ko2iblnd.
 
 	  If unsure, say N.
+
+config LUSTREFSX_LNET_EFALND
+	tristate "LNET EFA support"
+	depends on m
+	depends on LUSTREFSX_LNET && AMAZON_EFA_INFINIBAND
+	default LUSTREFSX_LNET && AMAZON_EFA_INFINIBAND
+	help
+	  This option allows the LNET users to use EFA as an
+	  RDMA-enabled transport.
+
+	  To compile this as a kernel module, choose M here and it will be
+	  called kefalnd.
