@@ -77,7 +77,7 @@ static DECLARE_RWSEM(cfs_tracefile_sem);
  * with other interrupt locks that might be happening. See LU-1311
  * for details.
  */
-int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
+static int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 	__acquires(&tcd->tcd_lock)
 {
 	__LASSERT(tcd->tcd_type < CFS_TCD_TYPE_CNT);
@@ -92,7 +92,7 @@ int cfs_trace_lock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 	return 1;
 }
 
-void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
+static void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 	__releases(&tcd->tcd_lock)
 {
 	__LASSERT(tcd->tcd_type < CFS_TCD_TYPE_CNT);
@@ -117,7 +117,7 @@ void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 	     (tcd = &(*cfs_trace_data[i])[cpu].tcd) &&			\
 	     cfs_trace_lock_tcd(tcd, 1); cfs_trace_unlock_tcd(tcd, 1), i++)
 
-enum cfs_trace_buf_type cfs_trace_buf_idx_get(void)
+static enum cfs_trace_buf_type cfs_trace_buf_idx_get(void)
 {
 	if (in_irq())
 		return CFS_TCD_TYPE_IRQ;
@@ -482,12 +482,12 @@ int libcfs_debug_msg(struct libcfs_debug_msg_data *msgdata,
 		debug_buf += sizeof(header);
 	}
 
-	strlcpy(debug_buf, file, PAGE_SIZE - tage->used);
+	snprintf(debug_buf, PAGE_SIZE - tage->used, "%s", file);
 	tage->used += strlen(file) + 1;
 	debug_buf += strlen(file) + 1;
 
 	if (msgdata->msg_fn) {
-		strlcpy(debug_buf, msgdata->msg_fn, PAGE_SIZE - tage->used);
+		snprintf(debug_buf, PAGE_SIZE - tage->used, "%s", msgdata->msg_fn);
 		tage->used += strlen(msgdata->msg_fn) + 1;
 		debug_buf += strlen(msgdata->msg_fn) + 1;
 	}
@@ -967,7 +967,10 @@ int cfs_trace_get_debug_mb(void)
 
 	up_read(&cfs_tracefile_sem);
 
-	return (total_pages >> (20 - PAGE_SHIFT)) + 1;
+	if (total_pages)
+		return (total_pages >> (20 - PAGE_SHIFT)) + 1;
+	else
+		return 0;
 }
 
 static int tracefiled(void *arg)

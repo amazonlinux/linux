@@ -273,7 +273,7 @@ sfw_init_session(struct sfw_session *sn, struct lst_sid sid,
 	atomic_set(&sn->sn_refcount, 1);        /* +1 for caller */
 	atomic_set(&sn->sn_brw_errors, 0);
 	atomic_set(&sn->sn_ping_errors, 0);
-	strlcpy(&sn->sn_name[0], name, sizeof(sn->sn_name));
+	strscpy(&sn->sn_name[0], name, sizeof(sn->sn_name));
 
 	sn->sn_timer_active = 0;
 	sn->sn_id = sid;
@@ -300,8 +300,10 @@ sfw_server_rpc_done(struct srpc_server_rpc *rpc)
                 swi_state2str(rpc->srpc_wi.swi_state),
                 status);
 
-        if (rpc->srpc_bulk != NULL)
-                sfw_free_pages(rpc);
+	if (rpc->srpc_bulk) {
+		srpc_free_bulk(rpc->srpc_bulk);
+		rpc->srpc_bulk = NULL;
+	}
 }
 
 static void
@@ -433,10 +435,10 @@ sfw_make_session(struct srpc_mksn_reqst *request, struct srpc_mksn_reply *reply)
 
                 if (!request->mksn_force) {
                         reply->mksn_status = EBUSY;
-			cplen = strlcpy(&reply->mksn_name[0], &sn->sn_name[0],
+			cplen = strscpy(&reply->mksn_name[0], &sn->sn_name[0],
 					sizeof(reply->mksn_name));
-			if (cplen >= sizeof(reply->mksn_name))
-				return -E2BIG;
+			if (cplen < 0)
+				return cplen;
                         return 0;
                 }
         }
@@ -514,6 +516,7 @@ sfw_debug_session(struct srpc_debug_reqst *request,
 		  struct srpc_debug_reply *reply)
 {
 	struct sfw_session *sn = sfw_data.fw_session;
+	int cplen;
 
         if (sn == NULL) {
                 reply->dbg_status = ESRCH;
@@ -524,9 +527,10 @@ sfw_debug_session(struct srpc_debug_reqst *request,
 	reply->dbg_status  = 0;
 	reply->dbg_sid     = sn->sn_id;
 	reply->dbg_timeout = sn->sn_timeout;
-	if (strlcpy(reply->dbg_name, &sn->sn_name[0], sizeof(reply->dbg_name))
-	    >= sizeof(reply->dbg_name))
-		return -E2BIG;
+	cplen = strscpy(reply->dbg_name, &sn->sn_name[0],
+		    sizeof(reply->dbg_name));
+	if (cplen < 0)
+		return cplen;
 
         return 0;
 }
@@ -539,6 +543,7 @@ sfw_test_rpc_fini(struct srpc_client_rpc *rpc)
 
 	/* Called with hold of tsi->tsi_lock */
 	LASSERT(list_empty(&rpc->crpc_list));
+	rpc->crpc_wi.swi_state = SWI_STATE_DONE;
 	list_add(&rpc->crpc_list, &tsi->tsi_free_rpcs);
 }
 
@@ -640,6 +645,7 @@ sfw_destroy_test_instance(struct sfw_test_instance *tsi)
 		rpc = list_entry(tsi->tsi_free_rpcs.next,
 				 struct srpc_client_rpc, crpc_list);
 		list_del(&rpc->crpc_list);
+		swi_cancel_workitem(&rpc->crpc_wi);
 		LIBCFS_FREE(rpc, srpc_client_rpc_size(rpc));
 	}
 
@@ -928,6 +934,7 @@ sfw_create_test_rpc(struct sfw_test_unit *tsu, struct lnet_process_id peer,
 					     blklen, sfw_test_rpc_done,
 					     sfw_test_rpc_fini, tsu);
 	} else {
+		swi_cancel_workitem(&rpc->crpc_wi);
 		srpc_init_client_rpc(rpc, peer, tsi->tsi_service, nblk,
 				     blklen, sfw_test_rpc_done,
 				     sfw_test_rpc_fini, tsu);
@@ -944,25 +951,29 @@ sfw_create_test_rpc(struct sfw_test_unit *tsu, struct lnet_process_id peer,
 	return 0;
 }
 
-static int
+static void
 sfw_run_test(struct swi_workitem *wi)
 {
 	struct sfw_test_unit *tsu = container_of(wi, struct sfw_test_unit, tsu_worker);
 	struct sfw_test_instance *tsi = tsu->tsu_instance;
 	struct srpc_client_rpc *rpc = NULL;
 
-        LASSERT (wi == &tsu->tsu_worker);
+	if (tsi->tsi_ops->tso_prep_rpc(tsu, tsu->tsu_dest, &rpc) != 0) {
+		LASSERT(rpc == NULL);
+		wi->swi_state = SWI_STATE_DONE;
+		goto test_done;
+	}
 
-        if (tsi->tsi_ops->tso_prep_rpc(tsu, tsu->tsu_dest, &rpc) != 0) {
-                LASSERT (rpc == NULL);
-                goto test_done;
-        }
-
-        LASSERT (rpc != NULL);
+	LASSERT(rpc != NULL);
 
 	spin_lock(&tsi->tsi_lock);
+	if (wi->swi_state == SWI_STATE_DONE) {
+		spin_unlock(&tsi->tsi_lock);
+		return;
+	}
 
 	if (tsi->tsi_stopping) {
+		wi->swi_state = SWI_STATE_DONE;
 		list_add(&rpc->crpc_list, &tsi->tsi_free_rpcs);
 		spin_unlock(&tsi->tsi_lock);
 		goto test_done;
@@ -972,25 +983,24 @@ sfw_run_test(struct swi_workitem *wi)
 		tsu->tsu_loop--;
 
 	list_add_tail(&rpc->crpc_list, &tsi->tsi_active_rpcs);
+	wi->swi_state = SWI_STATE_RUNNING;
 	spin_unlock(&tsi->tsi_lock);
 
 	spin_lock(&rpc->crpc_lock);
 	rpc->crpc_timeout = rpc_timeout;
 	srpc_post_rpc(rpc);
 	spin_unlock(&rpc->crpc_lock);
-	return 0;
+	return;
 
 test_done:
-        /*
-         * No one can schedule me now since:
-         * - previous RPC, if any, has done and
-         * - no new RPC is initiated.
-         * - my batch is still active; no one can run it again now.
-         * Cancel pending schedules and prevent future schedule attempts:
-         */
-	swi_exit_workitem(wi);
+	/*
+	 * No one can schedule me now since:
+	 * - previous RPC, if any, has done and
+	 * - no new RPC is initiated.
+	 * - my batch is still active; no one can run it again now.
+	 * Cancel pending schedules and prevent future schedule attempts:
+	 */
 	sfw_test_unit_done(tsu);
-	return 1;
 }
 
 static int
@@ -1020,7 +1030,9 @@ sfw_run_batch(struct sfw_batch *tsb)
 			tsu->tsu_loop = tsi->tsi_loop;
 			wi = &tsu->tsu_worker;
 			swi_init_workitem(wi, sfw_run_test,
-					  lst_sched_test[lnet_cpt_of_nid(tsu->tsu_dest.nid, NULL)]);
+					  lst_test_wq[lnet_cpt_of_nid(
+							      tsu->tsu_dest.nid,
+							      NULL)]);
 			swi_schedule_workitem(wi);
 		}
 	}
@@ -1095,23 +1107,18 @@ sfw_query_batch(struct sfw_batch *tsb, int testidx,
         return -ENOENT;
 }
 
-void
-sfw_free_pages(struct srpc_server_rpc *rpc)
-{
-        srpc_free_bulk(rpc->srpc_bulk);
-        rpc->srpc_bulk = NULL;
-}
-
 int
-sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int npages, int len,
+sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int len,
 		int sink)
 {
 	LASSERT(rpc->srpc_bulk == NULL);
-	LASSERT(npages > 0 && npages <= LNET_MAX_IOV);
+	LASSERT(len > 0 && len <= LNET_MTU);
 
-	rpc->srpc_bulk = srpc_alloc_bulk(cpt, 0, npages, len, sink);
+	rpc->srpc_bulk = srpc_alloc_bulk(cpt, len);
 	if (rpc->srpc_bulk == NULL)
 		return -ENOMEM;
+
+	srpc_init_bulk(rpc->srpc_bulk, 0, len, sink);
 
 	return 0;
 }
@@ -1161,18 +1168,12 @@ sfw_add_test(struct srpc_server_rpc *rpc)
 
         if (request->tsr_is_client && rpc->srpc_bulk == NULL) {
 		/* rpc will be resumed later in sfw_bulk_ready */
-		int	npg = sfw_id_pages(request->tsr_ndest);
 		int	len;
 
-		if ((sn->sn_features & LST_FEAT_BULK_LEN) == 0) {
-			len = npg * PAGE_SIZE;
-
-		} else  {
-			len = sizeof(struct lnet_process_id_packed) *
+		len = sizeof(struct lnet_process_id_packed) *
 			      request->tsr_ndest;
-		}
 
-		return sfw_alloc_pages(rpc, CFS_CPT_ANY, npg, len, 1);
+		return sfw_alloc_pages(rpc, CFS_CPT_ANY, len, 1);
         }
 
         rc = sfw_add_test_instance(bat, rpc);
@@ -1398,14 +1399,15 @@ sfw_create_rpc(struct lnet_process_id peer, int service,
 		rpc = list_entry(sfw_data.fw_zombie_rpcs.next,
 				     struct srpc_client_rpc, crpc_list);
 		list_del(&rpc->crpc_list);
-
-                srpc_init_client_rpc(rpc, peer, service, 0, 0,
-                                     done, sfw_client_rpc_fini, priv);
-        }
-
+	}
 	spin_unlock(&sfw_data.fw_lock);
 
-	if (rpc == NULL) {
+	if (rpc) {
+		/* Ensure that rpc is done */
+		swi_cancel_workitem(&rpc->crpc_wi);
+		srpc_init_client_rpc(rpc, peer, service, 0, 0,
+				     done, sfw_client_rpc_fini, priv);
+	} else {
 		rpc = srpc_create_client_rpc(peer, service,
 					     nbulkiov, bulklen, done,
 					     nbulkiov != 0 ?  NULL :
@@ -1638,10 +1640,9 @@ sfw_startup (void)
 	INIT_LIST_HEAD(&sfw_data.fw_zombie_rpcs);
 	INIT_LIST_HEAD(&sfw_data.fw_zombie_sessions);
 
-        brw_init_test_client();
-        brw_init_test_service();
-        rc = sfw_register_test(&brw_test_service, &brw_test_client);
-        LASSERT (rc == 0);
+	brw_init_test_service();
+	rc = sfw_register_test(&brw_test_service, &brw_test_client);
+	LASSERT(rc == 0);
 
         ping_init_test_client();
         ping_init_test_service();
