@@ -106,6 +106,8 @@ static inline __u32 LNET_MKNET(__u32 type, __u32 num)
 
 #define LNET_NET_ANY LNET_NIDNET(LNET_NID_ANY)
 
+#define LNET_ADDR_ANY LNET_NIDADDR(LNET_NID_ANY)
+
 static inline int nid_is_nid4(const struct lnet_nid *nid)
 {
 	return NID_ADDR_BYTES(nid) == 4;
@@ -158,6 +160,14 @@ static inline int nid_same(const struct lnet_nid *n1,
 		n1->nid_addr[1] == n2->nid_addr[1] &&
 		n1->nid_addr[2] == n2->nid_addr[2] &&
 		n1->nid_addr[3] == n2->nid_addr[3];
+}
+
+static inline int nid_net_same(const struct lnet_nid *n1,
+			       const struct lnet_nid *n2)
+{
+	return n1->nid_size == n2->nid_size &&
+		n1->nid_type == n2->nid_type &&
+		n1->nid_num == n2->nid_num;
 }
 
 /* This can be used when we need to hash a nid */
