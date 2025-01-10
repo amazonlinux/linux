@@ -133,8 +133,8 @@ void cl_io_fini(const struct lu_env *env, struct cl_io *io)
 }
 EXPORT_SYMBOL(cl_io_fini);
 
-static int cl_io_init0(const struct lu_env *env, struct cl_io *io,
-                       enum cl_io_type iot, struct cl_object *obj)
+static int __cl_io_init(const struct lu_env *env, struct cl_io *io,
+			enum cl_io_type iot, struct cl_object *obj)
 {
         struct cl_object *scan;
         int result;
@@ -172,7 +172,7 @@ int cl_io_sub_init(const struct lu_env *env, struct cl_io *io,
 {
         LASSERT(obj != cl_object_top(obj));
 
-        return cl_io_init0(env, io, iot, obj);
+	return __cl_io_init(env, io, iot, obj);
 }
 EXPORT_SYMBOL(cl_io_sub_init);
 
@@ -194,7 +194,7 @@ int cl_io_init(const struct lu_env *env, struct cl_io *io,
 	/* clear I/O restart from previous instance */
 	io->ci_need_restart = 0;
 
-	return cl_io_init0(env, io, iot, obj);
+	return __cl_io_init(env, io, iot, obj);
 }
 EXPORT_SYMBOL(cl_io_init);
 
@@ -875,7 +875,6 @@ void cl_page_list_del(const struct lu_env *env,
 		      struct cl_page_list *plist, struct cl_page *page)
 {
 	LASSERT(plist->pl_nr > 0);
-	LASSERT(cl_page_is_vmlocked(env, page));
 
 	ENTRY;
 	list_del_init(&page->cp_batch);
@@ -949,12 +948,10 @@ EXPORT_SYMBOL(cl_page_list_splice);
 /**
  * Disowns pages in a queue.
  */
-void cl_page_list_disown(const struct lu_env *env,
-			 struct cl_io *io, struct cl_page_list *plist)
+void cl_page_list_disown(const struct lu_env *env, struct cl_page_list *plist)
 {
 	struct cl_page *page;
 	struct cl_page *temp;
-
 
 	ENTRY;
 	cl_page_list_for_each_safe(page, temp, plist) {
@@ -963,14 +960,14 @@ void cl_page_list_disown(const struct lu_env *env,
 		list_del_init(&page->cp_batch);
 		--plist->pl_nr;
 		/*
-		 * cl_page_disown0 rather than usual cl_page_disown() is used,
+		 * __cl_page_disown rather than usual cl_page_disown() is used,
 		 * because pages are possibly in CPS_FREEING state already due
 		 * to the call to cl_page_list_discard().
 		 */
 		/*
-		 * XXX cl_page_disown0() will fail if page is not locked.
+		 * XXX __cl_page_disown() will fail if page is not locked.
 		 */
-		cl_page_disown0(env, io, page);
+		__cl_page_disown(env, page);
 		lu_ref_del_at(&page->cp_reference, &page->cp_queue_ref, "queue",
 			      plist);
 		cl_page_put(env, page);
@@ -1048,12 +1045,11 @@ EXPORT_SYMBOL(cl_2queue_add);
 /**
  * Disown pages in both lists of a 2-queue.
  */
-void cl_2queue_disown(const struct lu_env *env,
-                      struct cl_io *io, struct cl_2queue *queue)
+void cl_2queue_disown(const struct lu_env *env, struct cl_2queue *queue)
 {
         ENTRY;
-        cl_page_list_disown(env, io, &queue->c2_qin);
-        cl_page_list_disown(env, io, &queue->c2_qout);
+        cl_page_list_disown(env, &queue->c2_qin);
+        cl_page_list_disown(env, &queue->c2_qout);
         EXIT;
 }
 EXPORT_SYMBOL(cl_2queue_disown);
