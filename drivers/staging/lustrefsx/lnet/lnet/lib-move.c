@@ -2052,7 +2052,7 @@ lnet_handle_spec_local_mr_dst(struct lnet_send_data *sd)
 	return -EHOSTUNREACH;
 }
 
-struct lnet_ni *
+static struct lnet_ni *
 lnet_find_best_ni_on_spec_net(struct lnet_ni *cur_best_ni,
 			      struct lnet_peer *peer,
 			      struct lnet_peer_net *peer_net,
@@ -2152,7 +2152,7 @@ lnet_handle_find_routed_path(struct lnet_send_data *sd,
 			     struct lnet_peer_ni **gw_lpni,
 			     struct lnet_peer **gw_peer)
 {
-	int rc;
+	int rc = 0;
 	struct lnet_peer *gw;
 	struct lnet_peer *lp;
 	struct lnet_peer_net *lpn;
@@ -2163,6 +2163,7 @@ lnet_handle_find_routed_path(struct lnet_send_data *sd,
 	struct lnet_peer_ni *lpni = NULL;
 	struct lnet_peer_ni *gwni = NULL;
 	bool route_found = false;
+	bool gwni_decref = false;
 	struct lnet_nid *src_nid =
 		!LNET_NID_IS_ANY(&sd->sd_src_nid) || !sd->sd_best_ni
 		? &sd->sd_src_nid
@@ -2181,13 +2182,18 @@ lnet_handle_find_routed_path(struct lnet_send_data *sd,
 		gwni = lnet_peer_ni_find_locked(&sd->sd_rtr_nid);
 		if (gwni) {
 			gw = gwni->lpni_peer_net->lpn_peer;
-			lnet_peer_ni_decref_locked(gwni);
-			if (gw->lp_rtr_refcount)
+			if (gw->lp_rtr_refcount) {
+				gwni_decref = true;
 				route_found = true;
-		} else {
+			} else {
+				lnet_peer_ni_decref_locked(gwni);
+				gwni = NULL;
+				gw = NULL;
+			}
+		}
+		if (!gwni)
 			CWARN("No peer NI for gateway %s. Attempting to find an alternative route.\n",
 			       libcfs_nidstr(&sd->sd_rtr_nid));
-		}
 	}
 
 	if (!route_found) {
@@ -2205,7 +2211,8 @@ lnet_handle_find_routed_path(struct lnet_send_data *sd,
 						"any local NI" :
 						libcfs_nidstr(src_nid),
 				       libcfs_nidstr(&sd->sd_dst_nid));
-				return -EHOSTUNREACH;
+				rc = -EHOSTUNREACH;
+				goto out;
 			}
 		} else {
 			/* we've already looked up the initial lpni using
@@ -2251,7 +2258,8 @@ use_lpn:
 			if (!best_lpn) {
 				CERROR("peer %s has no available nets\n",
 				       libcfs_nidstr(&sd->sd_dst_nid));
-				return -EHOSTUNREACH;
+				rc =  -EHOSTUNREACH;
+				goto out;
 			}
 
 			sd->sd_best_lpni = lnet_find_best_lpni(sd->sd_best_ni,
@@ -2261,7 +2269,8 @@ use_lpn:
 			if (!sd->sd_best_lpni) {
 				CERROR("peer %s is unreachable\n",
 				       libcfs_nidstr(&sd->sd_dst_nid));
-				return -EHOSTUNREACH;
+				rc = -EHOSTUNREACH;
+				goto out;
 			}
 
 			/* We're attempting to round robin over the remote peer
@@ -2293,14 +2302,16 @@ use_lpn:
 			CERROR("no route to %s from %s\n",
 			       libcfs_nidstr(dst_nid),
 			       libcfs_nidstr(src_nid));
-			return -EHOSTUNREACH;
+			rc = -EHOSTUNREACH;
+			goto out;
 		}
 
 		if (!gwni) {
 			CERROR("Internal Error. Route expected to %s from %s\n",
 			       libcfs_nidstr(dst_nid),
 			       libcfs_nidstr(src_nid));
-			return -EFAULT;
+			rc = -EFAULT;
+			goto out;
 		}
 
 		gw = best_route->lr_gateway;
@@ -2323,7 +2334,7 @@ use_lpn:
 	if (alive_router_check_interval <= 0) {
 		rc = lnet_initiate_peer_discovery(gwni, sd->sd_msg, sd->sd_cpt);
 		if (rc)
-			return rc;
+			goto out;
 	}
 
 	if (!sd->sd_best_ni) {
@@ -2335,7 +2346,8 @@ use_lpn:
 			CERROR("Internal Error. Expected local ni on %s but non found: %s\n",
 			       libcfs_net2str(lpn->lpn_net_id),
 			       libcfs_nidstr(&sd->sd_src_nid));
-			return -EFAULT;
+			rc = -EFAULT;
+			goto out;
 		}
 	}
 
@@ -2353,7 +2365,11 @@ use_lpn:
 			best_lpn->lpn_seq++;
 	}
 
-	return 0;
+out:
+	if (gwni_decref && gwni)
+		lnet_peer_ni_decref_locked(gwni);
+
+	return rc;
 }
 
 /*
@@ -2411,7 +2427,7 @@ lnet_handle_spec_router_dst(struct lnet_send_data *sd)
 	return lnet_handle_send(sd);
 }
 
-struct lnet_ni *
+static struct lnet_ni *
 lnet_find_best_ni_on_local_net(struct lnet_peer *peer, int md_cpt,
 			       struct lnet_msg *msg, bool discovery)
 {
@@ -2995,7 +3011,6 @@ again:
 		lnet_net_unlock(cpt);
 		return rc;
 	}
-	lnet_peer_ni_decref_locked(lpni);
 
 	peer = lpni->lpni_peer_net->lpn_peer;
 
@@ -3095,6 +3110,7 @@ again:
 	 * updated as a result of calling lnet_handle_send_case_locked().
 	 */
 	cpt = send_data.sd_cpt;
+	lnet_peer_ni_decref_locked(lpni);
 
 	if (rc == REPEAT_SEND)
 		goto again;
@@ -3544,7 +3560,7 @@ lnet_recover_local_nis(void)
 
 			ev_info->mt_type = MT_TYPE_LOCAL_NI;
 			ev_info->mt_nid = nid;
-			rc = lnet_send_ping(&nid, &mdh, LNET_INTERFACES_MIN,
+			rc = lnet_send_ping(&nid, &mdh, LNET_PING_INFO_MIN_SIZE,
 					    ev_info, the_lnet.ln_mt_handler,
 					    true);
 			/* lookup the nid again */
@@ -3777,7 +3793,7 @@ lnet_recover_peer_nis(void)
 
 			ev_info->mt_type = MT_TYPE_PEER_NI;
 			ev_info->mt_nid = nid;
-			rc = lnet_send_ping(&nid, &mdh, LNET_INTERFACES_MIN,
+			rc = lnet_send_ping(&nid, &mdh, LNET_PING_INFO_MIN_SIZE,
 					    ev_info, the_lnet.ln_mt_handler,
 					    true);
 			lnet_net_lock(0);
@@ -3889,7 +3905,7 @@ lnet_monitor_thread(void *arg)
  */
 int
 lnet_send_ping(struct lnet_nid *dest_nid,
-	       struct lnet_handle_md *mdh, int nnis,
+	       struct lnet_handle_md *mdh, int bytes,
 	       void *user_data, lnet_handler_t handler, bool recovery)
 {
 	struct lnet_md md = { NULL };
@@ -3902,7 +3918,7 @@ lnet_send_ping(struct lnet_nid *dest_nid,
 		goto fail_error;
 	}
 
-	pbuf = lnet_ping_buffer_alloc(nnis, GFP_NOFS);
+	pbuf = lnet_ping_buffer_alloc(bytes, GFP_NOFS);
 	if (!pbuf) {
 		rc = ENOMEM;
 		goto fail_error;
@@ -3910,7 +3926,7 @@ lnet_send_ping(struct lnet_nid *dest_nid,
 
 	/* initialize md content */
 	md.start     = &pbuf->pb_info;
-	md.length    = LNET_PING_INFO_SIZE(nnis);
+	md.length    = bytes;
 	md.threshold = 2; /* GET/REPLY */
 	md.max_size  = 0;
 	md.options   = LNET_MD_TRUNCATE | LNET_MD_TRACK_RESPONSE;
@@ -4696,7 +4712,7 @@ lnet_parse(struct lnet_ni *ni, struct lnet_hdr *hdr,
 		lnet_msg_free(msg);
 		if (rc == -ESHUTDOWN)
 			/* We are shutting down.  Don't do anything more */
-			return 0;
+			return rc;
 		goto drop;
 	}
 

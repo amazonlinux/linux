@@ -874,12 +874,13 @@ lnet_del_route(__u32 net, struct lnet_nid *gw)
 		LASSERT(lp);
 		gw_nid = lp->lp_primary_nid;
 		gw = &gw_nid;
-		lnet_peer_ni_decref_locked(lpni);
 	}
 
 	if (net != LNET_NET_ANY) {
 		rnet = lnet_find_rnet_locked(net);
 		if (!rnet) {
+			if (lpni)
+				lnet_peer_ni_decref_locked(lpni);
 			lnet_net_unlock(LNET_LOCK_EX);
 			return -ENOENT;
 		}
@@ -912,6 +913,7 @@ delete_zombies:
 	if (lpni) {
 		if (list_empty(&lp->lp_routes))
 			lp->lp_disc_net_id = 0;
+		lnet_peer_ni_decref_locked(lpni);
 	}
 
 	lnet_net_unlock(LNET_LOCK_EX);
@@ -1462,7 +1464,7 @@ lnet_rtrpools_free(int keep_pools)
 static int
 lnet_nrb_tiny_calculate(void)
 {
-	int	nrbs = LNET_NRB_TINY;
+	int nrbs = LNET_NRB_TINY;
 
 	if (tiny_router_buffers < 0) {
 		LCONSOLE_ERROR_MSG(0x10c,
@@ -1471,17 +1473,21 @@ lnet_nrb_tiny_calculate(void)
 		return -EINVAL;
 	}
 
-	if (tiny_router_buffers > 0)
+	if (tiny_router_buffers > 0) {
+		if (tiny_router_buffers < LNET_NRB_TINY_MIN)
+			CWARN("tiny_router_buffers=%d less than recommended minimum %d\n",
+			      tiny_router_buffers, LNET_NRB_TINY_MIN);
 		nrbs = tiny_router_buffers;
+	}
 
 	nrbs /= LNET_CPT_NUMBER;
-	return max(nrbs, LNET_NRB_TINY_MIN);
+	return max(nrbs, 1);
 }
 
 static int
 lnet_nrb_small_calculate(void)
 {
-	int	nrbs = LNET_NRB_SMALL;
+	int nrbs = LNET_NRB_SMALL;
 
 	if (small_router_buffers < 0) {
 		LCONSOLE_ERROR_MSG(0x10c,
@@ -1490,17 +1496,21 @@ lnet_nrb_small_calculate(void)
 		return -EINVAL;
 	}
 
-	if (small_router_buffers > 0)
+	if (small_router_buffers > 0) {
+		if (small_router_buffers < LNET_NRB_SMALL_MIN)
+			CWARN("small_router_buffers=%d less than recommended minimum %d\n",
+			      small_router_buffers, LNET_NRB_SMALL_MIN);
 		nrbs = small_router_buffers;
+	}
 
 	nrbs /= LNET_CPT_NUMBER;
-	return max(nrbs, LNET_NRB_SMALL_MIN);
+	return max(nrbs, 1);
 }
 
 static int
 lnet_nrb_large_calculate(void)
 {
-	int	nrbs = LNET_NRB_LARGE;
+	int nrbs = LNET_NRB_LARGE;
 
 	if (large_router_buffers < 0) {
 		LCONSOLE_ERROR_MSG(0x10c,
@@ -1509,11 +1519,15 @@ lnet_nrb_large_calculate(void)
 		return -EINVAL;
 	}
 
-	if (large_router_buffers > 0)
+	if (large_router_buffers > 0) {
+		if (large_router_buffers < LNET_NRB_LARGE_MIN)
+			CWARN("large_router_buffers=%d less than recommended minimum %d\n",
+			      large_router_buffers, LNET_NRB_LARGE_MIN);
 		nrbs = large_router_buffers;
+	}
 
 	nrbs /= LNET_CPT_NUMBER;
-	return max(nrbs, LNET_NRB_LARGE_MIN);
+	return max(nrbs, 1);
 }
 
 int

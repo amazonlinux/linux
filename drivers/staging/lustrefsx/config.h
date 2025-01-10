@@ -145,6 +145,9 @@
 /* kernel has struct blk_integrity_iter */
 #define HAVE_BLK_INTEGRITY_ITER 1
 
+/* BLK_INTEGRITY_NOVERIFY is available */
+/* #undef HAVE_BLK_INTEGRITY_NOVERIFY */
+
 /* kernel hash_64() is broken */
 /* #undef HAVE_BROKEN_HASH_64 */
 
@@ -174,6 +177,9 @@
 
 /* compat rdma found */
 /* #undef HAVE_COMPAT_RDMA */
+
+/* struct ctl_table argument to proc_handler() is const */
+/* #undef HAVE_CONST_CTR_TABLE */
 
 /* copy_file_range() is supported */
 #define HAVE_COPY_FILE_RANGE 1
@@ -207,6 +213,9 @@
 
 /* dentry.d_child exist */
 #define HAVE_DENTRY_D_CHILD 1
+
+/* sruct dentry has d_children member */
+/* #undef HAVE_DENTRY_D_CHILDREN */
 
 /* list dentry.d_u.d_alias exist */
 #define HAVE_DENTRY_D_U_D_ALIAS 1
@@ -346,6 +355,9 @@
 /* filldir_t needs struct dir_context and returns bool */
 #define HAVE_FILLDIR_USE_CTX_RETURN_BOOL 1
 
+/* '__flush_workqueue(system_wq)' is available */
+#define HAVE_FLUSH___WORKQUEUE 1
+
 /* FMR pool API is available */
 /* #undef HAVE_FMR_POOL_API */
 
@@ -354,6 +366,9 @@
 
 /* 'folio_batch_reinit' is available */
 /* #undef HAVE_FOLIO_BATCH_REINIT */
+
+/* 'folio_mapcount()' is available */
+/* #undef HAVE_FOLIO_MAPCOUNT */
 
 /* file_operations has iterate_shared */
 #define HAVE_FOP_ITERATE_SHARED 1
@@ -372,6 +387,12 @@
 
 /* full_name_hash need 3 arguments */
 #define HAVE_FULL_NAME_HASH_3ARGS 1
+
+/* generic_error_remove_folio() exists */
+/* #undef HAVE_GENERIC_ERROR_REMOVE_FOLIO */
+
+/* 'generic_fillattr()' has request_mask argument */
+/* #undef HAVE_GENERIC_FILEATTR_HAS_MASK_ARG */
 
 /* generic_write_sync has 2 arguments */
 #define HAVE_GENERIC_WRITE_SYNC_2ARGS 1
@@ -442,6 +463,9 @@
 /* hypervisor_is_type function exists */
 #define HAVE_HYPERVISOR_IS_TYPE 1
 
+/* ibdev_to_node() is defined */
+#define HAVE_IBDEV_TO_NODE 1
+
 /* ib_alloc_fast_reg_mr is defined */
 /* #undef HAVE_IB_ALLOC_FAST_REG_MR */
 
@@ -481,6 +505,12 @@
 /* inode_operations .getattr member function can gather advance stats */
 /* #undef HAVE_INODEOPS_ENHANCED_GETATTR */
 
+/* 'inode_get_ctime()' exists */
+#define HAVE_INODE_GET_CTIME 1
+
+/* 'inode_get_mtime()' exists */
+/* #undef HAVE_INODE_GET_MTIME_SEC */
+
 /* inode_lock is defined */
 #define HAVE_INODE_LOCK 1
 
@@ -519,6 +549,9 @@
 
 /* generic_readlink has been removed */
 /* #undef HAVE_IOP_GENERIC_READLINK */
+
+/* inode_operations has .get_inode_acl member function */
+/* #undef HAVE_IOP_GET_INODE_ACL */
 
 /* have iop get_link */
 #define HAVE_IOP_GET_LINK 1
@@ -740,6 +773,9 @@
 /* Enable lru resize support */
 #define HAVE_LRU_RESIZE_SUPPORT 1
 
+/* lsmcontext has id */
+/* #undef HAVE_LSMCONTEXT_HAS_ID */
+
 /* lsmcontext_init is available */
 /* #undef HAVE_LSMCONTEXT_INIT */
 
@@ -764,6 +800,9 @@
 
 /* mmap_lock API is available. */
 #define HAVE_MMAP_LOCK 1
+
+/* 'mmap_write_trylock()' is available */
+#define HAVE_MMAP_WRITE_TRYLOCK 1
 
 /* 'inode_operations' members have mnt_idmap argument */
 /* #undef HAVE_MNT_IDMAP_ARG */
@@ -812,6 +851,9 @@
 
 /* NR_UNSTABLE_NFS is still in use. */
 /* #undef HAVE_NR_UNSTABLE_NFS */
+
+/* 'struct nsproxy.count' is refcount_t */
+/* #undef HAVE_NSPROXY_COUNT_AS_REFCOUNT */
 
 /* ns_to_timespec64() is available */
 #define HAVE_NS_TO_TIMESPEC64 1
@@ -952,6 +994,9 @@
    gss_krb5_set_allowable_enctypes */
 /* #undef HAVE_SET_ALLOWABLE_ENCTYPES */
 
+/* 'shrinker_alloc()' exists */
+/* #undef HAVE_SHRINKER_ALLOC */
+
 /* shrinker has count_objects member */
 #define HAVE_SHRINKER_COUNT 1
 
@@ -992,7 +1037,10 @@
 #define HAVE_STRNLEN 1
 
 /* kernel strscpy is available */
-/* #undef HAVE_STRSCPY */
+#define HAVE_STRSCPY 1
+
+/* struct file_lock_core exists */
+/* #undef HAVE_STRUCT_FILE_LOCK_CORE */
 
 /* struct posix_acl_xattr_{header,entry} defined */
 #define HAVE_STRUCT_POSIX_ACL_XATTR 1
@@ -1008,6 +1056,9 @@
 
 /* new_sync_[read|write] is exported by the kernel */
 /* #undef HAVE_SYNC_READ_WRITE */
+
+/* sysfs_emit_at() is defined */
+#define HAVE_SYSFS_EMIT_AT 1
 
 /* Define to 1 if you have <sys/quota.h>. */
 #define HAVE_SYS_QUOTA_H 1
@@ -1153,11 +1204,17 @@
 /* Have zap_remove_by_dnode() in ZFS */
 /* #undef HAVE_ZAP_REMOVE_ADD_BY_DNODE */
 
+/* ZFS arc_prune_func_t uses uint64_t */
+/* #undef HAVE_ZFS_ARC_PRUNE_FUNC_UINT64 */
+
 /* Have inode_timespec_t */
 /* #undef HAVE_ZFS_INODE_TIMESPEC */
 
 /* Have multihost protection in ZFS */
 /* #undef HAVE_ZFS_MULTIHOST */
+
+/* ZFS nvlist interfaces require const */
+/* #undef HAVE_ZFS_NVLIST_CONST_INTERFACES */
 
 /* Enable zfs osd */
 /* #undef HAVE_ZFS_OSD */
@@ -1205,10 +1262,10 @@
 #define LUSTRE_MINOR 15
 
 /* Third number in the Lustre version */
-#define LUSTRE_PATCH 4
+#define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.4_139_gdac5f27_dirty"
+#define LUSTRE_VERSION_STRING "2.15.6_564_g23706e3"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1238,7 +1295,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.4_139_gdac5f27_dirty"
+#define PACKAGE_STRING "Lustre 2.15.6_564_g23706e3"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1247,13 +1304,16 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.4_139_gdac5f27_dirty"
+#define PACKAGE_VERSION "2.15.6_564_g23706e3"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
 
 /* enable randomly alloc failure */
 #define RANDOM_FAIL_ALLOC 1
+
+/* no request_mask argument needed */
+#define RQMASK_ARG /**/
 
 /* The size of `unsigned long long', as computed by sizeof. */
 #define SIZEOF_UNSIGNED_LONG_LONG 8
@@ -1282,10 +1342,13 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.4_139_gdac5f27_dirty"
+#define VERSION "2.15.6_564_g23706e3"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) (value)
+
+/* "GDS build enabled" */
+/* #undef WITH_GDS */
 
 /* zfs fix version */
 /* #undef ZFS_FIX */
