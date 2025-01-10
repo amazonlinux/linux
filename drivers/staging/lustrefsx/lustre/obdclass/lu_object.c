@@ -2034,6 +2034,14 @@ int lu_env_add(struct lu_env *env)
 }
 EXPORT_SYMBOL(lu_env_add);
 
+static void lu_env_item_free(struct rcu_head *head)
+{
+	struct lu_env_item *lei;
+
+	lei = container_of(head, struct lu_env_item, lei_rcu_head);
+	OBD_FREE_PTR(lei);
+}
+
 void lu_env_remove(struct lu_env *env)
 {
 	struct lu_env_item *lei;
@@ -2056,10 +2064,8 @@ void lu_env_remove(struct lu_env *env)
 	lei = rhashtable_lookup_fast(&lu_env_rhash, &task,
 				     lu_env_rhash_params);
 	if (lei && rhashtable_remove_fast(&lu_env_rhash, &lei->lei_linkage,
-									  lu_env_rhash_params) == 0) {
-		OBD_FREE_PRE(lei, sizeof(*lei), "kfreed");
-		kfree_rcu(lei, lei_rcu_head);
-	}
+					  lu_env_rhash_params) == 0)
+		call_rcu(&lei->lei_rcu_head, lu_env_item_free);
 }
 EXPORT_SYMBOL(lu_env_remove);
 
@@ -2192,7 +2198,7 @@ static unsigned long lu_cache_shrink_scan(struct shrinker *sk,
 }
 
 #ifdef HAVE_SHRINKER_COUNT
-static struct shrinker lu_site_shrinker = {
+static struct ll_shrinker_ops lu_site_sh_ops = {
 	.count_objects	= lu_cache_shrink_count,
 	.scan_objects	= lu_cache_shrink_scan,
 	.seeks		= DEFAULT_SEEKS,
@@ -2231,62 +2237,14 @@ static int lu_cache_shrink(struct shrinker *shrinker,
 	return cached;
 }
 
-static struct shrinker lu_site_shrinker = {
+static struct ll_shrinker_ops lu_site_sh_ops = {
 	.shrink  = lu_cache_shrink,
 	.seeks   = DEFAULT_SEEKS,
 };
 
 #endif /* HAVE_SHRINKER_COUNT */
 
-
-/*
- * Debugging stuff.
- */
-
-/**
- * Environment to be used in debugger, contains all tags.
- */
-static struct lu_env lu_debugging_env;
-
-/**
- * Debugging printer function using printk().
- */
-int lu_printk_printer(const struct lu_env *env,
-		      void *unused, const char *format, ...)
-{
-        va_list args;
-
-        va_start(args, format);
-        vprintk(format, args);
-        va_end(args);
-        return 0;
-}
-
-int lu_debugging_setup(void)
-{
-	return lu_env_init(&lu_debugging_env, ~0);
-}
-
-void lu_context_keys_dump(void)
-{
-	unsigned int i;
-
-	for (i = 0; i < ARRAY_SIZE(lu_keys); ++i) {
-		struct lu_context_key *key;
-
-		key = lu_keys[i];
-		if (key != NULL) {
-			CERROR("LU context keys [%d]: %p %x (%p,%p,%p) %d %d \"%s\"@%p\n",
-				i, key, key->lct_tags,
-				key->lct_init, key->lct_fini, key->lct_exit,
-				key->lct_index, atomic_read(&key->lct_used),
-				key->lct_owner ? key->lct_owner->name : "",
-				key->lct_owner);
-			lu_ref_print(&key->lct_reference);
-		}
-	}
-}
-
+static struct shrinker *lu_site_shrinker;
 /**
  * Initialization of global lu_* data.
  */
@@ -2323,9 +2281,11 @@ int lu_global_init(void)
 	 * inode, one for ea. Unfortunately setting this high value results in
 	 * lu_object/inode cache consuming all the memory.
 	 */
-	result = register_shrinker(&lu_site_shrinker);
-	if (result)
+	lu_site_shrinker = ll_shrinker_create(&lu_site_sh_ops, 0, "lu_site");
+	if (IS_ERR(lu_site_shrinker)) {
+		result = PTR_ERR(lu_site_shrinker);
 		goto out_env;
+	}
 
 	result = rhashtable_init(&lu_env_rhash, &lu_env_rhash_params);
 
@@ -2335,7 +2295,7 @@ int lu_global_init(void)
 	return result;
 
 out_shrinker:
-	unregister_shrinker(&lu_site_shrinker);
+	shrinker_free(lu_site_shrinker);
 out_env:
 	/* ordering here is explained in lu_global_fini() */
 	lu_context_key_degister(&lu_global_key);
@@ -2352,7 +2312,7 @@ out_lu_ref:
  */
 void lu_global_fini(void)
 {
-	unregister_shrinker(&lu_site_shrinker);
+	shrinker_free(lu_site_shrinker);
 
 	lu_context_key_degister(&lu_global_key);
 
@@ -2444,8 +2404,10 @@ EXPORT_SYMBOL(lu_kmem_init);
  */
 void lu_kmem_fini(struct lu_kmem_descr *caches)
 {
-        for (; caches->ckd_cache != NULL; ++caches) {
-                if (*caches->ckd_cache != NULL) {
+	/* wait for all RCU callbacks freeing objects are done */
+	rcu_barrier();
+	for (; caches->ckd_cache != NULL; ++caches) {
+		if (*caches->ckd_cache != NULL) {
 			kmem_cache_destroy(*caches->ckd_cache);
                         *caches->ckd_cache = NULL;
                 }
