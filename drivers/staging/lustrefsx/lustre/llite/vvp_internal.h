@@ -212,9 +212,6 @@ struct vvp_object {
  */
 struct vvp_page {
 	struct cl_page_slice vpg_cl;
-	unsigned	vpg_defer_uptodate:1,
-			vpg_ra_updated:1,
-			vpg_ra_used:1;
 	/** VM page */
 	struct page	*vpg_page;
 };
@@ -285,8 +282,6 @@ static inline struct page *cl2vm_page(const struct cl_page_slice *slice)
 # define CLOBINVRNT(env, clob, expr)					\
 	((void)sizeof(env), (void)sizeof(clob), (void)sizeof !!(expr))
 #endif /* CONFIG_LUSTRE_DEBUG_EXPENSIVE_CHECK */
-
-int lov_read_and_clear_async_rc(struct cl_object *clob);
 
 int vvp_io_init(const struct lu_env *env, struct cl_object *obj,
 		struct cl_io *io);
