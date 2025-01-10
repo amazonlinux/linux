@@ -574,6 +574,18 @@ static struct netstrfns libcfs_netstrfns[] = {
 		.nf_match_addr		= libcfs_num_match,
 		.nf_min_max		= cfs_num_min_max,
 		.nf_expand_addrrange	= libcfs_num_addr_range_expand
+	},
+	{
+		.nf_type		= EFALND,
+		.nf_name		= "efa",
+		.nf_modname		= "kefalnd",
+		.nf_addr2str		= libcfs_ip_addr2str,
+		.nf_str2addr		= libcfs_ip_str2addr,
+		.nf_parse_addrlist	= cfs_ip_addr_parse,
+		.nf_print_addrlist	= libcfs_ip_addr_range_print,
+		.nf_match_addr		= cfs_ip_addr_match,
+		.nf_min_max		= cfs_ip_min_max,
+		.nf_expand_addrrange	= libcfs_ip_addr_range_expand
 	}
 };
 
@@ -1014,7 +1026,7 @@ libcfs_net_str_len(const char *str)
 	return 0;
 }
 
-int
+static int
 parse_net_range(char *str, __u32 len, struct list_head *net_num,
 		__u32 *net_type)
 {
@@ -1074,7 +1086,7 @@ parse_net_range(char *str, __u32 len, struct list_head *net_num,
 				net_num);
 }
 
-int
+static int
 parse_address(struct cfs_lstr *src, const __u32 net_type,
 	      struct list_head *addr)
 {
