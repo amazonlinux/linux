@@ -87,6 +87,17 @@ struct ll_dentry_data {
 
 #define ll_d2d(de) ((struct ll_dentry_data*)((de)->d_fsdata))
 
+static inline void set_lld_invalid(struct dentry *de, int flag)
+{
+	struct ll_dentry_data *lld;
+
+	rcu_read_lock();
+	lld = ll_d2d(de);
+	if (lld)
+		lld->lld_invalid = flag;
+	rcu_read_unlock();
+}
+
 #define LLI_INODE_MAGIC                 0x111d0de5
 #define LLI_INODE_DEAD                  0xdeadd00d
 
@@ -1208,6 +1219,9 @@ struct posix_acl *ll_get_acl(
 	struct inode *inode, int type);
  #endif /* HAVE_GET_ACL_RCU_ARG */
 
+struct posix_acl *
+ll_get_inode_acl(struct inode *inode, int type, bool rcu);
+
 int ll_set_acl(struct mnt_idmap *mnt_userns,
  #ifdef HAVE_ACL_WITH_DENTRY
 	       struct dentry *dentry,
@@ -1280,14 +1294,8 @@ int ll_hsm_import(struct inode *inode, struct file *file,
 extern const struct dentry_operations ll_d_ops;
 #ifndef HAVE_D_INIT
 bool ll_d_setup(struct dentry *de, bool do_put);
-
-static inline bool lld_is_init(struct dentry *dentry)
-{
-	return ll_d2d(dentry);
-}
 #else
 #define ll_d_setup(de, do_put) (true)
-#define lld_is_init(dentry) (true)
 #endif
 
 void ll_intent_drop_lock(struct lookup_intent *);
@@ -1680,10 +1688,14 @@ dentry_may_statahead(struct inode *dir, struct dentry *dentry)
 	 * bypass interacting with statahead cache by checking
 	 * 'lld_sa_generation == lli->lli_sa_generation'.
 	 */
+	rcu_read_lock();
 	ldd = ll_d2d(dentry);
 	if (ldd != NULL && lli->lli_sa_generation &&
-	    ldd->lld_sa_generation == lli->lli_sa_generation)
+	    ldd->lld_sa_generation == lli->lli_sa_generation) {
+		rcu_read_unlock();
 		return false;
+	}
+	rcu_read_unlock();
 
 	return true;
 }
@@ -1739,7 +1751,16 @@ static inline void ll_set_lock_data(struct obd_export *exp, struct inode *inode,
 
 static inline int d_lustre_invalid(const struct dentry *dentry)
 {
-	return !ll_d2d(dentry) || ll_d2d(dentry)->lld_invalid;
+	struct ll_dentry_data *lld;
+	int rc = 1;
+
+	rcu_read_lock();
+	lld = ll_d2d(dentry);
+	if (lld)
+		rc = lld->lld_invalid;
+	rcu_read_unlock();
+
+	return rc;
 }
 
 /*
@@ -1751,26 +1772,26 @@ static inline int d_lustre_invalid(const struct dentry *dentry)
 static inline void d_lustre_invalidate(struct dentry *dentry)
 {
 	struct ll_sb_info *sbi = ll_s2sbi(dentry->d_sb);
+	struct ll_dentry_data *lld;
 
 	CDEBUG(D_DENTRY, "invalidate dentry %pd (%p) parent %p inode %p refc %d\n",
 	       dentry, dentry,
 	       dentry->d_parent, dentry->d_inode, ll_d_count(dentry));
 
+	rcu_read_lock();
 	spin_lock(&dentry->d_lock);
-	if (lld_is_init(dentry)) {
-		if (sbi->ll_neg_dentry_timeout != OBD_NEG_CACHE_TIMEOUT_DEFAULT_SECS)
-			ll_d2d(dentry)->lld_neg_cache_timeout =
-				jiffies + sbi->ll_neg_dentry_timeout * HZ;
-		ll_d2d(dentry)->lld_invalid = 1;
-	}
+	lld = ll_d2d(dentry);
+	if (lld && sbi->ll_neg_dentry_timeout != OBD_NEG_CACHE_TIMEOUT_DEFAULT_SECS)
+		lld->lld_neg_cache_timeout = jiffies + sbi->ll_neg_dentry_timeout * HZ;
+	set_lld_invalid(dentry, 1);
 	spin_unlock(&dentry->d_lock);
+	rcu_read_unlock();
 }
 
 static inline void d_lustre_revalidate(struct dentry *dentry)
 {
 	spin_lock(&dentry->d_lock);
-	LASSERT(ll_d2d(dentry));
-	ll_d2d(dentry)->lld_invalid = 0;
+	set_lld_invalid(dentry, 0);
 	spin_unlock(&dentry->d_lock);
 }
 
