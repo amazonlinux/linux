@@ -38,16 +38,20 @@
 
 /* LNET has 0xeXXX */
 #define CFS_FAIL_PTLRPC_OST_BULK_CB2	0xe000
+#define CFS_FAIL_MATCH_MD_NID		0xe001
 
 #include <linux/netdevice.h>
 
 #include <libcfs/libcfs.h>
 #include <lnet/api.h>
+#include <lnet/lib-cpt.h>
 #include <lnet/lib-types.h>
 #include <uapi/linux/lnet/lnet-dlc.h>
 #include <uapi/linux/lnet/lnet-types.h>
 #include <uapi/linux/lnet/lnetctl.h>
 #include <uapi/linux/lnet/nidstr.h>
+
+#include "lock.h"
 
 extern struct lnet the_lnet;			/* THE network */
 
@@ -599,6 +603,7 @@ struct lnet_net *lnet_get_net_locked(__u32 net_id);
 
 int lnet_lib_init(void);
 void lnet_lib_exit(void);
+void lnet_router_exit(void);
 
 extern unsigned int lnet_response_tracking;
 extern unsigned lnet_transaction_timeout;
@@ -616,6 +621,7 @@ extern int live_router_check_interval;
 extern int dead_router_check_interval;
 extern int portal_rotor;
 extern int lock_prim_nid;
+extern int lnet_interfaces_max;
 
 void lnet_mt_event_handler(struct lnet_event *event);
 
@@ -694,12 +700,13 @@ void lnet_prep_send(struct lnet_msg *msg, int type,
 int lnet_send(struct lnet_nid *nid, struct lnet_msg *msg,
 	      struct lnet_nid *rtr_nid);
 int lnet_send_ping(struct lnet_nid *dest_nid, struct lnet_handle_md *mdh,
-		   int nnis, void *user_ptr, lnet_handler_t handler,
+		   int bytes, void *user_ptr, lnet_handler_t handler,
 		   bool recovery);
 void lnet_return_tx_credits_locked(struct lnet_msg *msg);
 void lnet_return_rx_credits_locked(struct lnet_msg *msg);
 void lnet_schedule_blocked_locked(struct lnet_rtrbufpool *rbp);
 void lnet_drop_routed_msgs_locked(struct list_head *list, int cpt);
+int lnet_discover_nid_metadata(lnet_nid_t nid, struct lnet_nid_metadata *mapping);
 
 struct list_head **lnet_create_array_of_queues(void);
 
@@ -934,7 +941,7 @@ void lnet_wait_router_start(void);
 void lnet_swap_pinginfo(struct lnet_ping_buffer *pbuf);
 
 int lnet_ping_info_validate(struct lnet_ping_info *pinfo);
-struct lnet_ping_buffer *lnet_ping_buffer_alloc(int nnis, gfp_t gfp);
+struct lnet_ping_buffer *lnet_ping_buffer_alloc(int bytes, gfp_t gfp);
 void lnet_ping_buffer_free(struct lnet_ping_buffer *pbuf);
 
 static inline void lnet_ping_buffer_addref(struct lnet_ping_buffer *pbuf)
@@ -952,7 +959,7 @@ static inline void lnet_ping_buffer_decref(struct lnet_ping_buffer *pbuf)
 
 static inline int lnet_push_target_resize_needed(void)
 {
-	return the_lnet.ln_push_target->pb_nnis < the_lnet.ln_push_target_nnis;
+	return the_lnet.ln_push_target->pb_nbytes < the_lnet.ln_push_target_nbytes;
 }
 
 int lnet_push_target_resize(void);
@@ -1229,7 +1236,6 @@ __u32 lnet_sum_stats(struct lnet_element_stats *stats,
 
 void lnet_usr_translate_stats(struct lnet_ioctl_element_msg_stats *msg_stats,
 			      struct lnet_element_stats *stats);
-
 static inline void
 lnet_set_route_aliveness(struct lnet_route *route, bool alive)
 {
