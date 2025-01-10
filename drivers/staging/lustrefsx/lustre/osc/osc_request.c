@@ -86,7 +86,7 @@ static void osc_release_ppga(struct brw_page **ppga, size_t count);
 static int brw_interpret(const struct lu_env *env, struct ptlrpc_request *req,
 			 void *data, int rc);
 
-void osc_pack_req_body(struct ptlrpc_request *req, struct obdo *oa)
+static void osc_pack_req_body(struct ptlrpc_request *req, struct obdo *oa)
 {
 	struct ost_body *body;
 
@@ -2877,10 +2877,11 @@ static int osc_set_lock_data(struct ldlm_lock *lock, void *data)
 	return set;
 }
 
-int osc_enqueue_fini(struct ptlrpc_request *req, osc_enqueue_upcall_f upcall,
-		     void *cookie, struct lustre_handle *lockh,
-		     enum ldlm_mode mode, __u64 *flags, bool speculative,
-		     int errcode)
+static int osc_enqueue_fini(struct ptlrpc_request *req,
+			    osc_enqueue_upcall_f upcall,
+			    void *cookie, struct lustre_handle *lockh,
+			    enum ldlm_mode mode, __u64 *flags,
+			    bool speculative, int errcode)
 {
 	bool intent = *flags & LDLM_FL_HAS_INTENT;
 	int rc;
@@ -2915,8 +2916,9 @@ int osc_enqueue_fini(struct ptlrpc_request *req, osc_enqueue_upcall_f upcall,
 	RETURN(rc);
 }
 
-int osc_enqueue_interpret(const struct lu_env *env, struct ptlrpc_request *req,
-			  void *args, int rc)
+static int osc_enqueue_interpret(const struct lu_env *env,
+				 struct ptlrpc_request *req,
+				 void *args, int rc)
 {
 	struct osc_enqueue_args *aa = args;
 	struct ldlm_lock *lock;
@@ -3836,7 +3838,7 @@ LIST_HEAD(osc_shrink_list);
 DEFINE_SPINLOCK(osc_shrink_lock);
 
 #ifdef HAVE_SHRINKER_COUNT
-static struct shrinker osc_cache_shrinker = {
+static struct ll_shrinker_ops osc_cache_sh_ops = {
 	.count_objects	= osc_cache_shrink_count,
 	.scan_objects	= osc_cache_shrink_scan,
 	.seeks		= DEFAULT_SEEKS,
@@ -3850,11 +3852,13 @@ static int osc_cache_shrink(struct shrinker *shrinker,
 	return osc_cache_shrink_count(shrinker, sc);
 }
 
-static struct shrinker osc_cache_shrinker = {
+static struct ll_shrinker_ops osc_cache_sh_ops = {
 	.shrink   = osc_cache_shrink,
 	.seeks    = DEFAULT_SEEKS,
 };
 #endif
+
+static struct shrinker *osc_cache_shrinker;
 
 static int __init osc_init(void)
 {
@@ -3877,9 +3881,10 @@ static int __init osc_init(void)
 	if (rc)
 		GOTO(out_kmem, rc);
 
-	rc = register_shrinker(&osc_cache_shrinker);
-	if (rc)
-		GOTO(out_type, rc);
+	osc_cache_shrinker = ll_shrinker_create(&osc_cache_sh_ops, 0,
+						"osc_cache");
+	if (IS_ERR(osc_cache_shrinker))
+		GOTO(out_type, rc = PTR_ERR(osc_cache_shrinker));
 
 	/* This is obviously too much memory, only prevent overflow here */
 	if (osc_reqpool_mem_max >= 1 << 12 || osc_reqpool_mem_max == 0)
@@ -3915,7 +3920,7 @@ static int __init osc_init(void)
 out_req_pool:
 	ptlrpc_free_rq_pool(osc_rq_pool);
 out_shrinker:
-	unregister_shrinker(&osc_cache_shrinker);
+	shrinker_free(osc_cache_shrinker);
 out_type:
 	class_unregister_type(LUSTRE_OSC_NAME);
 out_kmem:
@@ -3927,7 +3932,7 @@ out_kmem:
 static void __exit osc_exit(void)
 {
 	osc_stop_grant_work();
-	unregister_shrinker(&osc_cache_shrinker);
+	shrinker_free(osc_cache_shrinker);
 	class_unregister_type(LUSTRE_OSC_NAME);
 	lu_kmem_fini(osc_caches);
 	ptlrpc_free_rq_pool(osc_rq_pool);
