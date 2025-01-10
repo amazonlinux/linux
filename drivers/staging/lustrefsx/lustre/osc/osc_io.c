@@ -953,8 +953,8 @@ int osc_fsync_ost(const struct lu_env *env, struct osc_object *obj,
 }
 EXPORT_SYMBOL(osc_fsync_ost);
 
-int osc_io_fsync_start(const struct lu_env *env,
-		       const struct cl_io_slice *slice)
+static int osc_io_fsync_start(const struct lu_env *env,
+			      const struct cl_io_slice *slice)
 {
 	struct cl_io       *io  = slice->cis_io;
 	struct cl_fsync_io *fio = &io->u.ci_fsync;
@@ -1049,7 +1049,7 @@ static int osc_io_ladvise_start(const struct lu_env *env,
 
 	memset(oa, 0, sizeof(*oa));
 	oa->o_oi = loi->loi_oi;
-	oa->o_valid = OBD_MD_FLID;
+	oa->o_valid = OBD_MD_FLID | OBD_MD_FLGROUP;
 	obdo_set_parent_fid(oa, lio->li_fid);
 
 	ladvise = ladvise_hdr->lah_advise;
