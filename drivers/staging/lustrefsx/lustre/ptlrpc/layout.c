@@ -55,6 +55,8 @@
 #include <lustre_acl.h>
 #include <lustre_nodemap.h>
 
+#include "ptlrpc_internal.h"
+
 /*
  * RQFs (see below) refer to two struct req_msg_field arrays describing the
  * client request and server reply, respectively.
@@ -1973,7 +1975,7 @@ EXPORT_SYMBOL(req_capsule_server_pack);
  * Returns the PTLRPC request or reply (\a loc) buffer offset of a \a pill
  * corresponding to the given RMF (\a field).
  */
-__u32 __req_capsule_offset(const struct req_capsule *pill,
+ __u32 __req_capsule_offset(const struct req_capsule *pill,
 			   const struct req_msg_field *field,
 			   enum req_location loc)
 {
@@ -2177,7 +2179,7 @@ static void *__req_capsule_get(struct req_capsule *pill,
 /**
  * Dump a request and/or reply
  */
-void __req_capsule_dump(struct req_capsule *pill, enum req_location loc)
+static void __req_capsule_dump(struct req_capsule *pill, enum req_location loc)
 {
 	const struct req_format *fmt;
 	const struct req_msg_field *field;
