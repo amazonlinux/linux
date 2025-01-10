@@ -51,12 +51,12 @@ lu_extent_le_to_cpu(struct lu_extent *dst, const struct lu_extent *src)
 
 /*
  * Find minimum stripe maxbytes value.  For inactive or
- * reconnecting targets use LUSTRE_EXT3_STRIPE_MAXBYTES.
+ * reconnecting targets use LUSTRE_EXT4_STRIPE_MAXBYTES.
  */
 static loff_t lov_tgt_maxbytes(struct lov_tgt_desc *tgt)
 {
 	struct obd_import *imp;
-	loff_t maxbytes = LUSTRE_EXT3_STRIPE_MAXBYTES;
+	loff_t maxbytes = LUSTRE_EXT4_STRIPE_MAXBYTES;
 
 	if (!tgt->ltd_active)
 		return maxbytes;
@@ -225,10 +225,10 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 	if (pool_name) {
 		size_t pool_name_len;
 
-		pool_name_len = strlcpy(lsme->lsme_pool_name, pool_name,
+		pool_name_len = strscpy(lsme->lsme_pool_name, pool_name,
 					sizeof(lsme->lsme_pool_name));
-		if (pool_name_len >= sizeof(lsme->lsme_pool_name))
-			GOTO(out_lsme, rc = -E2BIG);
+		if (pool_name_len < 0)
+			GOTO(out_lsme, rc = pool_name_len);
 	}
 
 	/* with Data-on-MDT set maxbytes to stripe size */
@@ -281,12 +281,14 @@ lsme_unpack(struct lov_obd *lov, struct lov_mds_md *lmm, size_t buf_size,
 
 	if (maxbytes) {
 		if (min_stripe_maxbytes == 0)
-			min_stripe_maxbytes = LUSTRE_EXT3_STRIPE_MAXBYTES;
+			min_stripe_maxbytes = LUSTRE_EXT4_STRIPE_MAXBYTES;
 
 		if (stripe_count == 0)
-			stripe_count = lov->desc.ld_tgt_count;
+			stripe_count = lsme->lsme_stripe_count <= 0 ?
+					    lov->desc.ld_tgt_count :
+					    lsme->lsme_stripe_count;
 
-		if (min_stripe_maxbytes <= LLONG_MAX / stripe_count)
+		if (min_stripe_maxbytes <= (LLONG_MAX / stripe_count))
 			lov_bytes = min_stripe_maxbytes * stripe_count;
 		else
 			lov_bytes = MAX_LFS_FILESIZE;
@@ -665,23 +667,6 @@ void dump_lsm(unsigned int level, const struct lov_stripe_md *lsm)
 			       lse->lsme_oinfo[j]->loi_ost_gen);
 		}
 	}
-}
-
-int lov_lsm_entry(const struct lov_stripe_md *lsm, __u64 offset)
-{
-	int i;
-
-	for (i = 0; i < lsm->lsm_entry_count; i++) {
-		struct lov_stripe_md_entry *lse = lsm->lsm_entries[i];
-
-		if ((offset >= lse->lsme_extent.e_start &&
-		     offset < lse->lsme_extent.e_end) ||
-		    (offset == OBD_OBJECT_EOF &&
-		     lse->lsme_extent.e_end == OBD_OBJECT_EOF))
-			return i;
-	}
-
-	return -1;
 }
 
 /**

@@ -781,7 +781,7 @@ pcc_dataset_add(struct pcc_super *super, struct pcc_cmd *cmd)
 	return rc;
 }
 
-struct pcc_dataset *
+static struct pcc_dataset *
 pcc_dataset_get(struct pcc_super *super, enum lu_pcc_type type, __u32 id)
 {
 	struct pcc_dataset *dataset;
@@ -1819,15 +1819,15 @@ int pcc_inode_getattr(struct inode *inode, u32 request_mask,
 
 	ll_inode_size_lock(inode);
 	if (test_and_clear_bit(LLIF_UPDATE_ATIME, &lli->lli_flags) ||
-	    inode->i_atime.tv_sec < lli->lli_atime)
-		inode->i_atime.tv_sec = lli->lli_atime;
+	    inode_get_atime_sec(inode) < lli->lli_atime)
+		inode_set_atime(inode, lli->lli_atime, 0);
 
-	inode->i_mtime.tv_sec = lli->lli_mtime;
-	inode->i_ctime.tv_sec = lli->lli_ctime;
+	inode_set_mtime(inode, lli->lli_mtime, 0);
+	inode_set_ctime(inode, lli->lli_ctime, 0);
 
-	atime = inode->i_atime.tv_sec;
-	mtime = inode->i_mtime.tv_sec;
-	ctime = inode->i_ctime.tv_sec;
+	atime = inode_get_atime_sec(inode);
+	mtime = inode_get_mtime_sec(inode);
+	ctime = inode_get_ctime_sec(inode);
 
 	if (atime < stat.atime.tv_sec)
 		atime = stat.atime.tv_sec;
@@ -1841,9 +1841,9 @@ int pcc_inode_getattr(struct inode *inode, u32 request_mask,
 	i_size_write(inode, stat.size);
 	inode->i_blocks = stat.blocks;
 
-	inode->i_atime.tv_sec = atime;
-	inode->i_mtime.tv_sec = mtime;
-	inode->i_ctime.tv_sec = ctime;
+	inode_set_atime(inode, atime, 0);
+	inode_set_mtime(inode, mtime, 0);
+	inode_set_ctime(inode, ctime, 0);
 
 	ll_inode_size_unlock(inode);
 out:
@@ -1851,7 +1851,14 @@ out:
 	RETURN(rc);
 }
 
-#ifdef HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT
+#if defined(HAVE_FILEMAP_SPLICE_READ)
+# define do_sys_splice_read	copy_splice_read
+#elif defined(HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT)
+# define do_sys_splice_read	default_file_splice_read
+#else
+# define do_sys_splice_read	generic_file_splice_read
+#endif
+
 ssize_t pcc_file_splice_read(struct file *in_file, loff_t *ppos,
 			     struct pipe_inode_info *pipe,
 			     size_t count, unsigned int flags)
@@ -1865,20 +1872,19 @@ ssize_t pcc_file_splice_read(struct file *in_file, loff_t *ppos,
 	ENTRY;
 
 	if (!pcc_file)
-		RETURN(default_file_splice_read(in_file, ppos, pipe,
-						count, flags));
+		RETURN(do_sys_splice_read(in_file, ppos, pipe,
+					  count, flags));
 
 	pcc_io_init(inode, PIT_SPLICE_READ, &cached);
 	if (!cached)
-		RETURN(default_file_splice_read(in_file, ppos, pipe,
-						count, flags));
+		RETURN(do_sys_splice_read(in_file, ppos, pipe,
+					  count, flags));
 
-	result = default_file_splice_read(pcc_file, ppos, pipe, count, flags);
+	result = do_sys_splice_read(pcc_file, ppos, pipe, count, flags);
 
 	pcc_io_fini(inode);
 	RETURN(result);
 }
-#endif /* HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT */
 
 int pcc_fsync(struct file *file, loff_t start, loff_t end,
 	      int datasync, bool *cached)
@@ -2273,8 +2279,8 @@ out:
  * Reset uid, gid or size for the PCC copy masked by @valid.
  * TODO: Set the project ID for PCC copy.
  */
-int pcc_inode_reset_iattr(struct dentry *dentry, unsigned int valid,
-			  kuid_t uid, kgid_t gid, loff_t size)
+static int pcc_inode_reset_iattr(struct dentry *dentry, unsigned int valid,
+				 kuid_t uid, kgid_t gid, loff_t size)
 {
 	struct inode *inode = dentry->d_inode;
 	struct iattr attr;
@@ -2738,7 +2744,7 @@ int pcc_ioctl_state(struct file *file, struct inode *inode,
 	if (IS_ERR(path))
 		GOTO(out_unlock, rc = PTR_ERR(path));
 
-	if (strlcpy(state->pccs_path, path, buf_len) >= buf_len)
+	if (strscpy(state->pccs_path, path, buf_len) < 0)
 		GOTO(out_unlock, rc = -ENAMETOOLONG);
 
 out_unlock:
