@@ -182,6 +182,7 @@ static int do_lcfg(char *cfgname, lnet_nid_t nid, int cmd,
  * Call class_attach and class_setup.  These methods in turn call
  * OBD type-specific methods.
  */
+SERVER_ONLY
 int lustre_start_simple(char *obdname, char *type, char *uuid,
 			char *s1, char *s2, char *s3, char *s4)
 {
@@ -201,6 +202,7 @@ int lustre_start_simple(char *obdname, char *type, char *uuid,
 	}
 	return rc;
 }
+SERVER_ONLY_EXPORT_SYMBOL(lustre_start_simple);
 
 static DEFINE_MUTEX(mgc_start_lock);
 
@@ -498,7 +500,7 @@ out_free:
 }
 EXPORT_SYMBOL(lustre_start_mgc);
 
-static int lustre_stop_mgc(struct super_block *sb)
+SERVER_ONLY int lustre_stop_mgc(struct super_block *sb)
 {
 	struct lustre_sb_info *lsi = s2lsi(sb);
 	struct obd_device *obd;
@@ -566,6 +568,7 @@ out:
 	mutex_unlock(&mgc_start_lock);
 	RETURN(rc);
 }
+SERVER_ONLY_EXPORT_SYMBOL(lustre_stop_mgc);
 
 /***************** lustre superblock **************/
 
@@ -800,6 +803,7 @@ int server_name2fsname(const char *svname, char *fsname, const char **endptr)
 }
 EXPORT_SYMBOL(server_name2fsname);
 
+#ifdef HAVE_SERVER_SUPPORT
 /**
  * Get service name (svname) from string
  * rc < 0 on error
@@ -819,13 +823,16 @@ int server_name2svname(const char *label, char *svname, const char **endptr,
 	if (endptr != NULL)
 		*endptr = dash;
 
-	if (strlcpy(svname, dash + 1, svsize) >= svsize)
-		return -E2BIG;
+	rc = strscpy(svname, dash + 1, svsize);
+	if (rc < 0)
+		return rc;
 
 	return 0;
 }
 EXPORT_SYMBOL(server_name2svname);
+#endif /* HAVE_SERVER_SUPPORT */
 
+#ifdef HAVE_SERVER_SUPPORT
 /**
  * check server name is OST.
  **/
@@ -846,12 +853,13 @@ int server_name_is_ost(const char *svname)
 	return 0;
 }
 EXPORT_SYMBOL(server_name_is_ost);
+#endif /* HAVE_SERVER_SUPPORT */
 
 /**
  * Get the index from the target name MDTXXXX/OSTXXXX
  * rc = server type, or rc < 0  on error
  **/
-int target_name2index(const char *tgtname, __u32 *idx, const char **endptr)
+SERVER_ONLY int target_name2index(const char *tgtname, __u32 *idx, const char **endptr)
 {
 	const char *dash = tgtname;
 	unsigned long index;
@@ -881,7 +889,7 @@ int target_name2index(const char *tgtname, __u32 *idx, const char **endptr)
 
 	return rc;
 }
-EXPORT_SYMBOL(target_name2index);
+SERVER_ONLY_EXPORT_SYMBOL(target_name2index);
 
 /*
  * Get the index from the OBD name.

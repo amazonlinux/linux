@@ -40,6 +40,7 @@
 #include <linux/percpu_counter.h>
 
 #include <libcfs/libcfs.h>
+#include <lnet/lib-cpt.h>
 #include <lprocfs_status.h>
 #include <lustre_handles.h>
 

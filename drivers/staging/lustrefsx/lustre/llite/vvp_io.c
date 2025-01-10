@@ -992,7 +992,7 @@ static inline void ll_page_tag_dirty(struct page *page,
 #ifndef HAVE_RADIX_TREE_TAG_SET
 	__xa_set_mark(&mapping->i_pages, page_index(page), PAGECACHE_TAG_DIRTY);
 #else
-	radix_tree_tag_set(&mapping->page_tree, page_index(page),
+	radix_tree_tag_set(&mapping->page_tree, folio_index_page(page),
 			   PAGECACHE_TAG_DIRTY);
 #endif
 }
@@ -1531,7 +1531,7 @@ static int vvp_io_fault_start(const struct lu_env *env,
 	LASSERT(PageLocked(vmpage));
 
 	if (OBD_FAIL_CHECK(OBD_FAIL_LLITE_FAULT_TRUNC_RACE))
-		generic_error_remove_page(vmpage->mapping, vmpage);
+		generic_error_remove_folio(vmpage->mapping, page_folio(vmpage));
 
 	size = i_size_read(inode);
         /* Though we have already held a cl_lock upon this page, but
@@ -1656,7 +1656,7 @@ static int vvp_io_fault_start(const struct lu_env *env,
                  */
                 fio->ft_nob = size - cl_offset(obj, fio->ft_index);
         else
-                fio->ft_nob = cl_page_size(obj);
+		fio->ft_nob = PAGE_SIZE;
 
         lu_ref_add(&page->cp_reference, "fault", io);
         fio->ft_page = page;
