@@ -1345,12 +1345,15 @@ static int ll_mdc_read_page_remote(void *data, struct page *page0)
 	int npages;
 	int i;
 	int rc;
+	gfp_t gfp;
+
 	ENTRY;
 
 	max_pages = rp->rp_exp->exp_obd->u.cli.cl_max_pages_per_rpc;
 	inode = op_data->op_data;
 	fid = &op_data->op_fid1;
 	LASSERT(inode != NULL);
+	gfp = mapping_gfp_mask(inode->i_mapping);
 
 	OBD_ALLOC_PTR_ARRAY_LARGE(page_pool, max_pages);
 	if (page_pool != NULL) {
@@ -1361,7 +1364,7 @@ static int ll_mdc_read_page_remote(void *data, struct page *page0)
 	}
 
 	for (npages = 1; npages < max_pages; npages++) {
-		page = page_cache_alloc(inode->i_mapping);
+		page = __page_cache_alloc(gfp);
 		if (page == NULL)
 			break;
 		page_pool[npages] = page;
@@ -2646,8 +2649,9 @@ struct mdc_rmfid_args {
 	int mra_nr;
 };
 
-int mdc_rmfid_interpret(const struct lu_env *env, struct ptlrpc_request *req,
-			  void *args, int rc)
+static int mdc_rmfid_interpret(const struct lu_env *env,
+			       struct ptlrpc_request *req,
+			       void *args, int rc)
 {
 	struct mdc_rmfid_args *aa;
 	int *rcs, size;
@@ -2972,6 +2976,8 @@ static int mdc_precleanup(struct obd_device *obd)
 
 static int mdc_cleanup(struct obd_device *obd)
 {
+	struct client_obd *cli = &obd->u.cli;
+	LASSERT(cli->cl_mod_rpcs_in_flight == 0);
 	return osc_cleanup_common(obd);
 }
 
