@@ -287,7 +287,7 @@ static int nrs_policy_start_locked(struct ptlrpc_nrs_policy *policy, char *arg)
 	}
 
 	if (arg != NULL) {
-		if (strlcpy(policy->pol_arg, arg, sizeof(policy->pol_arg)) >=
+		if (strscpy(policy->pol_arg, arg, sizeof(policy->pol_arg)) >=
 		    sizeof(policy->pol_arg)) {
 			CERROR("NRS: arg '%s' is too long\n", arg);
 			GOTO(out, rc = -E2BIG);
@@ -1213,7 +1213,7 @@ static int ptlrpc_nrs_policy_register(struct ptlrpc_nrs_pol_conf *conf)
 	if (desc == NULL)
 		GOTO(fail, rc = -ENOMEM);
 
-	if (strlcpy(desc->pd_name, conf->nc_name, sizeof(desc->pd_name)) >=
+	if (strscpy(desc->pd_name, conf->nc_name, sizeof(desc->pd_name)) >=
 	    sizeof(desc->pd_name)) {
 		OBD_FREE_PTR(desc);
 		GOTO(fail, rc = -E2BIG);
