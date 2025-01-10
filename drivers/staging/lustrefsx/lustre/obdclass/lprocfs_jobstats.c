@@ -128,6 +128,7 @@ static void job_putref(struct job_stat *job)
 static void job_stat_put_locked(struct cfs_hash *hs, struct hlist_node *hnode)
 {
 	struct job_stat *job;
+
 	job = hlist_entry(hnode, struct job_stat, js_hash);
 	job_putref(job);
 }
@@ -234,9 +235,14 @@ static void lprocfs_job_cleanup(struct obd_job_stats *stats, bool clear)
 	 * since locking of the hash is handled internally, but there isn't
 	 * any benefit to having multiple threads doing cleanup at one time.
 	 *
-	 * Subtract twice the cleanup_interval, since it is 1/2 the maximum age.
+	 * Subtract or add twice the cleanup_interval, since it is 1/2 the
+	 * maximum age.  When clearing all stats, push oldest into the future.
 	 */
-	oldest = ktime_sub(now, ktime_add(cleanup_interval, cleanup_interval));
+	cleanup_interval = ktime_add(cleanup_interval, cleanup_interval);
+	if (likely(!clear))
+		oldest = ktime_sub(now, cleanup_interval);
+	else
+		oldest = ktime_add(now, cleanup_interval);
 	cfs_hash_for_each_safe(stats->ojs_hash, job_cleanup_iter_callback,
 			       &oldest);
 
@@ -428,7 +434,7 @@ static void *lprocfs_jobstats_seq_next(struct seq_file *p, void *v, loff_t *pos)
 
 static const char spaces[] = "                    ";
 
-static int inline width(const char *str, int len)
+static inline int width(const char *str, int len)
 {
 	return len - min((int)strlen(str), 15);
 }

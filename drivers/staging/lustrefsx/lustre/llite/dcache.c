@@ -130,10 +130,7 @@ static int ll_ddelete(const struct dentry *de)
 	       d_lustre_invalid(de) ? "deleting" : "keeping",
 	       de, de, de->d_parent, de->d_inode,
 	       d_unhashed((struct dentry *)de) ? "" : "hashed,",
-	       list_empty(&de->d_subdirs) ? "" : "subdirs");
-
-	/* kernel >= 2.6.38 last refcount is decreased after this function. */
-	LASSERT(ll_d_count(de) == 1);
+	       d_no_children(de) ? "" : "subdirs");
 
 	if (d_lustre_invalid(de))
 		RETURN(1);
@@ -355,6 +352,7 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 	 * have an inode associated with it. In these cases, return 0 here
 	 * to force a lookup call to the server.
 	 */
+	rcu_read_lock();
 	sbi = ll_s2sbi(dentry->d_sb);
 	if (d_is_negative(dentry) &&
 		sbi->ll_neg_dentry_timeout != OBD_NEG_CACHE_TIMEOUT_DEFAULT_SECS) {
@@ -365,11 +363,14 @@ static int ll_revalidate_dentry(struct dentry *dentry,
 		if (time_after(jiffies, lld->lld_neg_cache_timeout)) {
 			CDEBUG(D_VFSTRACE,
 			       "negative dentry past timeout - flags: %u\n", lookup_flags);
+			rcu_read_unlock();
 			return 0;
 		}
 		CDEBUG(D_VFSTRACE,
 		       "negative dentry within timeout - flags: %u\n", lookup_flags);
 	}
+
+	rcu_read_unlock();
 
 	if (dentry_may_statahead(dir, dentry))
 		ll_revalidate_statahead(dir, &dentry, dentry->d_inode == NULL);
