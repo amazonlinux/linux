@@ -29,6 +29,7 @@
 
 #define DEBUG_SUBSYSTEM S_RPC
 
+#include <lustre_swab.h>
 #include <llog_swab.h>
 #include <obd_class.h>
 
@@ -53,7 +54,6 @@ void lustre_swab_object_update(struct object_update *ou)
 			 object_update_param_size(param));
 	}
 }
-
 int lustre_swab_object_update_request(struct object_update_request *our,
 				      __u32 len)
 {
@@ -87,7 +87,8 @@ int lustre_swab_object_update_request(struct object_update_request *our,
 	return size;
 }
 
-void lustre_swab_object_update_result(struct object_update_result *our)
+static void
+lustre_swab_object_update_result_no_len(struct object_update_result *our)
 {
 	__swab32s(&our->our_rc);
 	__swab16s(&our->our_datalen);
@@ -114,7 +115,7 @@ int lustre_swab_object_update_reply(struct object_update_reply *our, __u32 len)
 		ourp = object_update_result_get(our, i, NULL);
 		if (ourp == NULL)
 			return -EPROTO;
-		lustre_swab_object_update_result(ourp);
+		lustre_swab_object_update_result_no_len(ourp);
 	}
 
 	return size;
