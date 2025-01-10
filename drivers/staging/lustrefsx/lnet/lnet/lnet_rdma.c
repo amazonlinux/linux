@@ -1,6 +1,19 @@
+#ifdef WITH_GDS
+#include "nvfs-dma.h"
+#else
+#include <lnet/lnet_gds.h>
+#endif
+
 #include <lnet/lnet_rdma.h>
 #include <libcfs/libcfs.h>
+
+/* MAX / MIN conflict */
 #include <lnet/lib-lnet.h>
+
+#define NVFS_IO_ERR			-1
+#define NVFS_CPU_REQ			-2
+
+#define NVFS_HOLD_TIME_MS 1000
 
 #define ERROR_PRINT_DEADLINE 3600
 
@@ -78,7 +91,7 @@ int REGISTER_FUNC(struct nvfs_dma_rw_ops *ops)
 	CDEBUG(D_NET, "registering nvfs %p\n", ops);
 	return 0;
 }
-EXPORT_SYMBOL(REGISTER_FUNC);
+EXPORT_SYMBOL_GPL(REGISTER_FUNC);
 
 void UNREGISTER_FUNC(void)
 {
@@ -91,7 +104,7 @@ void UNREGISTER_FUNC(void)
 	nvfs_ops = NULL;
 	percpu_counter_destroy(&nvfs_n_ops);
 }
-EXPORT_SYMBOL(UNREGISTER_FUNC);
+EXPORT_SYMBOL_GPL(UNREGISTER_FUNC);
 
 unsigned int
 lnet_get_dev_prio(struct device *dev, unsigned int dev_idx)
@@ -112,6 +125,22 @@ lnet_get_dev_prio(struct device *dev, unsigned int dev_idx)
 	return dev_prio;
 }
 EXPORT_SYMBOL(lnet_get_dev_prio);
+
+unsigned int
+lnet_get_dev_idx(struct page *page)
+{
+	unsigned int dev_idx = UINT_MAX;
+	struct nvfs_dma_rw_ops *nvfs_ops;
+
+	nvfs_ops = nvfs_get_ops();
+	if (!nvfs_ops)
+		return dev_idx;
+
+	dev_idx = nvfs_ops->nvfs_gpu_index(page);
+
+	nvfs_put_ops();
+	return dev_idx;
+}
 
 int lnet_rdma_map_sg_attrs(struct device *dev, struct scatterlist *sg,
 			   int nents, enum dma_data_direction direction)
@@ -188,21 +217,3 @@ out:
 	return found;
 }
 EXPORT_SYMBOL(lnet_is_rdma_only_page);
-
-unsigned int
-lnet_get_dev_idx(struct page *page)
-{
-	unsigned int dev_idx = UINT_MAX;
-	struct nvfs_dma_rw_ops *nvfs_ops;
-
-	nvfs_ops = nvfs_get_ops();
-	if (!nvfs_ops)
-		return dev_idx;
-
-	dev_idx = nvfs_ops->nvfs_gpu_index(page);
-
-	nvfs_put_ops();
-	return dev_idx;
-}
-EXPORT_SYMBOL(lnet_get_dev_idx);
-
