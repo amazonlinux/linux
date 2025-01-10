@@ -190,8 +190,8 @@ int llog_sync(struct llog_ctxt *ctxt, struct obd_export *exp, int flags);
 
 /* llog_ioctl.c */
 struct obd_ioctl_data;
-int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt, int cmd,
-	       struct obd_ioctl_data *data);
+int llog_ioctl(const struct lu_env *env, struct llog_ctxt *ctxt,
+		               unsigned int cmd, struct obd_ioctl_data *data);
 int llog_catalog_list(const struct lu_env *env, struct dt_device *d,
 		      int count, struct obd_ioctl_data *data,
 		      const struct lu_fid *fid);
