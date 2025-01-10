@@ -171,9 +171,9 @@ int lov_page_init_empty(const struct lu_env *env, struct cl_object *obj,
 	page->cp_lov_index = ~0;
 	cl_page_slice_add(page, &lpg->lps_cl, obj, &lov_empty_page_ops);
 	addr = kmap(page->cp_vmpage);
-	memset(addr, 0, cl_page_size(obj));
+	memset(addr, 0, PAGE_SIZE);
 	kunmap(page->cp_vmpage);
-	cl_page_export(env, page, 1);
+	SetPageUptodate(page->cp_vmpage);
 	RETURN(0);
 }
 
