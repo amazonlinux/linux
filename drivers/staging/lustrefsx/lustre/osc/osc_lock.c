@@ -64,7 +64,7 @@ static struct ldlm_lock *osc_handle_ptr(struct lustre_handle *handle)
 /**
  * Invariant that has to be true all of the time.
  */
-static int osc_lock_invariant(struct osc_lock *ols)
+static inline int osc_lock_invariant(struct osc_lock *ols)
 {
 	struct ldlm_lock *lock	      = osc_handle_ptr(&ols->ols_handle);
 	struct ldlm_lock *olock	      = ols->ols_dlmlock;
@@ -645,7 +645,7 @@ static bool weigh_cb(const struct lu_env *env, struct cl_io *io,
 		struct osc_page *ops = pvec[i];
 		struct cl_page *page = ops->ops_cl.cpl_page;
 
-		if (cl_page_is_vmlocked(env, page) ||
+		if (PageLocked(page->cp_vmpage) ||
 		    PageDirty(page->cp_vmpage) ||
 		    PageWriteback(page->cp_vmpage))
 			return false;
