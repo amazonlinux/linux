@@ -132,7 +132,7 @@ static ssize_t lov_lsm_pack_v1v3(const struct lov_stripe_md *lsm, void *buf,
 	if (lsm->lsm_magic == LOV_MAGIC_V3) {
 		BUILD_BUG_ON(sizeof(lsm->lsm_entries[0]->lsme_pool_name) !=
 				    sizeof(lmmv3->lmm_pool_name));
-		strlcpy(lmmv3->lmm_pool_name,
+		strscpy(lmmv3->lmm_pool_name,
 			lsm->lsm_entries[0]->lsme_pool_name,
 			sizeof(lmmv3->lmm_pool_name));
 		lmm_objects = lmmv3->lmm_objects;
@@ -249,7 +249,7 @@ ssize_t lov_lsm_pack(const struct lov_stripe_md *lsm, void *buf,
 			struct lov_mds_md_v3 *lmmv3 =
 						(struct lov_mds_md_v3 *)lmm;
 
-			strlcpy(lmmv3->lmm_pool_name, lsme->lsme_pool_name,
+			strscpy(lmmv3->lmm_pool_name, lsme->lsme_pool_name,
 				sizeof(lmmv3->lmm_pool_name));
 			lmm_objects = lmmv3->lmm_objects;
 		} else {
