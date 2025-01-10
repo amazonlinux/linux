@@ -13,10 +13,8 @@ libcfs-linux-objs	:= $(addprefix linux/,$(libcfs-linux-objs))
 libcfs-crypto-objs	:= $(addprefix crypto/,$(libcfs-crypto-objs))
 
 
-libcfs-all-objs		:= libcfs_cpu.o
-libcfs-all-objs		+= debug.o fail.o module.o tracefile.o
-libcfs-all-objs		+= libcfs_string.o hash.o workitem.o
-libcfs-all-objs		+= libcfs_mem.o libcfs_lock.o
+libcfs-all-objs		:= debug.o fail.o module.o tracefile.o
+libcfs-all-objs		+= libcfs_string.o hash.o
 libcfs-all-objs		+= linux-crypto.o linux-crypto-adler.o
 
 libcfs-y		+= $(libcfs-linux-objs) $(libcfs-all-objs)

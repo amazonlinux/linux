@@ -178,13 +178,12 @@ restart:
 	spin_lock(&dir->i_lock);
 	hlist_for_each_entry(dentry, &dir->i_dentry, d_alias) {
 		spin_lock(&dentry->d_lock);
-		list_for_each_entry(child, &dentry->d_subdirs, d_child) {
+		d_for_each_child(child, dentry) {
 			if (child->d_inode)
 				continue;
 
 			spin_lock_nested(&child->d_lock, DENTRY_D_LOCK_NESTED);
-			if (lld_is_init(child))
-				ll_d2d(child)->lld_invalid = 1;
+			set_lld_invalid(child, 1);
 			if (!ll_d_count(child)) {
 				dget_dlock(child);
 				__d_drop(child);
@@ -397,7 +396,7 @@ static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 
 /* Check if the given lock may be downgraded instead of canceling and
  * that convert is really needed. */
-int ll_md_need_convert(struct ldlm_lock *lock)
+static int ll_md_need_convert(struct ldlm_lock *lock)
 {
 	struct ldlm_namespace *ns = ldlm_lock_to_ns(lock);
 	struct inode *inode;
@@ -1469,17 +1468,17 @@ void ll_update_times(struct ptlrpc_request *request, struct inode *inode)
 
 	LASSERT(body);
 	if (body->mbo_valid & OBD_MD_FLMTIME &&
-	    body->mbo_mtime > inode->i_mtime.tv_sec) {
+	    body->mbo_mtime > inode_get_mtime_sec(inode)) {
 		CDEBUG(D_INODE,
 		       "setting fid " DFID " mtime from %lld to %llu\n",
 		       PFID(ll_inode2fid(inode)),
-		       (s64)inode->i_mtime.tv_sec, body->mbo_mtime);
-		inode->i_mtime.tv_sec = body->mbo_mtime;
+		       (s64)inode_get_mtime_sec(inode), body->mbo_mtime);
+		inode_set_mtime(inode, body->mbo_mtime, 0);
 	}
 
 	if (body->mbo_valid & OBD_MD_FLCTIME &&
-	    body->mbo_ctime > inode->i_ctime.tv_sec)
-		inode->i_ctime.tv_sec = body->mbo_ctime;
+	    body->mbo_ctime > inode_get_ctime_sec(inode))
+		inode_set_ctime(inode, body->mbo_ctime, 0);
 }
 
 /* once default LMV (space balanced) is set on ROOT, it should take effect if
@@ -2198,6 +2197,9 @@ const struct inode_operations ll_dir_inode_operations = {
 	.removexattr	= ll_removexattr,
 #endif
 	.listxattr	= ll_listxattr,
+#ifdef HAVE_IOP_GET_INODE_ACL
+	.get_inode_acl	= ll_get_inode_acl,
+#endif
 	.get_acl	= ll_get_acl,
 #ifdef HAVE_IOP_SET_ACL
 	.set_acl	= ll_set_acl,
@@ -2214,6 +2216,9 @@ const struct inode_operations ll_special_inode_operations = {
 	.removexattr    = ll_removexattr,
 #endif
 	.listxattr      = ll_listxattr,
+#ifdef HAVE_IOP_GET_INODE_ACL
+	.get_inode_acl	= ll_get_inode_acl,
+#endif
 	.get_acl	= ll_get_acl,
 #ifdef HAVE_IOP_SET_ACL
 	.set_acl	= ll_set_acl,

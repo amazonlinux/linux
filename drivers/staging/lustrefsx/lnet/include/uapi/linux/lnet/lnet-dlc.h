@@ -81,6 +81,18 @@ struct lnet_ioctl_config_o2iblnd_tunables {
 	__u16 lnd_ntx;
 };
 
+struct lnet_ioctl_config_kfilnd_tunables {
+	__u32 lnd_version;
+	__u32 lnd_prov_major_version;
+	__u32 lnd_prov_minor_version;
+	__u32 lnd_auth_key;
+};
+
+struct lnet_ioctl_config_efalnd_tunables {
+	__u32 lnd_version;
+	__u32 lnd_nqps;
+};
+
 struct lnet_ioctl_config_socklnd_tunables {
 	__u32 lnd_version;
 	__u16 lnd_conns_per_peer;
@@ -90,6 +102,7 @@ struct lnet_ioctl_config_socklnd_tunables {
 struct lnet_lnd_tunables {
 	union {
 		struct lnet_ioctl_config_o2iblnd_tunables lnd_o2ib;
+		struct lnet_ioctl_config_efalnd_tunables lnd_efa;
 		struct lnet_ioctl_config_socklnd_tunables lnd_sock;
 	} lnd_tun_u;
 };
