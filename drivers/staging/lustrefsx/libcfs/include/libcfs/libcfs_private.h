@@ -185,8 +185,8 @@ do {									    \
 /**
  * default allocator
  */
-#define LIBCFS_ALLOC(ptr, size) \
-	LIBCFS_ALLOC_GFP(ptr, size, GFP_NOFS)
+#define LIBCFS_ALLOC(ptr, size) LIBCFS_ALLOC_GFP(ptr, size, GFP_NOFS)
+#define LIBCFS_ALLOC_PTR(ptr) LIBCFS_ALLOC(ptr, sizeof(*(ptr)))
 
 /**
  * non-sleeping allocator
@@ -228,6 +228,16 @@ do {									\
 		libcfs_vfree_atomic(ptr);				\
 	else								\
 		kfree(ptr);						\
+} while (0)
+
+#define LIBCFS_FREE_PTR(ptr) LIBCFS_FREE(ptr, sizeof(*(ptr)))
+
+#define LIBCFS_FREE_PRE(ptr, size, name)				\
+do {									\
+	LASSERT(ptr);							\
+	libcfs_kmem_dec((ptr), size);					\
+	CDEBUG(D_MALLOC, name " '" #ptr "': %d at %p.\n",		\
+	       (int)(size), ptr);					\
 } while (0)
 
 /******************************************************************************/
