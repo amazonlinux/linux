@@ -774,6 +774,15 @@ static struct netstrfns libcfs_netstrfns[] = {
 	  .nf_print_addrlist	= libcfs_num_addr_range_print,
 	  .nf_match_addr	= libcfs_num_match
 	},
+	{ .nf_type		= EFALND,
+	  .nf_name		= "efa",
+	  .nf_modname		= "kefalnd",
+	  .nf_addr2str		= libcfs_ip_addr2str,
+	  .nf_str2addr		= libcfs_ip_str2addr,
+	  .nf_parse_addrlist	= cfs_ip_addr_parse,
+	  .nf_print_addrlist	= libcfs_ip_addr_range_print,
+	  .nf_match_addr	= cfs_ip_addr_match
+	}
 };
 
 static const size_t libcfs_nnetstrfns = ARRAY_SIZE(libcfs_netstrfns);
