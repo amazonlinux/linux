@@ -44,6 +44,7 @@
 #include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/pagevec.h>
+#include <linux/workqueue.h>
 #include <libcfs/linux/linux-fs.h>
 #include <obd_support.h>
 
@@ -72,6 +73,24 @@
 #define bio_start_sector(bio) (bio->bi_sector)
 #endif
 
+#ifndef SLAB_MEM_SPREAD
+#define SLAB_MEM_SPREAD		0
+#endif
+
+#ifdef HAVE_STRUCT_FILE_LOCK_CORE
+#define C_FLC_TYPE	c.flc_type
+#define C_FLC_PID	c.flc_pid
+#define C_FLC_FILE	c.flc_file
+#define C_FLC_FLAGS	c.flc_flags
+#define C_FLC_OWNER	c.flc_owner
+#else
+#define C_FLC_TYPE	fl_type
+#define C_FLC_PID	fl_pid
+#define C_FLC_FILE	fl_file
+#define C_FLC_FLAGS	fl_flags
+#define C_FLC_OWNER	fl_owner
+#endif
+
 #ifndef HAVE_DENTRY_D_CHILD
 #define d_child			d_u.d_child
 #endif
@@ -85,6 +104,16 @@ static inline int d_in_lookup(struct dentry *dentry)
 {
 	return false;
 }
+#endif
+
+#ifdef HAVE_DENTRY_D_CHILDREN
+#define d_no_children(dentry)	(hlist_empty(&(dentry)->d_children))
+#define d_for_each_child(child, dentry) \
+	hlist_for_each_entry((child), &(dentry)->d_children, d_sib)
+#else
+#define d_no_children(dentry)	(list_empty(&(dentry)->d_subdirs))
+#define d_for_each_child(child, dentry) \
+	list_for_each_entry((child), &(dentry)->d_subdirs, d_child)
 #endif
 
 #ifndef HAVE_VM_FAULT_T
@@ -558,11 +587,84 @@ static inline bool is_root_inode(struct inode *inode)
 #define migrate_folio	migratepage
 #endif
 
-#ifdef HAVE_REGISTER_SHRINKER_FORMAT_NAMED
-#define register_shrinker(_s) register_shrinker((_s), "%ps", (_s))
-#elif !defined(HAVE_REGISTER_SHRINKER_RET)
-#define register_shrinker(_s) (register_shrinker(_s), 0)
+struct ll_shrinker_ops {
+#ifdef HAVE_SHRINKER_COUNT
+	unsigned long (*count_objects)(struct shrinker *,
+				       struct shrink_control *sc);
+	unsigned long (*scan_objects)(struct shrinker *,
+				      struct shrink_control *sc);
+#else
+	int (*shrink)(struct shrinker *, struct shrink_control *sc);
 #endif
+	int seeks;	/* seeks to recreate an obj */
+};
+
+#ifndef HAVE_SHRINKER_ALLOC
+static inline void shrinker_free(struct shrinker *shrinker)
+{
+	unregister_shrinker(shrinker);
+	OBD_FREE_PTR(shrinker);
+}
+#endif
+
+/* allocate and register a shrinker, return should be checked with IS_ERR() */
+static inline struct shrinker *
+ll_shrinker_create(struct ll_shrinker_ops *ops, unsigned int flags,
+		   const char *fmt, ...)
+{
+	struct shrinker *shrinker;
+	int rc = 0;
+
+#if defined(HAVE_REGISTER_SHRINKER_FORMAT_NAMED) || defined(HAVE_SHRINKER_ALLOC)
+	struct va_format vaf;
+	va_list args;
+#endif
+
+#ifdef HAVE_SHRINKER_ALLOC
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+	shrinker = shrinker_alloc(flags, "%pV", &vaf);
+	va_end(args);
+#else
+	OBD_ALLOC_PTR(shrinker);
+#endif
+	if (!shrinker)
+		return ERR_PTR(-ENOMEM);
+
+#ifdef HAVE_SHRINKER_COUNT
+	shrinker->count_objects = ops->count_objects;
+	shrinker->scan_objects = ops->scan_objects;
+#else
+	shrinker->shrink = ops->shrink;
+#endif
+	shrinker->seeks = ops->seeks;
+
+#ifdef HAVE_SHRINKER_ALLOC
+	shrinker_register(shrinker);
+#else
+ #ifdef HAVE_REGISTER_SHRINKER_FORMAT_NAMED
+	va_start(args, fmt);
+	vaf.fmt = fmt;
+	vaf.va = &args;
+	rc = register_shrinker(shrinker, "%pV", &vaf);
+	va_end(args);
+ #elif defined(HAVE_REGISTER_SHRINKER_RET)
+	rc = register_shrinker(shrinker);
+ #else
+	register_shrinker(shrinker);
+ #endif
+#endif
+	if (rc) {
+#ifdef HAVE_SHRINKER_ALLOC
+		shrinker_free(shrinker);
+#else
+		OBD_FREE_PTR(shrinker);
+#endif
+		shrinker = ERR_PTR(rc);
+	}
+	return shrinker;
+}
 
 #ifndef fallthrough
 # if defined(__GNUC__) && __GNUC__ >= 7
@@ -578,7 +680,11 @@ static inline bool is_root_inode(struct inode *inode)
 static inline void lsmcontext_init(struct lsmcontext *cp, char *context,
 				   u32 size, int slot)
 {
+#ifdef HAVE_LSMCONTEXT_HAS_ID
+	cp->id = slot;
+#else
 	cp->slot = slot;
+#endif
 	cp->context = context;
 	cp->len = size;
 }
@@ -608,6 +714,30 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen,
 #define ll_set_acl(ns, inode, acl, type)	ll_set_acl(inode, acl, type)
 #endif
 
+#ifndef HAVE_GENERIC_ERROR_REMOVE_FOLIO
+#ifdef HAVE_FOLIO_BATCH
+#define generic_folio			folio
+#else
+#define generic_folio			page
+#define folio_page(page, n)		(page)
+#define folio_nr_pages(page)		(1)
+#define page_folio(page)		(page)
+#endif
+static inline int generic_error_remove_folio(struct address_space *mapping,
+					     struct generic_folio *folio)
+{
+	int pg, npgs = folio_nr_pages(folio);
+	int err = 0;
+
+	for (pg = 0; pg < npgs; pg++) {
+		err = generic_error_remove_page(mapping, folio_page(folio, pg));
+		if (err)
+			break;
+	}
+	return err;
+}
+#endif
+
 /**
  * delete_from_page_cache is not exported anymore
  */
@@ -623,7 +753,7 @@ static inline void cfs_delete_from_page_cache(struct page *page)
 	unlock_page(page);
 	/* on entry page is locked */
 	if (S_ISREG(page->mapping->host->i_mode)) {
-		generic_error_remove_page(page->mapping, page);
+		generic_error_remove_folio(page->mapping, page_folio(page));
 	} else {
 		loff_t lstart = page->index << PAGE_SHIFT;
 		loff_t lend = lstart + PAGE_SIZE - 1;
@@ -664,6 +794,8 @@ static inline void folio_batch_reinit(struct folio_batch *fbatch)
 }
 # endif /* HAVE_FOLIO_BATCH_REINIT */
 
+# define folio_index_page(pg)		folio_index(page_folio((pg)))
+
 #else /* !HAVE_FOLIO_BATCH */
 
 # ifdef HAVE_PAGEVEC
@@ -685,6 +817,83 @@ static inline void folio_batch_reinit(struct folio_batch *fbatch)
 # define fbatch_at(pvec, n)		((pvec)->pages[(n)])
 # define fbatch_at_npgs(pvec, n)	1
 # define fbatch_at_pg(pvec, n, pg)	((pvec)->pages[(n)])
+# define folio_index_page(pg)		page_index((pg))
+
 #endif /* HAVE_FOLIO_BATCH */
+
+#ifndef HAVE_FLUSH___WORKQUEUE
+#define __flush_workqueue(wq)	flush_scheduled_work()
+#endif
+
+#ifdef HAVE_NSPROXY_COUNT_AS_REFCOUNT
+#define nsproxy_dec(ns)		refcount_dec(&(ns)->count)
+#else
+#define nsproxy_dec(ns)		atomic_dec(&(ns)->count)
+#endif
+
+#ifndef HAVE_INODE_GET_CTIME
+#define inode_get_ctime(i)		((i)->i_ctime)
+#define inode_set_ctime_to_ts(i, ts)	((i)->i_ctime = ts)
+#define inode_set_ctime_current(i) \
+	inode_set_ctime_to_ts((i), current_time((i)))
+
+static inline struct timespec64 inode_set_ctime(struct inode *inode,
+						time64_t sec, long nsec)
+{
+	struct timespec64 ts = { .tv_sec  = sec,
+				 .tv_nsec = nsec };
+
+	return inode_set_ctime_to_ts(inode, ts);
+}
+#endif /* !HAVE_INODE_GET_CTIME */
+
+#ifndef HAVE_INODE_GET_MTIME_SEC
+
+#define inode_get_ctime_sec(i)		(inode_get_ctime((i)).tv_sec)
+
+#define inode_get_atime(i)		((i)->i_atime)
+#define inode_get_atime_sec(i)		((i)->i_atime.tv_sec)
+#define inode_set_atime_to_ts(i, ts)	((i)->i_atime = ts)
+
+static inline struct timespec64 inode_set_atime(struct inode *inode,
+						time64_t sec, long nsec)
+{
+	struct timespec64 ts = { .tv_sec  = sec,
+				 .tv_nsec = nsec };
+	return inode_set_atime_to_ts(inode, ts);
+}
+
+#define inode_get_mtime(i)		((i)->i_mtime)
+#define inode_get_mtime_sec(i)		((i)->i_mtime.tv_sec)
+#define inode_set_mtime_to_ts(i, ts)	((i)->i_mtime = ts)
+
+static inline struct timespec64 inode_set_mtime(struct inode *inode,
+						time64_t sec, long nsec)
+{
+	struct timespec64 ts = { .tv_sec  = sec,
+				 .tv_nsec = nsec };
+	return inode_set_mtime_to_ts(inode, ts);
+}
+#endif  /* !HAVE_INODE_GET_MTIME_SEC */
+
+#ifdef HAVE_FOLIO_MAPCOUNT
+/* clone of fs/proc/internal.h:
+ *   folio_precise_page_mapcount(struct folio *folio, struct page *page)
+ */
+static inline int folio_mapcount_page(struct page *page)
+{
+	struct folio *folio = page_folio(page);
+	int mapcount = atomic_read(&page->_mapcount) + 1;
+
+	if (mapcount < PAGE_MAPCOUNT_RESERVE + 1)
+		mapcount = 0;
+	if (folio_test_large(folio))
+		mapcount += folio_entire_mapcount(folio);
+
+	return mapcount;
+}
+#else /* !HAVE_FOLIO_MAPCOUNT */
+#define folio_mapcount_page(pg)			page_mapcount((pg))
+#endif /* HAVE_FOLIO_MAPCOUNT */
 
 #endif /* _LUSTRE_COMPAT_H */
