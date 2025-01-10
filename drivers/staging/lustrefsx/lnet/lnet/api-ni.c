@@ -128,7 +128,8 @@ module_param(lnet_recovery_limit, uint, 0644);
 MODULE_PARM_DESC(lnet_recovery_limit,
 		 "How long to attempt recovery of unhealthy peer interfaces in seconds. Set to 0 to allow indefinite recovery");
 
-static int lnet_interfaces_max = LNET_INTERFACES_MAX_DEFAULT;
+int lnet_interfaces_max = LNET_INTERFACES_MAX_DEFAULT;
+EXPORT_SYMBOL(lnet_interfaces_max);
 static int intf_max_set(const char *val, cfs_kernel_param_arg_t *kp);
 
 static struct kernel_param_ops param_ops_interfaces_max = {
@@ -1499,29 +1500,6 @@ __must_hold(&the_lnet.ln_api_mutex)
 	return 0;
 }
 
-bool
-lnet_net_is_pref_rtr_locked(struct lnet_net *net, struct lnet_nid *rtr_nid)
-{
-	struct lnet_nid_list *ne;
-
-	CDEBUG(D_NET, "%s: rtr pref empty: %d\n",
-	       libcfs_net2str(net->net_id),
-	       list_empty(&net->net_rtr_pref_nids));
-
-	if (list_empty(&net->net_rtr_pref_nids))
-		return false;
-
-	list_for_each_entry(ne, &net->net_rtr_pref_nids, nl_list) {
-		CDEBUG(D_NET, "Comparing pref %s with gw %s\n",
-		       libcfs_nidstr(&ne->nl_nid),
-		       libcfs_nidstr(rtr_nid));
-		if (nid_same(rtr_nid, &ne->nl_nid))
-			return true;
-	}
-
-	return false;
-}
-
 static unsigned int
 lnet_nid4_cpt_hash(lnet_nid_t nid, unsigned int number)
 {
@@ -1754,13 +1732,16 @@ lnet_count_acceptor_nets(void)
 }
 
 struct lnet_ping_buffer *
-lnet_ping_buffer_alloc(int nnis, gfp_t gfp)
+lnet_ping_buffer_alloc(int nbytes, gfp_t gfp)
 {
 	struct lnet_ping_buffer *pbuf;
 
-	LIBCFS_ALLOC_GFP(pbuf, LNET_PING_BUFFER_SIZE(nnis), gfp);
+	nbytes += sizeof(__u32);
+	nbytes += sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max;
+
+	LIBCFS_ALLOC_GFP(pbuf, LNET_PING_BUFFER_SIZE(nbytes), gfp);
 	if (pbuf) {
-		pbuf->pb_nnis = nnis;
+		pbuf->pb_nbytes = nbytes;	/* sizeof of pb_info */
 		pbuf->pb_needs_post = false;
 		atomic_set(&pbuf->pb_refcnt, 1);
 	}
@@ -1772,21 +1753,21 @@ void
 lnet_ping_buffer_free(struct lnet_ping_buffer *pbuf)
 {
 	LASSERT(atomic_read(&pbuf->pb_refcnt) == 0);
-	LIBCFS_FREE(pbuf, LNET_PING_BUFFER_SIZE(pbuf->pb_nnis));
+	LIBCFS_FREE(pbuf, LNET_PING_BUFFER_SIZE(pbuf->pb_nbytes));
 }
 
 static struct lnet_ping_buffer *
-lnet_ping_target_create(int nnis)
+lnet_ping_target_create(int nbytes)
 {
 	struct lnet_ping_buffer *pbuf;
 
-	pbuf = lnet_ping_buffer_alloc(nnis, GFP_NOFS);
+	pbuf = lnet_ping_buffer_alloc(nbytes, GFP_NOFS);
 	if (pbuf == NULL) {
-		CERROR("Can't allocate ping source [%d]\n", nnis);
+		CERROR("Can't allocate ping source [%d]\n", nbytes);
 		return NULL;
 	}
 
-	pbuf->pb_info.pi_nnis = nnis;
+	pbuf->pb_info.pi_nnis = 0;
 	pbuf->pb_info.pi_pid = the_lnet.ln_pid;
 	pbuf->pb_info.pi_magic = LNET_PROTO_PING_MAGIC;
 	pbuf->pb_info.pi_features =
@@ -1796,52 +1777,64 @@ lnet_ping_target_create(int nnis)
 }
 
 static inline int
-lnet_get_net_ni_count_locked(struct lnet_net *net)
+lnet_get_net_ni_bytes_locked(struct lnet_net *net)
 {
-	struct lnet_ni	*ni;
-	int		count = 0;
+	struct lnet_ni *ni;
+	int bytes = 0;
 
 	list_for_each_entry(ni, &net->net_ni_list, ni_netlist)
-		count++;
+		if (nid_is_nid4(&ni->ni_nid))
+			bytes += sizeof(struct lnet_ni_status);
 
-	return count;
+	bytes += sizeof(__u32);
+	bytes += sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max;
+
+	return bytes;
 }
 
 static inline int
-lnet_get_net_ni_count_pre(struct lnet_net *net)
+lnet_get_net_ni_bytes_pre(struct lnet_net *net)
 {
-	struct lnet_ni	*ni;
-	int		count = 0;
+	struct lnet_ni *ni;
+	int bytes = 0;
 
 	list_for_each_entry(ni, &net->net_ni_added, ni_netlist)
-		count++;
+		if (nid_is_nid4(&ni->ni_nid))
+			bytes += sizeof(struct lnet_ni_status);
 
-	return count;
+	bytes += sizeof(__u32);
+	bytes += sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max;
+
+	return bytes;
 }
 
 static inline int
-lnet_get_ni_count(void)
+lnet_get_ni_bytes(void)
 {
-	struct lnet_ni	*ni;
+	struct lnet_ni *ni;
 	struct lnet_net *net;
-	int		count = 0;
+	int bytes = 0;
 
 	lnet_net_lock(0);
 
 	list_for_each_entry(net, &the_lnet.ln_nets, net_list) {
 		list_for_each_entry(ni, &net->net_ni_list, ni_netlist)
-			count++;
+			if (nid_is_nid4(&ni->ni_nid))
+				bytes += sizeof(struct lnet_ni_status);
 	}
+
+	bytes += sizeof(__u32);
+	bytes += sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max;
 
 	lnet_net_unlock(0);
 
-	return count;
+	return bytes;
 }
 
 void
 lnet_swap_pinginfo(struct lnet_ping_buffer *pbuf)
 {
-	struct lnet_ni_status *stat;
+	struct lnet_ni_status *stat, *end;
 	int nnis;
 	int i;
 
@@ -1850,10 +1843,9 @@ lnet_swap_pinginfo(struct lnet_ping_buffer *pbuf)
 	__swab32s(&pbuf->pb_info.pi_pid);
 	__swab32s(&pbuf->pb_info.pi_nnis);
 	nnis = pbuf->pb_info.pi_nnis;
-	if (nnis > pbuf->pb_nnis)
-		nnis = pbuf->pb_nnis;
-	for (i = 0; i < nnis; i++) {
-		stat = &pbuf->pb_info.pi_ni[i];
+	stat = &pbuf->pb_info.pi_ni[0];
+	end = (void *)&pbuf->pb_info + pbuf->pb_nbytes;
+	for (i = 0; i < nnis && stat + 1 <= end; i++, stat++) {
 		__swab64s(&stat->ns_nid);
 		__swab32s(&stat->ns_status);
 	}
@@ -1910,7 +1902,7 @@ lnet_ping_target_event_handler(struct lnet_event *event)
 static int
 lnet_ping_target_setup(struct lnet_ping_buffer **ppbuf,
 		       struct lnet_handle_md *ping_mdh,
-		       int ni_count, bool set_eq)
+		       int ni_bytes, bool set_eq)
 {
 	struct lnet_processid id = {
 		.nid = LNET_ANY_NID,
@@ -1924,7 +1916,7 @@ lnet_ping_target_setup(struct lnet_ping_buffer **ppbuf,
 		the_lnet.ln_ping_target_handler =
 			lnet_ping_target_event_handler;
 
-	*ppbuf = lnet_ping_target_create(ni_count);
+	*ppbuf = lnet_ping_target_create(ni_bytes);
 	if (*ppbuf == NULL) {
 		rc = -ENOMEM;
 		goto fail_free_eq;
@@ -1942,7 +1934,7 @@ lnet_ping_target_setup(struct lnet_ping_buffer **ppbuf,
 
 	/* initialize md content */
 	md.start     = &(*ppbuf)->pb_info;
-	md.length    = LNET_PING_INFO_SIZE((*ppbuf)->pb_nnis);
+	md.length    = (*ppbuf)->pb_nbytes;
 	md.threshold = LNET_MD_THRESH_INF;
 	md.max_size  = 0;
 	md.options   = LNET_MD_OP_GET | LNET_MD_TRUNCATE |
@@ -1983,21 +1975,41 @@ lnet_ping_md_unlink(struct lnet_ping_buffer *pbuf,
 static void
 lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 {
-	struct lnet_ni		*ni;
-	struct lnet_net		*net;
-	struct lnet_ni_status *ns;
-	int			i;
-	int			rc;
+	struct lnet_ni *ni;
+	struct lnet_net	*net;
+	struct lnet_ni_status *ns, *end;
+	struct lnet_nid_metadata *mapping;
+	int rc = 0;
+	int i = 0;
 
-	i = 0;
+	pbuf->pb_info.pi_nnis = 0;
+	ns = &pbuf->pb_info.pi_ni[0];
+	end = (void *)&pbuf->pb_info + pbuf->pb_nbytes;
+
+	LIBCFS_ALLOC(mapping,
+		     sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max));
+
 	list_for_each_entry(net, &the_lnet.ln_nets, net_list) {
 		list_for_each_entry(ni, &net->net_ni_list, ni_netlist) {
-			LASSERT(i < pbuf->pb_nnis);
-
-			ns = &pbuf->pb_info.pi_ni[i];
+			const struct lnet_lnd *lnd = ni->ni_net->net_lnd;
 
 			if (!nid_is_nid4(&ni->ni_nid))
 				continue;
+
+			/* If lnd_get_nid_metadata() is defined, we must
+			 * save the metadata - if we try to send too
+			 * many entries, we truncate and warn
+			 */
+			if (i >= lnet_interfaces_max) {
+				CERROR("Refusing to send more than %i mappings",
+				       lnet_interfaces_max);
+			} else if (lnd->lnd_get_nid_metadata) {
+				lnd->lnd_get_nid_metadata(ni, &mapping->nid_mappings[i]);
+				mapping->nid_mappings[i].nid = lnet_nid_to_nid4(&ni->ni_nid);
+				i++;
+			}
+
+			LASSERT(ns + 1 <= end);
 			ns->ns_nid = lnet_nid_to_nid4(&ni->ni_nid);
 
 			lnet_ni_lock(ni);
@@ -2005,11 +2017,17 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 			ni->ni_status = ns;
 			lnet_ni_unlock(ni);
 
-			i++;
+			pbuf->pb_info.pi_nnis++;
+			ns++;
 		}
 	}
-	/*
-	 * We (ab)use the ns_status of the loopback interface to
+
+	/* Add NID -> GID mapping to the end of ping buffer */
+	mapping->num_nid_mappings = i;
+	memcpy((struct lnet_nid_metadata *)ns, mapping,
+	       sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * i));
+
+	/* We (ab)use the ns_status of the loopback interface to
 	 * transmit the sequence number. The first interface listed
 	 * must be the loopback interface.
 	 */
@@ -2020,6 +2038,8 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 	}
 	LNET_PING_BUFFER_SEQNO(pbuf) =
 		atomic_inc_return(&the_lnet.ln_ping_target_seqno);
+	LIBCFS_FREE(mapping,
+		    sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max));
 }
 
 static void
@@ -2078,13 +2098,13 @@ int lnet_push_target_resize(void)
 	struct lnet_handle_md old_mdh;
 	struct lnet_ping_buffer *pbuf;
 	struct lnet_ping_buffer *old_pbuf;
-	int nnis;
+	int nbytes;
 	int rc;
 
 again:
-	nnis = the_lnet.ln_push_target_nnis;
-	if (nnis <= 0) {
-		CDEBUG(D_NET, "Invalid nnis %d\n", nnis);
+	nbytes = the_lnet.ln_push_target_nbytes;
+	if (nbytes <= 0) {
+		CDEBUG(D_NET, "Invalid nbytes %d\n", nbytes);
 		return -EINVAL;
 	}
 
@@ -2092,9 +2112,9 @@ again:
 	 * dropped when we need to resize again (see "old_pbuf" below) or when
 	 * LNet is shutdown (see lnet_push_target_fini())
 	 */
-	pbuf = lnet_ping_buffer_alloc(nnis, GFP_NOFS);
+	pbuf = lnet_ping_buffer_alloc(nbytes, GFP_NOFS);
 	if (!pbuf) {
-		CDEBUG(D_NET, "Can't allocate pbuf for nnis %d\n", nnis);
+		CDEBUG(D_NET, "Can't allocate pbuf for nbytes %d\n", nbytes);
 		return -ENOMEM;
 	}
 
@@ -2119,10 +2139,10 @@ again:
 	}
 
 	/* Received another push or reply that requires a larger buffer */
-	if (nnis < the_lnet.ln_push_target_nnis)
+	if (nbytes < the_lnet.ln_push_target_nbytes)
 		goto again;
 
-	CDEBUG(D_NET, "nnis %d success\n", nnis);
+	CDEBUG(D_NET, "nbytes %d success\n", nbytes);
 	return 0;
 }
 
@@ -2150,7 +2170,7 @@ int lnet_push_target_post(struct lnet_ping_buffer *pbuf,
 
 	/* initialize md content */
 	md.start     = &pbuf->pb_info;
-	md.length    = LNET_PING_INFO_SIZE(pbuf->pb_nnis);
+	md.length    = pbuf->pb_nbytes;
 	md.threshold = 1;
 	md.max_size  = 0;
 	md.options   = LNET_MD_OP_PUT | LNET_MD_TRUNCATE;
@@ -2207,10 +2227,9 @@ static int lnet_push_target_init(void)
 	LASSERT(rc == 0);
 
 	/* Start at the required minimum, we'll enlarge if required. */
-	the_lnet.ln_push_target_nnis = LNET_INTERFACES_MIN;
+	the_lnet.ln_push_target_nbytes = LNET_PING_INFO_MIN_SIZE;
 
 	rc = lnet_push_target_resize();
-
 	if (rc) {
 		LNetClearLazyPortal(LNET_RESERVED_PORTAL);
 		the_lnet.ln_push_target_handler = NULL;
@@ -2237,7 +2256,7 @@ static void lnet_push_target_fini(void)
 	/* Drop ref set by lnet_ping_buffer_alloc() */
 	lnet_ping_buffer_decref(the_lnet.ln_push_target);
 	the_lnet.ln_push_target = NULL;
-	the_lnet.ln_push_target_nnis = 0;
+	the_lnet.ln_push_target_nbytes = 0;
 
 	LNetClearLazyPortal(LNET_RESERVED_PORTAL);
 	lnet_assert_handler_unused(the_lnet.ln_push_target_handler);
@@ -2897,13 +2916,13 @@ void lnet_lib_exit(void)
 int
 LNetNIInit(lnet_pid_t requested_pid)
 {
-	int			im_a_router = 0;
-	int			rc;
-	int			ni_count;
+	int im_a_router = 0;
+	int rc;
+	int ni_bytes;
 	struct lnet_ping_buffer	*pbuf;
-	struct lnet_handle_md	ping_mdh;
+	struct lnet_handle_md ping_mdh;
 	LIST_HEAD(net_head);
-	struct lnet_net		*net;
+	struct lnet_net	*net;
 
 	mutex_lock(&the_lnet.ln_api_mutex);
 
@@ -2954,11 +2973,9 @@ LNetNIInit(lnet_pid_t requested_pid)
 			goto err_empty_list;
 	}
 
-	ni_count = lnet_startup_lndnets(&net_head);
-	if (ni_count < 0) {
-		rc = ni_count;
+	rc = lnet_startup_lndnets(&net_head);
+	if (rc < 0)
 		goto err_empty_list;
-	}
 
 	if (!the_lnet.ln_nis_from_mod_params) {
 		rc = lnet_parse_routes(lnet_get_routes(), &im_a_router);
@@ -2977,7 +2994,11 @@ LNetNIInit(lnet_pid_t requested_pid)
 	the_lnet.ln_refcount = 1;
 	/* Now I may use my own API functions... */
 
-	rc = lnet_ping_target_setup(&pbuf, &ping_mdh, ni_count, true);
+	ni_bytes = LNET_PING_INFO_HDR_SIZE;
+	list_for_each_entry(net, &the_lnet.ln_nets, net_list)
+		ni_bytes += lnet_get_net_ni_bytes_locked(net);
+
+	rc = lnet_ping_target_setup(&pbuf, &ping_mdh, ni_bytes, true);
 	if (rc != 0)
 		goto err_acceptor_stop;
 
@@ -3319,7 +3340,7 @@ lnet_get_next_ni_locked(struct lnet_net *mynet, struct lnet_ni *prev)
 	return ni;
 }
 
-int
+static int
 lnet_get_net_config(struct lnet_ioctl_config_data *config)
 {
 	struct lnet_ni *ni;
@@ -3342,7 +3363,7 @@ lnet_get_net_config(struct lnet_ioctl_config_data *config)
 	return rc;
 }
 
-int
+static int
 lnet_get_ni_config(struct lnet_ioctl_config_ni *cfg_ni,
 		   struct lnet_ioctl_config_lnd_tunables *tun,
 		   struct lnet_ioctl_element_stats *stats,
@@ -3370,7 +3391,7 @@ lnet_get_ni_config(struct lnet_ioctl_config_ni *cfg_ni,
 	return rc;
 }
 
-int lnet_get_ni_stats(struct lnet_ioctl_element_msg_stats *msg_stats)
+static int lnet_get_ni_stats(struct lnet_ioctl_element_msg_stats *msg_stats)
 {
 	struct lnet_ni *ni;
 	int cpt;
@@ -3400,7 +3421,7 @@ static int lnet_add_net_common(struct lnet_net *net,
 	struct lnet_ping_buffer *pbuf;
 	struct lnet_remotenet *rnet;
 	struct lnet_ni *ni;
-	int net_ni_count;
+	int net_ni_bytes;
 	__u32 net_id;
 	int rc;
 
@@ -3425,12 +3446,13 @@ static int lnet_add_net_common(struct lnet_net *net,
 	 * which will be added.
 	 *
 	 * since ni hasn't been configured yet, use
-	 * lnet_get_net_ni_count_pre() which checks the net_ni_added list
+	 * lnet_get_net_ni_bytes_pre() which checks the net_ni_added list
 	 */
-	net_ni_count = lnet_get_net_ni_count_pre(net);
+	net_ni_bytes = lnet_get_net_ni_bytes_pre(net);
 
 	rc = lnet_ping_target_setup(&pbuf, &ping_mdh,
-				    net_ni_count + lnet_get_ni_count(),
+				    LNET_PING_INFO_HDR_SIZE +
+				    net_ni_bytes + lnet_get_ni_bytes(),
 				    false);
 	if (rc < 0) {
 		lnet_net_free(net);
@@ -3586,38 +3608,58 @@ int lnet_dyn_add_ni(struct lnet_ioctl_config_ni *conf)
 		return -ENOMEM;
 
 	for (i = 0; i < conf->lic_ncpts; i++) {
-		if (conf->lic_cpts[i] >= LNET_CPT_NUMBER)
+		if (conf->lic_cpts[i] >= LNET_CPT_NUMBER) {
+			lnet_net_free(net);
 			return -EINVAL;
+		}
 	}
 
 	ni = lnet_ni_alloc_w_cpt_array(net, conf->lic_cpts, conf->lic_ncpts,
 				       conf->lic_ni_intf);
-	if (!ni)
+	if (!ni) {
+		lnet_net_free(net);
 		return -ENOMEM;
+	}
 
 	lnet_set_tune_defaults(tun);
 
 	mutex_lock(&the_lnet.ln_api_mutex);
-	if (the_lnet.ln_state != LNET_STATE_RUNNING)
+	if (the_lnet.ln_state != LNET_STATE_RUNNING) {
+		lnet_net_free(net);
 		rc = -ESHUTDOWN;
-	else
+	} else {
 		rc = lnet_add_net_common(net, tun);
+	}
 
 	mutex_unlock(&the_lnet.ln_api_mutex);
+
+	if (rc == -EEXIST)
+		lnet_ni_free(ni);
 
 	return rc;
 }
 
+static struct lnet_ni *
+search_ni_interface_name(struct lnet_net *net, const char *if_name)
+{
+	struct lnet_ni *ni;
+	list_for_each_entry(ni, &net->net_ni_list, ni_netlist) {
+		if (ni->ni_interface && strcmp(ni->ni_interface, if_name) == 0)
+			return ni;
+	}
+	return NULL;
+}
+
 int lnet_dyn_del_ni(struct lnet_ioctl_config_ni *conf)
 {
-	struct lnet_net	 *net;
+	struct lnet_net *net;
 	struct lnet_ni *ni;
 	__u32 net_id = LNET_NIDNET(conf->lic_nid);
 	struct lnet_ping_buffer *pbuf;
-	struct lnet_handle_md  ping_mdh;
-	int		  rc;
-	int		  net_count;
-	__u32		  addr;
+	struct lnet_handle_md ping_mdh;
+	int net_bytes, rc;
+	bool net_empty;
+	u32 addr;
 
 	/* don't allow userspace to shutdown the LOLND */
 	if (LNET_NETTYP(net_id) == LOLND)
@@ -3642,14 +3684,15 @@ int lnet_dyn_del_ni(struct lnet_ioctl_config_ni *conf)
 	addr = LNET_NIDADDR(conf->lic_nid);
 	if (addr == 0) {
 		/* remove the entire net */
-		net_count = lnet_get_net_ni_count_locked(net);
+		net_bytes = lnet_get_net_ni_bytes_locked(net);
 
 		lnet_net_unlock(0);
 
 		/* create and link a new ping info, before removing the old one */
 		rc = lnet_ping_target_setup(&pbuf, &ping_mdh,
-					lnet_get_ni_count() - net_count,
-					false);
+					    LNET_PING_INFO_HDR_SIZE +
+					    lnet_get_ni_bytes() - net_bytes,
+					    false);
 		if (rc != 0)
 			goto unlock_api_mutex;
 
@@ -3662,7 +3705,12 @@ int lnet_dyn_del_ni(struct lnet_ioctl_config_ni *conf)
 		goto unlock_api_mutex;
 	}
 
-	ni = lnet_nid2ni_locked(conf->lic_nid, 0);
+	if (strlen(conf->lic_ni_intf) > 0) {
+		ni = search_ni_interface_name(net, conf->lic_ni_intf);
+	} else {
+		ni = lnet_nid2ni_locked(conf->lic_nid, 0);
+	}
+
 	if (!ni) {
 		CERROR("nid %s not found\n",
 		       libcfs_nid2str(conf->lic_nid));
@@ -3670,13 +3718,17 @@ int lnet_dyn_del_ni(struct lnet_ioctl_config_ni *conf)
 		goto unlock_net;
 	}
 
-	net_count = lnet_get_net_ni_count_locked(net);
+	net_bytes = lnet_get_net_ni_bytes_locked(net);
+	net_empty = list_is_singular(&net->net_ni_list);
 
 	lnet_net_unlock(0);
 
 	/* create and link a new ping info, before removing the old one */
 	rc = lnet_ping_target_setup(&pbuf, &ping_mdh,
-				  lnet_get_ni_count() - 1, false);
+				    (LNET_PING_INFO_HDR_SIZE +
+				     lnet_get_ni_bytes() -
+				     sizeof(pbuf->pb_info.pi_ni[0])),
+				    false);
 	if (rc != 0)
 		goto unlock_api_mutex;
 
@@ -3687,7 +3739,7 @@ int lnet_dyn_del_ni(struct lnet_ioctl_config_ni *conf)
 	lnet_ping_target_update(pbuf, ping_mdh);
 
 	/* check if the net is empty and remove it if it is */
-	if (net_count == 1)
+	if (net_empty)
 		lnet_shutdown_lndnet(net);
 
 	goto unlock_api_mutex;
@@ -3764,13 +3816,12 @@ out_unlock_clean:
 }
 
 int
-lnet_dyn_del_net(__u32 net_id)
+lnet_dyn_del_net(u32 net_id)
 {
-	struct lnet_net	 *net;
+	struct lnet_net *net;
 	struct lnet_ping_buffer *pbuf;
 	struct lnet_handle_md ping_mdh;
-	int		  rc;
-	int		  net_ni_count;
+	int net_ni_bytes, rc;
 
 	/* don't allow userspace to shutdown the LOLND */
 	if (LNET_NETTYP(net_id) == LOLND)
@@ -3791,13 +3842,15 @@ lnet_dyn_del_net(__u32 net_id)
 		goto out;
 	}
 
-	net_ni_count = lnet_get_net_ni_count_locked(net);
+	net_ni_bytes = lnet_get_net_ni_bytes_locked(net);
 
 	lnet_net_unlock(0);
 
 	/* create and link a new ping info, before removing the old one */
 	rc = lnet_ping_target_setup(&pbuf, &ping_mdh,
-				    lnet_get_ni_count() - net_ni_count, false);
+				    LNET_PING_INFO_HDR_SIZE +
+				    lnet_get_ni_bytes() - net_ni_bytes,
+				    false);
 	if (rc != 0)
 		goto out;
 
@@ -4304,6 +4357,30 @@ LNetCtl(unsigned int cmd, void *arg)
 		return 0;
 	}
 
+	case IOC_LIBCFS_SET_PEER: {
+		struct lnet_ioctl_peer_cfg *cfg = arg;
+		struct lnet_peer *lp;
+
+		if (cfg->prcfg_hdr.ioc_len < sizeof(*cfg))
+			return -EINVAL;
+
+		mutex_lock(&the_lnet.ln_api_mutex);
+		lnet_nid4_to_nid(cfg->prcfg_prim_nid, &nid);
+		lp = lnet_find_peer(&nid);
+		if (!lp) {
+			mutex_unlock(&the_lnet.ln_api_mutex);
+			return -ENOENT;
+		}
+		spin_lock(&lp->lp_lock);
+		lp->lp_state = cfg->prcfg_state;
+		spin_unlock(&lp->lp_lock);
+		lnet_peer_decref_locked(lp);
+		mutex_unlock(&the_lnet.ln_api_mutex);
+		CDEBUG(D_NET, "Set peer %s state to %u\n",
+		       libcfs_nid2str(cfg->prcfg_prim_nid), cfg->prcfg_state);
+		return 0;
+	}
+
 	case IOC_LIBCFS_SET_CONNS_PER_PEER: {
 		struct lnet_ioctl_reset_conns_per_peer_cfg *cfg = arg;
 		int value;
@@ -4663,40 +4740,178 @@ lnet_ping_event_handler(struct lnet_event *event)
 		complete(&pd->completion);
 }
 
-static int lnet_ping(struct lnet_process_id id, struct lnet_nid *src_nid,
-		     signed long timeout, struct lnet_process_id __user *ids,
-		     int n_ids)
+/* lnet_ping() only works with nid4 nids, so we can calculate
+ * size from number of nids
+ */
+#define LNET_PING_INFO_SIZE(NNIDS) \
+	offsetof(struct lnet_ping_info, pi_ni[NNIDS])
+
+static struct lnet_ni *LNetGetLocalNID(struct lnet_nid *peer_nid)
 {
+	struct lnet_net *net;
+	struct lnet_ni *ni;
+	int cpt;
+
+	cpt = lnet_net_lock_current();
+	list_for_each_entry(net, &the_lnet.ln_nets, net_list) {
+		list_for_each_entry(ni, &net->net_ni_list, ni_netlist) {
+			if (nid_net_same(&ni->ni_nid, peer_nid)) {
+				lnet_net_unlock(cpt);
+				return ni;
+			}
+		}
+	}
+	lnet_net_unlock(cpt);
+
+	return NULL;
+}
+
+/*
+ * Rather than deal with LNet routing trickery, just build the message
+ * ourselves and send it over a network interface of our choosing.
+ */
+static int
+LNetGetForce(lnet_nid_t self4, struct lnet_handle_md mdh,
+	     struct lnet_process_id target4, unsigned int portal,
+	     __u64 match_bits, unsigned int offset)
+{
+	struct lnet_processid target;
+	struct lnet_nid self;
+	struct lnet_msg *msg;
+	struct lnet_libmd *md;
+	struct lnet_ni *ni;
+	int cpt;
+
+	LASSERT(the_lnet.ln_refcount > 0);
+
+	lnet_nid4_to_nid(self4, &self);
+	lnet_nid4_to_nid(target4.nid, &target.nid);
+	target.pid = target4.pid;
+
+	ni = LNetGetLocalNID(&target.nid);
+	if (!ni) {
+		CERROR("Can't find valid local NI\n");
+		return -ENOENT;
+	}
+
+	msg = lnet_msg_alloc();
+	if (!msg) {
+		CERROR("Dropping GET to %s: ENOMEM on struct lnet_msg\n",
+		       libcfs_id2str(target4));
+		return -ENOMEM;
+	}
+
+	cpt = lnet_cpt_of_cookie(mdh.cookie);
+	lnet_res_lock(cpt);
+
+	md = lnet_handle2md(&mdh);
+	if (!md || md->md_threshold == 0 || md->md_me) {
+		CERROR("Dropping GET (%llu:%d:%s): MD (%d) invalid\n",
+		       match_bits, portal, libcfs_id2str(target4),
+		       !md ? -1 : md->md_threshold);
+
+		if (md && md->md_me)
+			CERROR("REPLY MD also attached to portal %d\n",
+			       md->md_me->me_portal);
+
+		lnet_res_unlock(cpt);
+		lnet_msg_free(msg);
+		return -ENOENT;
+	}
+
+	lnet_msg_attach_md(msg, md, 0, 0);
+
+	lnet_prep_send(msg, LNET_MSG_GET, &target, 0, 0);
+
+	msg->msg_hdr.msg.get.match_bits = cpu_to_le64(match_bits);
+	msg->msg_hdr.msg.get.ptl_index = cpu_to_le32(portal);
+	msg->msg_hdr.msg.get.src_offset = cpu_to_le32(offset);
+	msg->msg_hdr.msg.get.sink_length = cpu_to_le32(md->md_length);
+
+	/* NB handles only looked up by creator (no flips) */
+	msg->msg_hdr.msg.get.return_wmd.wh_interface_cookie =
+		the_lnet.ln_interface_cookie;
+	msg->msg_hdr.msg.get.return_wmd.wh_object_cookie =
+		md->md_lh.lh_cookie;
+
+	msg->msg_hdr.src_nid = ni->ni_nid;
+	msg->msg_hdr.src_pid = the_lnet.ln_pid;
+	msg->msg_txcredit = 1;
+	msg->msg_peertxcredit = 1;
+
+	lnet_res_unlock(cpt);
+
+	lnet_build_msg_event(msg, LNET_EVENT_SEND);
+
+	lnet_ni_send(ni, msg);
+
+	return 0;
+}
+
+/**
+ * lnet_discover_nid_metadata() - Ping NID using any interface.
+ * @nid: NID that should be pinged.
+ *
+ * This is a clone of lnet_ping() that doesn't copy anything to
+ * userspace and that doesn't care which interface the ping is sent
+ * from. This clone is intended to provide a simple interface for
+ * sending LNet pings initiated from kernel space.
+ *
+ * TODO - This function could likely be simplified further.
+ * TODO - The special NID -> GID mapping functionality should be locked
+ * behind a ping feature flag for compatibility reasons.
+ */
+int lnet_discover_nid_metadata(lnet_nid_t nid, struct lnet_nid_metadata *mapping)
+{
+	struct lnet_process_id id4 = {
+		.nid = nid,
+		.pid = LNET_PID_LUSTRE,
+	};
 	struct lnet_md md = { NULL };
 	struct ping_data pd = { 0 };
 	struct lnet_ping_buffer *pbuf;
-	struct lnet_process_id tmpid;
-	int i;
+	struct lnet_processid id;
+	struct lnet_nid nid_struct;
+	struct lnet_nid_metadata *end;
+	lnet_nid_t src_nid = LNET_NID_ANY;
+	signed long timeout = cfs_time_seconds(30);
+	int n_ids = lnet_interfaces_max;
+	int id_bytes;
 	int nob;
 	int rc;
 	int rc2;
 
-	/* n_ids limit is arbitrary */
-	if (n_ids <= 0 || id.nid == LNET_NID_ANY)
-		return -EINVAL;
+	lnet_nid4_to_nid(nid, &nid_struct);
 
-	/*
-	 * if the user buffer has more space than the lnet_interfaces_max
-	 * then only fill it up to lnet_interfaces_max
+	CDEBUG(D_NET, "handshake with NID: %s\n",
+	       libcfs_nidstr(&nid_struct));
+
+	/* If the NID isn't TCP, this ping doesn't need to happen.
+	 * So, exit early.
 	 */
-	if (n_ids > lnet_interfaces_max)
-		n_ids = lnet_interfaces_max;
+	if (LNET_NETTYP(LNET_NIDNET(nid)) != SOCKLND) {
+		CDEBUG(D_NET, "refusing to handshake with NID: %s\n",
+		       libcfs_nidstr(&nid_struct));
 
-	if (id.pid == LNET_PID_ANY)
-		id.pid = LNET_PID_LUSTRE;
+		return -1;
+	}
 
-	pbuf = lnet_ping_buffer_alloc(n_ids, GFP_NOFS);
-	if (!pbuf)
+	/* n_ids limit is arbitrary */
+	if (id4.nid == LNET_NID_ANY) {
+		CDEBUG(D_NET, "refusing to handshake LNET_NID_ANY\n");
+		return -EINVAL;
+	}
+
+	id_bytes = LNET_PING_INFO_SIZE(n_ids);
+	pbuf = lnet_ping_buffer_alloc(id_bytes, GFP_NOFS);
+	if (!pbuf) {
+		CDEBUG(D_NET, "refusing to handshake since can't alloc pbuf\n");
 		return -ENOMEM;
+	}
 
 	/* initialize md content */
 	md.start     = &pbuf->pb_info;
-	md.length    = LNET_PING_INFO_SIZE(n_ids);
+	md.length    = id_bytes;
 	md.threshold = 2; /* GET/REPLY */
 	md.max_size  = 0;
 	md.options   = LNET_MD_TRUNCATE;
@@ -4711,7 +4926,145 @@ static int lnet_ping(struct lnet_process_id id, struct lnet_nid *src_nid,
 		goto fail_ping_buffer_decref;
 	}
 
-	rc = LNetGet(lnet_nid_to_nid4(src_nid), pd.mdh, id,
+	lnet_pid4_to_pid(id4, &id);
+	rc = LNetGetForce(src_nid, pd.mdh, id4, LNET_RESERVED_PORTAL,
+			  LNET_PROTO_PING_MATCHBITS, 0);
+
+	if (rc != 0) {
+		/* Don't CERROR; this could be deliberate! */
+		rc2 = LNetMDUnlink(pd.mdh);
+		LASSERT(rc2 == 0);
+
+		/* NB must wait for the UNLINK event below... */
+	}
+
+	if (wait_for_completion_timeout(&pd.completion, timeout) == 0) {
+		/* Ensure completion in finite time... */
+		LNetMDUnlink(pd.mdh);
+		wait_for_completion(&pd.completion);
+	}
+
+	if (!pd.replied) {
+		CERROR("misc ping error\n");
+		rc = -EIO;
+		goto fail_ping_buffer_decref;
+	}
+
+	nob = pd.rc;
+	LASSERT(nob >= 0 && nob <= id_bytes);
+
+	rc = -EPROTO;		/* if I can't parse... */
+
+	if (nob < 8) {
+		CERROR("%s: ping info too short %d\n",
+		       libcfs_idstr(&id), nob);
+		goto fail_ping_buffer_decref;
+	}
+
+	if (pbuf->pb_info.pi_magic == __swab32(LNET_PROTO_PING_MAGIC)) {
+		lnet_swap_pinginfo(pbuf);
+	} else if (pbuf->pb_info.pi_magic != LNET_PROTO_PING_MAGIC) {
+		CERROR("%s: Unexpected magic %08x\n",
+		       libcfs_idstr(&id), pbuf->pb_info.pi_magic);
+		goto fail_ping_buffer_decref;
+	}
+
+	if ((pbuf->pb_info.pi_features & LNET_PING_FEAT_NI_STATUS) == 0) {
+		CERROR("%s: ping w/o NI status: 0x%x\n",
+		       libcfs_idstr(&id), pbuf->pb_info.pi_features);
+		goto fail_ping_buffer_decref;
+	}
+
+	/* Test if smaller than lnet_pinginfo with no pi_ni status info */
+	if (nob < LNET_PING_INFO_HDR_SIZE) {
+		CERROR("%s: Short reply %d(%lu min)\n",
+		       libcfs_idstr(&id), nob, LNET_PING_INFO_HDR_SIZE);
+		goto fail_ping_buffer_decref;
+	}
+
+	if (pbuf->pb_info.pi_nnis < n_ids) {
+		n_ids = pbuf->pb_info.pi_nnis;
+		id_bytes = lnet_ping_info_size(&pbuf->pb_info);
+	}
+
+	if (nob < id_bytes) {
+		CERROR("%s: Short reply %d(%d expected)\n",
+		       libcfs_idstr(&id), nob, id_bytes);
+		goto fail_ping_buffer_decref;
+	}
+
+	/* Extract the mapping from the ping buffer we received */
+	end = (void *)&pbuf->pb_info.pi_ni[n_ids];
+	if (end->num_nid_mappings == 0 ||
+	    end->num_nid_mappings > lnet_interfaces_max) {
+		CERROR("%s: Unexpected number of handshake entries %i\n",
+		       libcfs_idstr(&id), end->num_nid_mappings);
+		goto fail_ping_buffer_decref;
+	}
+
+	rc = 0;
+	memcpy(mapping, end,
+	       sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * end->num_nid_mappings));
+
+	CDEBUG(D_NET, "ping reply received with mapping\n");
+
+fail_ping_buffer_decref:
+	lnet_ping_buffer_decref(pbuf);
+	return rc;
+}
+EXPORT_SYMBOL(lnet_discover_nid_metadata);
+
+static int lnet_ping(struct lnet_process_id id4, struct lnet_nid *src_nid,
+		     signed long timeout, struct lnet_process_id __user *ids,
+		     int n_ids)
+{
+	struct lnet_md md = { NULL };
+	struct ping_data pd = { 0 };
+	struct lnet_ping_buffer *pbuf;
+	struct lnet_process_id tmpid;
+	int id_bytes;
+	int i;
+	int nob;
+	int rc;
+	int rc2;
+
+	/* n_ids limit is arbitrary */
+	if (n_ids <= 0 || id4.nid == LNET_NID_ANY)
+		return -EINVAL;
+
+	/*
+	 * if the user buffer has more space than the lnet_interfaces_max
+	 * then only fill it up to lnet_interfaces_max
+	 */
+	if (n_ids > lnet_interfaces_max)
+		n_ids = lnet_interfaces_max;
+
+	if (id4.pid == LNET_PID_ANY)
+		id4.pid = LNET_PID_LUSTRE;
+
+	id_bytes = LNET_PING_INFO_SIZE(n_ids);
+	pbuf = lnet_ping_buffer_alloc(id_bytes, GFP_NOFS);
+	if (!pbuf)
+		return -ENOMEM;
+
+	/* initialize md content */
+	md.start     = &pbuf->pb_info;
+	md.length    = id_bytes;
+	md.threshold = 2; /* GET/REPLY */
+	md.max_size  = 0;
+	md.options   = LNET_MD_TRUNCATE;
+	md.user_ptr  = &pd;
+	md.handler   = lnet_ping_event_handler;
+
+	init_completion(&pd.completion);
+
+	rc = LNetMDBind(&md, LNET_UNLINK, &pd.mdh);
+	if (rc != 0) {
+		CERROR("Can't bind MD: %d\n", rc);
+		goto fail_ping_buffer_decref;
+	}
+
+	rc = LNetGet(lnet_nid_to_nid4(src_nid), pd.mdh, id4,
 		     LNET_RESERVED_PORTAL,
 		     LNET_PROTO_PING_MATCHBITS, 0, false);
 
@@ -4734,13 +5087,13 @@ static int lnet_ping(struct lnet_process_id id, struct lnet_nid *src_nid,
 	}
 
 	nob = pd.rc;
-	LASSERT(nob >= 0 && nob <= LNET_PING_INFO_SIZE(n_ids));
+	LASSERT(nob >= 0 && nob <= id_bytes);
 
 	rc = -EPROTO;		/* if I can't parse... */
 
 	if (nob < 8) {
 		CERROR("%s: ping info too short %d\n",
-		       libcfs_id2str(id), nob);
+		       libcfs_id2str(id4), nob);
 		goto fail_ping_buffer_decref;
 	}
 
@@ -4748,30 +5101,31 @@ static int lnet_ping(struct lnet_process_id id, struct lnet_nid *src_nid,
 		lnet_swap_pinginfo(pbuf);
 	} else if (pbuf->pb_info.pi_magic != LNET_PROTO_PING_MAGIC) {
 		CERROR("%s: Unexpected magic %08x\n",
-		       libcfs_id2str(id), pbuf->pb_info.pi_magic);
+		       libcfs_id2str(id4), pbuf->pb_info.pi_magic);
 		goto fail_ping_buffer_decref;
 	}
 
 	if ((pbuf->pb_info.pi_features & LNET_PING_FEAT_NI_STATUS) == 0) {
 		CERROR("%s: ping w/o NI status: 0x%x\n",
-		       libcfs_id2str(id), pbuf->pb_info.pi_features);
+		       libcfs_id2str(id4), pbuf->pb_info.pi_features);
 		goto fail_ping_buffer_decref;
 	}
 
-	if (nob < LNET_PING_INFO_SIZE(0)) {
-		CERROR("%s: Short reply %d(%d min)\n",
-		       libcfs_id2str(id),
-		       nob, (int)LNET_PING_INFO_SIZE(0));
+	/* Test if smaller than lnet_pinginfo with no pi_ni status info */
+	if (nob < LNET_PING_INFO_HDR_SIZE) {
+		CERROR("%s: Short reply %d(%lu min)\n",
+		       libcfs_id2str(id4), nob, LNET_PING_INFO_HDR_SIZE);
 		goto fail_ping_buffer_decref;
 	}
 
-	if (pbuf->pb_info.pi_nnis < n_ids)
+	if (pbuf->pb_info.pi_nnis < n_ids) {
 		n_ids = pbuf->pb_info.pi_nnis;
+		id_bytes = lnet_ping_info_size(&pbuf->pb_info);
+	}
 
-	if (nob < LNET_PING_INFO_SIZE(n_ids)) {
+	if (nob < id_bytes) {
 		CERROR("%s: Short reply %d(%d expected)\n",
-		       libcfs_id2str(id),
-		       nob, (int)LNET_PING_INFO_SIZE(n_ids));
+		       libcfs_id2str(id4), nob, id_bytes);
 		goto fail_ping_buffer_decref;
 	}
 
@@ -4790,6 +5144,7 @@ static int lnet_ping(struct lnet_process_id id, struct lnet_nid *src_nid,
 	lnet_ping_buffer_decref(pbuf);
 	return rc;
 }
+#undef LNET_PING_INFO_SIZE
 
 static int
 lnet_discover(struct lnet_process_id id, __u32 force,
