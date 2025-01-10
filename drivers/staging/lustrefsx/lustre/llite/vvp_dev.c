@@ -41,13 +41,9 @@
 #include "vvp_internal.h"
 #include <linux/kallsyms.h>
 
-/*****************************************************************************
- *
+/*
  * Vvp device and device type functions.
  *
- */
-
-/*
  * vvp_ prefix stands for "Vfs Vm Posix". It corresponds to historical
  * "llite_" (var. "ll_") prefix.
  */
@@ -308,10 +304,8 @@ void vvp_global_fini(void)
 	lu_kmem_fini(vvp_caches);
 }
 
-/*****************************************************************************
- *
+/*
  * mirror obd-devices into cl devices.
- *
  */
 
 int cl_sb_init(struct super_block *sb)
@@ -386,8 +380,9 @@ struct vvp_seq_private {
 	loff_t			vvp_prev_pos;
 };
 
-unsigned int ll_filemap_get_one_page_contig(struct address_space *mapping,
-					     pgoff_t start, struct page **pg)
+static unsigned int
+ll_filemap_get_one_page_contig(struct address_space *mapping,
+			       pgoff_t start, struct page **pg)
 {
 #ifdef HAVE_FILEMAP_GET_FOLIOS_CONTIG
 	struct folio_batch fbatch;
@@ -470,11 +465,10 @@ static void vvp_pgcache_page_show(const struct lu_env *env,
 
 	vpg = cl2vvp_page(cl_page_at(page, &vvp_device_type));
 	vmpage = vpg->vpg_page;
-	seq_printf(seq, " %5i | %p %p %s %s %s | %p "DFID"(%p) %lu %u [",
+	seq_printf(seq, " %5i | %p %p %s %s | %p "DFID"(%p) %lu %u [",
 		   0 /* gen */,
 		   vpg, page,
 		   "none",
-		   vpg->vpg_defer_uptodate ? "du" : "- ",
 		   PageWriteback(vmpage) ? "wb" : "-",
 		   vmpage,
 		   PFID(ll_inode2fid(vmpage->mapping->host)),
