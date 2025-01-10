@@ -297,7 +297,7 @@ nrs_tbf_rule_start(struct ptlrpc_nrs_policy *policy,
 	if (rule == NULL)
 		return -ENOMEM;
 
-	strlcpy(rule->tr_name, start->tc_name, sizeof(rule->tr_name));
+	strscpy(rule->tr_name, start->tc_name, sizeof(rule->tr_name));
 	rule->tr_rpc_rate = start->u.tc_start.ts_rpc_rate;
 	rule->tr_flags = start->u.tc_start.ts_rule_flags;
 	rule->tr_nsecs_per_rpc = NSEC_PER_SEC / rule->tr_rpc_rate;
@@ -1641,8 +1641,8 @@ static inline void nrs_tbf_cli_gen_key(struct nrs_tbf_client *cli,
 
 	if (cli) {
 		INIT_LIST_HEAD(&cli->tc_lru);
-		strlcpy(cli->tc_key, keystr, sizeof(cli->tc_key));
-		strlcpy(cli->tc_jobid, jobid, sizeof(cli->tc_jobid));
+		strscpy(cli->tc_key, keystr, sizeof(cli->tc_key));
+		strscpy(cli->tc_jobid, jobid, sizeof(cli->tc_jobid));
 		cli->tc_nid = req->rq_peer.nid;
 		cli->tc_opcode = opc;
 		cli->tc_id = id;
@@ -2613,7 +2613,7 @@ static int nrs_tbf_ug_id_parse(struct nrs_tbf_cmd *cmd, char *id)
 	if (cmd->u.tc_start.ts_ids_str == NULL)
 		return -ENOMEM;
 
-	strlcpy(cmd->u.tc_start.ts_ids_str, src.ls_str, src.ls_len + 1);
+	strscpy(cmd->u.tc_start.ts_ids_str, src.ls_str, src.ls_len + 1);
 
 	rc = nrs_tbf_id_list_parse(cmd->u.tc_start.ts_ids_str,
 				   strlen(cmd->u.tc_start.ts_ids_str),
@@ -2641,7 +2641,7 @@ nrs_tbf_id_rule_init(struct ptlrpc_nrs_policy *policy,
 	if (rule->tr_ids_str == NULL)
 		return -ENOMEM;
 
-	strlcpy(rule->tr_ids_str, start->u.tc_start.ts_ids_str,
+	strscpy(rule->tr_ids_str, start->u.tc_start.ts_ids_str,
 		ids_len);
 
 	if (!list_empty(&start->u.tc_start.ts_ids)) {
@@ -2867,7 +2867,7 @@ static int nrs_tbf_ctl(struct ptlrpc_nrs_policy *policy,
 
 	assert_spin_locked(&policy->pol_nrs->nrs_lock);
 
-	switch ((enum nrs_ctl_tbf)opc) {
+	switch (opc) {
 	default:
 		RETURN(-EINVAL);
 
@@ -3088,13 +3088,9 @@ struct ptlrpc_nrs_request *nrs_tbf_req_get(struct ptlrpc_nrs_policy *policy,
 			ntoken = cli->tc_depth;
 
 		if (ntoken > 0) {
-			struct ptlrpc_request *req;
 			nrq = list_entry(cli->tc_list.next,
-					     struct ptlrpc_nrs_request,
-					     nr_u.tbf.tr_list);
-			req = container_of(nrq,
-					   struct ptlrpc_request,
-					   rq_nrq);
+					 struct ptlrpc_nrs_request,
+					 nr_u.tbf.tr_list);
 			ntoken--;
 			cli->tc_ntoken = ntoken;
 			cli->tc_check_time = now;
