@@ -51,10 +51,6 @@ static int lnet_tbnob = 0;			/* track text buf allocation */
 #define SPACESTR " \t\v\r\n"
 #define DELIMITERS ":()[]"
 
-#ifndef HAVE_STRSCPY
-#define strscpy(s1, s2, sz)	strlcpy((s1), (s2), (sz))
-#endif
-
 static void
 lnet_syntax(const char *name, const char *str, int offset, int width)
 {
@@ -1566,7 +1562,7 @@ int lnet_inet_enumerate(struct lnet_inetdev **dev_list, struct net *ns)
 			ifaces[nip].li_flags = flags;
 			ifaces[nip].li_ipaddr = ntohl(ifa->ifa_local);
 			ifaces[nip].li_netmask = ntohl(ifa->ifa_mask);
-			strlcpy(ifaces[nip].li_name, ifa->ifa_label,
+			strscpy(ifaces[nip].li_name, ifa->ifa_label,
 				sizeof(ifaces[nip].li_name));
 			nip++;
 		}
