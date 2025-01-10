@@ -201,4 +201,7 @@ int nodemap_idx_range_add(const struct lu_nid_range *range,
 			  const lnet_nid_t nid[2]);
 int nodemap_idx_range_del(const struct lu_nid_range *range);
 int nodemap_idx_nodemap_activate(bool value);
+int nodemap_index_read(struct lu_env *env, struct nm_config_file *ncf,
+		       struct idx_info *ii, const struct lu_rdpg *rdpg);
+
 #endif  /* _NODEMAP_INTERNAL_H */
