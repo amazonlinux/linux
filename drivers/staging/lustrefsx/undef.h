@@ -143,6 +143,9 @@
 /* kernel has struct blk_integrity_iter */
 #undef HAVE_BLK_INTEGRITY_ITER
 
+/* BLK_INTEGRITY_NOVERIFY is available */
+#undef HAVE_BLK_INTEGRITY_NOVERIFY
+
 /* kernel hash_64() is broken */
 #undef HAVE_BROKEN_HASH_64
 
@@ -172,6 +175,9 @@
 
 /* compat rdma found */
 #undef HAVE_COMPAT_RDMA
+
+/* struct ctl_table argument to proc_handler() is const */
+#undef HAVE_CONST_CTR_TABLE
 
 /* copy_file_range() is supported */
 #undef HAVE_COPY_FILE_RANGE
@@ -205,6 +211,9 @@
 
 /* dentry.d_child exist */
 #undef HAVE_DENTRY_D_CHILD
+
+/* sruct dentry has d_children member */
+#undef HAVE_DENTRY_D_CHILDREN
 
 /* list dentry.d_u.d_alias exist */
 #undef HAVE_DENTRY_D_U_D_ALIAS
@@ -344,6 +353,9 @@
 /* filldir_t needs struct dir_context and returns bool */
 #undef HAVE_FILLDIR_USE_CTX_RETURN_BOOL
 
+/* '__flush_workqueue(system_wq)' is available */
+#undef HAVE_FLUSH___WORKQUEUE
+
 /* FMR pool API is available */
 #undef HAVE_FMR_POOL_API
 
@@ -352,6 +364,9 @@
 
 /* 'folio_batch_reinit' is available */
 #undef HAVE_FOLIO_BATCH_REINIT
+
+/* 'folio_mapcount()' is available */
+#undef HAVE_FOLIO_MAPCOUNT
 
 /* file_operations has iterate_shared */
 #undef HAVE_FOP_ITERATE_SHARED
@@ -370,6 +385,12 @@
 
 /* full_name_hash need 3 arguments */
 #undef HAVE_FULL_NAME_HASH_3ARGS
+
+/* generic_error_remove_folio() exists */
+#undef HAVE_GENERIC_ERROR_REMOVE_FOLIO
+
+/* 'generic_fillattr()' has request_mask argument */
+#undef HAVE_GENERIC_FILEATTR_HAS_MASK_ARG
 
 /* generic_write_sync has 2 arguments */
 #undef HAVE_GENERIC_WRITE_SYNC_2ARGS
@@ -440,6 +461,9 @@
 /* hypervisor_is_type function exists */
 #undef HAVE_HYPERVISOR_IS_TYPE
 
+/* ibdev_to_node() is defined */
+#undef HAVE_IBDEV_TO_NODE
+
 /* ib_alloc_fast_reg_mr is defined */
 #undef HAVE_IB_ALLOC_FAST_REG_MR
 
@@ -479,6 +503,12 @@
 /* inode_operations .getattr member function can gather advance stats */
 #undef HAVE_INODEOPS_ENHANCED_GETATTR
 
+/* 'inode_get_ctime()' exists */
+#undef HAVE_INODE_GET_CTIME
+
+/* 'inode_get_mtime()' exists */
+#undef HAVE_INODE_GET_MTIME_SEC
+
 /* inode_lock is defined */
 #undef HAVE_INODE_LOCK
 
@@ -517,6 +547,9 @@
 
 /* generic_readlink has been removed */
 #undef HAVE_IOP_GENERIC_READLINK
+
+/* inode_operations has .get_inode_acl member function */
+#undef HAVE_IOP_GET_INODE_ACL
 
 /* have iop get_link */
 #undef HAVE_IOP_GET_LINK
@@ -738,6 +771,9 @@
 /* Enable lru resize support */
 #undef HAVE_LRU_RESIZE_SUPPORT
 
+/* lsmcontext has id */
+#undef HAVE_LSMCONTEXT_HAS_ID
+
 /* lsmcontext_init is available */
 #undef HAVE_LSMCONTEXT_INIT
 
@@ -762,6 +798,9 @@
 
 /* mmap_lock API is available. */
 #undef HAVE_MMAP_LOCK
+
+/* 'mmap_write_trylock()' is available */
+#undef HAVE_MMAP_WRITE_TRYLOCK
 
 /* 'inode_operations' members have mnt_idmap argument */
 #undef HAVE_MNT_IDMAP_ARG
@@ -810,6 +849,9 @@
 
 /* NR_UNSTABLE_NFS is still in use. */
 #undef HAVE_NR_UNSTABLE_NFS
+
+/* 'struct nsproxy.count' is refcount_t */
+#undef HAVE_NSPROXY_COUNT_AS_REFCOUNT
 
 /* ns_to_timespec64() is available */
 #undef HAVE_NS_TO_TIMESPEC64
@@ -950,6 +992,9 @@
    gss_krb5_set_allowable_enctypes */
 #undef HAVE_SET_ALLOWABLE_ENCTYPES
 
+/* 'shrinker_alloc()' exists */
+#undef HAVE_SHRINKER_ALLOC
+
 /* shrinker has count_objects member */
 #undef HAVE_SHRINKER_COUNT
 
@@ -992,6 +1037,9 @@
 /* kernel strscpy is available */
 #undef HAVE_STRSCPY
 
+/* struct file_lock_core exists */
+#undef HAVE_STRUCT_FILE_LOCK_CORE
+
 /* struct posix_acl_xattr_{header,entry} defined */
 #undef HAVE_STRUCT_POSIX_ACL_XATTR
 
@@ -1006,6 +1054,9 @@
 
 /* new_sync_[read|write] is exported by the kernel */
 #undef HAVE_SYNC_READ_WRITE
+
+/* sysfs_emit_at() is defined */
+#undef HAVE_SYSFS_EMIT_AT
 
 /* Define to 1 if you have <sys/quota.h>. */
 #undef HAVE_SYS_QUOTA_H
@@ -1151,11 +1202,17 @@
 /* Have zap_remove_by_dnode() in ZFS */
 #undef HAVE_ZAP_REMOVE_ADD_BY_DNODE
 
+/* ZFS arc_prune_func_t uses uint64_t */
+#undef HAVE_ZFS_ARC_PRUNE_FUNC_UINT64
+
 /* Have inode_timespec_t */
 #undef HAVE_ZFS_INODE_TIMESPEC
 
 /* Have multihost protection in ZFS */
 #undef HAVE_ZFS_MULTIHOST
+
+/* ZFS nvlist interfaces require const */
+#undef HAVE_ZFS_NVLIST_CONST_INTERFACES
 
 /* Enable zfs osd */
 #undef HAVE_ZFS_OSD
@@ -1253,6 +1310,9 @@
 /* enable randomly alloc failure */
 #undef RANDOM_FAIL_ALLOC
 
+/* no request_mask argument needed */
+#undef RQMASK_ARG
+
 /* The size of `unsigned long long', as computed by sizeof. */
 #undef SIZEOF_UNSIGNED_LONG_LONG
 
@@ -1284,6 +1344,9 @@
 
 /* vfs_setxattr() value argument is non-const */
 #undef VFS_SETXATTR_VALUE
+
+/* "GDS build enabled" */
+#undef WITH_GDS
 
 /* zfs fix version */
 #undef ZFS_FIX
