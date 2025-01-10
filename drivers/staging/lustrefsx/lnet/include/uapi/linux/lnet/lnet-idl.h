@@ -205,6 +205,7 @@ struct lnet_magicversion {
 #define LNET_PROTO_TCP_MAGIC		0xeebc0ded
 #define LNET_PROTO_ACCEPTOR_MAGIC	0xacce7100
 #define LNET_PROTO_PING_MAGIC		0x70696E67 /* 'ping' */
+#define LNET_PROTO_EFA_MAGIC		0x2be092be /* 2B or 9 2B */
 
 /* Placeholder for a future "unified" protocol across all LNDs */
 /* Current LNDs that receive a request with this magic will respond
@@ -257,6 +258,19 @@ struct lnet_ni_status {
 	__u32      ns_unused;
 } __attribute__((packed));
 
+struct lnet_nid_md_entry {
+	lnet_nid_t nid;
+	__u64 buffer;
+	__u64 buffer_1;
+	__u64 buffer_2;
+	__u64 buffer_end;
+} __attribute__((packed));
+
+struct lnet_nid_metadata {
+	__u32				num_nid_mappings;
+	struct lnet_nid_md_entry	nid_mappings[0];
+} __attribute__((packed));
+
 /*
  * NB: value of these features equal to LNET_PROTO_PING_VERSION_x
  * of old LNet, so there shouldn't be any compatibility issue
@@ -290,9 +304,13 @@ struct lnet_ping_info {
 	struct lnet_ni_status	pi_ni[];
 } __attribute__((packed));
 
-#define LNET_PING_INFO_SIZE(NNIDS) \
-	offsetof(struct lnet_ping_info, pi_ni[NNIDS])
+#define LNET_PING_INFO_HDR_SIZE \
+	offsetof(struct lnet_ping_info, pi_ni[0])
+#define LNET_PING_INFO_MIN_SIZE \
+	offsetof(struct lnet_ping_info, pi_ni[LNET_INTERFACES_MIN])
 #define LNET_PING_INFO_LONI(PINFO)      ((PINFO)->pi_ni[0].ns_nid)
 #define LNET_PING_INFO_SEQNO(PINFO)     ((PINFO)->pi_ni[0].ns_status)
+#define lnet_ping_info_size(pinfo)	\
+	offsetof(struct lnet_ping_info, pi_ni[(pinfo)->pi_nnis])
 
 #endif
