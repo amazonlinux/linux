@@ -1068,7 +1068,7 @@ cfs_hash_create(char *name, unsigned cur_bits, unsigned max_bits,
         if (hs == NULL)
                 RETURN(NULL);
 
-	strlcpy(hs->hs_name, name, len);
+	strscpy(hs->hs_name, name, len);
 	hs->hs_flags = flags;
 
 	atomic_set(&hs->hs_refcount, 1);
@@ -1828,8 +1828,15 @@ EXPORT_SYMBOL(cfs_hash_for_each_key);
 void
 cfs_hash_rehash_cancel(struct cfs_hash *hs)
 {
-	LASSERT(cfs_hash_with_rehash(hs));
-	cancel_work_sync(&hs->hs_rehash_work);
+	LASSERT(hs->hs_iterators > 0 || hs->hs_exiting);
+	while (cfs_hash_is_rehashing(hs)) {
+		if (cancel_work_sync(&hs->hs_rehash_work)) {
+			cfs_hash_lock(hs, 1);
+			hs->hs_rehash_bits = 0;
+			cfs_hash_unlock(hs, 1);
+		}
+		cond_resched();
+	}
 }
 
 void
