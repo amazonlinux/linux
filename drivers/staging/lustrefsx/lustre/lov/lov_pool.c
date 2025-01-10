@@ -223,7 +223,7 @@ static int pool_proc_open(struct inode *inode, struct file *file)
         return rc;
 }
 
-const static struct proc_ops pool_proc_operations = {
+static const struct proc_ops pool_proc_operations = {
 	.proc_open	= pool_proc_open,
 	.proc_read	= seq_read,
 	.proc_lseek	= seq_lseek,
@@ -265,7 +265,7 @@ int lov_pool_new(struct obd_device *obd, char *poolname)
         if (new_pool == NULL)
                 RETURN(-ENOMEM);
 
-	strlcpy(new_pool->pool_name, poolname, sizeof(new_pool->pool_name));
+	strscpy(new_pool->pool_name, poolname, sizeof(new_pool->pool_name));
 	new_pool->pool_lobd = obd;
 	/* ref count init to 1 because when created a pool is always used
 	 * up to deletion
