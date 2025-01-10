@@ -111,9 +111,9 @@ static void ll_prepare_close(struct inode *inode, struct md_op_data *op_data,
 			   0, 0, LUSTRE_OPC_ANY, NULL);
 
 	op_data->op_attr.ia_mode = inode->i_mode;
-	op_data->op_attr.ia_atime = inode->i_atime;
-	op_data->op_attr.ia_mtime = inode->i_mtime;
-	op_data->op_attr.ia_ctime = inode->i_ctime;
+	op_data->op_attr.ia_atime = inode_get_atime(inode);
+	op_data->op_attr.ia_mtime = inode_get_mtime(inode);
+	op_data->op_attr.ia_ctime = inode_get_ctime(inode);
 	/* In case of encrypted file without the key, visible size was rounded
 	 * up to next LUSTRE_ENCRYPTION_UNIT_SIZE, and clear text size was
 	 * stored into lli_lazysize in ll_merge_attr(), so set proper file size
@@ -625,7 +625,7 @@ void ll_dom_finish_open(struct inode *inode, struct ptlrpc_request *req)
 			put_page(vmpage);
 			break;
 		}
-		cl_page_export(env, page, 1);
+		SetPageUptodate(vmpage);
 		cl_page_put(env, page);
 		unlock_page(vmpage);
 		put_page(vmpage);
@@ -1486,15 +1486,15 @@ int ll_merge_attr(const struct lu_env *env, struct inode *inode)
 	 * read, this will hurt performance.
 	 */
 	if (test_and_clear_bit(LLIF_UPDATE_ATIME, &lli->lli_flags) ||
-	    inode->i_atime.tv_sec < lli->lli_atime)
-		inode->i_atime.tv_sec = lli->lli_atime;
+	    inode_get_atime_sec(inode) < lli->lli_atime)
+		inode_set_atime(inode, lli->lli_atime, 0);
 
-	inode->i_mtime.tv_sec = lli->lli_mtime;
-	inode->i_ctime.tv_sec = lli->lli_ctime;
+	inode_set_mtime(inode, lli->lli_mtime, 0);
+	inode_set_ctime(inode, lli->lli_ctime, 0);
 
-	mtime = inode->i_mtime.tv_sec;
-	atime = inode->i_atime.tv_sec;
-	ctime = inode->i_ctime.tv_sec;
+	mtime = inode_get_mtime_sec(inode);
+	atime = inode_get_atime_sec(inode);
+	ctime = inode_get_ctime_sec(inode);
 
 	cl_object_attr_lock(obj);
 	if (OBD_FAIL_CHECK(OBD_FAIL_MDC_MERGE))
@@ -1531,9 +1531,9 @@ int ll_merge_attr(const struct lu_env *env, struct inode *inode)
 	i_size_write(inode, attr->cat_size);
 	inode->i_blocks = attr->cat_blocks;
 
-	inode->i_mtime.tv_sec = mtime;
-	inode->i_atime.tv_sec = atime;
-	inode->i_ctime.tv_sec = ctime;
+	inode_set_mtime(inode, mtime, 0);
+	inode_set_atime(inode, atime, 0);
+	inode_set_ctime(inode, ctime, 0);
 
 out_size_unlock:
 	ll_inode_size_unlock(inode);
@@ -1573,25 +1573,30 @@ void ll_io_set_mirror(struct cl_io *io, const struct file *file)
 static int relatime_need_update(struct vfsmount *mnt, struct inode *inode,
 				struct timespec64 now)
 {
+	struct timespec64 ts;
+	struct timespec64 atime;
 
 	if (!(mnt->mnt_flags & MNT_RELATIME))
 		return 1;
 	/*
 	 * Is mtime younger than atime? If yes, update atime:
 	 */
-	if (timespec64_compare(&inode->i_mtime, &inode->i_atime) >= 0)
+	atime = inode_get_atime(inode);
+	ts = inode_get_mtime(inode);
+	if (timespec64_compare(&ts, &atime) >= 0)
 		return 1;
 	/*
 	 * Is ctime younger than atime? If yes, update atime:
 	 */
-	if (timespec64_compare(&inode->i_ctime, &inode->i_atime) >= 0)
+	ts = inode_get_ctime(inode);
+	if (timespec64_compare(&ts, &atime) >= 0)
 		return 1;
 
 	/*
 	 * Is the previous atime value older than 6 hours? If yes,
 	 * update atime:
 	 */
-	if ((long)(now.tv_sec - inode->i_atime.tv_sec) >= 6*60*60)
+	if ((long)(now.tv_sec - atime.tv_sec) >= 6*60*60)
 		return 1;
 	/*
 	 * Good, we can skip the atime update:
@@ -4605,7 +4610,7 @@ out_state:
 	}
 }
 
-loff_t ll_lseek(struct file *file, loff_t offset, int whence)
+static loff_t ll_lseek(struct file *file, loff_t offset, int whence)
 {
 	struct inode *inode = file_inode(file);
 	struct lu_env *env;
@@ -4853,7 +4858,7 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 	struct md_op_data *op_data;
 	struct lustre_handle lockh = { 0 };
 	union ldlm_policy_data flock = { { 0 } };
-	int fl_type = file_lock->fl_type;
+	int fl_type = file_lock->C_FLC_TYPE;
 	ktime_t kstart = ktime_get();
 	__u64 flags = 0;
 	int rc;
@@ -4863,20 +4868,20 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 	CDEBUG(D_VFSTRACE, "VFS Op:inode="DFID" file_lock=%p\n",
 	       PFID(ll_inode2fid(inode)), file_lock);
 
-	if (file_lock->fl_flags & FL_FLOCK) {
+	if (file_lock->C_FLC_FLAGS & FL_FLOCK) {
 		LASSERT((cmd == F_SETLKW) || (cmd == F_SETLK));
 		/* flocks are whole-file locks */
 		flock.l_flock.end = OFFSET_MAX;
 		/* For flocks owner is determined by the local file desctiptor*/
-		flock.l_flock.owner = (unsigned long)file_lock->fl_file;
-	} else if (file_lock->fl_flags & FL_POSIX) {
-		flock.l_flock.owner = (unsigned long)file_lock->fl_owner;
+		flock.l_flock.owner = (unsigned long)file_lock->C_FLC_FILE;
+	} else if (file_lock->C_FLC_FLAGS & FL_POSIX) {
+		flock.l_flock.owner = (unsigned long)file_lock->C_FLC_OWNER;
 		flock.l_flock.start = file_lock->fl_start;
 		flock.l_flock.end = file_lock->fl_end;
 	} else {
 		RETURN(-EINVAL);
 	}
-	flock.l_flock.pid = file_lock->fl_pid;
+	flock.l_flock.pid = file_lock->C_FLC_PID;
 
 #if defined(HAVE_LM_COMPARE_OWNER) || defined(lm_compare_owner)
 	/* Somewhat ugly workaround for svc lockd.
@@ -4887,7 +4892,7 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 	 * conflict with normal locks is unlikely since pid space and
 	 * pointer space for current->files are not intersecting */
 	if (file_lock->fl_lmops && file_lock->fl_lmops->lm_compare_owner)
-		flock.l_flock.owner = (unsigned long)file_lock->fl_pid;
+		flock.l_flock.owner = (unsigned long)file_lock->C_FLC_PID;
 #endif
 
 	switch (fl_type) {
@@ -4939,7 +4944,7 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 
 	/* Save the old mode so that if the mode in the lock changes we
 	 * can decrement the appropriate reader or writer refcount. */
-	file_lock->fl_type = einfo.ei_mode;
+	file_lock->C_FLC_TYPE = einfo.ei_mode;
 
         op_data = ll_prep_md_op_data(NULL, inode, NULL, NULL, 0, 0,
                                      LUSTRE_OPC_ANY, NULL);
@@ -4956,23 +4961,23 @@ ll_file_flock(struct file *file, int cmd, struct file_lock *file_lock)
 
 	/* Restore the file lock type if not TEST lock. */
 	if (!(flags & LDLM_FL_TEST_LOCK))
-		file_lock->fl_type = fl_type;
+		file_lock->C_FLC_TYPE = fl_type;
 
 #ifdef HAVE_LOCKS_LOCK_FILE_WAIT
-	if ((rc == 0 || file_lock->fl_type == F_UNLCK) &&
+	if ((rc == 0 || file_lock->C_FLC_TYPE == F_UNLCK) &&
 	    !(flags & LDLM_FL_TEST_LOCK))
 		rc2  = locks_lock_file_wait(file, file_lock);
 #else
-        if ((file_lock->fl_flags & FL_FLOCK) &&
-            (rc == 0 || file_lock->fl_type == F_UNLCK))
+	if ((file_lock->C_FLC_FLAGS & FL_FLOCK) &&
+	    (rc == 0 || file_lock->C_FLC_TYPE == F_UNLCK))
 		rc2  = flock_lock_file_wait(file, file_lock);
-        if ((file_lock->fl_flags & FL_POSIX) &&
-            (rc == 0 || file_lock->fl_type == F_UNLCK) &&
-            !(flags & LDLM_FL_TEST_LOCK))
+	if ((file_lock->C_FLC_FLAGS & FL_POSIX) &&
+	    (rc == 0 || file_lock->C_FLC_TYPE == F_UNLCK) &&
+	    !(flags & LDLM_FL_TEST_LOCK))
 		rc2  = posix_lock_file_wait(file, file_lock);
 #endif /* HAVE_LOCKS_LOCK_FILE_WAIT */
 
-	if (rc2 && file_lock->fl_type != F_UNLCK) {
+	if (rc2 && file_lock->C_FLC_TYPE != F_UNLCK) {
 		einfo.ei_mode = LCK_NL;
 		md_enqueue(sbi->ll_md_exp, &einfo, &flock, op_data,
 			   &lockh, flags);
@@ -5439,11 +5444,11 @@ int ll_getattr_dentry(struct dentry *de, struct kstat *stat, u32 request_mask,
 		if (lli->lli_attr_valid & OBD_MD_FLSIZE &&
 		    lli->lli_attr_valid & OBD_MD_FLBLOCKS &&
 		    lli->lli_attr_valid & OBD_MD_FLMTIME) {
-			inode->i_mtime.tv_sec = lli->lli_mtime;
+			inode_set_mtime(inode, lli->lli_mtime, 0);
 			if (lli->lli_attr_valid & OBD_MD_FLATIME)
-				inode->i_atime.tv_sec = lli->lli_atime;
+				inode_set_atime(inode, lli->lli_atime, 0);
 			if (lli->lli_attr_valid & OBD_MD_FLCTIME)
-				inode->i_ctime.tv_sec = lli->lli_ctime;
+				inode_set_ctime(inode, lli->lli_ctime, 0);
 			GOTO(fill_attr, rc);
 		}
 
@@ -5469,11 +5474,11 @@ int ll_getattr_dentry(struct dentry *de, struct kstat *stat, u32 request_mask,
 		}
 
 		if (lli->lli_attr_valid & OBD_MD_FLATIME)
-			inode->i_atime.tv_sec = lli->lli_atime;
+			inode_set_atime(inode, lli->lli_atime, 0);
 		if (lli->lli_attr_valid & OBD_MD_FLMTIME)
-			inode->i_mtime.tv_sec = lli->lli_mtime;
+			inode_set_mtime(inode, lli->lli_mtime, 0);
 		if (lli->lli_attr_valid & OBD_MD_FLCTIME)
-			inode->i_ctime.tv_sec = lli->lli_ctime;
+			inode_set_ctime(inode, lli->lli_ctime, 0);
 	}
 
 fill_attr:
@@ -5497,9 +5502,9 @@ fill_attr:
 
 	stat->uid = inode->i_uid;
 	stat->gid = inode->i_gid;
-	stat->atime = inode->i_atime;
-	stat->mtime = inode->i_mtime;
-	stat->ctime = inode->i_ctime;
+	stat->atime = inode_get_atime(inode);
+	stat->mtime = inode_get_mtime(inode);
+	stat->ctime = inode_get_ctime(inode);
 	/* stat->blksize is used to tell about preferred IO size */
 	if (sbi->ll_stat_blksize)
 		stat->blksize = sbi->ll_stat_blksize;
@@ -5562,8 +5567,8 @@ int ll_getattr(struct vfsmount *mnt, struct dentry *de, struct kstat *stat)
 }
 #endif
 
-int cl_falloc(struct file *file, struct inode *inode, int mode, loff_t offset,
-	      loff_t len)
+static int cl_falloc(struct file *file, struct inode *inode, int mode,
+		     loff_t offset, loff_t len)
 {
 	loff_t size = i_size_read(inode);
 	struct lu_env *env;
@@ -5627,7 +5632,7 @@ out:
 	RETURN(rc);
 }
 
-long ll_fallocate(struct file *filp, int mode, loff_t offset, loff_t len)
+static long ll_fallocate(struct file *filp, int mode, loff_t offset, loff_t len)
 {
 	struct inode *inode = file_inode(filp);
 	int rc;
@@ -5693,7 +5698,7 @@ static int ll_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
 
 	rc = ll_do_fiemap(inode, fiemap, num_bytes);
 
-	if (IS_ENCRYPTED(inode)) {
+	if (IS_ENCRYPTED(inode) && extent_count > 0) {
 		int i;
 
 		for (i = 0; i < fiemap->fm_mapped_extents; i++)
@@ -5784,13 +5789,7 @@ int ll_inode_permission(struct mnt_idmap *idmap, struct inode *inode, int mask)
 	RETURN(rc);
 }
 
-#if defined(HAVE_FILEMAP_SPLICE_READ)
-# define ll_splice_read		filemap_splice_read
-#elif !defined(HAVE_DEFAULT_FILE_SPLICE_READ_EXPORT)
-# define ll_splice_read		generic_file_splice_read
-#else
 # define ll_splice_read		pcc_file_splice_read
-#endif
 
 /* -o localflock - only provides locally consistent flock locks */
 static const struct file_operations ll_file_operations = {
@@ -5893,6 +5892,9 @@ const struct inode_operations ll_file_inode_operations = {
 #endif
 	.listxattr	= ll_listxattr,
 	.fiemap		= ll_fiemap,
+#ifdef HAVE_IOP_GET_INODE_ACL
+	.get_inode_acl	= ll_get_inode_acl,
+#endif
 	.get_acl	= ll_get_acl,
 #ifdef HAVE_IOP_SET_ACL
 	.set_acl	= ll_set_acl,
