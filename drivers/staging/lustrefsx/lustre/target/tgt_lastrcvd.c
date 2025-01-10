@@ -550,11 +550,11 @@ static void tgt_cb_new_client(struct lu_env *env, struct thandle *th,
 	OBD_FREE_PTR(ccb);
 }
 
-int tgt_new_client_cb_add(struct thandle *th, struct obd_export *exp)
+static int tgt_new_client_cb_add(struct thandle *th, struct obd_export *exp)
 {
-	struct tgt_new_client_callback	*ccb;
-	struct dt_txn_commit_cb		*dcb;
-	int				 rc;
+	struct tgt_new_client_callback *ccb;
+	struct dt_txn_commit_cb	*dcb;
+	int rc;
 
 	OBD_ALLOC_PTR(ccb);
 	if (ccb == NULL)
@@ -565,7 +565,7 @@ int tgt_new_client_cb_add(struct thandle *th, struct obd_export *exp)
 	dcb = &ccb->lncc_cb;
 	dcb->dcb_func = tgt_cb_new_client;
 	INIT_LIST_HEAD(&dcb->dcb_linkage);
-	strlcpy(dcb->dcb_name, "tgt_cb_new_client", sizeof(dcb->dcb_name));
+	strscpy(dcb->dcb_name, "tgt_cb_new_client", sizeof(dcb->dcb_name));
 
 	rc = dt_trans_cb_add(th, dcb);
 	if (rc) {
@@ -952,7 +952,7 @@ static int tgt_last_commit_cb_add(struct thandle *th, struct lu_target *tgt,
 	dcb = &ccb->llcc_cb;
 	dcb->dcb_func = tgt_cb_last_committed;
 	INIT_LIST_HEAD(&dcb->dcb_linkage);
-	strlcpy(dcb->dcb_name, "tgt_cb_last_committed", sizeof(dcb->dcb_name));
+	strscpy(dcb->dcb_name, "tgt_cb_last_committed", sizeof(dcb->dcb_name));
 
 	rc = dt_trans_cb_add(th, dcb);
 	if (rc) {
