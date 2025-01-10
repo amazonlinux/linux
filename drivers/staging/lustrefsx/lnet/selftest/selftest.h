@@ -51,14 +51,18 @@
 #endif
 
 
-#define SWI_STATE_NEWBORN                  0
-#define SWI_STATE_REPLY_SUBMITTED          1
-#define SWI_STATE_REPLY_SENT               2
-#define SWI_STATE_REQUEST_SUBMITTED        3
-#define SWI_STATE_REQUEST_SENT             4
-#define SWI_STATE_REPLY_RECEIVED           5
-#define SWI_STATE_BULK_STARTED             6
-#define SWI_STATE_DONE                     10
+enum lsr_swi_state {
+	SWI_STATE_DONE = 0,
+	SWI_STATE_NEWBORN,
+	SWI_STATE_REPLY_SUBMITTED,
+	SWI_STATE_REPLY_SENT,
+	SWI_STATE_REQUEST_SUBMITTED,
+	SWI_STATE_REQUEST_SENT,
+	SWI_STATE_REPLY_RECEIVED,
+	SWI_STATE_BULK_STARTED,
+	SWI_STATE_RUNNING,
+	SWI_STATE_PAUSE,
+};
 
 /* forward refs */
 struct srpc_service;
@@ -153,6 +157,7 @@ struct srpc_bulk {
 	int			bk_len;  /* len of bulk data */
 	struct lnet_handle_md	bk_mdh;
 	int			bk_sink; /* sink/source */
+	int			bk_alloc; /* # allocated iov */
 	int			bk_niov; /* # iov in bk_iovs */
 	struct bio_vec		bk_iovs[0];
 };
@@ -167,13 +172,13 @@ struct srpc_buffer {
 };
 
 struct swi_workitem;
-typedef int (*swi_action_t)(struct swi_workitem *);
+typedef void (*swi_action_t)(struct swi_workitem *);
 
 struct swi_workitem {
-	struct cfs_wi_sched	*swi_sched;
-	struct cfs_workitem	swi_workitem;
-        swi_action_t         swi_action;
-        int                  swi_state;
+	struct workqueue_struct	*swi_wq;
+	struct work_struct	swi_work;
+	swi_action_t		swi_action;
+	enum lsr_swi_state	swi_state;
 };
 
 /* server-side state of a RPC */
@@ -316,6 +321,12 @@ struct srpc_service {
          */
 	int              (*sv_handler)(struct srpc_server_rpc *);
 	int              (*sv_bulk_ready)(struct srpc_server_rpc *, int);
+
+	/** Service side srpc constructor/destructor.
+	 *  used for the bulk preallocation as usual.
+	 */
+	int              (*sv_srpc_init)(struct srpc_server_rpc *, int);
+	void             (*sv_srpc_fini)(struct srpc_server_rpc *);
 };
 
 struct sfw_session {
@@ -417,9 +428,8 @@ void sfw_abort_rpc(struct srpc_client_rpc *rpc);
 void sfw_post_rpc(struct srpc_client_rpc *rpc);
 void sfw_client_rpc_done(struct srpc_client_rpc *rpc);
 void sfw_unpack_message(struct srpc_msg *msg);
-void sfw_free_pages(struct srpc_server_rpc *rpc);
 void sfw_add_bulk_page(struct srpc_bulk *bk, struct page *pg, int i);
-int sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int npages, int len,
+int sfw_alloc_pages(struct srpc_server_rpc *rpc, int cpt, int len,
 		    int sink);
 int sfw_make_session(struct srpc_mksn_reqst *request,
 		     struct srpc_mksn_reply *reply);
@@ -432,10 +442,12 @@ srpc_create_client_rpc(struct lnet_process_id peer, int service,
 void srpc_post_rpc(struct srpc_client_rpc *rpc);
 void srpc_abort_rpc(struct srpc_client_rpc *rpc, int why);
 void srpc_free_bulk(struct srpc_bulk *bk);
-struct srpc_bulk *srpc_alloc_bulk(int cpt, unsigned int off,
-				  unsigned int bulk_npg, unsigned int bulk_len,
-				  int sink);
-int srpc_send_rpc(struct swi_workitem *wi);
+
+struct srpc_bulk *srpc_alloc_bulk(int cpt, unsigned int bulk_len);
+void srpc_init_bulk(struct srpc_bulk *bk, unsigned int off,
+		    unsigned int bulk_len, int sink);
+
+void srpc_send_rpc(struct swi_workitem *wi);
 int srpc_send_reply(struct srpc_server_rpc *rpc);
 int srpc_add_service(struct srpc_service *sv);
 int srpc_remove_service(struct srpc_service *sv);
@@ -445,10 +457,9 @@ int srpc_finish_service(struct srpc_service *sv);
 int srpc_service_add_buffers(struct srpc_service *sv, int nbuffer);
 void srpc_service_remove_buffers(struct srpc_service *sv, int nbuffer);
 void srpc_get_counters(struct srpc_counters *cnt);
-void srpc_set_counters(const struct srpc_counters *cnt);
 
-extern struct cfs_wi_sched *lst_sched_serial;
-extern struct cfs_wi_sched **lst_sched_test;
+extern struct workqueue_struct *lst_serial_wq;
+extern struct workqueue_struct **lst_test_wq;
 
 static inline int
 srpc_serv_is_framework(struct srpc_service *svc)
@@ -456,41 +467,36 @@ srpc_serv_is_framework(struct srpc_service *svc)
 	return svc->sv_id < SRPC_FRAMEWORK_SERVICE_MAX_ID;
 }
 
-static inline int
-swi_wi_action(struct cfs_workitem *wi)
+static void
+swi_wi_action(struct work_struct *wi)
 {
 	struct swi_workitem *swi;
 
-	swi = container_of(wi, struct swi_workitem, swi_workitem);
-	return swi->swi_action(swi);
+	swi = container_of(wi, struct swi_workitem, swi_work);
+	swi->swi_action(swi);
 }
 
 static inline void
 swi_init_workitem(struct swi_workitem *swi,
-		  swi_action_t action, struct cfs_wi_sched *sched)
+		  swi_action_t action, struct workqueue_struct *wq)
 {
-	swi->swi_sched  = sched;
+	swi->swi_wq = wq;
 	swi->swi_action = action;
 	swi->swi_state  = SWI_STATE_NEWBORN;
-	cfs_wi_init(&swi->swi_workitem, swi_wi_action);
+	INIT_WORK(&swi->swi_work, swi_wi_action);
 }
 
 static inline void
 swi_schedule_workitem(struct swi_workitem *wi)
 {
-	cfs_wi_schedule(wi->swi_sched, &wi->swi_workitem);
-}
-
-static inline void
-swi_exit_workitem(struct swi_workitem *swi)
-{
-	cfs_wi_exit(swi->swi_sched, &swi->swi_workitem);
+	queue_work(wi->swi_wq, &wi->swi_work);
 }
 
 static inline int
-swi_deschedule_workitem(struct swi_workitem *swi)
+swi_cancel_workitem(struct swi_workitem *swi)
 {
-	return cfs_wi_deschedule(swi->swi_sched, &swi->swi_workitem);
+	swi->swi_state = SWI_STATE_DONE;
+	return cancel_work_sync(&swi->swi_work);
 }
 
 int sfw_startup(void);
@@ -525,7 +531,7 @@ srpc_init_client_rpc(struct srpc_client_rpc *rpc, struct lnet_process_id peer,
 
 	INIT_LIST_HEAD(&rpc->crpc_list);
 	swi_init_workitem(&rpc->crpc_wi, srpc_send_rpc,
-			  lst_sched_test[lnet_cpt_of_nid(peer.nid, NULL)]);
+			  lst_test_wq[lnet_cpt_of_nid(peer.nid, NULL)]);
 	spin_lock_init(&rpc->crpc_lock);
 	atomic_set(&rpc->crpc_refcount, 1); /* 1 ref for caller */
 
@@ -607,7 +613,6 @@ void ping_init_test_service(void);
 
 extern struct sfw_test_client_ops brw_test_client;
 extern struct srpc_service brw_test_service;
-void brw_init_test_client(void);
 void brw_init_test_service(void);
 
 #endif /* __SELFTEST_SELFTEST_H__ */
