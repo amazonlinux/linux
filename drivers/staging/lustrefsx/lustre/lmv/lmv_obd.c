@@ -867,6 +867,7 @@ static int lmv_iocontrol(unsigned int cmd, struct obd_export *exp,
 	case OBD_IOC_QUOTACTL: {
 		struct if_quotactl *qctl = karg;
 		struct obd_quotactl *oqctl;
+		struct obd_import *imp;
 
 		if (qctl->qc_valid == QC_MDTIDX) {
 			tgt = lmv_tgt(lmv, qctl->qc_idx);
@@ -885,8 +886,18 @@ static int lmv_iocontrol(unsigned int cmd, struct obd_export *exp,
 			RETURN(-EINVAL);
 		}
 
-		if (!tgt || !tgt->ltd_exp)
+		if (!tgt)
+			RETURN(-ENODEV);
+
+		if (!tgt->ltd_exp)
 			RETURN(-EINVAL);
+
+		imp = class_exp2cliimp(tgt->ltd_exp);
+		if (!tgt->ltd_active && imp->imp_state != LUSTRE_IMP_IDLE) {
+			qctl->qc_valid = QC_MDTIDX;
+			qctl->obd_uuid = tgt->ltd_uuid;
+			RETURN(-ENODATA);
+		}
 
 		OBD_ALLOC_PTR(oqctl);
 		if (!oqctl)
@@ -1491,6 +1502,14 @@ static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv,
 			continue;
 		}
 
+		/* update one hour overdue statfs or if target not initialized */
+		if ((ktime_get_seconds() - tgt->ltd_statfs_age >
+		    60 * lmv->lmv_mdt_descs.ltd_lmv_desc.ld_qos_maxage) ||
+		    (tgt->ltd_qos.ltq_avail == 0 && 
+		      tgt->ltd_qos.ltq_weight == 0 && 
+		      tgt->ltd_qos.ltq_penalty_per_obj == 0)) {
+			lmv_statfs_check_update(lmv2obd_dev(lmv), tgt);
+		}
 		tgt->ltd_qos.ltq_usable = 1;
 		lu_tgt_qos_weight_calc(tgt);
 		if (tgt->ltd_index == op_data->op_mds)
@@ -1895,26 +1914,20 @@ static struct lu_tgt_desc *lmv_locate_tgt_by_space(struct lmv_obd *lmv,
 			tgt = tmp;
 		else
 			tgt = lmv_locate_tgt_rr(lmv);
+		if (!IS_ERR(tgt))
+			lmv_statfs_check_update(lmv2obd_dev(lmv), tgt);
 	}
 
-	/*
-	 * only update statfs after QoS mkdir, this means the cached statfs may
-	 * be stale, and current mkdir may not follow QoS accurately, but it's
-	 * not serious, and avoids periodic statfs when client doesn't mkdir by
-	 * QoS.
-	 */
-	if (!IS_ERR(tgt)) {
+	if (!IS_ERR(tgt))
 		op_data->op_mds = tgt->ltd_index;
-		lmv_statfs_check_update(lmv2obd_dev(lmv), tgt);
-	}
 
 	return tgt;
 }
 
-int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
-		const void *data, size_t datalen, umode_t mode, uid_t uid,
-		gid_t gid, kernel_cap_t cap_effective, __u64 rdev,
-		struct ptlrpc_request **request)
+static int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
+		      const void *data, size_t datalen, umode_t mode, uid_t uid,
+		      gid_t gid, kernel_cap_t cap_effective, __u64 rdev,
+		      struct ptlrpc_request **request)
 {
 	struct obd_device *obd = exp->exp_obd;
 	struct lmv_obd *lmv = &obd->u.lmv;
@@ -3180,7 +3193,7 @@ static int lmv_get_info(const struct lu_env *env, struct obd_export *exp,
 			exp->exp_connect_data = *(struct obd_connect_data *)val;
 		RETURN(rc);
 	} else if (KEY_IS(KEY_TGT_COUNT)) {
-		*((int *)val) = lmv->lmv_mdt_descs.ltd_lmv_desc.ld_tgt_count;
+		*((int *)val) = lmv->lmv_mdt_descs.ltd_tgts_size;
 		RETURN(0);
 	}
 
@@ -3350,11 +3363,11 @@ static int lmv_unpack_md_v1(struct obd_export *exp, struct lmv_stripe_md *lsm,
 	lsm->lsm_md_layout_version = le32_to_cpu(lmm1->lmv_layout_version);
 	lsm->lsm_md_migrate_offset = le32_to_cpu(lmm1->lmv_migrate_offset);
 	lsm->lsm_md_migrate_hash = le32_to_cpu(lmm1->lmv_migrate_hash);
-	cplen = strlcpy(lsm->lsm_md_pool_name, lmm1->lmv_pool_name,
+	cplen = strscpy(lsm->lsm_md_pool_name, lmm1->lmv_pool_name,
 			sizeof(lsm->lsm_md_pool_name));
 
-	if (cplen >= sizeof(lsm->lsm_md_pool_name))
-		RETURN(-E2BIG);
+	if (cplen < 0)
+		RETURN(cplen);
 
 	CDEBUG(D_INFO, "unpack lsm count %d/%d, master %d hash_type %#x/%#x "
 	       "layout_version %d\n", lsm->lsm_md_stripe_count,
@@ -3819,8 +3832,9 @@ static int lmv_merge_attr(struct obd_export *exp,
 		       "" DFID " size %llu, blocks %llu nlink %u, atime %lld ctime %lld, mtime %lld.\n",
 		       PFID(&lsm->lsm_md_oinfo[i].lmo_fid),
 		       i_size_read(inode), (unsigned long long)inode->i_blocks,
-		       inode->i_nlink, (s64)inode->i_atime.tv_sec,
-		       (s64)inode->i_ctime.tv_sec, (s64)inode->i_mtime.tv_sec);
+		       inode->i_nlink, (s64)inode_get_atime_sec(inode),
+		       (s64)inode_get_ctime_sec(inode),
+		       (s64)inode_get_mtime_sec(inode));
 
 		/* for slave stripe, it needs to subtract nlink for . and .. */
 		if (i != 0)
@@ -3831,14 +3845,14 @@ static int lmv_merge_attr(struct obd_export *exp,
 		attr->cat_size += i_size_read(inode);
 		attr->cat_blocks += inode->i_blocks;
 
-		if (attr->cat_atime < inode->i_atime.tv_sec)
-			attr->cat_atime = inode->i_atime.tv_sec;
+		if (attr->cat_atime < inode_get_atime_sec(inode))
+			attr->cat_atime = inode_get_atime_sec(inode);
 
-		if (attr->cat_ctime < inode->i_ctime.tv_sec)
-			attr->cat_ctime = inode->i_ctime.tv_sec;
+		if (attr->cat_ctime < inode_get_ctime_sec(inode))
+			attr->cat_ctime = inode_get_ctime_sec(inode);
 
-		if (attr->cat_mtime < inode->i_mtime.tv_sec)
-			attr->cat_mtime = inode->i_mtime.tv_sec;
+		if (attr->cat_mtime < inode_get_mtime_sec(inode))
+			attr->cat_mtime = inode_get_mtime_sec(inode);
 	}
 	return 0;
 }
