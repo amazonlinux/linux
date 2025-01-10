@@ -1121,6 +1121,12 @@ void padata_free_shell(struct padata_shell *ps)
 {
 	struct padata_instance *pinst = ps->pinst;
 
+	/*
+	 * Wait for all _do_serial calls to finish to avoid touching
+	 * freed pd's and ps's.
+	 */
+	synchronize_rcu();
+
 	mutex_lock(&pinst->lock);
 	list_del(&ps->list);
 	padata_free_pd(rcu_dereference_protected(ps->pd, 1));
