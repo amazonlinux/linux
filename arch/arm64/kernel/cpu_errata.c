@@ -1145,6 +1145,42 @@ static void kvm_setup_bhb_slot(const char *hyp_vecs_start)
 static void kvm_setup_bhb_slot(const char *hyp_vecs_start) { };
 #endif
 
+static void spectre_bhb_enable_loop_mitigation(void)
+{
+	switch (spectre_bhb_loop_affected(SCOPE_SYSTEM)) {
+	case 8:
+		/*
+		 * A57/A72-r0 will already have selected the
+		 * spectre-indirect vector, which is sufficient
+		 * for BHB too.
+		 */
+		if (!__this_cpu_read(bp_hardening_data.fn))
+			kvm_setup_bhb_slot(__spectre_bhb_loop_k8_start);
+		break;
+	case 24:
+		kvm_setup_bhb_slot(__spectre_bhb_loop_k24_start);
+		break;
+	case 32:
+		kvm_setup_bhb_slot(__spectre_bhb_loop_k32_start);
+		break;
+	default:
+		WARN_ON_ONCE(1);
+	}
+	this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
+}
+
+static void spectre_bhb_enable_fw_mitigation(void)
+{
+	kvm_setup_bhb_slot(__smccc_workaround_3_smc_start);
+	this_cpu_set_vectors(EL1_VECTOR_BHB_FW);
+
+	/*
+	 * With WA3 in the vectors, the WA1 calls can be
+	 * removed.
+	 */
+	__this_cpu_write(bp_hardening_data.fn, NULL);
+}
+
 void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 {
 	enum mitigation_state fw_state, state = SPECTRE_VULNERABLE;
@@ -1166,40 +1202,12 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 
 		state = SPECTRE_MITIGATED;
 	} else if (spectre_bhb_loop_affected(SCOPE_LOCAL_CPU)) {
-		switch (spectre_bhb_loop_affected(SCOPE_SYSTEM)) {
-		case 8:
-			/*
-			 * A57/A72-r0 will already have selected the
-			 * spectre-indirect vector, which is sufficient
-			 * for BHB too.
-			 */
-			if (!__this_cpu_read(bp_hardening_data.fn))
-				kvm_setup_bhb_slot(__spectre_bhb_loop_k8_start);
-			break;
-		case 24:
-			kvm_setup_bhb_slot(__spectre_bhb_loop_k24_start);
-			break;
-		case 32:
-			kvm_setup_bhb_slot(__spectre_bhb_loop_k32_start);
-			break;
-		default:
-			WARN_ON_ONCE(1);
-		}
-		this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
-
+		spectre_bhb_enable_loop_mitigation();
 		state = SPECTRE_MITIGATED;
 	} else if (is_spectre_bhb_fw_affected(SCOPE_LOCAL_CPU)) {
 		fw_state = spectre_bhb_get_cpu_fw_mitigation_state();
 		if (fw_state == SPECTRE_MITIGATED) {
-			kvm_setup_bhb_slot(__smccc_workaround_3_smc_start);
-			this_cpu_set_vectors(EL1_VECTOR_BHB_FW);
-
-			/*
-			 * With WA3 in the vectors, the WA1 calls can be
-			 * removed.
-			 */
-			__this_cpu_write(bp_hardening_data.fn, NULL);
-
+			spectre_bhb_enable_fw_mitigation();
 			state = SPECTRE_MITIGATED;
 		}
 	}
