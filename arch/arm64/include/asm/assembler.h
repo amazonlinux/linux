@@ -575,7 +575,9 @@ alternative_cb_end
 #ifdef CONFIG_MITIGATE_SPECTRE_BRANCH_HISTORY
 	stp	x0, x1, [sp, #-16]!
 	stp	x2, x3, [sp, #-16]!
+alternative_cb spectre_bhb_patch_wa3
 	mov	w0, #ARM_SMCCC_ARCH_WORKAROUND_3
+alternative_cb_end
 alternative_cb	arm64_update_smccc_conduit
 	nop					// Patched to SMC/HVC #0
 alternative_cb_end
