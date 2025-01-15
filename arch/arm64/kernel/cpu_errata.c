@@ -847,11 +847,31 @@ static const char *get_bhb_affected_string(enum mitigation_state bhb_state)
 	}
 }
 
+static const char *get_bse_affected_string(enum mitigation_state bse_state)
+{
+	enum mitigation_state bhb_state = arm64_get_spectre_bhb_state();
+
+	switch (bse_state) {
+	case SPECTRE_UNAFFECTED:
+		return "";
+	default:
+	case SPECTRE_VULNERABLE:
+		/* BHB+BSE = ", but not BHB or BSE" */
+		if (bhb_state == SPECTRE_VULNERABLE)
+			return " or BSE";
+		return ", but not BSE";
+	case SPECTRE_MITIGATED:
+		return ", BSE";
+	}
+}
+
 ssize_t cpu_show_spectre_v2(struct device *dev, struct device_attribute *attr,
 		char *buf)
 {
 	enum mitigation_state bhb_state = arm64_get_spectre_bhb_state();
+	enum mitigation_state bse_state = arm64_get_spectre_bse_state();
 	const char *bhb_str = get_bhb_affected_string(bhb_state);
+	const char *bse_str = get_bse_affected_string(bse_state);
 	const char *v2_str = "Branch predictor hardening";
 
 	if (__spectrev2_safe) {
@@ -866,7 +886,7 @@ ssize_t cpu_show_spectre_v2(struct device *dev, struct device_attribute *attr,
 	}
 
 	if (__hardenbp_enab)
-		return sprintf(buf, "Mitigation: %s%s\n", v2_str, bhb_str);
+		return sprintf(buf, "Mitigation: %s%s%s\n", v2_str, bhb_str, bse_str);
 
 	return sprintf(buf, "Vulnerable\n");
 }
@@ -915,12 +935,27 @@ static void update_mitigation_state(enum mitigation_state *oldp,
  * - Has the 'Exception Clears Branch History Buffer' (ECBHB) feature, so no
  *   software mitigation in the vectors is needed.
  * - Has CSV2.3, so is unaffected.
+ *
+ * Spectre BSE.
+ *
+ * Affects a small number of CPUs. Cortex-A73 and Cortex-A75 are already
+ * mitigated by the firmware Spectre-BHB mitigation.
+ * A72 r0 is mitigated by the firmware Spectre v2 call. This means A72 appears
+ * in both the BHB "loop mitigated list" and "firmware mitigated list", and
+ * needs special casing.
  */
 static enum mitigation_state spectre_bhb_state;
 
 enum mitigation_state arm64_get_spectre_bhb_state(void)
 {
 	return spectre_bhb_state;
+}
+
+static enum mitigation_state spectre_bse_state;
+
+enum mitigation_state arm64_get_spectre_bse_state(void)
+{
+	return spectre_bse_state;
 }
 
 /*
@@ -1005,18 +1040,42 @@ static enum mitigation_state spectre_bhb_get_cpu_fw_mitigation_state(void)
 	}
 }
 
+/*
+ * For a core affected by BSE, get the WA3 state and handle the 'unaffected'
+ * case from unaware firmware.
+ */
+static enum mitigation_state spectre_bse_get_cpu_fw_mitigation_state(void)
+{
+	enum mitigation_state state = spectre_bhb_get_cpu_fw_mitigation_state();
+
+	switch (state) {
+	case SPECTRE_MITIGATED:
+		return state;
+	default:
+	case SPECTRE_UNAFFECTED:
+		/*
+		 * We don't rely on firmware for discovery of BSE affected
+		 * cores. Unaffected is treated as not-implemented.
+		 */
+	case SPECTRE_VULNERABLE:
+		return SPECTRE_VULNERABLE;
+	}
+}
+
 static bool is_spectre_bhb_fw_affected(int scope)
 {
 	static bool system_affected;
 	enum mitigation_state fw_state;
 	bool has_smccc = (psci_ops.smccc_version >= SMCCC_VERSION_1_1);
 	static const struct midr_range spectre_bhb_firmware_mitigated_list[] = {
+		/* A72 r0pX */
+		MIDR_RANGE(MIDR_CORTEX_A72, 0, 0, 0, 0xf),
 		MIDR_ALL_VERSIONS(MIDR_CORTEX_A73),
 		MIDR_ALL_VERSIONS(MIDR_CORTEX_A75),
 		{},
 	};
 	bool cpu_in_list = is_midr_in_range_list(read_cpuid_id(),
-					 spectre_bhb_firmware_mitigated_list);
+						 spectre_bhb_firmware_mitigated_list);
 
 	if (scope != SCOPE_LOCAL_CPU)
 		return system_affected;
@@ -1059,6 +1118,29 @@ bool is_spectre_bhb_affected(const struct arm64_cpu_capabilities *entry,
 
 	if (is_spectre_bhb_fw_affected(scope))
 		return true;
+
+	return false;
+}
+
+static bool is_spectre_bse_affected(int scope)
+{
+	static bool system_affected;
+	static const struct midr_range spectre_bse_firmware_mitigated_list[] = {
+		/* A72 r0pX */
+		MIDR_RANGE(MIDR_CORTEX_A72, 0, 0, 0, 0xf),
+		MIDR_ALL_VERSIONS(MIDR_CORTEX_A73),
+		MIDR_ALL_VERSIONS(MIDR_CORTEX_A75),
+		{},
+	};
+
+	if (scope != SCOPE_LOCAL_CPU)
+		return system_affected;
+
+	if (is_midr_in_range_list(read_cpuid_id(),
+				  spectre_bse_firmware_mitigated_list)) {
+		system_affected = true;
+		return true;
+	}
 
 	return false;
 }
@@ -1183,7 +1265,9 @@ static void spectre_bhb_enable_fw_mitigation(void)
 
 void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 {
+	bool bse_upgrade_loop_mitigation = false;
 	enum mitigation_state fw_state, state = SPECTRE_VULNERABLE;
+	enum mitigation_state bse_state = SPECTRE_VULNERABLE;
 
 	if (!is_spectre_bhb_affected(entry, SCOPE_LOCAL_CPU))
 		return;
@@ -1202,17 +1286,42 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 
 		state = SPECTRE_MITIGATED;
 	} else if (spectre_bhb_loop_affected(SCOPE_LOCAL_CPU)) {
-		spectre_bhb_enable_loop_mitigation();
-		state = SPECTRE_MITIGATED;
+		/* Cores also affected by BSE are special cased later */
+		if (!is_spectre_bse_affected(SCOPE_LOCAL_CPU)) {
+			spectre_bhb_enable_loop_mitigation();
+			state = SPECTRE_MITIGATED;
+		} else {
+			bse_upgrade_loop_mitigation = true;
+		}
 	} else if (is_spectre_bhb_fw_affected(SCOPE_LOCAL_CPU)) {
 		fw_state = spectre_bhb_get_cpu_fw_mitigation_state();
 		if (fw_state == SPECTRE_MITIGATED) {
 			spectre_bhb_enable_fw_mitigation();
 			state = SPECTRE_MITIGATED;
+
+			if (is_spectre_bse_affected(SCOPE_LOCAL_CPU))
+				bse_state = SPECTRE_MITIGATED;
 		}
 	}
 
+	/* Spectre BSE needs to upgrade the BHB mitigation to use firmware */
+	if (bse_upgrade_loop_mitigation) {
+		bse_state = spectre_bse_get_cpu_fw_mitigation_state();
+		if (bse_state == SPECTRE_MITIGATED) {
+			spectre_bhb_enable_fw_mitigation();
+			state = SPECTRE_MITIGATED;
+			bse_state = SPECTRE_MITIGATED;
+		} else {
+			spectre_bhb_enable_loop_mitigation();
+			state = SPECTRE_MITIGATED;
+			bse_state = SPECTRE_VULNERABLE;
+		}
+	} else if (!is_spectre_bse_affected(SCOPE_LOCAL_CPU)) {
+		bse_state = SPECTRE_UNAFFECTED;
+	}
+
 	update_mitigation_state(&spectre_bhb_state, state);
+	update_mitigation_state(&spectre_bse_state, bse_state);
 }
 
 /* Patched to correct the immediate */
