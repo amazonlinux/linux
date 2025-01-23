@@ -1,0 +1,3 @@
+source "net/lnet/libcfs/Kconfig"
+source "net/lnet/lnet/Kconfig"
+
