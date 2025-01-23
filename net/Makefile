@@ -9,7 +9,7 @@
 obj-y				:= devres.o socket.o core/
 
 obj-$(CONFIG_COMPAT)		+= compat.o
-
+obj-$(CONFIG_LUSTRE_LNET) += lnet/
 # LLC has to be linked before the files in net/802/
 obj-$(CONFIG_LLC)		+= llc/
 obj-y				+= ethernet/ 802/ sched/ netlink/ bpf/ ethtool/
