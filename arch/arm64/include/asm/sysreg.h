@@ -547,6 +547,7 @@
 #define SYS_CNTP_TVAL_EL02		sys_reg(3, 5, 14, 2, 0)
 #define SYS_CNTP_CTL_EL02		sys_reg(3, 5, 14, 2, 1)
 #define SYS_CNTP_CVAL_EL02		sys_reg(3, 5, 14, 2, 2)
+#define SYS_CNTPOFF_EL2         sys_reg(3, 4, 14, 0, 6)
 #define SYS_CNTV_TVAL_EL02		sys_reg(3, 5, 14, 3, 0)
 #define SYS_CNTV_CTL_EL02		sys_reg(3, 5, 14, 3, 1)
 #define SYS_CNTV_CVAL_EL02		sys_reg(3, 5, 14, 3, 2)
