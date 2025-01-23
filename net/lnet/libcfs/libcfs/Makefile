@@ -1,0 +1,26 @@
+obj-$(CONFIG_LUSTRE_LIBCFS)	+= libcfs.o
+
+libcfs-linux-objs := linux-prim.o
+libcfs-linux-objs += linux-hash.o
+libcfs-linux-objs += linux-wait.o
+libcfs-linux-objs += glob.o
+libcfs-linux-objs += xarray.o
+
+libcfs-crypto-objs := crypto.o fname.o hkdf.o hooks.o keyring.o
+libcfs-crypto-objs += keysetup.o keysetup_v1.o policy.o
+
+default: all
+
+libcfs-linux-objs := $(addprefix linux/,$(libcfs-linux-objs))
+libcfs-crypto-objs := $(addprefix crypto/,$(libcfs-crypto-objs))
+
+libcfs-all-objs := debug.o fail.o module.o tracefile.o \
+		   libcfs_string.o hash.o \
+		   linux-crypto.o linux-crypto-adler.o
+
+libcfs-objs := $(libcfs-linux-objs) $(libcfs-all-objs)
+libcfs-objs += $(libcfs-crypto-objs)
+
+EXTRA_PRE_CFLAGS := -I/$(srctree)/fs/lustre/libcfs/libcfs
+
+include $(srctree)/net/lnet/Makefile.rules
