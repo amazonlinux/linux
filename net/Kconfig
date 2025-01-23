@@ -74,6 +74,7 @@ config NET_DEVMEM
 
 menu "Networking options"
 
+source "net/lnet/Kconfig"
 source "net/packet/Kconfig"
 source "net/unix/Kconfig"
 source "net/tls/Kconfig"
