@@ -1271,6 +1271,16 @@ static void spectre_bhb_enable_loop_mitigation(void)
 	this_cpu_set_vectors(EL1_VECTOR_BHB_LOOP);
 }
 
+/* Spectre-BSE mitigations are disabled by default */
+static bool __read_mostly __spectre_bse;
+static int __init parse_spectre_bse_param(char *str)
+{
+	__spectre_bse = true;
+	return 0;
+}
+
+early_param("spectre_bse", parse_spectre_bse_param);
+
 static void spectre_bhb_enable_fw_mitigation(enum bhb_mitigation_bits fw_wa)
 {
 	kvm_setup_bhb_slot(__smccc_workaround_3_smc_start);
@@ -1328,7 +1338,7 @@ void spectre_bhb_enable_mitigation(const struct arm64_cpu_capabilities *entry)
 	/* Spectre BSE needs to upgrade the BHB mitigation to use firmware */
 	if (bse_upgrade_loop_mitigation) {
 		bse_state = spectre_bse_get_cpu_fw_mitigation_state(BHB_FW_WA1);
-		if (bse_state == SPECTRE_MITIGATED) {
+		if (bse_state == SPECTRE_MITIGATED && __spectre_bse) {
 			/*
 			 * For affected cores the firmware implementions of WA1
 			 * and WA3 are both sufficient for BSE, but what about
