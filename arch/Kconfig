@@ -1682,4 +1682,12 @@ config CC_HAS_SANE_FUNCTION_ALIGNMENT
 config ARCH_NEED_CMPXCHG_1_EMU
 	bool
 
+config AS_HAS_SFRAME_SUPPORT
+	# Detect availability of the AS option -Wa,--gsframe for generating
+	# sframe unwind table.
+	def_bool $(cc-option,-Wa$(comma)--gsframe)
+
+config SFRAME_UNWIND_TABLE
+	bool
+
 endmenu
