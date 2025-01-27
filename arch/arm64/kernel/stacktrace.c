@@ -14,6 +14,7 @@
 #include <linux/sched/debug.h>
 #include <linux/sched/task_stack.h>
 #include <linux/stacktrace.h>
+#include <linux/sframe_lookup.h>
 
 #include <asm/efi.h>
 #include <asm/irq.h>
@@ -242,6 +243,53 @@ kunwind_next_frame_record(struct kunwind_state *state)
 	return 0;
 }
 
+#ifdef CONFIG_SFRAME_UNWINDER
+/*
+ * Unwind to the next frame according to sframe.
+ */
+static __always_inline int
+unwind_next_frame_sframe(struct unwind_state *state)
+{
+	unsigned long fp = state->fp, ip = state->pc;
+	unsigned long base_reg, cfa;
+	unsigned long pc_addr, fp_addr;
+	struct sframe_ip_entry entry;
+	struct stack_info *info;
+	struct frame_record *record = (struct frame_record *)fp;
+
+	int err;
+
+	/* frame record alignment 8 bytes */
+	if (fp & 0x7)
+		return -EINVAL;
+
+	info = unwind_find_stack(state, fp, sizeof(*record));
+	if (!info)
+		return -EINVAL;
+
+	err = sframe_find_pc(ip, &entry);
+	if (err)
+		return -EINVAL;
+
+	unwind_consume_stack(state, info, fp, sizeof(*record));
+
+	base_reg = entry.use_fp ? fp : state->cfa;
+
+	/* Set up the initial CFA using fp based info if CFA is not set */
+	if (!state->cfa)
+		cfa = fp - entry.fp_offset;
+	else
+		cfa = base_reg + entry.cfa_offset;
+	fp_addr = cfa + entry.fp_offset;
+	pc_addr = cfa + entry.ra_offset;
+	state->cfa = cfa;
+	state->fp = READ_ONCE(*(unsigned long *)(fp_addr));
+	state->pc = READ_ONCE(*(unsigned long *)(pc_addr));
+
+	return 0;
+}
+#endif
+
 /*
  * Unwind from one frame record (A) to the next frame record (B).
  *
@@ -261,7 +309,15 @@ kunwind_next(struct kunwind_state *state)
 	case KUNWIND_SOURCE_CALLER:
 	case KUNWIND_SOURCE_TASK:
 	case KUNWIND_SOURCE_REGS_PC:
+#ifdef CONFIG_SFRAME_UNWINDER
+	err = unwind_next_frame_sframe(&state->common);
+
+	/* Fallback to FP based unwinder */
+	if (err)
 		err = kunwind_next_frame_record(state);
+#else
+	err = kunwind_next_frame_record(state);
+#endif
 		break;
 	default:
 		err = -EINVAL;
@@ -347,6 +403,9 @@ kunwind_stack_walk(kunwind_consume_fn consume_state,
 		.common = {
 			.stacks = stacks,
 			.nr_stacks = ARRAY_SIZE(stacks),
+#ifdef CONFIG_SFRAME_UNWINDER
+			.cfa = 0,
+#endif
 		},
 	};
 
