@@ -312,11 +312,16 @@ kunwind_next(struct kunwind_state *state)
 	case KUNWIND_SOURCE_TASK:
 	case KUNWIND_SOURCE_REGS_PC:
 #ifdef CONFIG_SFRAME_UNWINDER
-	err = unwind_next_frame_sframe(&state->common);
+	if (!state->common.unreliable)
+		err = unwind_next_frame_sframe(&state->common);
 
 	/* Fallback to FP based unwinder */
-	if (err)
+	if (err || state->common.unreliable) {
 		err = kunwind_next_frame_record(state);
+		/* Mark its stacktrace result as unreliable if it is unwindable via FP */
+		if (!err)
+			state->common.unreliable = true;
+	}
 #else
 	err = kunwind_next_frame_record(state);
 #endif
@@ -447,6 +452,44 @@ noinline noinstr void arch_stack_walk(stack_trace_consume_fn consume_entry,
 
 	kunwind_stack_walk(arch_kunwind_consume_entry, &data, task, regs);
 }
+
+#ifdef CONFIG_SFRAME_UNWINDER
+struct kunwind_reliable_consume_entry_data {
+	stack_trace_consume_fn consume_entry;
+	void *cookie;
+	bool unreliable;
+};
+
+static __always_inline bool
+arch_kunwind_reliable_consume_entry(const struct kunwind_state *state, void *cookie)
+{
+	struct kunwind_reliable_consume_entry_data *data = cookie;
+
+	if (state->common.unreliable) {
+		data->unreliable = true;
+		return false;
+	}
+	return data->consume_entry(data->cookie, state->common.pc);
+}
+
+noinline notrace int arch_stack_walk_reliable(
+				stack_trace_consume_fn consume_entry,
+				void *cookie, struct task_struct *task)
+{
+	struct kunwind_reliable_consume_entry_data data = {
+		.consume_entry = consume_entry,
+		.cookie = cookie,
+		.unreliable = false,
+	};
+
+	kunwind_stack_walk(arch_kunwind_reliable_consume_entry, &data, task, NULL);
+
+	if (data.unreliable)
+		return -EINVAL;
+
+	return 0;
+}
+#endif
 
 struct bpf_unwind_consume_entry_data {
 	bool (*consume_entry)(void *cookie, u64 ip, u64 sp, u64 fp);
