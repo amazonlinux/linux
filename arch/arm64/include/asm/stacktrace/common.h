@@ -25,6 +25,7 @@ struct stack_info {
  * @stack:       The stack currently being unwound.
  * @stacks:      An array of stacks which can be unwound.
  * @nr_stacks:   The number of stacks in @stacks.
+ * @cfa:         The sp value at the call site of the current function.
  */
 struct unwind_state {
 	unsigned long fp;
@@ -33,6 +34,9 @@ struct unwind_state {
 	struct stack_info stack;
 	struct stack_info *stacks;
 	int nr_stacks;
+#ifdef CONFIG_SFRAME_UNWINDER
+	unsigned long cfa;
+#endif
 };
 
 static inline struct stack_info stackinfo_get_unknown(void)
