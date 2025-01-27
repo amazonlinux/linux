@@ -1017,6 +1017,12 @@ KBUILD_CFLAGS += -fno-builtin-wcslen
 # change __FILE__ to the relative path from the srctree
 KBUILD_CPPFLAGS += $(call cc-option,-fmacro-prefix-map=$(srctree)/=)
 
+# build with sframe table
+ifdef CONFIG_SFRAME_UNWIND_TABLE
+KBUILD_CFLAGS	+= -Wa,--gsframe
+KBUILD_AFLAGS	+= -Wa,--gsframe
+endif
+
 # include additional Makefiles when needed
 include-y			:= scripts/Makefile.extrawarn
 include-$(CONFIG_DEBUG_INFO)	+= scripts/Makefile.debug
