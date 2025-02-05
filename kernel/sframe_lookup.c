@@ -82,7 +82,7 @@ static struct sframe_fde *find_fde(const struct sframe_table *tbl, unsigned long
 	if (f >= tbl->sfhdr_p->num_fdes || f < 0)
 		return NULL;
 	fdep = tbl->fde_p + f;
-	if (ip < fdep->start_addr || ip >= fdep->start_addr + fdep->size)
+	if (ip < fdep->start_addr || ip > fdep->start_addr + fdep->size)
 		return NULL;
 
 	return fdep;
@@ -106,7 +106,7 @@ static int find_fre(const struct sframe_table *tbl, unsigned long pc,
 	else
 		ip_off = (int32_t)(pc - (unsigned long)tbl->sfhdr_p) - fdep->start_addr;
 
-	if (ip_off < 0 || ip_off >= fdep->size)
+	if (ip_off < 0 || ip_off > fdep->size)
 		return -EINVAL;
 
 	/*
