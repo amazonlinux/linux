@@ -421,6 +421,8 @@ static int vmclock_probe(struct platform_device *pdev)
 	if (!st)
 		return -ENOMEM;
 
+	dev_set_drvdata(dev, st);
+
 	if (has_acpi_companion(dev))
 		ret = vmclock_probe_acpi(dev, st);
 	else
@@ -508,8 +510,6 @@ static int vmclock_probe(struct platform_device *pdev)
 		 st->miscdev.minor ? "miscdev" : "",
 		 (st->miscdev.minor && st->ptp_clock) ? ", " : "",
 		 st->ptp_clock ? "PTP" : "");
-
-	dev_set_drvdata(dev, st);
 
  out:
 	return ret;
