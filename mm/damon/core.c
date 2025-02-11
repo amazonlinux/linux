@@ -1622,6 +1622,9 @@ static unsigned long damon_get_intervals_score(struct damon_ctx *c)
 	}
 	target_access_events = max_access_events * goal_bp / 10000;
 	target_access_events = target_access_events ? : 1;
+
+	pr_info("access_events %lu/%lu\n", access_events, target_access_events);
+
 	return access_events * 10000 / target_access_events;
 }
 
@@ -1641,6 +1644,9 @@ static unsigned long damon_get_intervals_adaptation_bp(struct damon_ctx *c)
 	 */
 	if (adaptation_bp <= 10000)
 		adaptation_bp = 5000 + adaptation_bp / 2;
+
+	pr_info("score_bp %lu, adaptation bp %lu\n", score_bp, adaptation_bp);
+
 	return adaptation_bp;
 }
 
@@ -1663,6 +1669,9 @@ static void kdamond_tune_intervals(struct damon_ctx *c)
 	new_attrs.aggr_interval = new_attrs.sample_interval *
 		c->attrs.aggr_samples;
 	trace_damon_monitor_intervals_tune(new_attrs.sample_interval);
+
+	pr_info("tune intervals to %lu %lu\n\n",
+			new_attrs.sample_interval, new_attrs.aggr_interval);
 	damon_set_attrs(c, &new_attrs);
 }
 
