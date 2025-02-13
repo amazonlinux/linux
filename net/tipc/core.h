@@ -115,6 +115,9 @@ struct tipc_net {
 	/* Topology subscription server */
 	struct tipc_server *topsrv;
 	atomic_t subscription_count;
+
+	/* The number of work queues in schedule */
+	atomic_t wq_count;
 };
 
 static inline struct tipc_net *tipc_net(struct net *net)
