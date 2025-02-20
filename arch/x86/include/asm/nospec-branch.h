@@ -234,8 +234,10 @@
 
 #ifdef CONFIG_RETHUNK
 extern void __x86_return_thunk(void);
+extern void its_return_thunk(void);
 #else
 static inline void __x86_return_thunk(void) {}
+static void its_return_thunk(void) {}
 #endif
 
 extern void retbleed_return_thunk(void);
