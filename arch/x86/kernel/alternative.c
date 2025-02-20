@@ -18,6 +18,7 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#include <linux/moduleloader.h>
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -29,6 +30,7 @@
 #include <asm/io.h>
 #include <asm/fixmap.h>
 #include <asm/asm-prototypes.h>
+#include <asm/set_memory.h>
 
 int __read_mostly alternatives_patched;
 
@@ -74,6 +76,116 @@ do {									\
 		printk(KERN_CONT "%02hhx\n", buf[j]);			\
 	}								\
 } while (0)
+
+#define ITS_TRAMP_ALLOC_SIZE		HPAGE_PMD_SIZE
+#define ITS_TRAMP_REGS			16
+#define ITS_TRAMP_REG_CHUNK_SIZE	PAGE_SIZE
+#define ITS_TRAMP_TOTAL_PAGES		(ITS_TRAMP_ALLOC_SIZE / PAGE_SIZE)
+
+#define ITS_THUNK_INSN_SIZE		4
+#define ITS_UNSAFE_SKIP_SIZE		32
+
+static u8 *its_new_thunk_pos[ITS_TRAMP_REGS];
+static void *__x86_indirect_scatter_thunk_array __ro_after_init;
+
+static bool its_thunk_overflow(unsigned long addr, int reg);
+
+static void fill_pattern(u8 *mem, int size, void *pattern, int pattern_size)
+{
+	while (size >= pattern_size) {
+		memcpy(mem, pattern, pattern_size);
+		mem += pattern_size;
+		size -= pattern_size;
+	}
+}
+
+static void its_fill_reg_chunk(u8 *mem, int reg)
+{
+	u8 insn[ITS_THUNK_INSN_SIZE];
+	u8 cacheline[64];
+
+	if (reg < 8) {
+		insn[0] = 0xff;
+		insn[1] = 0xe0 + reg; /* jmp *reg */
+		insn[2] = INT3_INSN_OPCODE;
+		insn[3] = INT3_INSN_OPCODE;
+	} else {
+		insn[0] = 0x41; /* REX.B prefix */
+		insn[1] = 0xff;
+		insn[2] = 0xe0 + reg - 8; /* jmp *reg */
+		insn[3] = INT3_INSN_OPCODE;
+	}
+
+	/* Prepare a single cacheline of safe thunks */
+	memset(cacheline, INT3_INSN_OPCODE, ITS_UNSAFE_SKIP_SIZE);
+	fill_pattern(cacheline + 32, 32, insn, sizeof(insn));
+
+	/* Copy the cacheline to entire chunk */
+	fill_pattern(mem, ITS_TRAMP_REG_CHUNK_SIZE, cacheline, sizeof(cacheline));
+}
+
+/*
+ * Allocate and fill the trampoline memory with ITS-safe indirect branches.
+ * These branches replace the original indirect branches in the kernel text
+ * that are not safe against ITS.
+ *
+ * Trampoline memory is composed of page-size chunks of tramps for each
+ * register. Each chunk is filled with int3 in the unsafe area and
+ * jmp *reg;int3 in the safe area. This pattern is repeated for all registers
+ * such that every 17th page belongs to the same register type. Below is an
+ * example of trampoline memory layout:
+ *
+ * Page 0: Register 0 (rax)
+ *  0xffffffffc0000000:    cc cc cc cc cc cc cc cc  cc cc cc cc cc cc cc cc
+ *  0xffffffffc0000010:    cc cc cc cc cc cc cc cc  cc cc cc cc cc cc cc cc
+ *  0xffffffffc0000020:    ff e0 cc cc ff e0 cc cc  ff e0 cc cc ff e0 cc cc <-- jmp *%rax; int3; ...
+ *  0xffffffffc0000030:    ff e0 cc cc ff e0 cc cc  ff e0 cc cc ff e0 cc cc
+ *  0xffffffffc0000040:    cc cc cc cc cc cc cc cc  cc cc cc cc cc cc cc cc
+ *  ...
+ * Page 1: Register 1 (rcx)
+ *  0xffffffffc0001000:    cc cc cc cc cc cc cc cc  cc cc cc cc cc cc cc cc
+ *  0xffffffffc0001010:    cc cc cc cc cc cc cc cc  cc cc cc cc cc cc cc cc
+ *  0xffffffffc0001020:    ff e1 cc cc ff e1 cc cc  ff e1 cc cc ff e1 cc cc <-- jmp *%rcx; int3; ...
+ *  0xffffffffc0001030:    ff e1 cc cc ff e1 cc cc  ff e1 cc cc ff e1 cc cc
+ *  0xffffffffc0001040:    cc cc cc cc cc cc cc cc  cc cc cc cc cc cc cc cc
+ *  ...
+ */
+static void __init its_alloc_trampoline(void)
+{
+	int reg, remaining, this_write;
+	u8 *tramp_base, *tramp_mem;
+
+	__x86_indirect_scatter_thunk_array = module_alloc(ITS_TRAMP_ALLOC_SIZE);
+	if (!__x86_indirect_scatter_thunk_array) {
+		pr_err("Failed to allocate ITS trampoline\n");
+		return;
+	}
+
+	tramp_base = (u8 *)__x86_indirect_scatter_thunk_array;
+	WARN_ON_ONCE(!PAGE_ALIGNED(tramp_base));
+	BUILD_BUG_ON(ITS_TRAMP_REG_CHUNK_SIZE < 64);
+	BUILD_BUG_ON(ITS_TRAMP_REG_CHUNK_SIZE % 64);
+	memset(tramp_base, INT3_INSN_OPCODE, ITS_TRAMP_ALLOC_SIZE);
+
+	tramp_mem = tramp_base;
+	remaining = ITS_TRAMP_ALLOC_SIZE;
+	this_write = ITS_TRAMP_REGS * ITS_TRAMP_REG_CHUNK_SIZE;
+	while (remaining >= this_write) {
+		for (reg = 0; reg < ITS_TRAMP_REGS; reg++) {
+			its_fill_reg_chunk(tramp_mem, reg);
+			tramp_mem += ITS_TRAMP_REG_CHUNK_SIZE;
+			remaining -= ITS_TRAMP_REG_CHUNK_SIZE;
+		}
+	}
+
+	for (reg = 0; reg < ITS_TRAMP_REGS; reg++)
+		its_new_thunk_pos[reg] = tramp_base +
+					 reg * ITS_TRAMP_REG_CHUNK_SIZE +
+					 ITS_UNSAFE_SKIP_SIZE;
+
+	set_memory_ro((unsigned long)tramp_base, ITS_TRAMP_TOTAL_PAGES);
+	set_memory_x((unsigned long)tramp_base, ITS_TRAMP_TOTAL_PAGES);
+}
 
 /*
  * Each GENERIC_NOPX is of X bytes, and defined as an array of bytes
@@ -597,9 +709,45 @@ clang_jcc:
 
 static int emit_its_trampoline(void *addr, struct insn *insn, int reg, u8 *bytes)
 {
-	return __emit_trampoline(addr, insn, reg, bytes,
-				 __x86_indirect_its_thunk_array[reg],
-				 __x86_indirect_its_thunk_array[reg]);
+	u64 next_dest, dest = (u64)its_new_thunk_pos[reg];
+
+	if (!dest)
+		return __emit_trampoline(addr, insn, reg, bytes,
+					 __x86_indirect_its_thunk_array[reg],
+					 __x86_indirect_its_thunk_array[reg]);
+
+	next_dest = dest + ITS_THUNK_INSN_SIZE;
+	if (!(next_dest % ITS_TRAMP_REG_CHUNK_SIZE))
+		next_dest += (ITS_TRAMP_REGS - 1) * ITS_TRAMP_REG_CHUNK_SIZE + ITS_UNSAFE_SKIP_SIZE;
+	else if (!(next_dest % 32))
+		next_dest += ITS_UNSAFE_SKIP_SIZE;
+
+	/*
+	 * Check if we have reached the end of the allocated area for this
+	 * register thunk. If so, wrap around to the beginning.
+	 */
+	if (its_thunk_overflow(next_dest, reg))
+		next_dest = (u64)__x86_indirect_scatter_thunk_array +
+				 reg * ITS_TRAMP_REG_CHUNK_SIZE +
+				 ITS_UNSAFE_SKIP_SIZE;
+
+	its_new_thunk_pos[reg] = (u8 *)next_dest;
+
+	return __emit_trampoline(addr, insn, reg, bytes, (void *)dest, (void *)dest);
+}
+
+static bool its_thunk_overflow(unsigned long addr, int reg)
+{
+	u64 base = (u64)__x86_indirect_scatter_thunk_array;
+	u64 reg_alloc_end;
+
+	reg_alloc_end = base + (ITS_TRAMP_ALLOC_SIZE -
+				(ITS_TRAMP_REGS - reg) * ITS_TRAMP_REG_CHUNK_SIZE);
+
+	if (addr >= reg_alloc_end)
+		return true;
+
+	return false;
 }
 
 bool cpu_wants_indirect_its_thunk(void)
@@ -1124,6 +1272,8 @@ void __init alternative_instructions(void)
 {
 	int3_selftest();
 
+	if (cpu_wants_indirect_its_thunk())
+		its_alloc_trampoline();
 	/*
 	 * The patching is not fully atomic, so try to avoid local
 	 * interruptions that might execute the to be patched code.
