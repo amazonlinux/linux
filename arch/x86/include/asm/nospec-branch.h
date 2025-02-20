@@ -253,7 +253,10 @@ extern void (*x86_return_thunk)(void);
 
 #ifdef CONFIG_RETPOLINE
 
+#define ITS_THUNK_SIZE 64
+
 typedef u8 retpoline_thunk_t[RETPOLINE_THUNK_SIZE];
+typedef u8 its_thunk_t[ITS_THUNK_SIZE];
 
 #define GEN(reg) \
 	extern retpoline_thunk_t __x86_indirect_thunk_ ## reg;
@@ -261,6 +264,7 @@ typedef u8 retpoline_thunk_t[RETPOLINE_THUNK_SIZE];
 #undef GEN
 
 extern retpoline_thunk_t __x86_indirect_thunk_array[];
+extern its_thunk_t	 __x86_indirect_its_thunk_array[];
 
 #ifdef CONFIG_X86_64
 
