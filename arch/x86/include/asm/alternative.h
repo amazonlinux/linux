@@ -80,6 +80,21 @@ extern void apply_returns(s32 *start, s32 *end);
 
 struct module;
 
+#ifdef CONFIG_RETPOLINE
+extern bool cpu_wants_indirect_its_thunk(void);
+extern bool cpu_wants_indirect_its_thunk_at(unsigned long addr, int reg);
+#else
+static __always_inline bool cpu_wants_indirect_its_thunk(void);
+{
+	return false;
+}
+
+static __always_inline bool cpu_wants_indirect_its_thunk_at(unsigned long addr, int reg)
+{
+	return false;
+}
+#endif
+
 #ifdef CONFIG_SMP
 extern void alternatives_smp_module_add(struct module *mod, char *name,
 					void *locks, void *locks_end,
