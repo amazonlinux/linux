@@ -41,7 +41,7 @@ static void __ref __static_call_transform(void *insn, enum insn_type type,
 		break;
 
 	case RET:
-		if (cpu_feature_enabled(X86_FEATURE_RETHUNK))
+		if (cpu_wants_rethunk_at(insn))
 			code = text_gen_insn(JMP32_INSN_OPCODE, insn, x86_return_thunk);
 		else
 			code = &retinsn;
@@ -125,7 +125,7 @@ noinstr void __static_call_update_early(void *tramp, void *func)
  * having a return trampoline.
  *
  * The problem is that static_call() is available before determining
- * X86_FEATURE_RETHUNK and, by implication, running alternatives.
+ * X86_FEATURE_RETHUNK{_ITS} and, by implication, running alternatives.
  *
  * This means that __static_call_transform() above can have overwritten the
  * return trampoline and we now need to fix things up to be consistent.
