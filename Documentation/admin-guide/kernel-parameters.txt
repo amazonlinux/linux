@@ -1875,8 +1875,10 @@
 			Target Selection bug in Intel CPUs. Updated microcode
 			is also required for a fix in IBPB.
 
-			on:  Enable mitigation (default).
-			off: Disable mitigation.
+			on:	Enable mitigation (default).
+			vmexit: Only deploy mitigation if CPU is affected by
+				guest/host isolation part of ITS.
+			off:	Disable mitigation.
 
 			For details see:
 			Documentation/admin-guide/hw-vuln/indirect-target-selection.rst	(TODO)
