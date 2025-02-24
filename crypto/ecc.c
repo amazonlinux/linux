@@ -1581,11 +1581,9 @@ static int ecc_pairwise_test(const struct ecc_curve *curve,
 		      struct ecc_point *pk,
 		      unsigned int ndigits)
 {
-	u64 priv[ECC_MAX_DIGITS];
 	struct ecc_point *epk;
 	int ret;
 
-	ecc_swap_digits(private_key, priv, ndigits);
 
 	epk = ecc_alloc_point(ndigits);
 	if (!epk) {
@@ -1593,7 +1591,7 @@ static int ecc_pairwise_test(const struct ecc_curve *curve,
 		goto err;
 	}
 
-	ecc_point_mult(epk, &curve->g, priv, NULL, curve, ndigits);
+	ecc_point_mult(epk, &curve->g, private_key, NULL, curve, ndigits);
 
 	/* check expected public key against the public_key */
 	if (vli_cmp(epk->x, pk->x, ndigits)) {
