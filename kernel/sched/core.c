@@ -8969,7 +8969,7 @@ void sched_move_task(struct task_struct *tsk, bool for_autogroup)
 	 * group changes.
 	 */
 	group = sched_get_task_group(tsk);
-	if (group == tsk->sched_task_group)
+	if ((group == tsk->sched_task_group) && !(tsk->flags & PF_EXITING))
 		return;
 
 	update_rq_clock(rq);
