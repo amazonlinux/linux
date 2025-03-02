@@ -1600,6 +1600,15 @@ static void kdamond_reset_aggregated(struct damon_ctx *c)
 			damon_warn_fix_nr_accesses_corruption(r);
 			r->last_nr_accesses = r->nr_accesses;
 			r->nr_accesses = 0;
+			if (r->nr_accesses_bp != r->last_nr_accesses * 10000) {
+				pr_info("reset time invalid region found!\n");
+				pr_info("nr_accesses_bp %u last_nr_acceses %u\n",
+						r->nr_accesses_bp, r->last_nr_accesses);
+				pr_info("passed_sis %lu next_aggregation_sis %lu\n",
+						c->passed_sample_intervals,
+						c->next_aggregation_sis);
+				BUG();
+			}
 		}
 		ti++;
 	}
