@@ -93,7 +93,7 @@ struct cfs_hash_bucket {
 	__u32			hsb_version;	/**< change version */
 	unsigned int		hsb_index;	/**< index of bucket */
 	int			hsb_depmax;	/**< max depth on bucket */
-	long			hsb_head[0];	/**< hash-head array */
+	long			hsb_head[];	/**< hash-head array */
 };
 
 /**
@@ -265,8 +265,8 @@ struct cfs_hash {
         /** workitem to output max depth */
 	struct work_struct		hs_dep_work;
 #endif
-        /** name of htable */
-        char                        hs_name[0];
+	/** name of htable */
+	char                        hs_name[];
 };
 
 struct cfs_hash_lock_ops {
