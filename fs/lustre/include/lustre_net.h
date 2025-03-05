@@ -1638,7 +1638,7 @@ struct ptlrpc_service {
 	/**
 	 * partition data for ptlrpc service
 	 */
-	struct ptlrpc_service_part	*srv_parts[0];
+	struct ptlrpc_service_part	*srv_parts[];
 };
 
 /**
@@ -2252,7 +2252,8 @@ int ptlrpc_reconnect_import(struct obd_import *imp);
 int ptlrpc_unpack_rep_msg(struct ptlrpc_request *req, int len);
 int ptlrpc_unpack_req_msg(struct ptlrpc_request *req, int len);
 
-int lustre_msg_check_version(struct lustre_msg *msg, __u32 version);
+int lustre_msg_check_version(struct lustre_msg *msg,
+			     enum lustre_msg_version version);
 void lustre_init_msg_v2(struct lustre_msg_v2 *msg, int count, __u32 *lens,
                         char **bufs);
 int lustre_pack_request(struct ptlrpc_request *, __u32 magic, int count,
@@ -2280,7 +2281,7 @@ __u32 lustre_msg_buflen(struct lustre_msg *m, __u32 n);
 void lustre_msg_set_buflen(struct lustre_msg *m, __u32 n, __u32 len);
 __u32 lustre_msg_bufcount(struct lustre_msg *m);
 char *lustre_msg_string(struct lustre_msg *m, __u32 n, __u32 max_len);
-__u32 lustre_msghdr_get_flags(struct lustre_msg *msg);
+enum lustre_msghdr lustre_msghdr_get_flags(struct lustre_msg *msg);
 void lustre_msghdr_set_flags(struct lustre_msg *msg, __u32 flags);
 __u32 lustre_msg_get_flags(struct lustre_msg *msg);
 void lustre_msg_add_flags(struct lustre_msg *msg, __u32 flags);
