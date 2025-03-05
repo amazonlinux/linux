@@ -847,6 +847,20 @@ struct ptlrpc_sec_policy {
 #define PTLRPC_SEC_FL_BULK              0x0008 /* intensive bulk i/o expected */
 #define PTLRPC_SEC_FL_PAG               0x0010 /* PAG mode */
 
+struct sptlrpc_sepol {
+	struct rcu_head	ssp_rcu;
+	struct kref	ssp_ref;
+	/** mtime of SELinux policy file */
+	ktime_t		ssp_mtime;
+	/**
+	 * SELinux policy info
+	 * sepol string format is:
+	 * <mode>:<policy name>:<policy version>:<policy hash>
+	 */
+	__u32		ssp_sepol_size;
+	char		ssp_sepol[];
+};
+
 /**
  * The ptlrpc_sec represents the client side ptlrpc security facilities,
  * each obd_import (both regular and reverse import) must associate with
@@ -924,13 +938,13 @@ struct ptlrpc_svc_ctx {
 #define LUSTRE_MAX_GROUPS               (128)
 
 struct ptlrpc_user_desc {
-        __u32           pud_uid;
-        __u32           pud_gid;
-        __u32           pud_fsuid;
-        __u32           pud_fsgid;
-        __u32           pud_cap;
-        __u32           pud_ngroups;
-        __u32           pud_groups[0];
+	__u32           pud_uid;
+	__u32           pud_gid;
+	__u32           pud_fsuid;
+	__u32           pud_fsgid;
+	__u32           pud_cap;
+	__u32           pud_ngroups;
+	__u32           pud_groups[];
 };
 
 /*
@@ -956,12 +970,12 @@ enum {
 };
 
 struct ptlrpc_bulk_sec_desc {
-        __u8            bsd_version;    /* 0 */
-        __u8            bsd_type;       /* SPTLRPC_BULK_XXX */
-        __u8            bsd_svc;        /* SPTLRPC_BULK_SVC_XXXX */
-        __u8            bsd_flags;      /* flags */
-        __u32           bsd_nob;        /* nob of bulk data */
-        __u8            bsd_data[0];    /* policy-specific token */
+	__u8            bsd_version;    /* 0 */
+	__u8            bsd_type;       /* SPTLRPC_BULK_XXX */
+	__u8            bsd_svc;        /* SPTLRPC_BULK_SVC_XXXX */
+	__u8            bsd_flags;      /* flags */
+	__u32           bsd_nob;        /* nob of bulk data */
+	__u8            bsd_data[];     /* policy-specific token */
 };
 
 extern struct dentry *sptlrpc_debugfs_dir;
