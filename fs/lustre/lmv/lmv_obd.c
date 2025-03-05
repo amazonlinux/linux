@@ -906,7 +906,7 @@ static int lmv_iocontrol(unsigned int cmd, struct obd_export *exp,
 		QCTL_COPY(oqctl, qctl);
 		rc = obd_quotactl(tgt->ltd_exp, oqctl);
 		if (rc == 0) {
-			QCTL_COPY(qctl, oqctl);
+			QCTL_COPY_NO_PNAME(qctl, oqctl);
 			qctl->qc_valid = QC_MDTIDX;
 			qctl->obd_uuid = tgt->ltd_uuid;
 		}
@@ -2645,7 +2645,7 @@ struct lmv_dir_ctxt {
 	struct md_readdir_info  *ldc_mrinfo;
 	__u64			 ldc_hash;
 	int			 ldc_count;
-	struct stripe_dirent	 ldc_stripes[0];
+	struct stripe_dirent	 ldc_stripes[];
 };
 
 static inline void stripe_dirent_unload(struct stripe_dirent *stripe)
