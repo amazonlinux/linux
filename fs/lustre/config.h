@@ -1261,6 +1261,9 @@
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
 
+/* Use the kernel's built-in EFA driver */
+#define KERNEL_INCLUDE_RDMA_EFA 1
+
 /* Define this as the Kerberos version number */
 /* #undef KRB5_VERSION */
 
@@ -1286,7 +1289,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_570_ge9974b3"
+#define LUSTRE_VERSION_STRING "2.15.6_590_g46ce8c1_dirty"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1316,7 +1319,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_570_ge9974b3"
+#define PACKAGE_STRING "Lustre 2.15.6_590_g46ce8c1_dirty"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1325,7 +1328,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_570_ge9974b3"
+#define PACKAGE_VERSION "2.15.6_590_g46ce8c1_dirty"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1369,7 +1372,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_570_ge9974b3"
+#define VERSION "2.15.6_590_g46ce8c1_dirty"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) ((void *)(value))
