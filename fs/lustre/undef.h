@@ -1259,6 +1259,9 @@
 /* ext4_journal_start takes 3 arguments */
 #undef JOURNAL_START_HAS_3ARGS
 
+/* Use the kernel's built-in EFA driver */
+#undef KERNEL_INCLUDE_RDMA_EFA
+
 /* Define this as the Kerberos version number */
 #undef KRB5_VERSION
 
