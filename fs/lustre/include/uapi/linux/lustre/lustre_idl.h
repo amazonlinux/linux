@@ -115,6 +115,29 @@ extern "C" {
 /* #define DVS_PORTAL			63 */
 /* reserved for Cray DVS - spitzcor@cray.com, roe@cray.com, n8851@cray.com */
 
+#ifndef DECLARE_FLEX_ARRAY
+#ifdef __cplusplus
+/* sizeof(struct{}) is 1 in C++, not 0, can't use C version of the macro. */
+#define DECLARE_FLEX_ARRAY(T, member) T member[0]
+#else
+/**
+ * DECLARE_FLEX_ARRAY() - Declare a flexible array usable in a union
+ *
+ * @TYPE: The type of each flexible array element
+ * @NAME: The name of the flexible array member
+ *
+ * In order to have a flexible array member in a union or alone in a
+ * struct, it needs to be wrapped in an anonymous struct with at least 1
+ * named member, but that member can be empty.
+ */
+#define DECLARE_FLEX_ARRAY(TYPE, NAME)	       \
+	struct {			       \
+		struct { } __empty_ ## NAME;   \
+		TYPE NAME[];		       \
+	}
+#endif
+#endif /* DECLARE_FLEX_ARRAY */
+
 /**
  * Describes a range of sequence, lsr_start is included but lsr_end is
  * not in the range.
@@ -131,7 +154,7 @@ struct lu_seq_range {
 struct lu_seq_range_array {
 	__u32 lsra_count;
 	__u32 lsra_padding;
-	struct lu_seq_range lsra_lsr[0];
+	struct lu_seq_range lsra_lsr[];
 };
 
 #define LU_SEQ_RANGE_MDT	0x0
@@ -438,7 +461,7 @@ struct lu_dirent {
          *  their natural order. After the last attribute, padding bytes are
          *  added to make ->lde_reclen a multiple of 8.
          */
-        char          lde_name[0];
+        char          lde_name[];
 };
 
 /*
@@ -470,11 +493,11 @@ struct luda_type {
 };
 
 struct lu_dirpage {
-        __u64            ldp_hash_start;
-        __u64            ldp_hash_end;
-        __u32            ldp_flags;
-        __u32            ldp_pad0;
-        struct lu_dirent ldp_entries[0];
+	__u64            ldp_hash_start;
+	__u64            ldp_hash_end;
+	__u32            ldp_flags;
+	__u32            ldp_pad0;
+	struct lu_dirent ldp_entries[];
 };
 
 enum lu_dirpage_flags {
@@ -611,12 +634,11 @@ struct lustre_msg_v2 {
 	__u32 lm_flags;		/* enum lustre_msghdr MSGHDR_* flags */
 	__u32 lm_padding_2;	/* unused */
 	__u32 lm_padding_3;	/* unused */
-	__u32 lm_buflens[0];	/* length of additional buffers in bytes,
-				 * padded to a multiple of 8 bytes. */
 	/*
 	 * message buffers are packed after padded lm_buflens[] array,
 	 * padded to a multiple of 8 bytes each to align contents.
 	 */
+	__u32 lm_buflens[];
 };
 
 /* ptlrpc_body packet pb_types */
@@ -1188,7 +1210,7 @@ struct lov_mds_md_v1 {            /* LOV EA mds/wire data (little-endian) */
 	/* lmm_stripe_count used to be __u32 */
 	__u16 lmm_stripe_count;   /* num stripes in use for this object */
 	__u16 lmm_layout_gen;     /* layout generation number */
-	struct lov_ost_data_v1 lmm_objects[0]; /* per-stripe data */
+	struct lov_ost_data_v1 lmm_objects[]; /* per-stripe data */
 };
 
 #define MAX_MD_SIZE_OLD (sizeof(struct lov_mds_md) +			\
@@ -1240,7 +1262,7 @@ struct lov_mds_md_v3 {            /* LOV EA mds/wire data (little-endian) */
 	__u16 lmm_stripe_count;   /* num stripes in use for this object */
 	__u16 lmm_layout_gen;     /* layout generation number */
 	char  lmm_pool_name[LOV_MAXPOOLNAME + 1]; /* must be 32bit aligned */
-	struct lov_ost_data_v1 lmm_objects[0]; /* per-stripe data */
+	struct lov_ost_data_v1 lmm_objects[]; /* per-stripe data */
 };
 
 static inline __u32 lov_mds_md_size(__u16 stripes, __u32 lmm_magic)
@@ -1516,11 +1538,7 @@ struct obd_quotactl {
 
 #define Q_COPY(out, in, member) (out)->member = (in)->member
 
-/* NOTE:
- * - in and out maybe a type of struct if_quotactl or struct obd_quotactl
- * - in and out need not be of the same type.
- */
-#define __QCTL_COPY(out, in, need_pname)				\
+#define QCTL_COPY_NO_PNAME(out, in)					\
 do {									\
 	Q_COPY(out, in, qc_cmd);					\
 	Q_COPY(out, in, qc_type);					\
@@ -1528,16 +1546,22 @@ do {									\
 	Q_COPY(out, in, qc_stat);					\
 	Q_COPY(out, in, qc_dqinfo);					\
 	Q_COPY(out, in, qc_dqblk);					\
-	if (need_pname && LUSTRE_Q_CMD_IS_POOL(in->qc_cmd)) {		\
+} while (0)
+
+/* NOTE:
+ * - in and out maybe a type of struct if_quotactl or struct obd_quotactl
+ * - in and out need not be of the same type.
+ */
+#define QCTL_COPY(out, in)						\
+do {									\
+	QCTL_COPY_NO_PNAME(out, in);					\
+	if (LUSTRE_Q_CMD_IS_POOL(in->qc_cmd)) {				\
 		size_t len = strnlen(in->qc_poolname, LOV_MAXPOOLNAME);	\
 									\
 		memcpy(out->qc_poolname, in->qc_poolname, len);		\
 		out->qc_poolname[len] = '\0';				\
 	}								\
 } while (0)
-
-#define QCTL_COPY(out, in) __QCTL_COPY(out, in, true)
-#define QCTL_COPY_NO_PNAME(out, in) __QCTL_COPY(out, in, false)
 
 /* Body of quota request used for quota acquire/release RPCs between quota
  * master (aka QMT) and slaves (ak QSD). */
@@ -2238,7 +2262,7 @@ struct lmv_mds_md_v1 {
 	__u32 lmv_padding2;
 	__u64 lmv_padding3;
 	char lmv_pool_name[LOV_MAXPOOLNAME + 1];	/* pool name */
-	struct lu_fid lmv_stripe_fids[0];	/* FIDs for each stripe */
+	struct lu_fid lmv_stripe_fids[];	/* FIDs for each stripe */
 };
 
 /* stripe count before directory split */
@@ -2619,17 +2643,17 @@ struct mgs_target_info {
 };
 
 struct mgs_nidtbl_entry {
-        __u64           mne_version;    /* table version of this entry */
-        __u32           mne_instance;   /* target instance # */
-        __u32           mne_index;      /* target index */
-        __u32           mne_length;     /* length of this entry - by bytes */
-        __u8            mne_type;       /* target type LDD_F_SV_TYPE_OST/MDT */
-        __u8            mne_nid_type;   /* type of nid(mbz). for ipv6. */
-        __u8            mne_nid_size;   /* size of each NID, by bytes */
-        __u8            mne_nid_count;  /* # of NIDs in buffer */
-        union {
-                lnet_nid_t nids[0];     /* variable size buffer for NIDs. */
-        } u;
+	__u64		mne_version;	/* table version of this entry */
+	__u32		mne_instance;	/* target instance # */
+	__u32		mne_index;	/* target index */
+	__u32		mne_length;	/* length of this entry - by bytes */
+	__u8		mne_type;	/* target type LDD_F_SV_TYPE_OST/MDT */
+	__u8		mne_nid_type;	/* type of NID. for IPv6. */
+	__u8		mne_nid_size;	/* size of each NID, by bytes */
+	__u8		mne_nid_count;	/* # of NIDs in buffer */
+	union {
+		DECLARE_FLEX_ARRAY(lnet_nid_t, nids); /* variable size buffer for NIDs. */
+	} u;
 };
 
 enum mgs_cfg_type {
@@ -3277,8 +3301,9 @@ struct lu_idxpage {
 	 * - the key size (II_FL_VARKEY is set)
 	 * - the record size (II_FL_VARREC is set)
 	 *
-	 * For the time being, we only support fixed-size key & record. */
-	char	lip_entries[0];
+	 * For the time being, we only support fixed-size key & record.
+	 */
+	char	lip_entries[];
 };
 
 #define LIP_HDR_SIZE (offsetof(struct lu_idxpage, lip_entries))
@@ -3313,10 +3338,9 @@ struct link_ea_header {
  * Stored in this crazy struct for maximum packing and endian-neutrality
  */
 struct link_ea_entry {
-        /** __u16 stored big-endian, unaligned */
-        unsigned char      lee_reclen[2];
-        unsigned char      lee_parent_fid[sizeof(struct lu_fid)];
-        char               lee_name[0];
+	unsigned char      lee_reclen[2]; /* __u16 big-endian, unaligned */
+	unsigned char      lee_parent_fid[sizeof(struct lu_fid)];
+	char               lee_name[];
 } __attribute__((packed));
 
 /** fid2path request/reply structure */
@@ -3326,8 +3350,8 @@ struct getinfo_fid2path {
 	__u32		gf_linkno;
 	__u32		gf_pathlen;
 	union {
-		char		gf_path[0];
-		struct lu_fid	gf_root_fid[0];
+		DECLARE_FLEX_ARRAY(char, gf_path);
+		DECLARE_FLEX_ARRAY(struct lu_fid, gf_root_fid);
 	} gf_u;
 } __attribute__((packed));
 
@@ -3336,7 +3360,7 @@ struct getparent {
 	struct lu_fid	gp_fid;         /**< parent FID */
 	__u32		gp_linkno;	/**< hardlink number */
 	__u32		gp_name_size;   /**< size of the name field */
-	char		gp_name[0];     /**< zero-terminated link name */
+	char		gp_name[];      /**< zero-terminated link name */
 } __attribute__((packed));
 
 enum layout_intent_opc {
@@ -3443,7 +3467,7 @@ struct object_update_param {
 	__u16	oup_len;	/* length of this parameter */
 	__u16	oup_padding;
 	__u32	oup_padding2;
-	char	oup_buf[0];
+	char	oup_buf[];
 } __attribute__((packed));
 
 /* object update */
@@ -3455,7 +3479,7 @@ struct object_update {
 	__u32		ou_padding1;		/* padding 1 */
 	__u64		ou_batchid;		/* op transno on master */
 	struct lu_fid	ou_fid;			/* object to be updated */
-	struct object_update_param ou_params[0]; /* update params */
+	struct object_update_param ou_params[]; /* update params */
 };
 
 #define	UPDATE_REQUEST_MAGIC_V1	0xBDDE0001
@@ -3466,7 +3490,7 @@ struct object_update_request {
 	__u32			ourq_magic;
 	__u16			ourq_count;	/* number of ourq_updates[] */
 	__u16			ourq_padding;
-	struct object_update	ourq_updates[0];
+	struct object_update	ourq_updates[];
 };
 
 #define OUT_UPDATE_HEADER_MAGIC		0xBDDF0001
@@ -3477,7 +3501,7 @@ struct out_update_header {
 	__u32		ouh_count;
 	__u32		ouh_inline_length;
 	__u32		ouh_reply_size;
-	__u32		ouh_inline_data[0];
+	__u32		ouh_inline_data[];
 };
 
 struct out_update_buffer {
@@ -3490,7 +3514,7 @@ struct object_update_result {
 	__u32   our_rc;
 	__u16   our_datalen;
 	__u16   our_padding;
-	__u32   our_data[0];
+	__u32   our_data[];
 };
 
 #define UPDATE_REPLY_MAGIC_V1	0x00BD0001
@@ -3501,7 +3525,7 @@ struct object_update_reply {
 	__u32	ourp_magic;
 	__u16	ourp_count;
 	__u16	ourp_padding;
-	__u16	ourp_lens[0];
+	__u16	ourp_lens[];
 };
 
 /* read update result */
@@ -3509,7 +3533,7 @@ struct out_read_reply {
 	__u32	orr_size;
 	__u32	orr_padding;
 	__u64	orr_offset;
-	char	orr_data[0];
+	char	orr_data[];
 };
 
 /** layout swap request structure
@@ -3550,11 +3574,11 @@ struct update_op {
 } __attribute__((packed));
 
 struct update_ops {
-	struct update_op	uops_op[0];
+	DECLARE_FLEX_ARRAY(struct update_op, uops_op);
 };
 
 struct update_params {
-	struct object_update_param	up_params[0];
+	DECLARE_FLEX_ARRAY(struct object_update_param, up_params);
 };
 
 enum update_records_flag {
@@ -3660,8 +3684,9 @@ union nodemap_rec {
  */
 typedef struct netobj_s {
 	__u32 len;
-	__u8 data[0];
+	__u8 data[];
 } netobj_t;
+
 
 typedef struct rawobj_s {
 	__u32 len;
@@ -3749,7 +3774,7 @@ struct ladvise_hdr {
 	__u32			lah_value1;	/* unused */
 	__u32			lah_value2;	/* unused */
 	__u64			lah_value3;	/* unused */
-	struct lu_ladvise	lah_advise[0];	/* advices in this header */
+	struct lu_ladvise	lah_advise[];	/* advices in this header */
 };
 
 #if defined(__cplusplus)
