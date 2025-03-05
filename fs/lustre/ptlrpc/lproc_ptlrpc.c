@@ -906,7 +906,7 @@ ptlrpc_lprocfs_svc_req_history_start(struct seq_file *s, loff_t *pos)
 	struct ptlrpc_srh_iterator	*srhi;
 	unsigned int			cpt;
 	int				rc;
-	int				i;
+	__u64				i;
 
 	if (sizeof(loff_t) != sizeof(__u64)) { /* can't support */
 		CWARN("Failed to read request history because size of loff_t "
