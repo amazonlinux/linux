@@ -72,6 +72,23 @@ TRACE_EVENT_CONDITION(damos_before_apply,
 			__entry->nr_accesses, __entry->age)
 );
 
+TRACE_EVENT(damon_monitor_intervals_score,
+
+	TP_PROTO(unsigned long score_bp),
+
+	TP_ARGS(score_bp),
+
+	TP_STRUCT__entry(
+		__field(unsigned long, score_bp)
+	),
+
+	TP_fast_assign(
+		__entry->score_bp = score_bp;
+	),
+
+	TP_printk("score_bp=%lu", __entry->score_bp)
+);
+
 TRACE_EVENT(damon_monitor_intervals_tune,
 
 	TP_PROTO(unsigned long sample_us),

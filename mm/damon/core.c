@@ -1670,6 +1670,7 @@ static unsigned long damon_get_intervals_adaptation_bp(struct damon_ctx *c)
 
 	pr_info("score_bp %lu, adaptation bp %lu\n", score_bp, adaptation_bp);
 
+	trace_damon_monitor_intervals_score(score_bp);
 	return adaptation_bp;
 }
 
