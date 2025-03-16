@@ -13,3 +13,12 @@ config CRYPTO_FIPS140_EXTMOD
 	  those provided by this module.
 
 	  If unsure, say N.
+config CRYPTO_FIPS140_HMAC_KEY
+	string "FIPS 140-3 external module HMAC key"
+	depends on CRYPTO_FIPS140_EXTMOD
+	default "Sphinx of black quartz, judge my vow"
+	help
+	  This is the HMAC key used to build and verify the integrity of
+	  the FIPS module.
+
+	  Must be at least 14 characters.
