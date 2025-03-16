@@ -7,6 +7,7 @@
 
 #define INCLUDE_VERMAGIC
 
+#include <crypto/api.h>
 #include <linux/export.h>
 #include <linux/extable.h>
 #include <linux/moduleloader.h>
@@ -2956,6 +2957,24 @@ static int post_relocation(struct module *mod, const struct load_info *info)
 	return module_finalize(info->hdr, info->sechdrs, mod);
 }
 
+static void do_crypto_api(struct load_info *info)
+{
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	struct crypto_api_key *crypto_api_keys;
+	unsigned int num_crypto_api_keys;
+
+	unsigned int i;
+
+	crypto_api_keys = section_objs(info, "__crypto_api_keys",
+		sizeof(*crypto_api_keys), &num_crypto_api_keys);
+
+	for (i = 0; i < num_crypto_api_keys; ++i) {
+		struct crypto_api_key *key = &crypto_api_keys[i];
+		__static_call_update(key->key, key->tramp, key->func);
+	}
+#endif
+}
+
 /* Call module constructors. */
 static void do_mod_ctors(struct module *mod)
 {
@@ -3010,7 +3029,7 @@ module_param(async_probe, bool, 0644);
  * Keep it uninlined to provide a reliable breakpoint target, e.g. for the gdb
  * helper command 'lx-symbols'.
  */
-static noinline int do_init_module(struct module *mod, int flags)
+static noinline int do_init_module(struct load_info *info, struct module *mod, int flags)
 {
 	int ret = 0;
 	struct mod_initfree *freeinit;
@@ -3035,6 +3054,9 @@ static noinline int do_init_module(struct module *mod, int flags)
 	freeinit->init_text = mod->mem[MOD_INIT_TEXT].base;
 	freeinit->init_data = mod->mem[MOD_INIT_DATA].base;
 	freeinit->init_rodata = mod->mem[MOD_INIT_RODATA].base;
+
+	if (flags & MODULE_INIT_MEM)
+		do_crypto_api(info);
 
 	do_mod_ctors(mod);
 	/* Start the module */
@@ -3498,7 +3520,7 @@ static int _load_module(struct load_info *info, const char __user *uargs,
 	/* Done! */
 	trace_module_load(mod);
 
-	return do_init_module(mod, flags);
+	return do_init_module(info, mod, flags);
 
  sysfs_cleanup:
 	mod_sysfs_teardown(mod);
