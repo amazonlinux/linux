@@ -780,8 +780,8 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct ladvise_hdr *)0)->lah_value3));
 	LASSERTF((int)offsetof(struct ladvise_hdr, lah_advise) == 32, "found %lld\n",
 		 (long long)(int)offsetof(struct ladvise_hdr, lah_advise));
-	LASSERTF((int)sizeof(((struct ladvise_hdr *)0)->lah_advise) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct ladvise_hdr *)0)->lah_advise));
+	LASSERTF((int)sizeof(*((struct ladvise_hdr *)0)->lah_advise) == 32, "found %lld\n",
+		 (long long)(int)sizeof(*((struct ladvise_hdr *)0)->lah_advise));
 	BUILD_BUG_ON(LF_ASYNC != 0x00000001);
 	BUILD_BUG_ON(LF_UNSET != 0x00000002);
 	BUILD_BUG_ON(LADVISE_MAGIC != 0x1adf1ce0);
@@ -4842,8 +4842,8 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct link_ea_entry *)0)->lee_parent_fid));
 	LASSERTF((int)offsetof(struct link_ea_entry, lee_name) == 18, "found %lld\n",
 		 (long long)(int)offsetof(struct link_ea_entry, lee_name));
-	LASSERTF((int)sizeof(((struct link_ea_entry *)0)->lee_name) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct link_ea_entry *)0)->lee_name));
+	LASSERTF((int)sizeof(*((struct link_ea_entry *)0)->lee_name) == 1, "found %lld\n",
+		 (long long)(int)sizeof(*((struct link_ea_entry *)0)->lee_name));
 
 	/* Checks for struct layout_intent */
 	LASSERTF((int)sizeof(struct layout_intent) == 24, "found %lld\n",
@@ -4908,8 +4908,8 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct hsm_action_item *)0)->hai_gid));
 	LASSERTF((int)offsetof(struct hsm_action_item, hai_data) == 72, "found %lld\n",
 		 (long long)(int)offsetof(struct hsm_action_item, hai_data));
-	LASSERTF((int)sizeof(((struct hsm_action_item *)0)->hai_data) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct hsm_action_item *)0)->hai_data));
+	LASSERTF((int)sizeof(*((struct hsm_action_item *)0)->hai_data) == 1, "found %lld\n",
+		 (long long)(int)sizeof(*((struct hsm_action_item *)0)->hai_data));
 
 	/* Checks for struct hsm_action_list */
 	LASSERTF((int)sizeof(struct hsm_action_list) == 32, "found %lld\n",
@@ -4940,8 +4940,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct hsm_action_list *)0)->padding1));
 	LASSERTF((int)offsetof(struct hsm_action_list, hal_fsname) == 32, "found %lld\n",
 		 (long long)(int)offsetof(struct hsm_action_list, hal_fsname));
-	LASSERTF((int)sizeof(((struct hsm_action_list *)0)->hal_fsname) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct hsm_action_list *)0)->hal_fsname));
+	BUILD_BUG_ON(offsetof(struct hsm_action_list, hal_fsname) != sizeof(struct hsm_action_list));
 
 	/* Checks for struct hsm_progress */
 	LASSERTF((int)sizeof(struct hsm_progress) == 48, "found %lld\n",
@@ -5154,8 +5153,8 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct hsm_user_request *)0)->hur_request));
 	LASSERTF((int)offsetof(struct hsm_user_request, hur_user_item) == 24, "found %lld\n",
 		 (long long)(int)offsetof(struct hsm_user_request, hur_user_item));
-	LASSERTF((int)sizeof(((struct hsm_user_request *)0)->hur_user_item) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct hsm_user_request *)0)->hur_user_item));
+	LASSERTF((int)sizeof(*((struct hsm_user_request *)0)->hur_user_item) == 32, "found %lld\n",
+		 (long long)(int)sizeof(*((struct hsm_user_request *)0)->hur_user_item));
 
 	/* Checks for struct hsm_user_import */
 	LASSERTF((int)sizeof(struct hsm_user_import) == 48, "found %lld\n",
@@ -5206,8 +5205,8 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct netobj_s *)0)->len));
 	LASSERTF((int)offsetof(struct netobj_s, data) == 4, "found %lld\n",
 		 (long long)(int)offsetof(struct netobj_s, data));
-	LASSERTF((int)sizeof(((struct netobj_s *)0)->data) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct netobj_s *)0)->data));
+	LASSERTF((int)sizeof(*((struct netobj_s *)0)->data) == 1, "found %lld\n",
+		 (long long)(int)sizeof(*((struct netobj_s *)0)->data));
 
 	/* Checks for struct rawobj_s */
 	LASSERTF((int)sizeof(struct rawobj_s) == 16, "found %lld\n",
@@ -5408,8 +5407,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct object_update_param *)0)->oup_padding2));
 	LASSERTF((int)offsetof(struct object_update_param, oup_buf) == 8, "found %lld\n",
 		 (long long)(int)offsetof(struct object_update_param, oup_buf));
-	LASSERTF((int)sizeof(((struct object_update_param *)0)->oup_buf) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct object_update_param *)0)->oup_buf));
+	BUILD_BUG_ON(offsetof(struct object_update_param, oup_buf) != sizeof(struct object_update_param));
 
 	/* Checks for struct object_update */
 	LASSERTF((int)sizeof(struct object_update) == 40, "found %lld\n",
@@ -5444,8 +5442,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct object_update *)0)->ou_fid));
 	LASSERTF((int)offsetof(struct object_update, ou_params) == 40, "found %lld\n",
 		 (long long)(int)offsetof(struct object_update, ou_params));
-	LASSERTF((int)sizeof(((struct object_update *)0)->ou_params) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct object_update *)0)->ou_params));
+	BUILD_BUG_ON(offsetof(struct object_update, ou_params) != sizeof(struct object_update));
 	BUILD_BUG_ON(UPDATE_FL_OST != 0x00000001);
 	BUILD_BUG_ON(UPDATE_FL_SYNC != 0x00000002);
 	BUILD_BUG_ON(UPDATE_FL_COMMITTED != 0x00000004);
@@ -5468,8 +5465,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct object_update_request *)0)->ourq_padding));
 	LASSERTF((int)offsetof(struct object_update_request, ourq_updates) == 8, "found %lld\n",
 		 (long long)(int)offsetof(struct object_update_request, ourq_updates));
-	LASSERTF((int)sizeof(((struct object_update_request *)0)->ourq_updates) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct object_update_request *)0)->ourq_updates));
+	BUILD_BUG_ON(offsetof(struct object_update_request, ourq_updates) != sizeof(struct object_update_request));
 	BUILD_BUG_ON(UPDATE_REQUEST_MAGIC != 0xBDDE0002);
 
 	/* Checks for struct object_update_result */
@@ -5489,8 +5485,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct object_update_result *)0)->our_padding));
 	LASSERTF((int)offsetof(struct object_update_result, our_data) == 8, "found %lld\n",
 		 (long long)(int)offsetof(struct object_update_result, our_data));
-	LASSERTF((int)sizeof(((struct object_update_result *)0)->our_data) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct object_update_result *)0)->our_data));
+	BUILD_BUG_ON(offsetof(struct object_update_result, our_data) != sizeof(struct object_update_result));
 
 	/* Checks for struct object_update_reply */
 	LASSERTF((int)sizeof(struct object_update_reply) == 8, "found %lld\n",
@@ -5509,8 +5504,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct object_update_reply *)0)->ourp_padding));
 	LASSERTF((int)offsetof(struct object_update_reply, ourp_lens) == 8, "found %lld\n",
 		 (long long)(int)offsetof(struct object_update_reply, ourp_lens));
-	LASSERTF((int)sizeof(((struct object_update_reply *)0)->ourp_lens) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct object_update_reply *)0)->ourp_lens));
+	BUILD_BUG_ON(offsetof(struct object_update_reply, ourp_lens) != sizeof(struct object_update_reply));
 	BUILD_BUG_ON(UPDATE_REPLY_MAGIC != 0x00BD0002);
 
 	/* Checks for struct out_update_header */
@@ -5534,8 +5528,7 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct out_update_header *)0)->ouh_reply_size));
 	LASSERTF((int)offsetof(struct out_update_header, ouh_inline_data) == 16, "found %lld\n",
 		 (long long)(int)offsetof(struct out_update_header, ouh_inline_data));
-	LASSERTF((int)sizeof(((struct out_update_header *)0)->ouh_inline_data) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct out_update_header *)0)->ouh_inline_data));
+	BUILD_BUG_ON(offsetof(struct out_update_header, ouh_inline_data) != sizeof(struct out_update_header));
 	BUILD_BUG_ON(OUT_UPDATE_HEADER_MAGIC != 0xBDDF0001);
 	BUILD_BUG_ON(OUT_UPDATE_MAX_INLINE_SIZE != 4096);
 
@@ -5871,8 +5864,8 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(struct update_params));
 	LASSERTF((int)offsetof(struct update_params, up_params) == 0, "found %lld\n",
 		 (long long)(int)offsetof(struct update_params, up_params));
-	LASSERTF((int)sizeof(((struct update_params *)0)->up_params) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct update_params *)0)->up_params));
+	LASSERTF((int)sizeof(*((struct update_params *)0)->up_params) == 8, "found %lld\n",
+		 (long long)(int)sizeof(*((struct update_params *)0)->up_params));
 
 	/* Checks for struct update_op */
 	LASSERTF((int)sizeof(struct update_op) == 20, "found %lld\n",
@@ -5891,14 +5884,16 @@ void lustre_assert_wire_constants(void)
 		 (long long)(int)sizeof(((struct update_op *)0)->uop_param_count));
 	LASSERTF((int)offsetof(struct update_op, uop_params_off) == 20, "found %lld\n",
 		 (long long)(int)offsetof(struct update_op, uop_params_off));
+	LASSERTF((int)sizeof(*((struct update_op *)0)->uop_params_off) == 2, "found %lld\n",
+		 (long long)(int)sizeof(*((struct update_op *)0)->uop_params_off));
 
 	/* Checks for struct update_ops */
 	LASSERTF((int)sizeof(struct update_ops) == 0, "found %lld\n",
 		 (long long)(int)sizeof(struct update_ops));
 	LASSERTF((int)offsetof(struct update_ops, uops_op) == 0, "found %lld\n",
 		 (long long)(int)offsetof(struct update_ops, uops_op));
-	LASSERTF((int)sizeof(((struct update_ops *)0)->uops_op) == 0, "found %lld\n",
-		 (long long)(int)sizeof(((struct update_ops *)0)->uops_op));
+	LASSERTF((int)sizeof(*((struct update_ops *)0)->uops_op) == 20, "found %lld\n",
+		 (long long)(int)sizeof(*((struct update_ops *)0)->uops_op));
 
 	/* Checks for struct update_records */
 	LASSERTF((int)sizeof(struct update_records) == 32, "found %lld\n",
