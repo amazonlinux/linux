@@ -1951,6 +1951,7 @@ ksocknal_handle_link_state_change(struct net_device *dev,
 	struct ksock_interface *ksi = NULL;
 	struct sockaddr_in *sa;
 	DECLARE_CONST_IN_IFADDR(ifa);
+	struct net *dev_netns = dev_net(dev);
 
 	ifindex = dev->ifindex;
 
@@ -1963,12 +1964,18 @@ ksocknal_handle_link_state_change(struct net_device *dev,
 		ksi = &net->ksnn_interface;
 		sa = (void *)&ksi->ksni_addr;
 		found_ip = false;
+		ni = net->ksnn_ni;
+
+		/* Skip devices from a different namespace */
+		if (!net_eq(dev_netns, ni->ni_net_ns)) {
+			CDEBUG(D_NET, "Skipping device %s from namespace %p (expected %p)\n",
+			       dev->name, dev_netns, ni->ni_net_ns);
+			continue;
+		}
 
 		if (ksi->ksni_index != ifindex ||
 		    strcmp(ksi->ksni_name, dev->name))
 			continue;
-
-		ni = net->ksnn_ni;
 
 		in_dev = __in_dev_get_rtnl(dev);
 		if (!in_dev) {
@@ -2017,6 +2024,7 @@ ksocknal_handle_inetaddr_change(struct in_ifaddr *ifa, unsigned long event)
 	int ifindex;
 	struct ksock_interface *ksi = NULL;
 	struct sockaddr_in *sa;
+	struct net *dev_netns = dev_net(event_netdev);
 
 	if (!ksocknal_data.ksnd_nnets)
 		goto out;
@@ -2028,6 +2036,14 @@ ksocknal_handle_inetaddr_change(struct in_ifaddr *ifa, unsigned long event)
 
 		ksi = &net->ksnn_interface;
 		sa = (void *)&ksi->ksni_addr;
+		ni = net->ksnn_ni;
+
+		/* Skip devices from a different namespace */
+		if (!net_eq(dev_netns, ni->ni_net_ns)) {
+			CDEBUG(D_NET, "Skipping device %s from namespace %p (expected %p)\n",
+			       event_netdev->name, dev_netns, ni->ni_net_ns);
+			continue;
+		}
 
 		if (ksi->ksni_index != ifindex ||
 		    strcmp(ksi->ksni_name, event_netdev->name))
@@ -2053,11 +2069,13 @@ static int ksocknal_device_event(struct notifier_block *unused,
 {
 	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
 	unsigned char operstate;
+	struct net *dev_netns = dev_net(dev);
 
 	operstate = dev->operstate;
 
-	CDEBUG(D_NET, "devevent: status=%ld, iface=%s ifindex %d state %u\n",
-	       event, dev->name, dev->ifindex, operstate);
+	CDEBUG(D_NET, "devevent: status=%s, iface=%s ifindex %d state %u ns %p \n",
+	       netdev_cmd_to_name(event), dev->name, dev->ifindex, operstate,
+	       dev_netns);
 
 	switch (event) {
 	case NETDEV_UP:
@@ -2077,9 +2095,11 @@ static int ksocknal_inetaddr_event(struct notifier_block *unused,
 				   unsigned long event, void *ptr)
 {
 	struct in_ifaddr *ifa = ptr;
+	struct net *dev_netns = dev_net(ifa->ifa_dev->dev);
 
-	CDEBUG(D_NET, "addrevent: status %ld ip addr %pI4, netmask %pI4.\n",
-	       event, &ifa->ifa_address, &ifa->ifa_mask);
+	CDEBUG(D_NET, "addrevent: status %s device %s, ip addr %pI4, netmask %pI4 ns %p.\n",
+		netdev_cmd_to_name(event), ifa->ifa_dev->dev->name,
+		&ifa->ifa_address, &ifa->ifa_mask, dev_netns);
 
 	switch (event) {
 	case NETDEV_UP:
