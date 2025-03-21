@@ -46,6 +46,9 @@
 /* Enable POSIX acl */
 #define CONFIG_LUSTRE_FS_POSIX_ACL 1
 
+/* 'ClearPageError()' replacement */
+/* #undef ClearPageError */
+
 /* name of ldiskfs debug program */
 #define DEBUGFS "debugfs"
 
@@ -439,6 +442,9 @@
 /* struct group_info has member gid */
 #define HAVE_GROUP_INFO_GID 1
 
+/* 'struct group_info.usage' is refcount_t */
+/* #undef HAVE_GROUP_INFO_USAGE_AS_REFCOUNT */
+
 /* Define this is if you enable gss */
 /* #undef HAVE_GSS */
 
@@ -755,6 +761,9 @@
 /* linux/stdarg.h is present */
 #define HAVE_LINUX_STDARG_HEADER 1
 
+/* linux/unaligned.h header is available */
+/* #undef HAVE_LINUX_UNALIGNED_HEADER */
+
 /* list_cmp_func_t type is defined */
 #define HAVE_LIST_CMP_FUNC_T 1
 
@@ -879,6 +888,9 @@
 /* 'pagevec_init' takes one parameter */
 #define HAVE_PAGEVEC_INIT_ONE_PARAM 1
 
+/* 'page_mapcount_is_type()' is available */
+/* #undef HAVE_PAGE_MAPCOUNT_IS_TYPE */
+
 /* linux/panic_notifier.h is present */
 #define HAVE_PANIC_NOTIFIER_H 1
 
@@ -890,6 +902,9 @@
 
 /* percpu_counter_init uses GFP_* flag */
 #define HAVE_PERCPU_COUNTER_INIT_GFP_FLAG 1
+
+/* 'PageError()()' is available */
+#define HAVE_PG_ERROR 1
 
 /* 'struct nsproxy' has 'pid_ns_for_children' */
 #define HAVE_PID_NS_FOR_CHILDREN 1
@@ -1039,6 +1054,9 @@
 /* kernel strscpy is available */
 #define HAVE_STRSCPY 1
 
+/* struct file has f_version */
+#define HAVE_STRUCT_FILE_F_VERSION 1
+
 /* struct file_lock_core exists */
 /* #undef HAVE_STRUCT_FILE_LOCK_CORE */
 
@@ -1183,6 +1201,9 @@
 /* 'wait_woken, is available' */
 #define HAVE_WAIT_WOKEN 1
 
+/* write_begin() takes folio */
+/* #undef HAVE_WRITE_BEGIN_FOLIO */
+
 /* kernel Xarray implementation lacks 'xa_is_value' */
 #define HAVE_XARRAY_SUPPORT 1
 
@@ -1240,6 +1261,9 @@
 /* ext4_journal_start takes 3 arguments */
 /* #undef JOURNAL_START_HAS_3ARGS */
 
+/* Use the kernel's built-in EFA driver */
+#define KERNEL_INCLUDE_RDMA_EFA 1
+
 /* Define this as the Kerberos version number */
 /* #undef KRB5_VERSION */
 
@@ -1265,7 +1289,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_564_g23706e3"
+#define LUSTRE_VERSION_STRING "2.15.6_595_g6d759c0_dirty"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1295,7 +1319,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_564_g23706e3"
+#define PACKAGE_STRING "Lustre 2.15.6_595_g6d759c0_dirty"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1304,10 +1328,13 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_564_g23706e3"
+#define PACKAGE_VERSION "2.15.6_595_g6d759c0_dirty"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
+
+/* 'PageError()' replacement */
+/* #undef PageError */
 
 /* enable randomly alloc failure */
 #define RANDOM_FAIL_ALLOC 1
@@ -1330,6 +1357,9 @@
 /* Define to 1 if you have the ANSI C header files. */
 #define STDC_HEADERS 1
 
+/* 'SetPageError()' replacement */
+/* #undef SetPageError */
+
 /* name of ldiskfs tune program */
 #define TUNE2FS "tune2fs"
 
@@ -1342,7 +1372,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_564_g23706e3"
+#define VERSION "2.15.6_595_g6d759c0_dirty"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) (value)
@@ -1365,6 +1395,9 @@
 /* 'struct iov_iter' has 'iov' member */
 #define __iov iov
 
+/* 'folio_test_mlocked()' replacement */
+#define folio_test_mlocked_page(pg) folio_test_mlocked(page_folio((pg)))
+
 /* get_random_u32() is not available, use prandom_u32 */
 /* #undef get_random_u32 */
 
@@ -1376,6 +1409,9 @@
 
 /* 'class_create' expects module arg */
 #define ll_class_create(name) class_create(THIS_MODULE, (name))
+
+/* need 'page_mapcount_is_type()' replacement */
+#define page_mapcount_is_type(count) (count < PAGE_MAPCOUNT_RESERVE + 1)
 
 /* function pde_data() unavailable */
 /* #undef pde_data */
