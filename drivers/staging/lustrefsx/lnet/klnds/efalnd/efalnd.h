@@ -23,7 +23,11 @@
 #include <lnet/lib-types.h>
 #include <lnet/lib-lnet.h>
 #include <lnet/lnet_rdma.h>
+#ifdef KERNEL_INCLUDE_RDMA_EFA
 #include <rdma/efa_verbs.h>
+#else
+#include <efa_verbs.h>
+#endif
 #include "efalnd-proto.h"
 
 #define EFALND_MAJOR_VER        1
