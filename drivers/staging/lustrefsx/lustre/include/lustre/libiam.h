@@ -78,7 +78,7 @@ int iam_creat(char *filename, enum iam_fmt_t fmt,
 int iam_open(char *filename, struct iam_uapi_info *ua);
 
 /*
- * Close file opened by iam_open. 
+ * Close file opened by iam_open.
  */
 int iam_close(int fd);
 
