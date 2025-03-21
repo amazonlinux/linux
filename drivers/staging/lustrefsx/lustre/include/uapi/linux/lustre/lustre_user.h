@@ -110,6 +110,29 @@ typedef struct stat     lstat_t;
 #define fstatat_f       fstatat
 #endif
 
+#ifndef DECLARE_FLEX_ARRAY
+#ifdef __cplusplus
+/* sizeof(struct{}) is 1 in C++, not 0, can't use C version of the macro. */
+#define DECLARE_FLEX_ARRAY(T, member) T member[0]
+#else
+/**
+ * DECLARE_FLEX_ARRAY() - Declare a flexible array usable in a union
+ *
+ * @TYPE: The type of each flexible array element
+ * @NAME: The name of the flexible array member
+ *
+ * In order to have a flexible array member in a union or alone in a
+ * struct, it needs to be wrapped in an anonymous struct with at least 1
+ * named member, but that member can be empty.
+ */
+#define DECLARE_FLEX_ARRAY(TYPE, NAME)	       \
+	struct {			       \
+		struct { } __empty_ ## NAME;   \
+		TYPE NAME[];		       \
+	}
+#endif
+#endif /* DECLARE_FLEX_ARRAY */
+
 #ifndef STATX_BASIC_STATS
 /*
  * Timestamp structure for the timestamps in struct statx.
@@ -549,7 +572,7 @@ struct ll_ioc_lease {
 	__u32		lil_mode;
 	__u32		lil_flags;
 	__u32		lil_count;
-	__u32		lil_ids[0];
+	__u32		lil_ids[];
 };
 
 struct ll_ioc_lease_id {
@@ -559,7 +582,7 @@ struct ll_ioc_lease_id {
 	__u16		lil_mirror_id;
 	__u16		lil_padding1;
 	__u64		lil_padding2;
-	__u32		lil_ids[0];
+	__u32		lil_ids[];
 };
 
 /*
@@ -820,7 +843,7 @@ struct lov_user_md_v1 {           /* LOV EA user data (host-endian) */
 		__u16 lmm_layout_gen;     /* layout generation number
 					   * used when reading */
 	};
-	struct lov_user_ost_data_v1 lmm_objects[0]; /* per-stripe data */
+	struct lov_user_ost_data_v1 lmm_objects[]; /* per-stripe data */
 } __attribute__((packed, __may_alias__));
 
 struct lov_user_md_v3 {           /* LOV EA user data (host-endian) */
@@ -836,7 +859,7 @@ struct lov_user_md_v3 {           /* LOV EA user data (host-endian) */
 					   * used when reading */
 	};
 	char  lmm_pool_name[LOV_MAXPOOLNAME + 1]; /* pool name */
-	struct lov_user_ost_data_v1 lmm_objects[0]; /* per-stripe data */
+	struct lov_user_ost_data_v1 lmm_objects[]; /* per-stripe data */
 } __attribute__((packed, __may_alias__));
 
 struct lov_foreign_md {
@@ -986,7 +1009,7 @@ struct lov_comp_md_v1 {
 	__u16	lcm_mirror_count;
 	__u16	lcm_padding1[3];
 	__u64	lcm_padding2;
-	struct lov_comp_md_entry_v1 lcm_entries[0];
+	struct lov_comp_md_entry_v1 lcm_entries[];
 } __attribute__((packed));
 
 static inline __u32 lov_user_md_size(__u16 stripes, __u32 lmm_magic)
@@ -1399,7 +1422,7 @@ struct identity_downcall_data {
 	__u32                            idd_nperms;
 	__u32                            idd_ngroups;
 	struct perm_downcall_data idd_perms[N_PERMS_MAX];
-	__u32                            idd_groups[0];
+	__u32                            idd_groups[];
 };
 
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 16, 53, 0)
@@ -1409,7 +1432,7 @@ struct sepol_downcall_data_old {
 	__u32		sdd_magic;
 	__s64		sdd_sepol_mtime;
 	__u16		sdd_sepol_len;
-	char		sdd_sepol[0];
+	char		sdd_sepol[];
 };
 #endif
 
@@ -1419,7 +1442,7 @@ struct sepol_downcall_data {
 	__u16		sdd_sepol_len;
 	__u16		sdd_padding1;
 	__s64		sdd_sepol_mtime;
-	char		sdd_sepol[0];
+	char		sdd_sepol[];
 };
 
 #ifdef NEED_QUOTA_DEFS
@@ -2376,7 +2399,7 @@ struct hsm_user_item {
 
 struct hsm_user_request {
 	struct hsm_request	hur_request;
-	struct hsm_user_item	hur_user_item[0];
+	struct hsm_user_item	hur_user_item[];
 	/* extra data blob at end of struct (after all
 	 * hur_user_items), only use helpers to access it
 	 */
@@ -2448,7 +2471,7 @@ struct hsm_action_item {
 	struct hsm_extent hai_extent;  /* byte range to operate on */
 	__u64      hai_cookie;  /* action cookie from coordinator */
 	__u64      hai_gid;     /* grouplock id */
-	char       hai_data[0]; /* variable length */
+	char       hai_data[];  /* variable length */
 } __attribute__((packed));
 
 /**
@@ -2491,7 +2514,7 @@ struct hsm_action_list {
 	__u64 hal_flags;
 	__u32 hal_archive_id; /* which archive backend */
 	__u32 padding1;
-	char  hal_fsname[0];   /* null-terminated */
+	char  hal_fsname[];   /* null-terminated */
 	/* struct hsm_action_item[hal_count] follows, aligned on 8-byte
 	   boundaries. See hai_zero */
 } __attribute__((packed));
@@ -2619,7 +2642,7 @@ struct llapi_ladvise_hdr {
 	__u32			lah_value1;	/* unused */
 	__u32			lah_value2;	/* unused */
 	__u64			lah_value3;	/* unused */
-	struct llapi_lu_ladvise	lah_advise[0];	/* advices in this header */
+	struct llapi_lu_ladvise	lah_advise[];	/* advices in this header */
 };
 
 #define LAH_COUNT_MAX	(1024)
@@ -2694,7 +2717,7 @@ enum obd_heat_type {
 struct lu_heat {
 	__u32 lh_count;
 	__u32 lh_flags;
-	__u64 lh_heat[0];
+	__u64 lh_heat[];
 };
 
 enum lu_pcc_type {
@@ -2771,7 +2794,7 @@ struct fid_array {
 	/* make header's size equal lu_fid */
 	__u32 fa_padding0;
 	__u64 fa_padding1;
-	struct lu_fid fa_fids[0];
+	struct lu_fid fa_fids[];
 };
 #define OBD_MAX_FIDS_IN_ARRAY	4096
 
@@ -2802,7 +2825,7 @@ struct ll_foreign_symlink_upcall_item {
 				/* internal storage of constant string */
 				char *string;
 				/* upcall stores constant string in a raw */
-				char bytestring[0];
+				DECLARE_FLEX_ARRAY(char, bytestring);
 			};
 		};
 	};
