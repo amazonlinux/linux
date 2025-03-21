@@ -44,6 +44,9 @@
 /* Enable POSIX acl */
 #undef CONFIG_LUSTRE_FS_POSIX_ACL
 
+/* 'ClearPageError()' replacement */
+#undef ClearPageError
+
 /* name of ldiskfs debug program */
 #undef DEBUGFS
 
@@ -437,6 +440,9 @@
 /* struct group_info has member gid */
 #undef HAVE_GROUP_INFO_GID
 
+/* 'struct group_info.usage' is refcount_t */
+#undef HAVE_GROUP_INFO_USAGE_AS_REFCOUNT
+
 /* Define this is if you enable gss */
 #undef HAVE_GSS
 
@@ -753,6 +759,9 @@
 /* linux/stdarg.h is present */
 #undef HAVE_LINUX_STDARG_HEADER
 
+/* linux/unaligned.h header is available */
+#undef HAVE_LINUX_UNALIGNED_HEADER
+
 /* list_cmp_func_t type is defined */
 #undef HAVE_LIST_CMP_FUNC_T
 
@@ -877,6 +886,9 @@
 /* 'pagevec_init' takes one parameter */
 #undef HAVE_PAGEVEC_INIT_ONE_PARAM
 
+/* 'page_mapcount_is_type()' is available */
+#undef HAVE_PAGE_MAPCOUNT_IS_TYPE
+
 /* linux/panic_notifier.h is present */
 #undef HAVE_PANIC_NOTIFIER_H
 
@@ -888,6 +900,9 @@
 
 /* percpu_counter_init uses GFP_* flag */
 #undef HAVE_PERCPU_COUNTER_INIT_GFP_FLAG
+
+/* 'PageError()()' is available */
+#undef HAVE_PG_ERROR
 
 /* 'struct nsproxy' has 'pid_ns_for_children' */
 #undef HAVE_PID_NS_FOR_CHILDREN
@@ -1037,6 +1052,9 @@
 /* kernel strscpy is available */
 #undef HAVE_STRSCPY
 
+/* struct file has f_version */
+#undef HAVE_STRUCT_FILE_F_VERSION
+
 /* struct file_lock_core exists */
 #undef HAVE_STRUCT_FILE_LOCK_CORE
 
@@ -1181,6 +1199,9 @@
 /* 'wait_woken, is available' */
 #undef HAVE_WAIT_WOKEN
 
+/* write_begin() takes folio */
+#undef HAVE_WRITE_BEGIN_FOLIO
+
 /* kernel Xarray implementation lacks 'xa_is_value' */
 #undef HAVE_XARRAY_SUPPORT
 
@@ -1237,6 +1258,9 @@
 
 /* ext4_journal_start takes 3 arguments */
 #undef JOURNAL_START_HAS_3ARGS
+
+/* Use the kernel's built-in EFA driver */
+#undef KERNEL_INCLUDE_RDMA_EFA
 
 /* Define this as the Kerberos version number */
 #undef KRB5_VERSION
@@ -1307,6 +1331,9 @@
 /* name of parallel fsck program */
 #undef PFSCK
 
+/* 'PageError()' replacement */
+#undef PageError
+
 /* enable randomly alloc failure */
 #undef RANDOM_FAIL_ALLOC
 
@@ -1327,6 +1354,9 @@
 
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
+
+/* 'SetPageError()' replacement */
+#undef SetPageError
 
 /* name of ldiskfs tune program */
 #undef TUNE2FS
@@ -1363,6 +1393,9 @@
 /* 'struct iov_iter' has 'iov' member */
 #undef __iov
 
+/* 'folio_test_mlocked()' replacement */
+#undef folio_test_mlocked_page
+
 /* get_random_u32() is not available, use prandom_u32 */
 #undef get_random_u32
 
@@ -1374,6 +1407,9 @@
 
 /* 'class_create' expects module arg */
 #undef ll_class_create
+
+/* need 'page_mapcount_is_type()' replacement */
+#undef page_mapcount_is_type
 
 /* function pde_data() unavailable */
 #undef pde_data
