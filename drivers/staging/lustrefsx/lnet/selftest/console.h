@@ -72,7 +72,7 @@ struct lstcon_group {
 
 	struct list_head	grp_trans_list;	/* transaction list */
 	struct list_head	grp_ndl_list;	/* nodes list */
-	struct list_head	grp_ndl_hash[0];/* hash table for nodes */
+	struct list_head	grp_ndl_hash[]; /* hash table for nodes */
 };
 
 #define LST_BATCH_IDLE          0xB0            /* idle batch */
@@ -120,22 +120,19 @@ struct lstcon_test {
 	struct list_head	tes_link;
 	/* pointer to batch */
 	struct lstcon_batch	*tes_batch;
-
-        int                   tes_type;       /* type of the test, i.e: bulk, ping */
-        int                   tes_stop_onerr; /* stop on error */
-        int                   tes_oneside;    /* one-sided test */
-        int                   tes_concur;     /* concurrency */
-        int                   tes_loop;       /* loop count */
-        int                   tes_dist;       /* nodes distribution of target group */
-        int                   tes_span;       /* nodes span of target group */
-        int                   tes_cliidx;     /* client index, used for RPC creating */
-
-	struct list_head	tes_trans_list;	/* transaction list */
-	struct lstcon_group	*tes_src_grp;	/* group run the test */
-	struct lstcon_group	*tes_dst_grp;	/* target group */
-
-        int                   tes_paramlen;   /* test parameter length */
-        char                  tes_param[0];   /* test parameter */
+	int			tes_type;       /* type of the test, i.e: bulk, ping */
+	int			tes_stop_onerr; /* stop on error */
+	int			tes_oneside;    /* one-sided test */
+	int			tes_concur;     /* concurrency */
+	int			tes_loop;       /* loop count */
+	int			tes_dist;       /* nodes distribution of target group */
+	int			tes_span;       /* nodes span of target group */
+	int			tes_cliidx;     /* client index, used for RPC creating */
+	struct list_head	tes_trans_list; /* transaction list */
+	struct lstcon_group	*tes_src_grp;   /* group run the test */
+	struct lstcon_group	*tes_dst_grp;   /* target group */
+	int			tes_paramlen;   /* test parameter length */
+	char			tes_param[];    /* test parameter */
 };
 
 #define LST_GLOBAL_HASHSIZE     503             /* global nodes hash table size */
