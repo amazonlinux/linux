@@ -959,7 +959,7 @@ struct lnet_rtrbufpool {
 struct lnet_rtrbuf {
 	struct list_head	 rb_list;	/* chain on rbp_bufs */
 	struct lnet_rtrbufpool	*rb_pool;	/* owning pool */
-	struct bio_vec		 rb_kiov[0];	/* the buffer space */
+	struct bio_vec		 rb_kiov[];	/* the buffer space */
 };
 
 #define LNET_PEER_HASHSIZE   503		/* prime! */
@@ -1046,7 +1046,7 @@ struct lnet_portal {
 	/* # active entries for this portal */
 	int			ptl_mt_nmaps;
 	/* array of active entries' cpu-partition-id */
-	int			ptl_mt_maps[0];
+	int			ptl_mt_maps[];
 };
 
 #define LNET_LH_HASH_BITS	12
