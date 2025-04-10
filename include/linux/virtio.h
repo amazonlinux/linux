@@ -175,6 +175,8 @@ int virtio_device_restore(struct virtio_device *dev);
  *    changes; may be called in interrupt context.
  * @freeze: optional function to call during suspend/hibernation.
  * @restore: optional function to call on resume.
+ * @shutdown: synchronize with the device on shutdown. If provided, replaces
+ *    the virtio core implementation.
  */
 struct virtio_driver {
 	struct device_driver driver;
@@ -192,6 +194,7 @@ struct virtio_driver {
 	int (*freeze)(struct virtio_device *dev);
 	int (*restore)(struct virtio_device *dev);
 #endif
+	void (*shutdown)(struct virtio_device *dev);
 };
 
 static inline struct virtio_driver *drv_to_virtio(struct device_driver *drv)
