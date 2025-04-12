@@ -2015,7 +2015,7 @@ bool bpf_jit_supports_kfunc_call(void)
 
 void *bpf_arch_text_copy(void *dst, void *src, size_t len)
 {
-	if (!aarch64_insn_copy(dst, src, len))
+	if (!text_poke(dst, src, len))
 		return ERR_PTR(-EINVAL);
 	return dst;
 }
