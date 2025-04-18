@@ -1,6 +1,6 @@
 /*
  *    driver for Microchip PQI-based storage controllers
- *    Copyright (c) 2019-2021 Microchip Technology Inc. and its subsidiaries
+ *    Copyright (c) 2019-2023 Microchip Technology Inc. and its subsidiaries
  *    Copyright (c) 2016-2018 Microsemi Corporation
  *    Copyright (c) 2016 PMC-Sierra, Inc.
  *
@@ -582,4 +582,3 @@ struct sas_function_template pqi_sas_transport_functions = {
 	.set_phy_speed = pqi_sas_phy_speed,
 	.smp_handler = PQI_SAS_SMP_HANDLER,
 };
-
