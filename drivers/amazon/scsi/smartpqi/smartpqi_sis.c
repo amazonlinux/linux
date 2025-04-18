@@ -1,6 +1,6 @@
 /*
  *    driver for Microchip PQI-based storage controllers
- *    Copyright (c) 2019-2021 Microchip Technology Inc. and its subsidiaries
+ *    Copyright (c) 2019-2023 Microchip Technology Inc. and its subsidiaries
  *    Copyright (c) 2016-2018 Microsemi Corporation
  *    Copyright (c) 2016 PMC-Sierra, Inc.
  *
@@ -37,6 +37,7 @@
 #define SIS_ENABLE_INTX				0x80
 #define SIS_SOFT_RESET				0x100
 #define SIS_CMD_READY				0x200
+#define SIS_NOTIFY_KDUMP			0x400
 #define SIS_TRIGGER_SHUTDOWN			0x800000
 #define SIS_PQI_RESET_QUIESCE			0x1000000
 
@@ -60,6 +61,8 @@
 #define SIS_BASE_STRUCT_ALIGNMENT		16
 
 #define SIS_CTRL_KERNEL_FW_TRIAGE		0x3
+#define SIS_CTRL_KERNEL_CTRL_LOGGING		0x4
+#define SIS_CTRL_KERNEL_CTRL_LOGGING_STATUS	0x18
 #define SIS_CTRL_KERNEL_UP			0x80
 #define SIS_CTRL_KERNEL_PANIC			0x100
 #if TORTUGA
@@ -75,6 +78,13 @@ enum sis_fw_triage_status {
 	FW_TRIAGE_STARTED,
 	FW_TRIAGE_COND_INVALID,
 	FW_TRIAGE_COMPLETED
+};
+
+enum sis_ctrl_logging_status {
+	CTRL_LOGGING_NOT_STARTED = 0,
+	CTRL_LOGGING_STARTED,
+	CTRL_LOGGING_COND_INVALID,
+	CTRL_LOGGING_COMPLETED
 };
 
 #pragma pack(1)
@@ -454,6 +464,21 @@ static inline enum sis_fw_triage_status
 		SIS_CTRL_KERNEL_FW_TRIAGE));
 }
 
+bool sis_is_ctrl_logging_supported(struct pqi_ctrl_info *ctrl_info)
+{
+	return readl(&ctrl_info->registers->sis_firmware_status) & SIS_CTRL_KERNEL_CTRL_LOGGING;
+}
+
+void sis_notify_kdump(struct pqi_ctrl_info *ctrl_info)
+{
+	sis_set_doorbell_bit(ctrl_info, SIS_NOTIFY_KDUMP);
+}
+
+static inline enum sis_ctrl_logging_status sis_read_ctrl_logging_status(struct pqi_ctrl_info *ctrl_info)
+{
+	return ((enum sis_ctrl_logging_status)((readl(&ctrl_info->registers->sis_firmware_status) & SIS_CTRL_KERNEL_CTRL_LOGGING_STATUS) >> 3));
+}
+
 void sis_soft_reset(struct pqi_ctrl_info *ctrl_info)
 {
 	writel(SIS_SOFT_RESET,
@@ -494,7 +519,41 @@ int sis_wait_for_fw_triage_completion(struct pqi_ctrl_info *ctrl_info)
 	}
 
 	return rc;
+}
 
+#define SIS_CTRL_LOGGING_STATUS_TIMEOUT_SECS		180
+#define SIS_CTRL_LOGGING_STATUS_POLL_INTERVAL_SECS	1
+
+int sis_wait_for_ctrl_logging_completion(struct pqi_ctrl_info *ctrl_info)
+{
+	int rc;
+	enum sis_ctrl_logging_status status;
+	unsigned long timeout;
+
+	timeout = (SIS_CTRL_LOGGING_STATUS_TIMEOUT_SECS * HZ) + jiffies;
+	while (1) {
+		status = sis_read_ctrl_logging_status(ctrl_info);
+		if (status == CTRL_LOGGING_COND_INVALID) {
+			dev_err(&ctrl_info->pci_dev->dev,
+				"controller data logging condition invalid\n");
+			rc = -EINVAL;
+			break;
+		} else if (status == CTRL_LOGGING_COMPLETED) {
+			rc = 0;
+			break;
+		}
+
+		if (time_after(jiffies, timeout)) {
+			dev_err(&ctrl_info->pci_dev->dev,
+				"timed out waiting for controller data logging status\n");
+			rc = -ETIMEDOUT;
+			break;
+		}
+
+		ssleep(SIS_CTRL_LOGGING_STATUS_POLL_INTERVAL_SECS);
+	}
+
+	return rc;
 }
 
 void sis_verify_structures(void)
@@ -513,4 +572,3 @@ void sis_verify_structures(void)
 		error_buffer_num_elements) != 0x14);
 	BUILD_BUG_ON(sizeof(struct sis_base_struct) != 0x18);
 }
-
