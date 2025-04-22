@@ -805,6 +805,236 @@ out:
 	return rc;
 }
 
+static int get_acl_from_req(struct ptlrpc_request *req, struct posix_acl **acl)
+{
+	struct mdt_body	*body;
+	void *buf;
+	int rc;
+
+	body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
+	if (!body->mbo_aclsize) {
+		*acl = NULL;
+		return 0;
+	}
+
+	buf = req_capsule_server_sized_get(&req->rq_pill, &RMF_ACL,
+					   body->mbo_aclsize);
+	if (!buf)
+		return -EPROTO;
+
+	*acl = posix_acl_from_xattr(&init_user_ns, buf, body->mbo_aclsize);
+	if (IS_ERR_OR_NULL(*acl)) {
+		rc = *acl ? PTR_ERR(*acl) : 0;
+		CDEBUG(D_SEC, "convert xattr to acl: %d\n", rc);
+		return rc;
+	}
+
+	rc = posix_acl_valid(&init_user_ns, *acl);
+	if (rc) {
+		CDEBUG(D_SEC, "validate acl: %d\n", rc);
+		posix_acl_release(*acl);
+		return rc;
+	}
+
+	return 0;
+}
+
+static inline int accmode_from_openflags(u64 open_flags)
+{
+	unsigned int may_mask = 0;
+
+	if (open_flags & (FMODE_READ | FMODE_PREAD))
+		may_mask |= MAY_READ;
+	if (open_flags & (FMODE_WRITE | FMODE_PWRITE))
+		may_mask |= MAY_WRITE;
+	if (open_flags & FMODE_EXEC)
+		may_mask = MAY_EXEC;
+
+	return may_mask;
+}
+
+static __u32 get_uc_group_from_acl(const struct posix_acl *acl, int want)
+{
+	const struct posix_acl_entry *pa, *pe;
+
+	FOREACH_ACL_ENTRY(pa, acl, pe) {
+		switch (pa->e_tag) {
+		case ACL_GROUP_OBJ:
+		case ACL_GROUP:
+			if (in_group_p(pa->e_gid) &&
+			    (pa->e_perm & want) == want)
+				return (__u32)from_kgid(&init_user_ns,
+							pa->e_gid);
+			break;
+		default:
+			/* nothing to do */
+			break;
+		}
+	}
+
+	return (__u32)__kgid_val(INVALID_GID);
+}
+
+struct ll_grp_it {
+	struct group_info *gi;
+	int pos;
+};
+
+static struct ll_grp_it *ll_group_iter_start(void)
+{
+	struct ll_grp_it *git;
+
+	OBD_ALLOC_PTR(git);
+	if (!git)
+		return NULL;
+
+	git->gi = get_current_groups();
+	git->pos = 0;
+
+	return git;
+}
+
+static u32 ll_group_iter_next(struct ll_grp_it *git)
+{
+	int idx;
+
+	LASSERT(git);
+	idx = git->pos;
+	git->pos++;
+
+	/* -1 is treated as invalid */
+	if (idx >= git->gi->ngroups || idx >= NGROUPS_MAX)
+		return -1;
+
+	/* TODO @timday: This iterator doesn't work on
+	 * CentOS, so give up...
+	 */
+#ifdef HAVE_GROUP_INFO_GID
+	return git->gi->gid[idx].val;
+#else /* !HAVE_GROUP_INFO_GID */
+	return -1;
+#endif /* HAVE_GROUP_INFO_GID */
+}
+
+static bool ll_group_iter_is_done(struct ll_grp_it *git)
+{
+	LASSERT(git);
+
+	if (git->pos >= git->gi->ngroups || git->pos >= NGROUPS_MAX)
+		return true;
+
+	return false;
+}
+
+static void ll_group_iter_stop(struct ll_grp_it *git)
+{
+	LASSERT(git);
+	put_group_info(git->gi);
+	OBD_FREE_PTR(git);
+}
+
+/* This function implements a retry mechanism on top of md_intent_lock().
+ * This is useful because the client can provide at most 2 supplementary
+ * groups in the request sent to the MDS, but sometimes it does not know
+ * which ones are useful for credentials calculation on server side. For
+ * instance in case of lookup, the client does not have the child inode yet
+ * when it sends the intent lock request.
+ *
+ * Hopefully, the server can hint at the useful groups, by putting in the
+ * request reply the target inode's GID, and also its ACL.
+ * So in case the server replies -EACCES, we check the user's credentials
+ * against those, and try again the intent lock request if we find a matching
+ * supplementary group.
+ *
+ * If that still doesn't work, we can cycle through the available
+ * supplementary groups rather than giving up early.
+ */
+int ll_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
+		   struct lookup_intent *it, struct ptlrpc_request **reqp,
+		   ldlm_blocking_callback cb_blocking, __u64 extra_lock_flags,
+		   bool tryagain)
+{
+	struct ll_grp_it *git = ll_group_iter_start();
+	struct ptlrpc_request *req = *reqp;
+	bool more_viable_gids = false;
+	int rc = 0;
+
+	ENTRY;
+
+again:
+	if (op_data->op_suppgids[0] == -1)
+		op_data->op_suppgids[0] = ll_group_iter_next(git);
+
+	if (op_data->op_suppgids[1] == -1)
+		op_data->op_suppgids[1] = ll_group_iter_next(git);
+
+	rc = md_intent_lock(exp, op_data, it, reqp, cb_blocking,
+			    extra_lock_flags);
+
+	CDEBUG(D_VFSTRACE,
+	       "intent lock %d on i1 "DFID" suppgids[%d][%d] rc[%d] tryagain[%i] iter[%i]\n",
+	       it->it_op, PFID(&op_data->op_fid1),
+	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc,
+	       tryagain, ll_group_iter_is_done(git));
+
+	/* We can't (or won't) try again! */
+	if (rc != -EACCES || !tryagain)
+		GOTO(out, rc);
+
+	/* These GIDs don't work */
+	op_data->op_suppgids[0] = -1;
+	op_data->op_suppgids[1] = -1;
+
+	/* If the MDS allows the client to chgrp (CFS_SETGRP_PERM), but the
+	 * client does not know which suppgid should be sent to the MDS, or
+	 * some other(s) changed the target file's GID after this RPC sent
+	 * to the MDS with the suppgid as the original GID, then we should
+	 * try again with right suppgid.
+	 */
+	if (req && it->it_op & IT_OPEN &&
+	    it_disposition(it, DISP_OPEN_DENY)) {
+		int accmode = accmode_from_openflags(it->it_flags);
+		struct posix_acl *acl;
+		struct mdt_body *body;
+
+		LASSERT(req);
+
+		rc = get_acl_from_req(*reqp, &acl);
+		if (rc || !acl) {
+			op_data->op_suppgids[0] = -1;
+		} else {
+			op_data->op_suppgids[0] = get_uc_group_from_acl(acl, accmode);
+			posix_acl_release(acl);
+		}
+
+		body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
+
+		if (in_group_p(make_kgid(&init_user_ns, body->mbo_gid)))
+			op_data->op_suppgids[1] = body->mbo_gid;
+	}
+
+	more_viable_gids = !ll_group_iter_is_done(git) ||
+	  op_data->op_suppgids[0] != -1 ||
+	  op_data->op_suppgids[1] != -1;
+
+	/* Keep trying! */
+	if (more_viable_gids) {
+		if (!(it->it_flags & MDS_OPEN_BY_FID))
+			fid_zero(&op_data->op_fid2);
+
+		if (req)
+			ptlrpc_req_finished(req);
+
+		req = NULL;
+		ll_intent_release(it);
+		GOTO(again, rc = 0);
+	}
+
+out:
+	ll_group_iter_stop(git);
+	RETURN(rc);
+}
+
 static struct dentry *ll_lookup_it(struct inode *parent, struct dentry *dentry,
 				   struct lookup_intent *it,
 				   void **secctx, __u32 *secctxlen,
@@ -1014,34 +1244,9 @@ inherit:
 		it->it_flags |= MDS_OPEN_PCC;
 	}
 
-	rc = md_intent_lock(ll_i2mdexp(parent), op_data, it, &req,
-			    &ll_md_blocking_ast, 0);
-	/* If the MDS allows the client to chgrp (CFS_SETGRP_PERM), but the
-	 * client does not know which suppgid should be sent to the MDS, or
-	 * some other(s) changed the target file's GID after this RPC sent
-	 * to the MDS with the suppgid as the original GID, then we should
-	 * try again with right suppgid. */
-	if (rc == -EACCES && it->it_op & IT_OPEN &&
-	    it_disposition(it, DISP_OPEN_DENY)) {
-		struct mdt_body *body;
-
-		LASSERT(req != NULL);
-
-		body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
-		if (op_data->op_suppgids[0] == body->mbo_gid ||
-		    op_data->op_suppgids[1] == body->mbo_gid ||
-		    !in_group_p(make_kgid(&init_user_ns, body->mbo_gid)))
-			GOTO(out, retval = ERR_PTR(-EACCES));
-
-		fid_zero(&op_data->op_fid2);
-		op_data->op_suppgids[1] = body->mbo_gid;
-		ptlrpc_req_finished(req);
-		req = NULL;
-		ll_intent_release(it);
-		rc = md_intent_lock(ll_i2mdexp(parent), op_data, it, &req,
-				    &ll_md_blocking_ast, 0);
-	}
-
+	/* Try an intent lock with more GIDs */
+	rc = ll_intent_lock(ll_i2mdexp(parent), op_data, it, &req,
+			    &ll_md_blocking_ast, 0, true);
 	if (rc < 0)
 		GOTO(out, retval = ERR_PTR(rc));
 
