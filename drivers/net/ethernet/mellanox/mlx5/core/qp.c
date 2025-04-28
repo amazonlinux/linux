@@ -49,8 +49,10 @@ static struct mlx5_core_rsc_common *mlx5_get_rsc(struct mlx5_core_dev *dev,
 	spin_lock_irqsave(&table->lock, flags);
 
 	common = radix_tree_lookup(&table->tree, rsn);
-	if (common)
+	if (common && !common->invalid)
 		atomic_inc(&common->refcount);
+	else
+		common = NULL;
 
 	spin_unlock_irqrestore(&table->lock, flags);
 
@@ -164,6 +166,18 @@ static int create_qprqsq_common(struct mlx5_core_dev *dev,
 	qp->pid = current->pid;
 
 	return 0;
+}
+
+static void modify_resource_common_state(struct mlx5_core_dev *dev,
+					 struct mlx5_core_qp *qp,
+					 bool invalid)
+{
+	struct mlx5_qp_table *table = &dev->priv.qp_table;
+	unsigned long flags;
+
+	spin_lock_irqsave(&table->lock, flags);
+	qp->common.invalid = invalid;
+	spin_unlock_irqrestore(&table->lock, flags);
 }
 
 static void destroy_qprqsq_common(struct mlx5_core_dev *dev,
@@ -458,8 +472,17 @@ EXPORT_SYMBOL(mlx5_core_create_rq_tracked);
 void mlx5_core_destroy_rq_tracked(struct mlx5_core_dev *dev,
 				  struct mlx5_core_qp *rq)
 {
+	int ret;
+
+	/* The rq destruction can be called again in case it fails, hence we
+	 * mark the common resource as invalid and only once FW destruction
+	 * is completed successfully we actually destroy the resources.
+	 */
+	modify_resource_common_state(dev, rq, true);
+	ret = mlx5_core_destroy_rq(dev, rq->qpn);
+	if (ret)
+		modify_resource_common_state(dev, rq, false);
 	destroy_qprqsq_common(dev, rq);
-	mlx5_core_destroy_rq(dev, rq->qpn);
 }
 EXPORT_SYMBOL(mlx5_core_destroy_rq_tracked);
 
