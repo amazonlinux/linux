@@ -455,13 +455,6 @@ cifs_reconnect(struct TCP_Server_Info *server)
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each(tmp, &server->smb_ses_list) {
 		ses = list_entry(tmp, struct cifs_ses, smb_ses_list);
-		spin_lock(&ses->ses_lock);
-		if (ses->status == CifsExiting) {
-			spin_unlock(&ses->ses_lock);
-			continue;
-		}
-		spin_unlock(&ses->ses_lock);
-
 		spin_lock(&ses->chan_lock);
 		if (cifs_chan_needs_reconnect(ses, server))
 			goto next_session;
@@ -2800,6 +2793,34 @@ out:
 	return rc;
 }
 
+/**
+ * cifs_free_ipc - helper to release the session IPC tcon
+ *
+ * Needs to be called everytime a session is destroyed
+ */
+static int
+cifs_free_ipc(struct cifs_ses *ses)
+{
+	int rc = 0, xid;
+	struct cifs_tcon *tcon = ses->tcon_ipc;
+
+	if (tcon == NULL)
+		return 0;
+
+	if (ses->server->ops->tree_disconnect) {
+		xid = get_xid();
+		rc = ses->server->ops->tree_disconnect(xid, tcon);
+		free_xid(xid);
+	}
+
+	if (rc)
+		cifs_dbg(FYI, "failed to disconnect IPC tcon (rc=%d)\n", rc);
+
+	tconInfoFree(tcon);
+	ses->tcon_ipc = NULL;
+	return rc;
+}
+
 static struct cifs_ses *
 cifs_find_smb_ses(struct TCP_Server_Info *server, struct smb_vol *vol)
 {
@@ -2824,43 +2845,28 @@ void cifs_put_smb_ses(struct cifs_ses *ses)
 	unsigned int rc, xid;
 	unsigned int chan_count;
 	struct TCP_Server_Info *server = ses->server;
-	struct cifs_tcon *tcon;
-	bool do_logoff;
 
 	cifs_dbg(FYI, "%s: ses_count=%d\n", __func__, ses->ses_count);
 
 	spin_lock(&cifs_tcp_ses_lock);
-	spin_lock(&ses->ses_lock);
-	cifs_dbg(FYI, "%s: id=0x%llx ses_count=%d ses_status=%u ipc=%s\n",
-		 __func__, ses->Suid, ses->ses_count, ses->status,
-		 ses->tcon_ipc ? ses->tcon_ipc->treeName : "none");
-	if (ses->status == CifsExiting || --ses->ses_count > 0) {
-		spin_unlock(&ses->ses_lock);
+	if (ses->status == CifsExiting) {
 		spin_unlock(&cifs_tcp_ses_lock);
 		return;
 	}
-
-	spin_lock(&ses->chan_lock);
-	cifs_chan_clear_need_reconnect(ses, server);
-	spin_unlock(&ses->chan_lock);
-
-	do_logoff = ses->status == CifsGood && server->ops->logoff;
-	ses->status = CifsExiting;
-	tcon = ses->tcon_ipc;
-	ses->tcon_ipc = NULL;
-	spin_unlock(&ses->ses_lock);
+	if (--ses->ses_count > 0) {
+		spin_unlock(&cifs_tcp_ses_lock);
+		return;
+	}
 	spin_unlock(&cifs_tcp_ses_lock);
 
-	/*
-	 * On session close, the IPC is closed and the server must release all
-	 * tcons of the session.  No need to send a tree disconnect here.
-	 *
-	 * Besides, it will make the server to not close durable and resilient
-	 * files on session close, as specified in MS-SMB2 3.3.5.6 Receiving an
-	 * SMB2 LOGOFF Request.
-	 */
-	tconInfoFree(tcon);
-	if (do_logoff) {
+	spin_lock(&GlobalMid_Lock);
+	if (ses->status == CifsGood)
+		ses->status = CifsExiting;
+	spin_unlock(&GlobalMid_Lock);
+
+	cifs_free_ipc(ses);
+
+	if (ses->status == CifsExiting && server->ops->logoff) {
 		xid = get_xid();
 		rc = server->ops->logoff(xid, ses);
 		if (rc)
