@@ -455,25 +455,13 @@ cifs_reconnect(struct TCP_Server_Info *server)
 	spin_lock(&cifs_tcp_ses_lock);
 	list_for_each(tmp, &server->smb_ses_list) {
 		ses = list_entry(tmp, struct cifs_ses, smb_ses_list);
-		spin_lock(&ses->chan_lock);
-		if (cifs_chan_needs_reconnect(ses, server))
-			goto next_session;
-
-		cifs_chan_set_need_reconnect(ses, server);
-
-		/* If all channels need reconnect, then tcon needs reconnect */
-		if (!CIFS_ALL_CHANS_NEED_RECONNECT(ses))
-			goto next_session;
-
+		ses->need_reconnect = true;
 		list_for_each(tmp2, &ses->tcon_list) {
 			tcon = list_entry(tmp2, struct cifs_tcon, tcon_list);
 			tcon->need_reconnect = true;
 		}
 		if (ses->tcon_ipc)
 			ses->tcon_ipc->need_reconnect = true;
-
-next_session:
-		spin_unlock(&ses->chan_lock);
 	}
 	spin_unlock(&cifs_tcp_ses_lock);
 
@@ -3093,9 +3081,7 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 			free_xid(xid);
 			return ERR_PTR(rc);
 		}
-		spin_lock(&ses->chan_lock);
-		if (cifs_chan_needs_reconnect(ses, server)) {
-			spin_unlock(&ses->chan_lock);
+		if (ses->need_reconnect) {
 			cifs_dbg(FYI, "Session needs reconnect\n");
 			rc = cifs_setup_session(xid, ses,
 						volume_info->local_nls);
@@ -3106,9 +3092,7 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 				free_xid(xid);
 				return ERR_PTR(rc);
 			}
-			spin_lock(&ses->chan_lock);
 		}
-		spin_unlock(&ses->chan_lock);
 		mutex_unlock(&ses->session_mutex);
 
 		/* existing SMB ses has a server reference already */
@@ -3162,7 +3146,6 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 	ses->chans[0].server = server;
 	ses->chan_count = 1;
 	ses->chan_max = volume_info->multichannel ? volume_info->max_channels:1;
-	ses->chans_need_reconnect = 1;
 	spin_unlock(&ses->chan_lock);
 
 	rc = cifs_negotiate_protocol(xid, ses);
@@ -3177,11 +3160,7 @@ cifs_get_smb_ses(struct TCP_Server_Info *server, struct smb_vol *volume_info)
 	if (rc)
 		goto get_ses_fail;
 
-	/*
-	 * success, put it on the list and add it as first channel
-	 * note: the session becomes active soon after this. So you'll
-	 * need to lock before changing something in the session.
-	 */
+	/* success, put it on the list and add it as first channel */
 	spin_lock(&cifs_tcp_ses_lock);
 	list_add(&ses->smb_ses_list, &server->smb_ses_list);
 	spin_unlock(&cifs_tcp_ses_lock);
