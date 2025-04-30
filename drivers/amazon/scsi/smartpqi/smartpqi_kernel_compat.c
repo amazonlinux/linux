@@ -1,6 +1,6 @@
 /*
  *    driver for Microchip PQI-based storage controllers
- *    Copyright (c) 2019-2021 Microchip Technology Inc. and its subsidiaries
+ *    Copyright (c) 2019-2023 Microchip Technology Inc. and its subsidiaries
  *    Copyright (c) 2016-2018 Microsemi Corporation
  *    Copyright (c) 2016 PMC-Sierra, Inc.
  *
@@ -26,7 +26,6 @@
 #if KFEATURE_ENABLE_SCSI_MAP_QUEUES
 #include <linux/blk-mq-pci.h>
 #endif
-extern struct device_attribute *pqi_ncq_prio_sdev_attrs;
 
 #if !KFEATURE_HAS_2011_03_QUEUECOMMAND
 
@@ -118,21 +117,53 @@ static int pqi_change_queue_type(struct scsi_device *sdev, int tag_type)
 #endif	/* !KFEATURE_HAS_SCSI_CHANGE_QUEUE_DEPTH */
 
 #if KFEATURE_ENABLE_SCSI_MAP_QUEUES
+#if KFEATURE_MAP_QUEUES_RETURNS_INT
 static int pqi_map_queues(struct Scsi_Host *shost)
 {
 	struct pqi_ctrl_info *ctrl_info = shost_to_hba(shost);
 
+	if (!ctrl_info->disable_managed_interrupts) {
 #if KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V1
-	return blk_mq_pci_map_queues(&shost->tag_set, ctrl_info->pci_dev);
+		return blk_mq_pci_map_queues(&shost->tag_set, ctrl_info->pci_dev);
 #elif KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V2
-	return blk_mq_pci_map_queues(&shost->tag_set, ctrl_info->pci_dev, 0);
+		return blk_mq_pci_map_queues(&shost->tag_set, ctrl_info->pci_dev, 0);
 #elif KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V3
-	return blk_mq_pci_map_queues(&shost->tag_set.map[HCTX_TYPE_DEFAULT],
+		return blk_mq_pci_map_queues(&shost->tag_set.map[HCTX_TYPE_DEFAULT],
+						ctrl_info->pci_dev, 0);
+#else
+	#error "A version for KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES has not been defined."
+#endif
+	} else {
+#if KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V1
+		return blk_mq_map_queues(&shost->tag_set);
+#elif KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V2
+		return blk_mq_map_queues(&shost->tag_set.map[HCTX_TYPE_DEFAULT]);
+#else
+	#error "A version for KFEATURE_HAS_BLK_MQ_MAP_QUEUES has not been defined."
+#endif
+	}
+}
+#else
+static void pqi_map_queues(struct Scsi_Host *shost)
+{
+	struct pqi_ctrl_info *ctrl_info = shost_to_hba(shost);
+
+	if (!ctrl_info->disable_managed_interrupts) {
+#if KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES_V4
+		blk_mq_pci_map_queues(&shost->tag_set.map[HCTX_TYPE_DEFAULT],
 					ctrl_info->pci_dev, 0);
 #else
 	#error "A version for KFEATURE_HAS_BLK_MQ_PCI_MAP_QUEUES has not been defined."
 #endif
+	} else {
+#if KFEATURE_HAS_BLK_MQ_MAP_QUEUES_V3
+		blk_mq_map_queues(&shost->tag_set.map[HCTX_TYPE_DEFAULT]);
+#else
+	#error "A version for KFEATURE_HAS_BLK_MQ_MAP_QUEUES has not been defined."
+#endif
+	}
 }
+#endif
 #endif /* KFEATURE_ENABLE_SCSI_MAP_QUEUES */
 
 void pqi_compat_init_scsi_host_template(struct scsi_host_template *hostt)
@@ -149,9 +180,6 @@ void pqi_compat_init_scsi_host_template(struct scsi_host_template *hostt)
 #endif
 #if KFEATURE_ENABLE_SCSI_MAP_QUEUES
 	hostt->map_queues = pqi_map_queues;
-#endif
-#if KFEATURE_HAS_NCQ_PRIO_SUPPORT
-	hostt->sdev_attrs = &pqi_ncq_prio_sdev_attrs;
 #endif
 }
 
@@ -319,6 +347,7 @@ int pqi_sas_smp_handler_compat(struct Scsi_Host *shost, struct sas_rphy *rphy,
 	job = kzalloc(sizeof(struct bsg_job), GFP_KERNEL);
 	if (!job)
 		return -ENOMEM;
+
 	job->dd_data = &bsg_job;
 
 	pqi_bsg_prepare_job(job, rq);
@@ -333,6 +362,7 @@ int pqi_sas_smp_handler_compat(struct Scsi_Host *shost, struct sas_rphy *rphy,
 	req->resid_len = 0;
 
 	kfree(job);
+
 	return bsg_ret.result;
 }
 
@@ -363,7 +393,7 @@ void pqi_pci_free_irq_vectors(struct pci_dev *dev)
 }
 
 int pqi_pci_alloc_irq_vectors(struct pci_dev *dev, unsigned int min_vecs,
-                              unsigned int max_vecs, unsigned int flags)
+				unsigned int max_vecs, unsigned int flags)
 {
 #if KFEATURE_ENABLE_PCI_ALLOC_IRQ_VECTORS
 	return pci_alloc_irq_vectors(dev, min_vecs, max_vecs, flags);
@@ -389,3 +419,65 @@ int pqi_pci_alloc_irq_vectors(struct pci_dev *dev, unsigned int min_vecs,
 	return num_vectors_enabled;
 #endif
 }
+
+#if KFEATURE_HAS_SCSI_CMD_PRIV
+struct pqi_cmd_priv *pqi_cmd_priv(struct scsi_cmnd *cmd)
+{
+	return scsi_cmd_priv(cmd);
+}
+#endif
+
+#if !KFEATURE_HAS_HOST_TAGSET_SUPPORT
+
+struct pqi_io_request *pqi_get_io_request(struct pqi_ctrl_info *ctrl_info, struct scsi_cmnd *scmd)
+{
+	struct pqi_io_request *io_request;
+	u16 i = smp_processor_id() * ctrl_info->per_cpu_factor;
+
+	while (1) {
+		io_request = &ctrl_info->io_request_pool[i];
+		if (atomic_inc_return(&io_request->refcount) == 1)
+			break;
+		atomic_dec(&io_request->refcount);
+		i = (i + 1) % ctrl_info->max_io_slots;
+	}
+
+	return io_request;
+}
+
+#else
+
+struct pqi_io_request *pqi_get_io_request(struct pqi_ctrl_info *ctrl_info, struct scsi_cmnd *scmd)
+{
+	struct pqi_io_request *io_request;
+	u16 i;
+
+	if (scmd) {
+		u32 blk_tag = blk_mq_unique_tag(PQI_SCSI_REQUEST(scmd));
+
+		i = blk_mq_unique_tag_to_tag(blk_tag);
+		if (i < 0 || i >= ctrl_info->scsi_ml_can_queue)
+			return NULL;
+
+		io_request = &ctrl_info->io_request_pool[i];
+		if (atomic_inc_return(&io_request->refcount) > 1) {
+			atomic_dec(&io_request->refcount);
+			return NULL;
+		}
+	} else {
+		/*
+		 * benignly racy - may have to wait for an open slot.
+		 */
+		i = 0;
+		while (1) {
+			io_request = &ctrl_info->io_request_pool[ctrl_info->scsi_ml_can_queue + i];
+			if (atomic_inc_return(&io_request->refcount) == 1)
+				break;
+			atomic_dec(&io_request->refcount);
+			i = (i + 1) % PQI_RESERVED_IO_SLOTS;
+		}
+	}
+
+	return io_request;
+}
+#endif
