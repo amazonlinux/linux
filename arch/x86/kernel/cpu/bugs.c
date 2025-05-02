@@ -68,7 +68,19 @@ void (*x86_return_thunk)(void) __ro_after_init = &__x86_return_thunk;
 
 static void __init set_return_thunk(void *thunk)
 {
-	WARN_ON(x86_return_thunk != __x86_return_thunk);
+	/*
+	 * There can only be one return thunk enabled at a time, so issue a
+	 * warning when trying to set it after it's already been set (i.e. is
+	 * not the default) as this is likely a bug and will result in incorrect
+	 * mitigation information being displayed in sysfs. The one special case
+	 * is that it is safe to override the retbleed_return_thunk with the
+	 * srso_return_thunk since the srso_return_thunk provides a superset of
+	 * the functionality of the retbleed_return_thunk and this override is
+	 * handled correctly in entry_untrain_ret().
+	 */
+	WARN_ON((x86_return_thunk != __x86_return_thunk) &&
+		(thunk != srso_return_thunk ||
+		 x86_return_thunk != retbleed_return_thunk));
 	x86_return_thunk = thunk;
 }
 
