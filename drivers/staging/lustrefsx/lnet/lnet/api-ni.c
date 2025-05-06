@@ -1978,7 +1978,7 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 	struct lnet_ni *ni;
 	struct lnet_net	*net;
 	struct lnet_ni_status *ns, *end;
-	struct lnet_nid_metadata *mapping;
+	struct lnet_nid_metadata *data;
 	int rc = 0;
 	int i = 0;
 
@@ -1986,7 +1986,7 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 	ns = &pbuf->pb_info.pi_ni[0];
 	end = (void *)&pbuf->pb_info + pbuf->pb_nbytes;
 
-	LIBCFS_ALLOC(mapping,
+	LIBCFS_ALLOC(data,
 		     sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max));
 
 	list_for_each_entry(net, &the_lnet.ln_nets, net_list) {
@@ -2004,8 +2004,8 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 				CERROR("Refusing to send more than %i mappings",
 				       lnet_interfaces_max);
 			} else if (lnd->lnd_get_nid_metadata) {
-				lnd->lnd_get_nid_metadata(ni, &mapping->nid_mappings[i]);
-				mapping->nid_mappings[i].nid = lnet_nid_to_nid4(&ni->ni_nid);
+				lnd->lnd_get_nid_metadata(ni, &data->nid_mappings[i]);
+				data->nid_mappings[i].nid = lnet_nid_to_nid4(&ni->ni_nid);
 				i++;
 			}
 
@@ -2023,8 +2023,8 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 	}
 
 	/* Add NID -> GID mapping to the end of ping buffer */
-	mapping->num_nid_mappings = i;
-	memcpy((struct lnet_nid_metadata *)ns, mapping,
+	data->num_nid_mappings = i;
+	memcpy((struct lnet_nid_metadata *)ns, data,
 	       sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * i));
 
 	/* We (ab)use the ns_status of the loopback interface to
@@ -2038,7 +2038,7 @@ lnet_ping_target_install_locked(struct lnet_ping_buffer *pbuf)
 	}
 	LNET_PING_BUFFER_SEQNO(pbuf) =
 		atomic_inc_return(&the_lnet.ln_ping_target_seqno);
-	LIBCFS_FREE(mapping,
+	LIBCFS_FREE(data,
 		    sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * lnet_interfaces_max));
 }
 
@@ -4755,7 +4755,7 @@ static struct lnet_ni *LNetGetLocalNID(struct lnet_nid *peer_nid)
 	cpt = lnet_net_lock_current();
 	list_for_each_entry(net, &the_lnet.ln_nets, net_list) {
 		list_for_each_entry(ni, &net->net_ni_list, ni_netlist) {
-			if (nid_net_same(&ni->ni_nid, peer_nid)) {
+			if (nid_same_net(&ni->ni_nid, peer_nid)) {
 				lnet_net_unlock(cpt);
 				return ni;
 			}
@@ -4861,40 +4861,30 @@ LNetGetForce(lnet_nid_t self4, struct lnet_handle_md mdh,
  * TODO - The special NID -> GID mapping functionality should be locked
  * behind a ping feature flag for compatibility reasons.
  */
-int lnet_discover_nid_metadata(lnet_nid_t nid, struct lnet_nid_metadata *mapping)
+int lnet_discover_nid_metadata(lnet_nid_t nid, struct lnet_nid_metadata *data)
 {
+	signed long timeout = cfs_time_seconds(30);
+	struct lnet_nid_metadata *data_tmp;
+	lnet_nid_t src_nid = LNET_NID_ANY;
+	int n_ids = lnet_interfaces_max;
 	struct lnet_process_id id4 = {
 		.nid = nid,
 		.pid = LNET_PID_LUSTRE,
 	};
-	struct lnet_md md = { NULL };
-	struct ping_data pd = { 0 };
 	struct lnet_ping_buffer *pbuf;
-	struct lnet_processid id;
+	struct ping_data pd = { 0 };
 	struct lnet_nid nid_struct;
-	struct lnet_nid_metadata *end;
-	lnet_nid_t src_nid = LNET_NID_ANY;
-	signed long timeout = cfs_time_seconds(30);
-	int n_ids = lnet_interfaces_max;
+	struct lnet_md md = { 0 };
+	struct lnet_processid id;
 	int id_bytes;
 	int nob;
-	int rc;
 	int rc2;
+	int rc;
 
 	lnet_nid4_to_nid(nid, &nid_struct);
 
 	CDEBUG(D_NET, "handshake with NID: %s\n",
 	       libcfs_nidstr(&nid_struct));
-
-	/* If the NID isn't TCP, this ping doesn't need to happen.
-	 * So, exit early.
-	 */
-	if (LNET_NETTYP(LNET_NIDNET(nid)) != SOCKLND) {
-		CDEBUG(D_NET, "refusing to handshake with NID: %s\n",
-		       libcfs_nidstr(&nid_struct));
-
-		return -1;
-	}
 
 	/* n_ids limit is arbitrary */
 	if (id4.nid == LNET_NID_ANY) {
@@ -4945,7 +4935,7 @@ int lnet_discover_nid_metadata(lnet_nid_t nid, struct lnet_nid_metadata *mapping
 	}
 
 	if (!pd.replied) {
-		CERROR("misc ping error\n");
+		CDEBUG(D_NET, "misc ping error\n");
 		rc = -EIO;
 		goto fail_ping_buffer_decref;
 	}
@@ -4994,17 +4984,17 @@ int lnet_discover_nid_metadata(lnet_nid_t nid, struct lnet_nid_metadata *mapping
 	}
 
 	/* Extract the mapping from the ping buffer we received */
-	end = (void *)&pbuf->pb_info.pi_ni[n_ids];
-	if (end->num_nid_mappings == 0 ||
-	    end->num_nid_mappings > lnet_interfaces_max) {
+	data_tmp = (struct lnet_nid_metadata *)&pbuf->pb_info.pi_ni[n_ids];
+	if (data_tmp->num_nid_mappings == 0 ||
+	    data_tmp->num_nid_mappings > lnet_interfaces_max) {
 		CERROR("%s: Unexpected number of handshake entries %i\n",
-		       libcfs_idstr(&id), end->num_nid_mappings);
+		       libcfs_idstr(&id), data_tmp->num_nid_mappings);
 		goto fail_ping_buffer_decref;
 	}
 
 	rc = 0;
-	memcpy(mapping, end,
-	       sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * end->num_nid_mappings));
+	memcpy(data, data_tmp,
+	       sizeof(__u32) + (sizeof(struct lnet_nid_md_entry) * data_tmp->num_nid_mappings));
 
 	CDEBUG(D_NET, "ping reply received with mapping\n");
 
