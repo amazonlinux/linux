@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright (c) 2023-2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -97,6 +97,9 @@ kefalnd_tunables_setup(struct lnet_ni *ni)
 
 	if (net_tunables->lct_peer_tx_credits > EFALND_CREDITS_MAX)
 		net_tunables->lct_peer_tx_credits = EFALND_CREDITS_MAX;
+
+	if (net_tunables->lct_peer_timeout < EFALND_MIN_INIT_CONN_TIMEOUT)
+		net_tunables->lct_peer_timeout = EFALND_MIN_INIT_CONN_TIMEOUT;
 
 	if (net_tunables->lct_peer_tx_credits >
 	    net_tunables->lct_max_tx_credits)
