@@ -401,8 +401,7 @@ static int ll_xattr_find_get_lock(struct inode *inode,
 
 	op_data->op_valid = OBD_MD_FLXATTR | OBD_MD_FLXATTRLS;
 
-	rc = ll_intent_lock(exp, op_data, oit, req,
-			    &ll_md_blocking_ast, 0, true);
+	rc = md_intent_lock(exp, op_data, oit, req, &ll_md_blocking_ast, 0);
 	ll_finish_md_op_data(op_data);
 	*req = oit->it_request;
 
