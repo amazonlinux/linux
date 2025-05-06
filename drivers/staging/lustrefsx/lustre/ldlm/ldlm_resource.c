@@ -967,7 +967,7 @@ struct ldlm_namespace *ldlm_namespace_new(struct obd_device *obd, char *name,
 	ns->ns_max_unused         = LDLM_DEFAULT_LRU_SIZE;
 	ns->ns_cancel_batch       = LDLM_DEFAULT_LRU_SHRINK_BATCH;
 	ns->ns_recalc_pct         = LDLM_DEFAULT_SLV_RECALC_PCT;
-	ns->ns_max_age            = ktime_set(LDLM_DEFAULT_MAX_ALIVE, 0);
+	ns->ns_max_age            = ktime_set(LDLM_DEFAULT_LRU_MAX_AGE, 0);
 	ns->ns_ctime_age_limit    = LDLM_CTIME_AGE_LIMIT;
 	ns->ns_dirty_age_limit    = ktime_set(LDLM_DIRTY_AGE_LIMIT, 0);
 	ns->ns_timeouts           = 0;
