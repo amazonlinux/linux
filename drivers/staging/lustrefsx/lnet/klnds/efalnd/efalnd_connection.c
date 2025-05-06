@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright (c) 2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -19,6 +19,42 @@
 
 #define MAX_IDLE_CONN		32
 #define RESP_CONN_EXTRA_TIME	300
+
+static inline struct kefa_conn_probe_msg *
+kefalnd_get_probe_from_msg(struct kefa_msg *msg)
+{
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return &msg->msg_v2.u.conn_probe;
+
+	return &msg->msg_v1.u.conn_probe;
+}
+
+static inline struct kefa_conn_probe_resp_msg *
+kefalnd_get_probe_resp_from_msg(struct kefa_msg *msg)
+{
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return &msg->msg_v2.u.conn_probe_resp;
+
+	return &msg->msg_v1.u.conn_probe_resp;
+}
+
+static inline struct kefa_conn_req_msg *
+kefalnd_get_conn_req_from_msg(struct kefa_msg *msg)
+{
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return &msg->msg_v2.u.conn_request;
+
+	return &msg->msg_v1.u.conn_request;
+}
+
+static inline struct kefa_conn_req_ack *
+kefalnd_get_conn_req_ack_from_msg(struct kefa_msg *msg)
+{
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return &msg->msg_v2.u.conn_request_ack;
+
+	return &msg->msg_v1.u.conn_request_ack;
+}
 
 static inline void
 kefalnd_set_conn_state_locked(struct kefa_conn *conn, enum kefa_conn_state new_state)
@@ -45,13 +81,13 @@ kefalnd_post_conn_message(struct kefa_conn *conn, struct kefa_tx *tx)
 {
 	struct kefa_dev *efa_dev = conn->efa_ni->efa_dev;
 	struct kefa_peer_ni *peer_ni = conn->peer_ni;
+	struct kefa_qp *cm_qp = efa_dev->cm_qp;
 	struct ib_srd_wr *srd_wr;
 	struct ib_send_wr *wr;
 	unsigned long flags;
 	int rc;
 
 	tx->conn = conn;
-	tx->qp = efa_dev->cm_qp;
 
 	srd_wr = &tx->wrq.wr;
 	wr = &srd_wr->wr;
@@ -71,27 +107,21 @@ kefalnd_post_conn_message(struct kefa_conn *conn, struct kefa_tx *tx)
 	srd_wr->remote_qkey = peer_ni->cm_qp.qkey;
 	read_unlock_irqrestore(&peer_ni->peer_ni_lock, flags);
 
-	rc = ib_post_send(tx->qp->ib_qp, wr, NULL);
+	rc = ib_post_send(cm_qp->ib_qp, wr, NULL);
 	if (rc) {
 		EFA_DEV_ERR(efa_dev, "QP[%u] failed to post conn msg to peer NI[%s]. err[%d]\n",
-			    tx->qp->ib_qp->qp_num, libcfs_nidstr(&conn->remote_nid), rc);
+			    cm_qp->ib_qp->qp_num, libcfs_nidstr(&conn->remote_nid), rc);
 
 		spin_lock_irqsave(&conn->lock, flags);
 		list_del_init(&tx->list_node);
 		spin_unlock_irqrestore(&conn->lock, flags);
 
 		tx->conn = NULL;
-		tx->qp = NULL;
 		atomic_set(&tx->ref_cnt, 0);
 		atomic64_set(&tx->send_time, 0);
 
 		return rc;
 	}
-
-	/* TT: https://issues.amazon.com/issues/EFA-3459 */
-	rc = ib_req_notify_cq(tx->qp->cq->ib_cq, IB_CQ_NEXT_COMP);
-	if (rc < 0)
-		EFA_DEV_ERR(tx->qp->cq->efa_dev, "request notify CQ failed. err[%d]\n", rc);
 
 	return 0;
 }
@@ -117,10 +147,8 @@ kefalnd_send_conn_req_ack(struct kefa_conn *conn, int status)
 {
 	struct kefa_dev *efa_dev = conn->efa_ni->efa_dev;
 	struct kefa_conn_req_ack *ack_msg;
-	struct kefa_msg *msg;
 	struct kefa_tx *tx;
-	int nob;
-	int rc;
+	int nob, rc;
 
 	CDEBUG(D_NET, "Send connection ack from[%s] to[%s]\n",
 	       libcfs_nidstr(&conn->local_nid), libcfs_nidstr(&conn->remote_nid));
@@ -133,8 +161,7 @@ kefalnd_send_conn_req_ack(struct kefa_conn *conn, int status)
 		return -ENOMEM;
 	}
 
-	msg = tx->msg;
-	ack_msg = &msg->u.conn_request_ack;
+	ack_msg = &tx->msg->msg_v1.u.conn_request_ack;
 	ack_msg->lnd_ver = kefalnd_get_lnd_version();
 	ack_msg->src_epoch = conn->efa_ni->ni_epoch;
 	ack_msg->caps = 0;
@@ -150,7 +177,7 @@ kefalnd_send_conn_req_ack(struct kefa_conn *conn, int status)
 		ack_msg->nqps = kefalnd_select_conn_qps(efa_dev, &ack_msg->data_qps[0]);
 	}
 
-	kefalnd_init_tx_msg(tx, EFALND_MSG_CONN_REQ_ACK, nob);
+	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_REQ_ACK, nob);
 
 	rc = kefalnd_post_conn_message(conn, tx);
 	if (rc)
@@ -164,10 +191,8 @@ kefalnd_send_conn_req(struct kefa_conn *conn)
 {
 	struct kefa_dev *efa_dev = conn->efa_ni->efa_dev;
 	struct kefa_conn_req_msg *req;
-	struct kefa_msg *msg;
 	struct kefa_tx *tx;
-	int nob;
-	int rc;
+	int nob, rc;
 
 	LASSERT(conn->state == KEFA_CONN_ESTABLISH);
 
@@ -183,10 +208,9 @@ kefalnd_send_conn_req(struct kefa_conn *conn)
 	}
 
 	nob = offsetof(struct kefa_conn_req_msg, data_qps[efa_dev->nqps]);
-	kefalnd_init_tx_msg(tx, EFALND_MSG_CONN_REQ, nob);
+	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_REQ, nob);
 
-	msg = tx->msg;
-	req = &msg->u.conn_request;
+	req = &tx->msg->msg_v1.u.conn_request;
 	req->lnd_ver = kefalnd_get_lnd_version();
 	memcpy(req->src_gid, efa_dev->gid.raw, sizeof(req->src_gid));
 	req->src_epoch = conn->efa_ni->ni_epoch;
@@ -211,7 +235,6 @@ kefalnd_send_conn_probe_resp(struct kefa_conn *conn, int status)
 {
 	struct kefa_dev *efa_dev = conn->efa_ni->efa_dev;
 	struct kefa_conn_probe_resp_msg *probe_resp;
-	struct kefa_msg *msg;
 	struct kefa_tx *tx;
 	int rc;
 
@@ -226,14 +249,15 @@ kefalnd_send_conn_probe_resp(struct kefa_conn *conn, int status)
 		return -ENOMEM;
 	}
 
-	kefalnd_init_tx_msg(tx, EFALND_MSG_CONN_PROBE_RESP,
-			    sizeof(struct kefa_conn_probe_resp_msg));
+	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_PROBE_RESP,
+				     sizeof(struct kefa_conn_probe_resp_msg));
 
-	msg = tx->msg;
-	probe_resp = &msg->u.conn_probe_resp;
+	probe_resp = &tx->msg->msg_v1.u.conn_probe_resp;
 	probe_resp->lnd_ver = kefalnd_get_lnd_version();
 	probe_resp->src_epoch = conn->efa_ni->ni_epoch;
 	probe_resp->caps = 0;
+	probe_resp->min_proto_ver = EFALND_MIN_PROTO_VER;
+	probe_resp->max_proto_ver = EFALND_MAX_PROTO_VER;
 	probe_resp->status = kefalnd_errno_to_efa_status(status);
 
 	rc = kefalnd_post_conn_message(conn, tx);
@@ -248,7 +272,6 @@ kefalnd_send_conn_probe(struct kefa_conn *conn)
 {
 	struct kefa_dev *efa_dev = conn->efa_ni->efa_dev;
 	struct kefa_conn_probe_msg *probe;
-	struct kefa_msg *msg;
 	struct kefa_tx *tx;
 	int rc;
 
@@ -265,10 +288,9 @@ kefalnd_send_conn_probe(struct kefa_conn *conn)
 		return -ENOMEM;
 	}
 
-	kefalnd_init_tx_msg(tx, EFALND_MSG_CONN_PROBE, sizeof(struct kefa_conn_probe_msg));
+	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_PROBE, sizeof(struct kefa_conn_probe_msg));
 
-	msg = tx->msg;
-	probe = &msg->u.conn_probe;
+	probe = &tx->msg->msg_v1.u.conn_probe;
 	probe->lnd_ver = kefalnd_get_lnd_version();
 	probe->src_epoch = conn->efa_ni->ni_epoch;
 	memcpy(probe->src_gid, efa_dev->gid.raw, sizeof(probe->src_gid));
@@ -287,20 +309,23 @@ void
 kefalnd_destroy_conn(struct kefa_conn *conn, enum lnet_msg_hstatus hstatus, int status)
 {
 	struct kefa_tx *tx, *temp_tx;
+	struct list_head cancel_tx;
 	unsigned long flags;
 
-	spin_lock_irqsave(&conn->lock, flags);
+	INIT_LIST_HEAD(&cancel_tx);
 
+	spin_lock_irqsave(&conn->lock, flags);
 	if (!list_empty(&conn->active_tx))
 		EFA_DEV_WARN(conn->efa_ni->efa_dev,
 			     "destroying conn to peer NI[%s] with active TXs\n",
 			     libcfs_nidstr(&conn->remote_nid));
 
-	list_for_each_entry_safe(tx, temp_tx, &conn->pend_tx, list_node) {
-		kefalnd_force_cancel_tx_locked(tx, hstatus, status);
-	}
-
+	list_splice_init(&conn->pend_tx, &cancel_tx);
 	spin_unlock_irqrestore(&conn->lock, flags);
+
+	list_for_each_entry_safe(tx, temp_tx, &cancel_tx, list_node) {
+		kefalnd_force_cancel_tx(tx, hstatus, status);
+	}
 
 	if (!IS_ERR_OR_NULL(conn->ah))
 		rdma_destroy_ah(conn->ah, RDMA_DESTROY_AH_SLEEPABLE);
@@ -315,7 +340,7 @@ kefalnd_destroy_conn(struct kefa_conn *conn, enum lnet_msg_hstatus hstatus, int 
 }
 
 static struct kefa_conn *
-kefalnd_create_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid_peer,
+kefalnd_create_conn(struct kefa_ni *efa_ni, struct lnet_nid *peer_nid,
 		    enum kefa_conn_type conn_type)
 {
 	struct kefa_dev *efa_dev = efa_ni->efa_dev;
@@ -328,8 +353,8 @@ kefalnd_create_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid_peer,
 	}
 
 	conn->efa_ni = efa_ni;
-	conn->proto_ver = EFALND_CURR_PROTO_VER;
-	conn->remote_nid = *nid_peer;
+	conn->proto_ver = EFALND_MAX_PROTO_VER;
+	conn->remote_nid = *peer_nid;
 	conn->local_nid = efa_ni->lnet_ni->ni_nid;
 	conn->remote_epoch = 0;
 	conn->last_use_time = ktime_get_seconds();
@@ -431,8 +456,8 @@ kefalnd_establish_conn(struct kefa_conn *conn)
 	kefalnd_set_conn_state(conn, KEFA_CONN_PROBE_TCP);
 	peer_ni = kefalnd_find_remote_peer_ni(efa_dev, &conn->remote_nid);
 	if (IS_ERR_OR_NULL(peer_ni)) {
-		EFA_DEV_ERR(efa_dev, "failed to locate GID for NID %s. err[%ld]\n",
-			    libcfs_nidstr(&conn->remote_nid), PTR_ERR(peer_ni));
+		EFA_DEV_DEBUG(efa_dev, "failed to locate GID for NID %s. err[%ld]\n",
+			      libcfs_nidstr(&conn->remote_nid), PTR_ERR(peer_ni));
 		return PTR_ERR(peer_ni);
 	}
 
@@ -578,38 +603,33 @@ kefalnd_lookup_or_init_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid,
 }
 
 struct kefa_conn *
-kefalnd_get_conn_from_rx(struct kefa_ni *efa_ni, struct kefa_rx *rx, enum kefa_conn_type conn_type)
+kefalnd_lookup_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid, enum kefa_conn_type conn_type)
 {
-	struct kefa_msg *msg = rx->msg;
 	struct kefa_conn *conn;
-	struct lnet_nid nid;
 	unsigned long flags;
 
-	lnet_nid4_to_nid(msg->srcnid, &nid);
-
 	read_lock_irqsave(&efa_ni->conn_lock, flags);
-	conn = kefalnd_lookup_conn_locked(efa_ni, &nid, conn_type);
+	conn = kefalnd_lookup_conn_locked(efa_ni, nid, conn_type);
 	read_unlock_irqrestore(&efa_ni->conn_lock, flags);
 	return conn;
 }
 
-int
-kefalnd_handle_conn_req_ack(struct kefa_ni *efa_ni, struct kefa_rx *rx)
+static int
+kefalnd_handle_conn_req_ack(struct kefa_ni *efa_ni, struct lnet_nid *srcnid,
+			    struct lnet_nid *dstnid, struct kefa_conn_req_ack *ack_msg)
 {
-	struct kefa_msg *msg = rx->msg;
-	struct kefa_conn_req_ack *ack_msg;
 	enum lnet_msg_hstatus hstatus;
 	struct kefa_conn *conn;
 	unsigned long flags;
 	int rc;
 
 	CDEBUG(D_NET, "Received connection ack from[%s] to[%s]\n",
-	       libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+	       libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
-	conn = kefalnd_get_conn_from_rx(efa_ni, rx, KEFA_CONN_TYPE_INITIATOR);
+	conn = kefalnd_lookup_conn(efa_ni, srcnid, KEFA_CONN_TYPE_INITIATOR);
 	if (!conn) {
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection from[%s] to[%s]\n",
-			    libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -ENOTCONN;
 	}
@@ -618,20 +638,19 @@ kefalnd_handle_conn_req_ack(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	if (conn->state != KEFA_CONN_ESTABLISH) {
 		spin_unlock_irqrestore(&conn->lock, flags);
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection state[%u] from[%s] to[%s]\n",
-			    conn->state, libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    conn->state, libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -EINVAL;
 	}
 
 	spin_unlock_irqrestore(&conn->lock, flags);
 
-	ack_msg = &msg->u.conn_request_ack;
 	if (ack_msg->status) {
 		rc = kefalnd_efa_status_to_errno(ack_msg->status);
 		hstatus = LNET_MSG_STATUS_REMOTE_DROPPED;
 		EFA_DEV_ERR(efa_ni->efa_dev,
 			    "conn request failed on remote err[%d] from[%s] to[%s]\n",
-			    rc, libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    rc, libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		goto cleanup_conn;
 	}
@@ -658,22 +677,22 @@ cleanup_conn:
 	return rc;
 }
 
-int
-kefalnd_handle_conn_req(struct kefa_ni *efa_ni, struct kefa_rx *rx)
+static int
+kefalnd_handle_conn_req(struct kefa_ni *efa_ni, struct lnet_nid *srcnid,
+			struct lnet_nid *dstnid, struct kefa_conn_req_msg *request_msg,
+			u8 proto_ver)
 {
-	struct kefa_conn_req_msg *request_msg;
-	struct kefa_msg *msg = rx->msg;
 	struct kefa_conn *conn;
 	unsigned long flags;
 	int rc;
 
 	CDEBUG(D_NET, "Received connection request from[%s] to[%s]\n",
-	       libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+	       libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
-	conn = kefalnd_get_conn_from_rx(efa_ni, rx, KEFA_CONN_TYPE_RESPONDER);
+	conn = kefalnd_lookup_conn(efa_ni, srcnid, KEFA_CONN_TYPE_RESPONDER);
 	if (!conn) {
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection from[%s] to[%s]\n",
-			    libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -ENOTCONN;
 	}
@@ -681,14 +700,13 @@ kefalnd_handle_conn_req(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	/* We currently asume connection probe comes before request so the connection must exits
 	 * at this point and it can be active or during establishment.
 	 */
-	request_msg = &msg->u.conn_request;
-
 	spin_lock_irqsave(&conn->lock, flags);
 	switch (conn->state) {
 	case KEFA_CONN_PROBE_EFA_PASSIVE:
 		/* Regular path */
 		/* TODO: validate requests make sense */
 		conn->requests = request_msg->requests;
+		conn->proto_ver = proto_ver;
 
 		rc = kefalnd_init_conn_data_qps(conn, (struct kefa_qp_proto *)request_msg->data_qps,
 						request_msg->nqps);
@@ -710,7 +728,7 @@ kefalnd_handle_conn_req(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	default:
 		spin_unlock_irqrestore(&conn->lock, flags);
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection state[%u] from[%s] to[%s]\n",
-			    conn->state, libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    conn->state, libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -EINVAL;
 	}
@@ -719,23 +737,25 @@ kefalnd_handle_conn_req(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	return rc;
 }
 
-int
-kefalnd_handle_conn_probe_resp(struct kefa_ni *efa_ni, struct kefa_rx *rx)
+static int
+kefalnd_handle_conn_probe_resp(struct kefa_ni *efa_ni, struct lnet_nid *srcnid,
+			       struct lnet_nid *dstnid,
+			       struct kefa_conn_probe_resp_msg *probe_resp_msg,
+			       u16 msg_nob)
 {
-	struct kefa_conn_probe_resp_msg *probe_resp_msg;
-	struct kefa_msg *msg = rx->msg;
 	enum lnet_msg_hstatus hstatus;
+	u8 min_proto, max_proto;
 	struct kefa_conn *conn;
 	unsigned long flags;
 	int rc;
 
 	CDEBUG(D_NET, "Received connection probe response from[%s] to[%s]\n",
-	       libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+	       libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
-	conn = kefalnd_get_conn_from_rx(efa_ni, rx, KEFA_CONN_TYPE_INITIATOR);
+	conn = kefalnd_lookup_conn(efa_ni, srcnid, KEFA_CONN_TYPE_INITIATOR);
 	if (!conn) {
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection from[%s] to[%s]\n",
-			    libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -ENOTCONN;
 	}
@@ -744,19 +764,34 @@ kefalnd_handle_conn_probe_resp(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	if (conn->state != KEFA_CONN_PROBE_EFA) {
 		spin_unlock_irqrestore(&conn->lock, flags);
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection state[%u] from[%s] to[%s]\n",
-			    conn->state, libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    conn->state, libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -EINVAL;
 	}
 
 	spin_unlock_irqrestore(&conn->lock, flags);
 
-	probe_resp_msg = &msg->u.conn_probe_resp;
+	min_proto = EFALND_PROTO_VER_1;
+	max_proto = EFALND_PROTO_VER_1;
+	if (EFALND_FIELD_AVAIL(typeof(*probe_resp_msg), max_proto_ver, msg_nob)) {
+		min_proto = probe_resp_msg->min_proto_ver;
+		max_proto = probe_resp_msg->max_proto_ver;
+	}
+
 	rc = kefalnd_efa_status_to_errno(probe_resp_msg->status);
 	if (rc) {
-		/* Downgrade protocol version to remote's supported version and probe again. */
 		if (rc == -EPROTONOSUPPORT) {
-			conn->proto_ver = msg->proto_ver;
+			/* Check for supported proto versions overlap */
+			if (min_t(u8, EFALND_MAX_PROTO_VER, max_proto) <
+			    max_t(u8, EFALND_MIN_PROTO_VER, min_proto)) {
+				hstatus = LNET_MSG_STATUS_LOCAL_ERROR;
+				goto cleanup_conn;
+			}
+
+			/* Downgrade protocol version to remote's supported version
+			 * and probe again.
+			 */
+			conn->proto_ver = min_t(u8, EFALND_MAX_PROTO_VER, max_proto);
 			rc = kefalnd_send_conn_probe(conn);
 			if (!rc)
 				return 0;
@@ -773,6 +808,7 @@ kefalnd_handle_conn_probe_resp(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	conn->remote_caps = probe_resp_msg->caps;
 	conn->requests = 0;
 	conn->remote_epoch = probe_resp_msg->src_epoch;
+	conn->proto_ver = min_t(u8, EFALND_MAX_PROTO_VER, max_proto);
 
 	kefalnd_set_conn_state(conn, KEFA_CONN_ESTABLISH);
 	rc = kefalnd_send_conn_req(conn);
@@ -853,28 +889,25 @@ kefalnd_refresh_connection(struct kefa_ni *efa_ni, struct kefa_conn *old_conn,
 	return new_conn;
 }
 
-int
-kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct kefa_rx *rx)
+static int
+kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct lnet_nid *srcnid,
+			  struct lnet_nid *dstnid, struct kefa_conn_probe_msg *probe_msg,
+			  u8 proto_ver)
 {
-	struct kefa_conn_probe_msg *probe_msg;
 	struct kefa_conn *conn, *init_conn;
-	struct kefa_msg *msg = rx->msg;
 	struct kefa_peer_ni *peer_ni;
 	bool init_conn_active;
-	struct lnet_nid nid;
 	unsigned long flags;
 	union ib_gid gid;
 	int rc, resp_rc;
 
 	CDEBUG(D_NET, "Received connection probe from[%s] to[%s]\n",
-	       libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+	       libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
-	lnet_nid4_to_nid(msg->srcnid, &nid);
-	conn = kefalnd_lookup_or_init_conn(efa_ni, &nid, KEFA_CONN_TYPE_RESPONDER);
+	conn = kefalnd_lookup_or_init_conn(efa_ni, srcnid, KEFA_CONN_TYPE_RESPONDER);
 	if (!conn)
 		return PTR_ERR(conn);
 
-	probe_msg = &msg->u.conn_probe;
 	memcpy(gid.raw, probe_msg->src_gid, sizeof(probe_msg->src_gid));
 
 	spin_lock_irqsave(&conn->lock, flags);
@@ -882,7 +915,7 @@ kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	case KEFA_CONN_INACTIVE:
 		kefalnd_set_conn_state_locked(conn, KEFA_CONN_PROBE_EFA_PASSIVE);
 		spin_unlock_irqrestore(&conn->lock, flags);
-		peer_ni = kefalnd_lookup_or_create_peer_ni(msg->srcnid, &gid,
+		peer_ni = kefalnd_lookup_or_create_peer_ni(lnet_nid_to_nid4(srcnid), &gid,
 							   probe_msg->cm_qp.qp_num,
 							   probe_msg->cm_qp.qkey);
 		if (IS_ERR_OR_NULL(peer_ni)) {
@@ -911,8 +944,8 @@ kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 		}
 
 		spin_unlock_irqrestore(&conn->lock, flags);
-		conn = kefalnd_refresh_connection(efa_ni, conn, &nid, &gid, probe_msg->cm_qp.qp_num,
-						  probe_msg->cm_qp.qkey);
+		conn = kefalnd_refresh_connection(efa_ni, conn, srcnid, &gid,
+						  probe_msg->cm_qp.qp_num, probe_msg->cm_qp.qkey);
 		if (IS_ERR(conn)) {
 			return PTR_ERR(conn);
 		}
@@ -928,13 +961,13 @@ kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 		 */
 		spin_unlock_irqrestore(&conn->lock, flags);
 		EFA_DEV_ERR(efa_ni->efa_dev, "Unexpected connection state[%u] from[%s] to[%s]\n",
-			    conn->state, libcfs_nid2str(msg->srcnid), libcfs_nid2str(msg->dstnid));
+			    conn->state, libcfs_nidstr(srcnid), libcfs_nidstr(dstnid));
 
 		return -EINVAL;
 	}
 
 	/* We check if TX connection is valid as well and if not remove it */
-	init_conn = kefalnd_get_conn_from_rx(efa_ni, rx, KEFA_CONN_TYPE_INITIATOR);
+	init_conn = kefalnd_lookup_conn(efa_ni, srcnid, KEFA_CONN_TYPE_INITIATOR);
 	if (init_conn) {
 		spin_lock_irqsave(&init_conn->lock, flags);
 		init_conn_active = init_conn->state == KEFA_CONN_ACTIVE;
@@ -952,9 +985,9 @@ kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 		goto cleanup_conn;
 
 proto_check:
-	resp_rc = msg->proto_ver > EFALND_CURR_PROTO_VER ? -EPROTONOSUPPORT : 0;
+	resp_rc = proto_ver > EFALND_MAX_PROTO_VER ? -EPROTONOSUPPORT : 0;
 	if (!resp_rc) {
-		conn->proto_ver = msg->proto_ver;
+		conn->proto_ver = proto_ver;
 	}
 
 	rc = kefalnd_send_conn_probe_resp(conn, resp_rc);
@@ -969,47 +1002,61 @@ cleanup_conn:
 	return rc;
 }
 
-/* TT: https://issues.amazon.com/issues/EFA-3459 */
-static void
-kefalnd_notify_all_cqs(struct kefa_ni *efa_ni)
+static inline u16
+kefalnd_get_payload_size_from_msg(struct kefa_msg *msg)
 {
-	struct kefa_dev *efa_dev = efa_ni->efa_dev;
-	struct kefa_sched *sched;
-	unsigned long flags;
-	int i, rc;
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return msg->hdr.nob - offsetof(struct kefa_msg, msg_v2.u);
 
-	if (hash_empty(efa_ni->conns))
-		return;
+	return msg->hdr.nob - offsetof(struct kefa_msg, msg_v1.u);
+}
 
-	sched = kefalnd.scheds[efa_ni->lnet_ni->ni_dev_cpt];
+void
+kefalnd_handle_conn_establishment(struct kefa_ni *efa_ni, struct kefa_msg *msg)
+{
+	struct lnet_nid srcnid, dstnid;
+	u8 proto_ver;
 
-	spin_lock_irqsave(&sched->lock, flags);
-	rc = ib_req_notify_cq(efa_dev->cm_cq->ib_cq, IB_CQ_NEXT_COMP);
-	if (rc < 0)
-		EFA_DEV_ERR(efa_dev, "request notify CM CQ failed. err[%d]\n", rc);
+	kefalnd_get_srcnid_from_msg(msg, &srcnid);
+	kefalnd_get_dstnid_from_msg(msg, &dstnid);
+	proto_ver = msg->hdr.proto_ver;
 
-	if (list_empty(&efa_dev->cm_cq->sched_node))
-		list_add_tail(&efa_dev->cm_cq->sched_node, &sched->pend_cqs);
+	switch (msg->hdr.type) {
+	default:
+		EFA_DEV_ERR(efa_ni->efa_dev, "bad EFALND establishment message type[%x]\n",
+			    msg->hdr.type);
 
-	for (i = 0; i < efa_dev->ncqs; i++) {
-		rc = ib_req_notify_cq(efa_dev->cqs[i].ib_cq, IB_CQ_NEXT_COMP);
-		if (rc < 0)
-			EFA_DEV_ERR(efa_dev, "request notify CQ failed. err[%d]\n", rc);
+		break;
 
-		if (list_empty(&efa_dev->cqs[i].sched_node))
-			list_add_tail(&efa_dev->cqs[i].sched_node, &sched->pend_cqs);
+	case EFALND_MSG_CONN_PROBE:
+		kefalnd_handle_conn_probe(efa_ni, &srcnid, &dstnid, kefalnd_get_probe_from_msg(msg),
+					  proto_ver);
+		break;
+
+	case EFALND_MSG_CONN_PROBE_RESP:
+		kefalnd_handle_conn_probe_resp(efa_ni, &srcnid, &dstnid,
+					       kefalnd_get_probe_resp_from_msg(msg),
+					       kefalnd_get_payload_size_from_msg(msg));
+		break;
+
+	case EFALND_MSG_CONN_REQ:
+		kefalnd_handle_conn_req(efa_ni, &srcnid, &dstnid,
+					kefalnd_get_conn_req_from_msg(msg), proto_ver);
+		break;
+
+	case EFALND_MSG_CONN_REQ_ACK:
+		kefalnd_handle_conn_req_ack(efa_ni, &srcnid, &dstnid,
+					    kefalnd_get_conn_req_ack_from_msg(msg));
+		break;
 	}
-
-	spin_unlock_irqrestore(&sched->lock, flags);
-
-	wake_up_all(&sched->waitq);
 }
 
 static void
-kefalnd_cleanup_conn_txs(struct kefa_conn *conn)
+kefalnd_cleanup_conn_txs(struct kefa_conn *conn, struct list_head *abort_tx,
+			 struct list_head *cancel_tx)
 {
-	time64_t now = ktime_get_seconds();
 	int timeout = lnet_get_lnd_timeout();
+	time64_t now = ktime_get_seconds();
 	struct kefa_tx *tx, *temp_tx;
 	unsigned long flags;
 
@@ -1022,13 +1069,10 @@ kefalnd_cleanup_conn_txs(struct kefa_conn *conn)
 		if (tx_send_time == 0 || now < tx_send_time + timeout)
 			break;
 
-		/* Its a zombie TX */
-		kefalnd_abort_tx_locked(tx, LNET_MSG_STATUS_NETWORK_TIMEOUT, -ETIMEDOUT);
+		list_move_tail(&tx->list_node, abort_tx);
 	}
 
-	list_for_each_entry_safe(tx, temp_tx, &conn->pend_tx, list_node) {
-		kefalnd_force_cancel_tx_locked(tx, LNET_MSG_STATUS_LOCAL_ABORTED, -ETIMEDOUT);
-	}
+	list_splice_init(&conn->pend_tx, cancel_tx);
 
 	spin_unlock_irqrestore(&conn->lock, flags);
 }
@@ -1039,6 +1083,8 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 	struct kefa_conn *removed_conn[MAX_IDLE_CONN] = { 0 };
 	struct kefa_conn *idle_conn[MAX_IDLE_CONN] = { 0 };
 	int init_timeout, resp_timeout, timeout, bkt, i = 0;
+	struct list_head abort_tx, cancel_tx;
+	struct kefa_tx *tx, *temp_tx;
 	struct kefa_conn *conn;
 	unsigned long flags;
 	int num_removed = 0;
@@ -1046,6 +1092,8 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 	time64_t now;
 
 	now = ktime_get_seconds();
+	INIT_LIST_HEAD(&abort_tx);
+	INIT_LIST_HEAD(&cancel_tx);
 	init_timeout = efa_ni->lnet_ni->ni_net->net_tunables.lct_peer_timeout;
 	resp_timeout = init_timeout + RESP_CONN_EXTRA_TIME;
 
@@ -1078,7 +1126,7 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 			kefalnd_deactivate_conn_locked(idle_conn[i]);
 
 		if (idle_conn[i]->state == KEFA_CONN_DEACTIVATING)
-			kefalnd_cleanup_conn_txs(idle_conn[i]);
+			kefalnd_cleanup_conn_txs(idle_conn[i], &abort_tx, &cancel_tx);
 
 		if (now > idle_conn[i]->last_use_time + timeout &&
 		    list_empty(&idle_conn[i]->active_tx)) {
@@ -1089,6 +1137,14 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 	}
 
 	write_unlock_irqrestore(&efa_ni->conn_lock, flags);
+
+	list_for_each_entry_safe(tx, temp_tx, &abort_tx, list_node) {
+		kefalnd_abort_tx(tx, LNET_MSG_STATUS_NETWORK_TIMEOUT, -ETIMEDOUT);
+	}
+
+	list_for_each_entry_safe(tx, temp_tx, &cancel_tx, list_node) {
+		kefalnd_force_cancel_tx(tx, LNET_MSG_STATUS_LOCAL_ABORTED, -ETIMEDOUT);
+	}
 
 	for (i = 0; i < num_removed; i++)
 		kefalnd_destroy_conn(removed_conn[i], LNET_MSG_STATUS_LOCAL_ABORTED, -ESHUTDOWN);
@@ -1115,7 +1171,6 @@ kefalnd_cm_daemon(void *arg)
 	while (!kefalnd.shutdown) {
 		mutex_lock(&cm_daemon->ni_list_lock);
 		list_for_each_entry(efa_ni, &cm_daemon->efa_ni_list, cm_node) {
-			kefalnd_notify_all_cqs(efa_ni);
 			if (cm_daemon->iter % 5 == 0)
 				kefalnd_cleanup_ni_conns(efa_ni);
 		}
