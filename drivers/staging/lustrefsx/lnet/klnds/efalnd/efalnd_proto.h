@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright (c) 2023-2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -40,11 +40,10 @@ enum kefa_comp_status {
 
 struct kefa_nid_md_entry {
 	lnet_nid_t nid;
-	union ib_gid gid;
-	__u16 qp_num;
-	__u32 qkey;
-	__u16 buffer_2;
-	__u64 buffer_end;
+	u8 gid[16];
+	u16 qp_num;
+	u32 qkey;
+	u8 buffer[10];
 } __packed;
 
 struct kefa_qp_proto {
@@ -52,19 +51,19 @@ struct kefa_qp_proto {
 	u32 qkey;
 } __packed;
 
-struct kefa_rdma_frag {
-	u64 addr;				/* CAVEAT EMPTOR: misaligned!! */
-	u32 nob;				/* # bytes this frag */
-} __packed;
-
 struct kefa_rdma_desc {
 	u32 key;				/* local/remote key */
-	struct kefa_rdma_frag frag;		/* buffer frag */
+	u64 addr;
+	u32 nob;				/* # of bytes */
 } __packed;
-
 
 struct kefa_immediate_msg {
 	struct lnet_hdr_nid4 hdr;		/* portals header */
+	char payload[0];			/* piggy-backed payload */
+} __packed;
+
+struct kefa_immediate_msg_v2 {
+	struct lnet_hdr_nid16 hdr;		/* portals header */
 	char payload[0];			/* piggy-backed payload */
 } __packed;
 
@@ -74,8 +73,19 @@ struct kefa_putr_req_msg {
 	struct kefa_rdma_desc rdma_desc;	/* src rdma desc */
 } __packed;
 
+struct kefa_putr_req_msg_v2 {
+	struct lnet_hdr_nid16 hdr;		/* portals header */
+	u64 cookie;				/* opaque completion cookie */
+	struct kefa_rdma_desc rdma_desc;	/* src rdma desc */
+} __packed;
+
 struct kefa_getr_req_msg {
 	struct lnet_hdr_nid4 hdr;		/* portals header */
+	u64 sink_cookie;			/* opaque completion cookie */
+} __packed;
+
+struct kefa_getr_req_msg_v2 {
+	struct lnet_hdr_nid16 hdr;		/* portals header */
 	u64 sink_cookie;			/* opaque completion cookie */
 } __packed;
 
@@ -87,7 +97,7 @@ struct kefa_getr_ack_msg {
 
 struct kefa_completion_msg {
 	u64 cookie;				/* opaque completion cookie */
-	s16 status;				/* < 0 failure: >= 0 length */
+	s16 status;				/* enum kefa_comp_status */
 } __packed;
 
 struct kefa_conn_probe_msg {
@@ -100,9 +110,11 @@ struct kefa_conn_probe_msg {
 
 struct kefa_conn_probe_resp_msg {
 	u16 lnd_ver;				/* LND version */
-	s16 status;				/* < 0 failure: = 0 success */
+	s16 status;				/* enum kefa_comp_status */
 	u64 src_epoch;				/* Responder's epoch */
 	u64 caps;				/* Capabilities bit array */
+	u8 min_proto_ver;			/* Min supported protocol version */
+	u8 max_proto_ver;			/* Max supported protocol version */
 } __packed;
 
 struct kefa_conn_req_msg {
@@ -124,18 +136,13 @@ struct kefa_conn_req_ack {
 	u64 src_epoch;				/* Responder's epoch */
 	u64 caps;				/* Capabilities bit array */
 	u64 reserved;
-	s16 status;				/* < 0 failure: = 0 success */
+	s16 status;				/* enum kefa_comp_status */
 	u32 src_conn_id;			/* Responder's connection ID */
 	u32 nqps;				/* Number of data QPs on the array */
 	struct kefa_qp_proto data_qps[0];	/* Data QPs array */
 } __packed;
 
-struct kefa_msg {
-	/* First 2 fields fixed FOR ALL TIME */
-	u32 magic;				/* I'm an efanal message */
-	u8 proto_ver;				/* this is my protocol version number */
-	u8 type;				/* efa msg type */
-	u16 nob;				/* # bytes in whole message */
+struct kefa_msg_v1 {
 	lnet_nid_t srcnid;			/* sender's NID */
 	lnet_nid_t dstnid;			/* destination's NID */
 	u64 dst_epoch;				/* destination's epoch */
@@ -156,10 +163,50 @@ struct kefa_msg {
 	/* No additional fields can be added after the union. */
 } __packed;
 
+struct kefa_msg_v2 {
+	struct lnet_nid srcnid;			/* sender's NID */
+	struct lnet_nid dstnid;			/* destination's NID */
+	u64 dst_epoch;				/* destination's epoch */
+	u32 dst_conn_id;			/* ID for fast connection retrieval */
+	u8 credits;				/* returned credits */
+
+	union {
+		struct kefa_immediate_msg_v2 immediate;
+		struct kefa_putr_req_msg_v2 putr_req;
+		struct kefa_getr_req_msg_v2 getr_req;
+		struct kefa_getr_ack_msg getr_ack;
+		struct kefa_completion_msg completion;
+		struct kefa_conn_probe_msg conn_probe;
+		struct kefa_conn_probe_resp_msg conn_probe_resp;
+		struct kefa_conn_req_msg conn_request;
+		struct kefa_conn_req_ack conn_request_ack;
+	} __packed u;
+	/* No additional fields can be added after the union. */
+} __packed;
+
+struct kefa_hdr {
+		/* First 3 fields fixed FOR ALL TIME */
+	u32 magic;				/* I'm an efanal message */
+	u8 proto_ver;				/* this is my protocol version number */
+	u8 type;				/* efa msg type */
+	u16 nob;				/* # bytes in whole message */
+} __packed;
+
+struct kefa_msg {
+	struct kefa_hdr hdr;
+	union {
+		struct kefa_msg_v1 msg_v1;
+		struct kefa_msg_v2 msg_v2;
+	} __packed;
+	/* No additional fields can be added after the union. */
+} __packed;
+
 #define EFALND_MSG_MAGIC LNET_PROTO_EFA_MAGIC	/* unique magic */
 
 #define EFALND_PROTO_VER_1	0x81
-#define EFALND_CURR_PROTO_VER	EFALND_PROTO_VER_1
+#define EFALND_PROTO_VER_2	0x82
+#define EFALND_MIN_PROTO_VER	EFALND_PROTO_VER_1
+#define EFALND_MAX_PROTO_VER	EFALND_PROTO_VER_1
 
 #define EFALND_MSG_RESERVED		0x00
 #define EFALND_MSG_CONN_PROBE		0x01	/* connection probe */
