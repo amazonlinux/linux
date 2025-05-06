@@ -1073,9 +1073,6 @@
 /* new_sync_[read|write] is exported by the kernel */
 #undef HAVE_SYNC_READ_WRITE
 
-/* sysfs_emit_at() is defined */
-#undef HAVE_SYSFS_EMIT_AT
-
 /* Define to 1 if you have <sys/quota.h>. */
 #undef HAVE_SYS_QUOTA_H
 
