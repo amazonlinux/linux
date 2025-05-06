@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright (c) 2023-2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -84,6 +84,7 @@ static void peer_ni_free(struct kref *ref)
 		rhashtable_remove_fast(&kefalnd.peer_ni, &peer_ni->linkage,
 				       peer_ni_params);
 
+	atomic_dec(&kefalnd.peer_ni_count);
 	LIBCFS_FREE_PRE(peer_ni, sizeof(*peer_ni), "kfreed");
 	kfree_rcu(peer_ni, rcu_read);
 	rcu_read_unlock();
@@ -120,7 +121,7 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 {
 	struct kefa_peer_ni *new_peer_ni, *old_peer_ni;
 
-	LIBCFS_ALLOC_PTR(new_peer_ni);
+	CFS_ALLOC_PTR(new_peer_ni);
 	if (!new_peer_ni)
 		return ERR_PTR(-ENOMEM);
 
@@ -134,7 +135,7 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 	rcu_read_lock();
 	if (kefalnd.shutdown || kefalnd.init_state == EFALND_INIT_NONE) {
 		rcu_read_unlock();
-		LIBCFS_FREE_PTR(new_peer_ni);
+		CFS_FREE_PTR(new_peer_ni);
 		return ERR_PTR(-ENODEV);
 	}
 
@@ -147,7 +148,7 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 		       libcfs_nid2str(nid_addr));
 
 		rcu_read_unlock();
-		LIBCFS_FREE_PTR(new_peer_ni);
+		CFS_FREE_PTR(new_peer_ni);
 		return old_peer_ni;
 	}
 
@@ -159,11 +160,12 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 			old_peer_ni =  ERR_PTR(-ENODEV);
 
 		rcu_read_unlock();
-		LIBCFS_FREE_PTR(new_peer_ni);
+		CFS_FREE_PTR(new_peer_ni);
 		return old_peer_ni;
 	}
 
 	rcu_read_unlock();
+	atomic_inc(&kefalnd.peer_ni_count);
 	return new_peer_ni;
 }
 
@@ -208,6 +210,7 @@ kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev, struct lnet_nid *efa_nid)
 	struct lnet_nid_metadata *mapping;
 	lnet_nid_t tcp_nid4;
 	lnet_nid_t efa_nid4;
+	union ib_gid gid;
 	u32 nid_addr;
 	int rc = 0;
 	int i = 0;
@@ -237,8 +240,8 @@ kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev, struct lnet_nid *efa_nid)
 
 	rc = lnet_discover_nid_metadata(tcp_nid4, mapping);
 	if (rc) {
-		EFA_DEV_ERR(efa_dev, "Failed to ping TCP peer NI[%s]\n",
-			    libcfs_nid2str(tcp_nid4));
+		EFA_DEV_DEBUG(efa_dev, "Failed to ping TCP peer NI[%s]\n",
+			      libcfs_nid2str(tcp_nid4));
 		GOTO(out_mapping, rc);
 	}
 
@@ -259,10 +262,10 @@ kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev, struct lnet_nid *efa_nid)
 			continue;
 
 		kefa_nid_md = (struct kefa_nid_md_entry *)&mapping->nid_mappings[i];
+		memcpy(gid.raw, &kefa_nid_md->gid, sizeof(kefa_nid_md->gid));
 
 		new_peer_ni = kefalnd_lookup_or_create_peer_ni(LNET_NIDADDR(kefa_nid_md->nid),
-							       &kefa_nid_md->gid,
-							       kefa_nid_md->qp_num,
+							       &gid, kefa_nid_md->qp_num,
 							       kefa_nid_md->qkey);
 
 		if (IS_ERR_OR_NULL(new_peer_ni))
@@ -289,7 +292,6 @@ out_mapping:
 	LIBCFS_FREE(mapping, mapping_size);
 
 out_error:
-	EFA_DEV_ERR(efa_dev, "Failed to perform ping\n");
 	RETURN(ERR_PTR(rc));
 }
 
@@ -311,7 +313,7 @@ int kefalnd_get_nid_metadata(struct lnet_ni *ni, struct lnet_nid_md_entry *md_en
 	if (kefalnd.shutdown || kefalnd.init_state == EFALND_INIT_NONE)
 		return -ENODEV;
 
-	kefa_ni_md->gid = efa_dev->gid;
+	memcpy(&kefa_ni_md->gid, efa_dev->gid.raw, sizeof(efa_dev->gid.raw));
 	kefa_ni_md->qp_num = efa_dev->cm_qp->ib_qp->qp_num;
 	kefa_ni_md->qkey = efa_dev->cm_qp->qkey;
 
@@ -320,82 +322,6 @@ int kefalnd_get_nid_metadata(struct lnet_ni *ni, struct lnet_nid_md_entry *md_en
 		      cpu_to_be64(efa_dev->gid.global.interface_id));
 
 	return 0;
-}
-
-static ssize_t gidmap_show(struct kobject *kobj, struct kobj_attribute *attr,
-			   char *buf)
-{
-	struct kefa_peer_ni *peer_ni;
-	char ip_str[INET_ADDRSTRLEN];
-	struct rhashtable_iter iter;
-	ssize_t cnt = 0;
-	u16 *gid_raw;
-
-	rcu_read_lock();
-	if (kefalnd.shutdown || kefalnd.init_state == EFALND_INIT_NONE) {
-		rcu_read_unlock();
-		return 0;
-	}
-
-	rhashtable_walk_enter(&kefalnd.peer_ni, &iter);
-	rhashtable_walk_start(&iter);
-
-	while ((peer_ni = rhashtable_walk_next(&iter)) != NULL) {
-		if (IS_ERR(peer_ni))
-			continue;
-
-		gid_raw = (u16 *)peer_ni->gid.raw;
-
-		snprintf(ip_str, INET_ADDRSTRLEN, "%d.%d.%d.%d",
-			 peer_ni->remote_nid_addr >> 24,
-			 peer_ni->remote_nid_addr >> 16 & 0xFF,
-			 peer_ni->remote_nid_addr >> 8 & 0xFF,
-			 peer_ni->remote_nid_addr & 0xFF);
-		cnt += sysfs_emit_at(buf, cnt,
-				     "%-15s %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x %i %x\n",
-				     ip_str,
-				     be16_to_cpu(gid_raw[0]),
-				     be16_to_cpu(gid_raw[1]),
-				     be16_to_cpu(gid_raw[2]),
-				     be16_to_cpu(gid_raw[3]),
-				     be16_to_cpu(gid_raw[4]),
-				     be16_to_cpu(gid_raw[5]),
-				     be16_to_cpu(gid_raw[6]),
-				     be16_to_cpu(gid_raw[7]),
-				     peer_ni->cm_qp.qp_num,
-				     peer_ni->cm_qp.qkey);
-	}
-
-	rhashtable_walk_stop(&iter);
-	rhashtable_walk_exit(&iter);
-	rcu_read_unlock();
-
-	return cnt;
-}
-
-static struct kobj_attribute gidmap = __ATTR_RO(gidmap);
-static struct kobject *efalnd_kobj;
-
-int kefalnd_peerni_init(void)
-{
-	int rc = 0;
-
-	efalnd_kobj = kobject_create_and_add("efalnd", kernel_kobj);
-	if (!efalnd_kobj)
-		return -ENOMEM;
-
-	rc = sysfs_create_file(efalnd_kobj, &gidmap.attr);
-	if (rc) {
-		CERROR("failed to create gidmap sysfs\n");
-		return rc;
-	}
-
-	return rc;
-}
-
-void kefalnd_peerni_exit(void)
-{
-	kobject_put(efalnd_kobj);
 }
 
 /**
