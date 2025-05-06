@@ -260,10 +260,7 @@ struct lnet_ni_status {
 
 struct lnet_nid_md_entry {
 	lnet_nid_t nid;
-	__u64 buffer;
-	__u64 buffer_1;
-	__u64 buffer_2;
-	__u64 buffer_end;
+	__u8 buffer[32];
 } __attribute__((packed));
 
 struct lnet_nid_metadata {
