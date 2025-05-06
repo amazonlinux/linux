@@ -162,7 +162,7 @@ static inline int nid_same(const struct lnet_nid *n1,
 		n1->nid_addr[3] == n2->nid_addr[3];
 }
 
-static inline int nid_net_same(const struct lnet_nid *n1,
+static inline int nid_same_net(const struct lnet_nid *n1,
 			       const struct lnet_nid *n2)
 {
 	return n1->nid_size == n2->nid_size &&
