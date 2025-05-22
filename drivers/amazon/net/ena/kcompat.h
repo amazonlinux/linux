@@ -1006,8 +1006,12 @@ static inline ssize_t strscpy(char *dest, const char *src, size_t count)
 
 static inline void ena_netif_napi_add(struct net_device *dev,
 				      struct napi_struct *napi,
-				      int (*poll)(struct napi_struct *, int))
+				      int (*poll)(struct napi_struct *, int),
+				      int index)
 {
+#ifdef ENA_NETIF_NAPI_ADD_CONFIG
+	netif_napi_add_config(dev, napi, poll, index);
+#else
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0)) && \
 	!(RHEL_RELEASE_CODE && \
 	  ((RHEL_RELEASE_CODE >= RHEL_RELEASE_VERSION(8, 8)) && \
@@ -1020,6 +1024,7 @@ static inline void ena_netif_napi_add(struct net_device *dev,
 #else
 	netif_napi_add(dev, napi, poll);
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(6, 1, 0) */
+#endif /* ENA_NETIF_NAPI_ADD_CONFIG */
 }
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
@@ -1193,5 +1198,48 @@ static inline int ena_xdp_return_buff(struct xdp_buff *xdp)
 	return 0;
 }
 #endif /* defined(ENA_XDP_SUPPORT) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 17, 0) */
+
+#if defined(ENA_XDP_SUPPORT) && defined(ENA_HAVE_XDP_MB_DEPS)
+#define ENA_XDP_MB_SUPPORT
+#endif
+
+#if defined(ENA_XDP_MB_SUPPORT) && !defined(ENA_HAVE_SKB_FRAG_FILL_PAGE_DESC)
+static inline void skb_frag_fill_page_desc(skb_frag_t *frag,
+					   struct page *page,
+					   int off, int size)
+{
+	frag->bv_page = page;
+	frag->bv_offset = off;
+	skb_frag_size_set(frag, size);
+}
+#endif /* defined(ENA_XDP_MB_SUPPORT) && !defined(ENA_HAVE_SKB_FRAG_FILL_PAGE_DESC) */
+
+#ifdef ENA_XDP_SUPPORT
+static inline int ena_xdp_rxq_info_reg(struct xdp_rxq_info *xdp_rxq,
+				       struct net_device *dev, u32 queue_index,
+				       unsigned int napi_id, u32 frag_size)
+{
+#ifdef ENA_XDP_MB_SUPPORT
+	return __xdp_rxq_info_reg(xdp_rxq, dev, queue_index, napi_id, frag_size);
+
+#else /* ENA_XDP_MB_SUPPORT */
+
+#ifdef AF_XDP_BUSY_POLL_SUPPORTED
+#ifdef ENA_AF_XDP_SUPPORT
+	return xdp_rxq_info_reg(xdp_rxq, dev, queue_index, napi_id);
+#else
+	return xdp_rxq_info_reg(xdp_rxq, dev, queue_index, 0);
+#endif /* ENA_AF_XDP_SUPPORT */
+#else
+	return xdp_rxq_info_reg(xdp_rxq, dev, queue_index);
+#endif /* AF_XDP_BUSY_POLL_SUPPORTED */
+
+#endif /* ENA_XDP_MB_SUPPORT */
+}
+#endif /* ENA_XDP_SUPPORT */
+
+#ifndef ENA_HAVE_SKB_METADATA_SET
+static inline void skb_metadata_set(struct sk_buff *skb, u8 meta_len) {}
+#endif /* ENA_HAVE_SKB_METADATA_SET */
 
 #endif /* _KCOMPAT_H_ */
