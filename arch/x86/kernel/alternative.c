@@ -18,7 +18,9 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#ifdef CONFIG_MITIGATION_ITS
 #include <linux/moduleloader.h>
+#endif
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -152,6 +154,7 @@ static void its_fill_reg_chunk(u8 *mem, int reg)
  */
 static void __init its_alloc_trampoline(void)
 {
+#ifdef CONFIG_MITIGATION_ITS
 	int reg, remaining, this_write;
 	u8 *tramp_base, *tramp_mem;
 
@@ -185,6 +188,7 @@ static void __init its_alloc_trampoline(void)
 
 	set_memory_ro((unsigned long)tramp_base, ITS_TRAMP_TOTAL_PAGES);
 	set_memory_x((unsigned long)tramp_base, ITS_TRAMP_TOTAL_PAGES);
+#endif
 }
 
 /*
