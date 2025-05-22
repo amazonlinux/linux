@@ -31,8 +31,8 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	13
-#define DRV_MODULE_GEN_SUBMINOR	2
+#define DRV_MODULE_GEN_MINOR	14
+#define DRV_MODULE_GEN_SUBMINOR	1
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -237,6 +237,10 @@ struct ena_stats_tx {
 	u64 xsk_need_wakeup_set;
 	u64 xsk_wakeup_request;
 #endif /* ENA_AF_XDP_SUPPORT */
+#ifdef ENA_XDP_MB_SUPPORT
+	u64 xdp_frags_exceeded;
+	u64 xdp_short_linear_part;
+#endif /* ENA_XDP_MB_SUPPORT */
 };
 
 struct ena_stats_rx {
@@ -298,6 +302,9 @@ struct ena_ring {
 	struct ena_com_io_sq *ena_com_io_sq;
 #ifdef ENA_XDP_SUPPORT
 	struct bpf_prog *xdp_bpf_prog;
+#ifdef ENA_XDP_MB_SUPPORT
+	bool xdp_prog_support_frags;
+#endif /* ENA_XDP_MB_SUPPORT */
 	struct xdp_rxq_info xdp_rxq;
 	spinlock_t xdp_tx_lock;	/* synchronize XDP TX/Redirect traffic */
 	/* Used for rx queues only to point to the xdp tx ring, to
@@ -542,6 +549,8 @@ void ena_dump_stats_to_dmesg(struct ena_adapter *adapter);
 
 void ena_dump_stats_to_buf(struct ena_adapter *adapter, u8 *buf);
 
+struct sk_buff *ena_alloc_skb(struct ena_ring *rx_ring, void *first_frag, u16 len);
+
 int ena_set_lpc_state(struct ena_adapter *adapter, bool enabled);
 
 int ena_update_queue_params(struct ena_adapter *adapter,
@@ -652,6 +661,43 @@ static inline void ena_reset_device(struct ena_adapter *adapter,
 	set_bit(ENA_FLAG_TRIGGER_RESET, &adapter->flags);
 }
 
+static inline int ena_tx_map_frags(struct skb_shared_info *sh_info,
+				   struct ena_tx_buffer *tx_info,
+				   struct ena_ring *tx_ring,
+				   struct ena_com_buf *ena_buf,
+				   u16 delta)
+{
+	u32 nr_frags = sh_info->nr_frags;
+	dma_addr_t dma;
+	u32 frag_len;
+	int i, rc;
+
+	for (i = 0; i < nr_frags; i++) {
+		const skb_frag_t *frag = &sh_info->frags[i];
+
+		frag_len = skb_frag_size(frag);
+
+		if (unlikely(delta >= frag_len)) {
+			delta -= frag_len;
+			continue;
+		}
+
+		dma = skb_frag_dma_map(tx_ring->dev, frag, delta,
+				       frag_len - delta, DMA_TO_DEVICE);
+		rc = dma_mapping_error(tx_ring->dev, dma);
+		if (unlikely(rc))
+			return rc;
+
+		ena_buf->paddr = dma;
+		ena_buf->len = frag_len - delta;
+		ena_buf++;
+		tx_info->num_of_bufs++;
+		delta = 0;
+	}
+
+	return 0;
+}
+
 /* Allocate a page and DMA map it
  * @rx_ring: The IO queue pair which requests the allocation
  *
@@ -670,7 +716,7 @@ int validate_tx_req_id(struct ena_ring *tx_ring, u16 req_id);
 
 static inline void ena_ring_tx_doorbell(struct ena_ring *tx_ring)
 {
-	ena_com_write_sq_doorbell(tx_ring->ena_com_io_sq);
+	ena_com_write_tx_sq_doorbell(tx_ring->ena_com_io_sq);
 	ena_increase_stat(&tx_ring->tx_stats.doorbells, 1, &tx_ring->syncp);
 }
 
@@ -688,6 +734,21 @@ void ena_down(struct ena_adapter *adapter);
 int ena_up(struct ena_adapter *adapter);
 void ena_unmask_interrupt(struct ena_ring *tx_ring, struct ena_ring *rx_ring);
 void ena_update_ring_numa_node(struct ena_ring *rx_ring);
+void ena_unmap_rx_buff_attrs(struct ena_ring *rx_ring,
+			     struct ena_rx_buffer *rx_info,
+			     unsigned long attrs);
+struct sk_buff *ena_rx_skb_copybreak(struct ena_ring *rx_ring,
+				     struct ena_rx_buffer *rx_info,
+				     u16 len, u8 meta_len, int pkt_offset,
+				     void *buf_data_addr);
+void ena_fill_rx_frags(struct ena_ring *rx_ring,
+		       u32 descs,
+		       struct ena_com_rx_buf_info *ena_bufs,
+		       struct skb_shared_info *sh_info,
+#ifdef ENA_XDP_MB_SUPPORT
+		       struct xdp_buff *xdp,
+#endif /* ENA_XDP_MB_SUPPORT */
+		       struct sk_buff *skb);
 void ena_rx_checksum(struct ena_ring *rx_ring,
 		     struct ena_com_rx_ctx *ena_rx_ctx,
 		     struct sk_buff *skb);
@@ -715,6 +776,22 @@ static inline u32 get_rss_indirection_table_size(struct ena_adapter *adapter)
 		return 0;
 
 	return (1UL << ena_dev->rss.tbl_log_size);
+}
+
+static inline void ena_rx_release_packet_buffers(struct ena_ring *rx_ring,
+						 int first_to_release,
+						 int last_to_release)
+{
+	int i;
+
+	for (i = first_to_release; i <= last_to_release; i++) {
+		int req_id = rx_ring->ena_bufs[i].req_id;
+
+		ena_unmap_rx_buff_attrs(rx_ring,
+					&rx_ring->rx_buffer_info[req_id],
+					ENA_DMA_ATTR_SKIP_CPU_SYNC);
+		rx_ring->rx_buffer_info[req_id].page = NULL;
+	}
 }
 
 #endif /* !(ENA_H) */
