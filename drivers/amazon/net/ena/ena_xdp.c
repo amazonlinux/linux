@@ -6,51 +6,128 @@
 #include "ena_xdp.h"
 #ifdef ENA_XDP_SUPPORT
 
+#ifdef ENA_XDP_MB_SUPPORT
+static bool ena_xdp_too_many_tx_frags(u8 nr_frags, u16 sgl_size,
+				      u32 header_len, u8 tx_max_header_size,
+				      bool is_llq)
+{
+	if (likely(nr_frags < sgl_size))
+		return false;
+
+	/* In non-LLQ case: The linear part of the xdp_buff will be the first
+	 * buffer of the packet in addition to the frag buffers.
+	 *
+	 * In LLQ case: If the linear part of the xdp_buff fits the header
+	 * part of the LLQ entry perfectly, the linear part of the xdp_buff
+	 * will not be used as the first buffer.
+	 */
+	if (unlikely(is_llq && (nr_frags == sgl_size) &&
+	    (header_len == tx_max_header_size)))
+		return false;
+
+	return true;
+}
+
+#endif  /* ENA_XDP_MB_SUPPORT */
 static int ena_xdp_tx_map_frame(struct ena_ring *tx_ring,
 				struct ena_tx_buffer *tx_info,
 				struct xdp_frame *xdpf,
 				struct ena_com_tx_ctx *ena_tx_ctx)
 {
 	struct ena_adapter *adapter = tx_ring->adapter;
+#ifdef ENA_XDP_MB_SUPPORT
+	bool xdp_has_frags = xdp_frame_has_frags(xdpf);
+	struct skb_shared_info *sh_info;
+#endif /* ENA_XDP_MB_SUPPORT */
 	struct ena_com_buf *ena_buf;
-	int push_len = 0;
+	u8 tx_max_header_size;
+	int rc, push_len = 0;
+	u32 header_len;
 	dma_addr_t dma;
+	bool is_llq;
 	void *data;
-	u32 size;
 
+	ena_buf = tx_info->bufs;
 	tx_info->xdpf = xdpf;
 	data = tx_info->xdpf->data;
-	size = tx_info->xdpf->len;
+	header_len = tx_info->xdpf->len;
+	tx_max_header_size = tx_ring->tx_max_header_size;
+	is_llq = likely(tx_ring->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV);
 
-	if (tx_ring->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
+#ifdef ENA_XDP_MB_SUPPORT
+	if (xdp_has_frags) {
+		bool too_many_tx_frags;
+
+		if (unlikely(is_llq && header_len < tx_max_header_size)) {
+			netdev_err_once(adapter->netdev,
+					"xdp: dropped multi-buffer packets with short linear part\n");
+
+			ena_increase_stat(&tx_ring->tx_stats.xdp_short_linear_part, 1,
+					  &tx_ring->syncp);
+
+			rc = -EINVAL;
+			goto error_report_map_error;
+		}
+
+		sh_info = xdp_get_shared_info_from_frame(xdpf);
+		too_many_tx_frags = ena_xdp_too_many_tx_frags(sh_info->nr_frags,
+							      tx_ring->sgl_size,
+							      header_len,
+							      tx_max_header_size,
+							      is_llq);
+
+		if (too_many_tx_frags) {
+			netdev_err_once(adapter->netdev,
+					"xdp: dropped multi-buffer packets with too many frags\n");
+
+			ena_increase_stat(&tx_ring->tx_stats.xdp_frags_exceeded, 1,
+					  &tx_ring->syncp);
+
+			rc = -ENOMEM;
+			goto error_report_map_error;
+		}
+	}
+
+#endif /* ENA_XDP_MB_SUPPORT */
+	if (is_llq) {
 		/* Designate part of the packet for LLQ */
-		push_len = min_t(u32, size, tx_ring->tx_max_header_size);
+		push_len = min_t(u32, header_len, tx_max_header_size);
 
 		ena_tx_ctx->push_header = data;
 
-		size -= push_len;
+		header_len -= push_len;
 		data += push_len;
 	}
 
 	ena_tx_ctx->header_len = push_len;
 
-	if (size > 0) {
+	if (header_len > 0) {
 		dma = dma_map_single(tx_ring->dev,
 				     data,
-				     size,
+				     header_len,
 				     DMA_TO_DEVICE);
-		if (unlikely(dma_mapping_error(tx_ring->dev, dma)))
+		rc = dma_mapping_error(tx_ring->dev, dma);
+		if (unlikely(rc))
 			goto error_report_dma_error;
 
 		tx_info->map_linear_data = 0;
 
-		ena_buf = tx_info->bufs;
 		ena_buf->paddr = dma;
-		ena_buf->len = size;
+		ena_buf->len = header_len;
 
 		ena_tx_ctx->ena_bufs = ena_buf;
-		ena_tx_ctx->num_bufs = tx_info->num_of_bufs = 1;
+		ena_buf++;
+		tx_info->num_of_bufs = 1;
 	}
+
+#ifdef ENA_XDP_MB_SUPPORT
+	if (xdp_has_frags) {
+		rc = ena_tx_map_frags(sh_info, tx_info, tx_ring, ena_buf, 0);
+		if (unlikely(rc))
+			goto error_report_dma_error;
+	}
+#endif
+	ena_tx_ctx->num_bufs = tx_info->num_of_bufs;
 
 	return 0;
 
@@ -58,8 +135,14 @@ error_report_dma_error:
 	ena_increase_stat(&tx_ring->tx_stats.dma_mapping_err, 1,
 			  &tx_ring->syncp);
 	netif_warn(adapter, tx_queued, adapter->netdev, "Failed to map xdp buff\n");
+#ifdef ENA_XDP_MB_SUPPORT
+error_report_map_error:
+#endif
+	tx_info->xdpf = NULL;
 
-	return -EINVAL;
+	ena_unmap_tx_buff(tx_ring, tx_info);
+
+	return rc;
 }
 
 int ena_xdp_xmit_frame(struct ena_ring *tx_ring,
@@ -78,7 +161,7 @@ int ena_xdp_xmit_frame(struct ena_ring *tx_ring,
 
 	rc = ena_xdp_tx_map_frame(tx_ring, tx_info, xdpf, &ena_tx_ctx);
 	if (unlikely(rc))
-		goto err;
+		return rc;
 
 	ena_tx_ctx.req_id = req_id;
 
@@ -100,9 +183,7 @@ int ena_xdp_xmit_frame(struct ena_ring *tx_ring,
 
 error_unmap_dma:
 	ena_unmap_tx_buff(tx_ring, tx_info);
-err:
 	tx_info->xdpf = NULL;
-
 	return rc;
 }
 
@@ -139,6 +220,16 @@ int ena_xdp_xmit(struct net_device *dev, int n,
 	/* Ring doorbell to make device aware of the packets */
 	if (flags & XDP_XMIT_FLUSH)
 		ena_ring_tx_doorbell(tx_ring);
+	else
+		/* In case a doorbell is not requested by the OS (XDP_XMIT_FLUSH), write
+		 * combine (WC) buffers might not be flushed on exit.
+		 * Later, in case other CPU refers to the same queue, it might trigger
+		 * a doorbell when not all WC buffers flushed to the device from the
+		 * first CPU.
+		 * This barrier guarantees that WC buffers of current CPU will be flushed
+		 * before switching context to other CPU transmitting in the same queue.
+		 */
+		wmb();
 
 	spin_unlock(&tx_ring->xdp_tx_lock);
 
@@ -168,16 +259,8 @@ int ena_xdp_register_rxq_info(struct ena_ring *rx_ring)
 {
 	int rc;
 
-#ifdef AF_XDP_BUSY_POLL_SUPPORTED
-#ifdef ENA_AF_XDP_SUPPORT
-	rc = xdp_rxq_info_reg(&rx_ring->xdp_rxq, rx_ring->netdev, rx_ring->qid,
-			      rx_ring->napi->napi_id);
-#else
-	rc = xdp_rxq_info_reg(&rx_ring->xdp_rxq, rx_ring->netdev, rx_ring->qid, 0);
-#endif /* ENA_AF_XDP_SUPPORT */
-#else
-	rc = xdp_rxq_info_reg(&rx_ring->xdp_rxq, rx_ring->netdev, rx_ring->qid);
-#endif /* AF_XDP_BUSY_POLL_SUPPORTED */
+	rc = ena_xdp_rxq_info_reg(&rx_ring->xdp_rxq, rx_ring->netdev, rx_ring->qid,
+				  rx_ring->napi->napi_id, ENA_PAGE_SIZE);
 
 	netif_dbg(rx_ring->adapter, ifup, rx_ring->netdev,
 		  "Registering RX info for queue %d with napi id %d\n",
@@ -266,6 +349,10 @@ void ena_xdp_exchange_program_rx_in_range(struct ena_adapter *adapter,
 		rx_ring = &adapter->rx_ring[i];
 		old_bpf_prog = xchg(&rx_ring->xdp_bpf_prog, prog);
 
+#ifdef ENA_XDP_MB_SUPPORT
+		if (prog)
+			rx_ring->xdp_prog_support_frags = prog->aux->xdp_has_frags;
+#endif
 		if (!old_bpf_prog && prog) {
 			rx_ring->rx_headroom = XDP_PACKET_HEADROOM;
 		} else if (old_bpf_prog && !prog) {
@@ -309,6 +396,18 @@ static int ena_destroy_and_free_all_xdp_queues(struct ena_adapter *adapter)
 	return 0;
 }
 
+static int ena_get_max_xdp_mtu(struct ena_adapter *adapter, struct bpf_prog *prog)
+{
+#ifndef ENA_XDP_MB_SUPPORT
+	return prog ? ENA_XDP_MAX_SINGLE_FRAME_SIZE : adapter->max_mtu;
+#else
+	if (!prog || prog->aux->xdp_has_frags)
+		return adapter->max_mtu;
+
+	return ENA_XDP_MAX_SINGLE_FRAME_SIZE;
+#endif
+}
+
 static int ena_xdp_set(struct net_device *netdev, struct netdev_bpf *bpf)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
@@ -318,7 +417,7 @@ static int ena_xdp_set(struct net_device *netdev, struct netdev_bpf *bpf)
 	bool is_up;
 
 	is_up = test_bit(ENA_FLAG_DEV_UP, &adapter->flags);
-	rc = ena_xdp_allowed(adapter);
+	rc = ena_xdp_allowed(adapter, prog);
 	if (rc == ENA_XDP_ALLOWED) {
 		old_bpf_prog = adapter->xdp_bpf_prog;
 		if (prog) {
@@ -337,7 +436,11 @@ static int ena_xdp_set(struct net_device *netdev, struct netdev_bpf *bpf)
 				if (rc)
 					return rc;
 			}
+#ifdef ENA_XDP_MB_SUPPORT
+			xdp_features_set_redirect_target(netdev, true);
+#else
 			xdp_features_set_redirect_target(netdev, false);
+#endif /* ENA_XDP_MB_SUPPORT */
 		} else if (old_bpf_prog) {
 			xdp_features_clear_redirect_target(netdev);
 			netif_dbg(adapter, drv, adapter->netdev, "Removing XDP program\n");
@@ -348,7 +451,7 @@ static int ena_xdp_set(struct net_device *netdev, struct netdev_bpf *bpf)
 		}
 
 		prev_mtu = netdev->max_mtu;
-		netdev->max_mtu = prog ? ENA_XDP_MAX_MTU : adapter->max_mtu;
+		netdev->max_mtu = ena_get_max_xdp_mtu(adapter, prog);
 
 		if (!old_bpf_prog)
 			netif_info(adapter, drv, adapter->netdev,
@@ -358,7 +461,7 @@ static int ena_xdp_set(struct net_device *netdev, struct netdev_bpf *bpf)
 	} else if (rc == ENA_XDP_CURRENT_MTU_TOO_LARGE) {
 		netif_err(adapter, drv, adapter->netdev,
 			  "Failed to set xdp program, the current MTU (%d) is larger than the maximum allowed MTU (%lu) while xdp is on",
-			  netdev->mtu, ENA_XDP_MAX_MTU);
+			  netdev->mtu, ENA_XDP_MAX_SINGLE_FRAME_SIZE);
 		NL_SET_ERR_MSG_MOD(bpf->extack,
 				   "Failed to set xdp program, the current MTU is larger than the maximum allowed MTU. Check the dmesg for more info");
 		return -EINVAL;
@@ -744,7 +847,7 @@ static bool ena_xdp_xmit_irq_zc(struct ena_ring *tx_ring,
 
 		size = desc.len;
 
-		if (tx_ring->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV) {
+		if (likely(tx_ring->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV)) {
 			/* Designate part of the packet for LLQ */
 			push_len = min_t(u32, size, tx_ring->tx_max_header_size);
 			ena_tx_ctx.push_header = xsk_buff_raw_get_data(xsk_pool, desc.addr);
@@ -858,6 +961,8 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 	pkt_copy = 0;
 
 	do {
+		int xdp_len = 0;
+
 		xdp_verdict = ENA_XDP_PASS;
 
 		/* Poll a packet from HW */
@@ -904,11 +1009,13 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 			next_to_clean =
 				ENA_RX_RING_IDX_NEXT(next_to_clean,
 						     rx_ring->ring_size);
+
+			xdp_len += ena_rx_ctx.ena_bufs[i].len;
 		}
 
 		if (likely(xdp_verdict)) {
 			work_done++;
-			total_len += ena_rx_ctx.ena_bufs[0].len;
+			total_len += xdp_len;
 			xdp_flags |= xdp_verdict;
 
 			/* Mark buffer as consumed when it is redirected or freed */
@@ -927,7 +1034,7 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 
 		pkt_copy++;
 		work_done++;
-		total_len += ena_rx_ctx.ena_bufs[0].len;
+		total_len += skb->len;
 		ena_rx_checksum(rx_ring, &ena_rx_ctx, skb);
 		ena_set_rx_hash(rx_ring, &ena_rx_ctx, skb);
 		skb_record_rx_queue(skb, rx_ring->qid);
@@ -1078,6 +1185,147 @@ int ena_xdp_io_poll(struct napi_struct *napi, int budget)
 	tx_ring->tx_stats.tx_poll++;
 	u64_stats_update_end(&tx_ring->syncp);
 	tx_ring->tx_stats.last_napi_jiffies = jiffies;
+
+	return ret;
+}
+
+struct sk_buff *ena_rx_skb_after_xdp_pass(struct ena_ring *rx_ring,
+					  struct ena_rx_buffer *rx_info,
+					  struct ena_com_rx_ctx *ena_rx_ctx,
+					  struct xdp_buff *xdp,
+					  u8 nr_frags,
+					  int xdp_len)
+{
+	u8 meta_len = xdp->data - xdp->data_meta;
+	u16 len_with_meta = xdp_len + meta_len;
+	struct sk_buff *skb;
+	int buf_offset;
+	u16 buf_len;
+	u16 len;
+
+	if (len_with_meta <= rx_ring->rx_copybreak && likely(!nr_frags))
+		return ena_rx_skb_copybreak(rx_ring, rx_info, xdp_len, meta_len,
+					    ena_rx_ctx->pkt_offset, xdp->data);
+
+#ifdef XDP_HAS_FRAME_SZ
+	buf_len = xdp->frame_sz;
+#else
+	buf_len = ENA_PAGE_SIZE;
+#endif
+	len = xdp->data_end - xdp->data;
+	buf_offset = xdp->data - xdp->data_hard_start;
+
+	skb = ena_alloc_skb(rx_ring, xdp->data_hard_start, buf_len);
+	if (unlikely(!skb))
+		return NULL;
+
+	skb_reserve(skb, buf_offset);
+	skb_put(skb, len);
+
+	skb->protocol = eth_type_trans(skb, rx_ring->netdev);
+
+#ifdef ENA_XDP_MB_SUPPORT
+	if (nr_frags) {
+		struct skb_shared_info *sh_info = xdp_get_shared_info_from_buff(xdp);
+
+		xdp_update_skb_shared_info(skb, nr_frags,
+					   sh_info->xdp_frags_size,
+					   nr_frags * buf_len,
+					   xdp_buff_is_frag_pfmemalloc(xdp));
+	}
+
+#endif /* ENA_XDP_MB_SUPPORT */
+	ena_rx_release_packet_buffers(rx_ring, 0, nr_frags);
+
+	if (meta_len)
+		skb_metadata_set(skb, meta_len);
+
+	return skb;
+}
+
+static bool ena_xdp_prog_is_frags_supported(struct ena_ring *rx_ring)
+{
+#ifdef ENA_XDP_MB_SUPPORT
+	return rx_ring->xdp_prog_support_frags;
+#else
+	return false;
+#endif
+}
+
+int ena_rx_xdp(struct ena_ring *rx_ring, struct xdp_buff *xdp, u16 descs,
+	       int *xdp_len, u8 *nr_frags)
+{
+	struct ena_com_rx_buf_info *ena_bufs = rx_ring->ena_bufs;
+#ifdef ENA_XDP_MB_SUPPORT
+	struct skb_shared_info *sh_info;
+#endif /* ENA_XDP_MB_SUPPORT */
+	struct ena_rx_buffer *rx_info;
+	u16 req_id;
+	int ret;
+	int i;
+
+	/* Drop unsupported multibuffer packets */
+	if (!ena_xdp_prog_is_frags_supported(rx_ring) && descs > 1) {
+		netdev_err_once(rx_ring->adapter->netdev,
+				"xdp: dropped unsupported multi-buffer packets\n");
+
+		for (i = 0; i < descs; i++)
+			*xdp_len += rx_ring->ena_bufs[i].len;
+
+		ena_increase_stat(&rx_ring->rx_stats.xdp_drop, 1, &rx_ring->syncp);
+		return ENA_XDP_RECYCLE;
+	}
+
+	req_id = ena_bufs[0].req_id;
+	rx_info = &rx_ring->rx_buffer_info[req_id];
+
+	if (unlikely(!rx_info->page)) {
+		struct ena_adapter *adapter = rx_ring->adapter;
+
+		netif_err(adapter, rx_err, rx_ring->netdev,
+			  "XDP: Page is NULL. qid %u req_id %u\n",
+			  rx_ring->qid, req_id);
+		ena_increase_stat(&rx_ring->rx_stats.bad_req_id, 1, &rx_ring->syncp);
+		ena_reset_device(adapter, ENA_REGS_RESET_INV_RX_REQ_ID);
+		return ENA_XDP_DROP;
+	}
+
+	*nr_frags = 0;
+
+	xdp_prepare_buff(xdp, page_address(rx_info->page),
+			 rx_info->buf_offset,
+			 ena_bufs[0].len, true);
+#ifdef ENA_XDP_MB_SUPPORT
+	xdp_buff_clear_frags_flag(xdp);
+
+	if (descs > 1) {
+		sh_info = xdp_get_shared_info_from_buff(xdp);
+		sh_info->nr_frags = 0;
+		sh_info->xdp_frags_size = 0;
+		xdp_buff_set_frags_flag(xdp);
+		ena_fill_rx_frags(rx_ring, descs, ena_bufs, sh_info, xdp, NULL);
+	}
+#endif /* ENA_XDP_MB_SUPPORT */
+
+	netif_dbg(rx_ring->adapter, rx_status, rx_ring->netdev,
+		  "RX xdp created. linear len %ld\n",
+		  xdp->data_end - xdp->data);
+
+	ret = ena_xdp_execute(rx_ring, xdp);
+
+	/* The XDP program may change the packet size and number of frags, making adjustments */
+#ifdef ENA_XDP_MB_SUPPORT
+	*xdp_len = xdp_get_buff_len(xdp);
+	if (descs > 1)
+		*nr_frags = sh_info->nr_frags;
+#else
+	*xdp_len = xdp->data_end - xdp->data;
+#endif /* ENA_XDP_MB_SUPPORT */
+
+	/* Release the buffers of frags that were freed by bpf_xdp_adjust_tail()
+	 * in the xdp program (if any)
+	 */
+	ena_rx_release_packet_buffers(rx_ring, *nr_frags + 1, descs - 1);
 
 	return ret;
 }
