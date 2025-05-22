@@ -16,19 +16,14 @@
 
 #endif /* ENA_AF_XDP_SUPPORT */
 
-/* The max MTU size is configured to be the ethernet frame size without
- * the overhead of the ethernet header, which can have a VLAN header, and
- * a frame check sequence (FCS).
- * The buffer size we share with the device is defined to be ENA_PAGE_SIZE
+/* Start from maximum RX buffer size = ENA_PAGE_SIZE
+ * Remove Ethernet header overhead = ETH_HLEN + VLAN_HLEN
+ * Reserve headroom (XDP_PACKET_HEADROOM) and tailroom
+ * (SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
  */
-#ifdef XDP_HAS_FRAME_SZ
-#define ENA_XDP_MAX_MTU (ENA_PAGE_SIZE - ETH_HLEN - ETH_FCS_LEN -	\
-			 VLAN_HLEN - XDP_PACKET_HEADROOM -		\
-			 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
-#else
-#define ENA_XDP_MAX_MTU (ENA_PAGE_SIZE - ETH_HLEN - ETH_FCS_LEN - \
-			 VLAN_HLEN - XDP_PACKET_HEADROOM)
-#endif
+#define ENA_XDP_MAX_SINGLE_FRAME_SIZE (ENA_PAGE_SIZE - ETH_HLEN - VLAN_HLEN - \
+				       XDP_PACKET_HEADROOM -                  \
+				       SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
 
 #define ENA_IS_XDP_INDEX(adapter, index) (((index) >= (adapter)->xdp_first_ring) && \
 	((index) < (adapter)->xdp_first_ring + (adapter)->xdp_num_queues))
@@ -41,14 +36,11 @@ enum ENA_XDP_ACTIONS {
 	ENA_XDP_DROP		= BIT(3)
 };
 
-#ifdef ENA_HAVE_NETDEV_XDP_ACT_XSK_ZEROCOPY
-#define ENA_XDP_FEATURES (NETDEV_XDP_ACT_BASIC | \
-			  NETDEV_XDP_ACT_REDIRECT | \
-			  NETDEV_XDP_ACT_XSK_ZEROCOPY)
-#else
-#define ENA_XDP_FEATURES (NETDEV_XDP_ACT_BASIC | \
-			  NETDEV_XDP_ACT_REDIRECT)
-#endif
+#define ENA_XDP_FEATURES (NETDEV_XDP_ACT_BASIC |        \
+			  NETDEV_XDP_ACT_REDIRECT |     \
+			  NETDEV_XDP_ACT_XSK_ZEROCOPY | \
+			  NETDEV_XDP_ACT_RX_SG |        \
+			  NETDEV_XDP_ACT_NDO_XMIT_SG)
 
 #define ENA_XDP_FORWARDED (ENA_XDP_TX | ENA_XDP_REDIRECT)
 
@@ -64,6 +56,14 @@ int ena_xdp_xmit(struct net_device *dev, int n,
 int ena_xdp(struct net_device *netdev, struct netdev_bpf *bpf);
 int ena_xdp_register_rxq_info(struct ena_ring *rx_ring);
 void ena_xdp_unregister_rxq_info(struct ena_ring *rx_ring);
+struct sk_buff *ena_rx_skb_after_xdp_pass(struct ena_ring *rx_ring,
+					  struct ena_rx_buffer *rx_info,
+					  struct ena_com_rx_ctx *ena_rx_ctx,
+					  struct xdp_buff *xdp,
+					  u8 nr_frags,
+					  int xdp_len);
+int ena_rx_xdp(struct ena_ring *rx_ring, struct xdp_buff *xdp, u16 descs,
+	       int *xdp_len, u8 *nr_frags);
 #ifdef ENA_AF_XDP_SUPPORT
 void ena_xdp_free_tx_bufs_zc(struct ena_ring *tx_ring);
 void ena_xdp_free_rx_bufs_zc(struct ena_ring *rx_ring);
@@ -92,11 +92,21 @@ static inline bool ena_xdp_legal_queue_count(struct ena_adapter *adapter,
 	return 2 * queues <= adapter->max_num_io_queues;
 }
 
-static inline enum ena_xdp_errors_t ena_xdp_allowed(struct ena_adapter *adapter)
+static inline bool ena_xdp_is_mtu_legal(unsigned int mtu, struct bpf_prog *prog)
+{
+#ifndef ENA_XDP_MB_SUPPORT
+	return !prog || mtu <= ENA_XDP_MAX_SINGLE_FRAME_SIZE;
+#else
+	return !prog || prog->aux->xdp_has_frags || mtu <= ENA_XDP_MAX_SINGLE_FRAME_SIZE;
+#endif
+}
+
+static inline enum ena_xdp_errors_t ena_xdp_allowed(struct ena_adapter *adapter,
+						    struct bpf_prog *prog)
 {
 	enum ena_xdp_errors_t rc = ENA_XDP_ALLOWED;
 
-	if (adapter->netdev->mtu > ENA_XDP_MAX_MTU)
+	if (!ena_xdp_is_mtu_legal(adapter->netdev->mtu, prog))
 		rc = ENA_XDP_CURRENT_MTU_TOO_LARGE;
 	else if (!ena_xdp_legal_queue_count(adapter, adapter->num_io_queues))
 		rc = ENA_XDP_NO_ENOUGH_QUEUES;
