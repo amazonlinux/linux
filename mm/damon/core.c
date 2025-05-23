@@ -3154,6 +3154,25 @@ static int __init damon_init(void)
 	return 0;
 }
 
+#ifdef DAMON_HACK_IDEA
+/**
+ * damon_search() - Return damon_region of a given address and type.
+ * @addr:	the address of the region to search for.
+ * @pid:	PID of the address space.
+ *
+ * Search and return damon_region of a given address in a given address space.
+ * The caller could read returned damon_region to get its address pattern.
+ *
+ * If @pid is NULL, the physical address space will be searched.
+ *
+ * Return: damon_region covering the memory of the given address.
+ */
+struct damon_region *damon_search(unsigned long addr, struct pid *pid)
+{
+	return NULL;
+}
+#endif
+
 subsys_initcall(damon_init);
 
 #include "tests/core-kunit.h"
