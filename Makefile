@@ -1332,8 +1332,8 @@ define filechk_utsrelease.h
 		     cut -d "-" -f 1 | cut -d "+" -f 1`;		  \
 	  EXTRAVER=`echo -n "$(KERNELRELEASE)" |			  \
 		    cut -s -d "-" --complement -f 1 `;			  \
-	  if [ $${STABLEVER} -gt 255 ]; then				  \
-	    echo "$${VER}.255-$${STABLEVER}$${EXTRAVER:+-$$EXTRAVER}";	  \
+	  if [ $${STABLEVER} -gt 100 ]; then				  \
+	    echo "$${VER}.100-$${STABLEVER}$${EXTRAVER:+-$$EXTRAVER}";	  \
 	  else								  \
 	    expr $(KERNELRELEASE);					  \
 	  fi)\";)
