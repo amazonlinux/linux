@@ -1320,6 +1320,25 @@ uapi-asm-generic:
 # needs to be updated, so this check is forced on all builds
 
 uts_len := 64
+ifdef CONFIG_MICROVM
+define filechk_utsrelease.h
+	if [ `echo -n "$(KERNELRELEASE)" | wc -c ` -gt $(uts_len) ]; then \
+	  echo '"$(KERNELRELEASE)" exceeds $(uts_len) characters' >&2;    \
+	  exit 1;                                                         \
+	fi;                                                               \
+	(echo \#define UTS_RELEASE \"$(shell				  \
+	  VER=`echo -n "$(KERNELRELEASE)" | cut -d "." -f 1,2`;		  \
+	  STABLEVER=`echo -n "$(KERNELRELEASE)" | cut -d "." -f 3 |	  \
+		     cut -d "-" -f 1 | cut -d "+" -f 1`;		  \
+	  EXTRAVER=`echo -n "$(KERNELRELEASE)" |			  \
+		    cut -s -d "-" --complement -f 1 `;			  \
+	  if [ $${STABLEVER} -gt 255 ]; then				  \
+	    echo "$${VER}.255-$${STABLEVER}$${EXTRAVER:+-$$EXTRAVER}";	  \
+	  else								  \
+	    expr $(KERNELRELEASE);					  \
+	  fi)\";)
+endef
+else
 define filechk_utsrelease.h
 	if [ `echo -n "$(KERNELRELEASE)" | wc -c ` -gt $(uts_len) ]; then \
 	  echo '"$(KERNELRELEASE)" exceeds $(uts_len) characters' >&2;    \
@@ -1327,6 +1346,7 @@ define filechk_utsrelease.h
 	fi;                                                               \
 	echo \#define UTS_RELEASE \"$(KERNELRELEASE)\"
 endef
+endif
 
 define filechk_version.h
 	if [ $(SUBLEVEL) -gt 255 ]; then                                 \
