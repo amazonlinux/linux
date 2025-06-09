@@ -18,7 +18,9 @@
 #include <linux/mmu_context.h>
 #include <linux/bsearch.h>
 #include <linux/sync_core.h>
+#ifdef CONFIG_MODULE
 #include <linux/moduleloader.h>
+#endif
 #include <asm/text-patching.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
@@ -155,7 +157,11 @@ static void __init its_alloc_trampoline(void)
 	int reg, remaining, this_write;
 	u8 *tramp_base, *tramp_mem;
 
+#ifdef CONFIG_MODULE
 	__x86_indirect_scatter_thunk_array = module_alloc(ITS_TRAMP_ALLOC_SIZE);
+#else
+	return; // Skip ITS mitigation 
+#endif
 	if (!__x86_indirect_scatter_thunk_array) {
 		pr_err("Failed to allocate ITS trampoline\n");
 		return;
