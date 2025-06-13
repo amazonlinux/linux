@@ -186,7 +186,6 @@ do {									    \
  * default allocator
  */
 #define LIBCFS_ALLOC(ptr, size) LIBCFS_ALLOC_GFP(ptr, size, GFP_NOFS)
-#define LIBCFS_ALLOC_PTR(ptr) LIBCFS_ALLOC(ptr, sizeof(*(ptr)))
 
 /**
  * non-sleeping allocator
@@ -229,8 +228,6 @@ do {									\
 	else								\
 		kfree(ptr);						\
 } while (0)
-
-#define LIBCFS_FREE_PTR(ptr) LIBCFS_FREE(ptr, sizeof(*(ptr)))
 
 #define LIBCFS_FREE_PRE(ptr, size, name)				\
 do {									\
