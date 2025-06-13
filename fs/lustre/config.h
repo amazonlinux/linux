@@ -1075,9 +1075,6 @@
 /* new_sync_[read|write] is exported by the kernel */
 /* #undef HAVE_SYNC_READ_WRITE */
 
-/* sysfs_emit_at() is defined */
-#define HAVE_SYSFS_EMIT_AT 1
-
 /* Define to 1 if you have <sys/quota.h>. */
 #define HAVE_SYS_QUOTA_H 1
 
@@ -1289,7 +1286,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_599_gd5769bb_dirty"
+#define LUSTRE_VERSION_STRING "2.15.6_648_g12ba450_dirty"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1319,7 +1316,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_599_gd5769bb_dirty"
+#define PACKAGE_STRING "Lustre 2.15.6_648_g12ba450_dirty"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1328,7 +1325,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_599_gd5769bb_dirty"
+#define PACKAGE_VERSION "2.15.6_648_g12ba450_dirty"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1372,7 +1369,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_599_gd5769bb_dirty"
+#define VERSION "2.15.6_648_g12ba450_dirty"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) ((void *)(value))
