@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright (c) 2023-2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -28,11 +28,11 @@
 #else
 #include <efa_verbs.h>
 #endif
-#include "efalnd-proto.h"
+#include "efalnd_proto.h"
 
 #define EFALND_MAJOR_VER        1
-#define EFALND_MINOR_VER        0
-#define EFALND_SUBMINOR_VER     9
+#define EFALND_MINOR_VER        1
+#define EFALND_SUBMINOR_VER     1
 #define EFALND_MAJOR_SHIFT	8
 
 #define KEFA_IFNAME_SIZE		256
@@ -56,7 +56,7 @@
 #define EFALND_MAX_SCHED_THRS		4
 
  /* TODO - use dynamic qkey for better security */
-#define EFALND_STATIC_QKEY	(0x1111)
+#define EFALND_STATIC_QKEY		(0x1111)
 
 /* TODO - use a tunable */
 #define EFALND_NO_RDMA_THRESH		EFALND_MSG_SIZE
@@ -67,8 +67,12 @@
 
 #define EFALND_MAX_PEER_QPS		256
 
+#define EFALND_MIN_INIT_CONN_TIMEOUT	200
+
 /* Define EFALND_CD so that we can easily add D_CONSOLE in test envs */
 #define EFALND_CD (D_NET)
+
+#define EFALND_FIELD_AVAIL(type, fld, sz) (offsetof(type, fld) < (sz))
 
 #define EFA_DEV_DEBUG(dev, format, ...) CDEBUG(EFALND_CD, "Device[%s] " format, (dev)->ifname, ## __VA_ARGS__)
 #define EFA_DEV_ERR(dev, format, ...) CERROR("Device[%s] " format, (dev)->ifname, ## __VA_ARGS__)
@@ -122,6 +126,7 @@ struct kefa_data {
 	struct kefa_sched **scheds;		/* global schedulers */
 	struct kefa_cm_deamon **cm_daemons;	/* Connection manager daemons */
 	struct rhashtable peer_ni;
+	atomic_t peer_ni_count;
 	atomic_t nthreads;			/* # live threads */
 	bool shutdown;				/* signal shutdown to threads */
 };
@@ -180,7 +185,6 @@ struct kefa_fmr {
 	struct list_head list_node;
 	struct ib_reg_wr reg_wr;
 	struct ib_send_wr inv_wr;
-	struct kefa_qp *inv_qp;
 };
 
 /* EFA device information */
@@ -220,7 +224,6 @@ struct kefa_tx {
 	u32 lkey;				/* lkey of sge buffers */
 	enum lnet_msg_hstatus hstatus;		/* health status of tx */
 	int status;				/* overall status */
-	struct kefa_qp *qp;			/* posted to QP */
 	int nfrags;				/* # of mapped buffer fragments */
 	struct scatterlist *frags;		/* mapped buffer fragments */
 	struct kefa_rdma_desc rdma_desc;	/* rdma descriptor to read/write */
@@ -339,20 +342,23 @@ kefalnd_thread_stop(void)
 static inline void
 kefalnd_init_msg(struct kefa_msg *msg, int type, int body_nob)
 {
-	msg->type = type;
-	msg->nob = offsetof(struct kefa_msg, u) + body_nob;
+	msg->hdr.type = type;
+	msg->hdr.nob = offsetof(struct kefa_msg, msg_v1.u) + body_nob;
 }
 
 static inline void
 kefalnd_msg_fill_hdr(struct kefa_conn *conn, struct kefa_msg *msg, u8 proto_ver)
 {
-	msg->magic = EFALND_MSG_MAGIC;
-	msg->proto_ver = proto_ver;
-	msg->credits = 0;
-	msg->srcnid = lnet_nid_to_nid4(&conn->local_nid);
-	msg->dstnid = lnet_nid_to_nid4(&conn->remote_nid);
-	msg->dst_epoch = conn->remote_epoch;
-	msg->dst_conn_id = EFALND_INV_CONN;
+	struct kefa_msg_v1 *msg_v1 = &msg->msg_v1;
+
+	msg->hdr.magic = EFALND_MSG_MAGIC;
+	msg->hdr.proto_ver = proto_ver;
+
+	msg_v1->credits = 0;
+	msg_v1->srcnid = lnet_nid_to_nid4(&conn->local_nid);
+	msg_v1->dstnid = lnet_nid_to_nid4(&conn->remote_nid);
+	msg_v1->dst_epoch = conn->remote_epoch;
+	msg_v1->dst_conn_id = EFALND_INV_CONN;
 }
 
 static inline int kefalnd_dma_map_sg(struct kefa_dev *efa_dev,
@@ -385,63 +391,21 @@ static inline void kefalnd_dma_unmap_sg(struct kefa_dev *efa_dev,
 	ib_dma_unmap_sg(efa_dev->ib_dev, sg, nents, direction);
 }
 
-static inline u64
-kefalnd_rdma_frag_addr(struct kefa_rdma_desc *rd)
-{
-	return rd->frag.addr;
-}
-
-static inline u32
-kefalnd_rdma_frag_size(struct kefa_rdma_desc *rd)
-{
-	return rd->frag.nob;
-}
-
-static inline u32
-kefalnd_rdma_frag_key(struct kefa_rdma_desc *rd)
-{
-	return rd->key;
-}
-
-static inline int
-kefalnd_rdma_consume_frag(struct kefa_rdma_desc *rd, int index, u32 nob)
-{
-	if (nob < rd->frag.nob) {
-		rd->frag.addr += nob;
-		rd->frag.nob -= nob;
-	} else {
-		index++;
-	}
-
-	return index;
-}
-
-static inline void
-kefalnd_rdma_dump(struct kefa_rdma_desc *rd)
-{
-	CERROR("cpu[%u] key[0x%x]\n", smp_processor_id(), rd->key);
-	CERROR("cpu[%u] addr[%p] len[%u]\n", smp_processor_id(), (void *)rd->frag.addr,
-	       rd->frag.nob);
-}
-
-static inline u32
-kefalnd_addr_to_dev_num(u32 addr)
-{
-	return (addr & 0xffff);
-}
-
 int kefalnd_tunables_init(void);
 int kefalnd_tunables_setup(struct lnet_ni *ni);
 
+int kefalnd_msgtype2size(int type);
 int kefalnd_efa_status_to_errno(s16 efa_status);
 s16 kefalnd_errno_to_efa_status(int status);
 void kefalnd_tx_done(struct kefa_tx *tx);
-void kefalnd_abort_tx_locked(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status);
+void kefalnd_abort_tx(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status);
 /* Should be used only on TXs that we don't expect to get any completions for */
-void kefalnd_force_cancel_tx_locked(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status);
-void kefalnd_init_tx_msg(struct kefa_tx *tx, int type, int body_nob);
+void kefalnd_force_cancel_tx(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status);
+void kefalnd_init_tx_protocol_msg(struct kefa_tx *tx, int type, int body_nob);
 struct kefa_tx *kefalnd_get_idle_tx(struct kefa_ni *efa_ni);
 void kefalnd_conn_post_tx_locked(struct kefa_conn *conn);
+void kefalnd_get_srcnid_from_msg(struct kefa_msg *msg, struct lnet_nid *srcnid);
+void kefalnd_get_dstnid_from_msg(struct kefa_msg *msg, struct lnet_nid *dstnid);
 
 struct kefa_peer_ni *kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev,
 						 struct lnet_nid *efa_nid);
@@ -450,22 +414,21 @@ struct kefa_peer_ni *kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid
 void kefalnd_update_peer_ni(struct kefa_peer_ni *peer_ni, union ib_gid *gid,
 			    u16 cm_qpn, u32 cm_qkey);
 int kefalnd_get_nid_metadata(struct lnet_ni *ni, struct lnet_nid_md_entry *md_entry);
-int kefalnd_peerni_init(void);
-void kefalnd_peerni_exit(void);
 lnet_nid_t kefalnd_create_efa_nid(u32 ip_addr, u32 bus_num, u32 devfn);
 void kefalnd_put_peer_ni(struct kefa_peer_ni *peer_ni);
 
-struct kefa_conn *kefalnd_get_conn_from_rx(struct kefa_ni *efa_ni, struct kefa_rx *rx,
-					   enum kefa_conn_type conn_type);
+void kefalnd_debugfs_init(void);
+void kefalnd_debugfs_exit(void);
+
+struct kefa_conn *kefalnd_lookup_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid,
+				      enum kefa_conn_type conn_type);
 struct kefa_conn *kefalnd_lookup_or_init_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid,
 					      enum kefa_conn_type conn_type);
-int kefalnd_handle_conn_probe(struct kefa_ni *efa_ni, struct kefa_rx *rx);
-int kefalnd_handle_conn_probe_resp(struct kefa_ni *efa_ni, struct kefa_rx *rx);
-int kefalnd_handle_conn_req(struct kefa_ni *efa_ni, struct kefa_rx *rx);
-int kefalnd_handle_conn_req_ack(struct kefa_ni *efa_ni, struct kefa_rx *rx);
+void kefalnd_handle_conn_establishment(struct kefa_ni *efa_ni, struct kefa_msg *msg);
 void kefalnd_deactivate_conn(struct kefa_conn *conn);
 void kefalnd_destroy_conn(struct kefa_conn *conn, enum lnet_msg_hstatus hstatus, int status);
 int kefalnd_cm_daemon(void *arg);
 void kefalnd_add_ni_to_cm_daemon(struct kefa_ni *efa_ni);
 void kefalnd_del_ni_from_cm_daemon(struct kefa_ni *efa_ni);
+
 #endif
