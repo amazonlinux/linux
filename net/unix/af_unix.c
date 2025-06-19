@@ -2531,9 +2531,8 @@ static int unix_stream_recv_urg(struct unix_stream_read_state *state)
 			read_skb = oob_skb->prev;
 			__skb_unlink(read_skb, &sk->sk_receive_queue);
 		}
-	} else {
+	} else
 		skb_get(oob_skb);
-	}
 
 	spin_unlock(&sk->sk_receive_queue.lock);
 	unix_state_unlock(sk);
