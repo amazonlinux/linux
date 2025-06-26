@@ -22,6 +22,7 @@
 #include <linux/sched/signal.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/workqueue.h>
 #include <net/netlink.h>
 
 #include "internal.h"
@@ -326,15 +327,35 @@ static const struct random_extrng crypto_devrandom_rng = {
 	.owner = THIS_MODULE,
 };
 
+static struct work_struct crypto_rng_register_work;
+
+static void crypto_rng_register_work_func(struct work_struct *work)
+{
+	/* Wait until default rng becomes avaiable, then
+		Overwrite the extrng.
+	*/
+	int ret = crypto_get_default_rng(); 
+	if (ret){
+		printk(KERN_ERR "crypto_rng: Failed to get default RNG (error %d)\n", ret);
+		return;
+	}
+	printk(KERN_INFO "Overwrite extrng\n");
+	random_register_extrng(&crypto_devrandom_rng);
+}
+
 static int __init crypto_rng_init(void)
 {
-	if (fips_enabled)
-		random_register_extrng(&crypto_devrandom_rng);
+	if (fips_enabled) {
+		INIT_WORK(&crypto_rng_register_work, crypto_rng_register_work_func);
+		schedule_work(&crypto_rng_register_work);
+ 	}
+		
 	return 0;
 }
 
 static void __exit crypto_rng_exit(void)
 {
+	cancel_work_sync(&crypto_rng_register_work);
 	random_unregister_extrng();
 }
 
