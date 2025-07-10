@@ -594,6 +594,8 @@ struct module {
 
 #ifdef CONFIG_MODULES
 
+extern int load_crypto_module_mem(const char *mem, size_t size);
+
 /* Get/put a kernel symbol (calls must be symmetric) */
 void *__symbol_get(const char *symbol);
 void *__symbol_get_gpl(const char *symbol);
