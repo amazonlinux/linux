@@ -1670,8 +1670,8 @@ static void block_revalidate(struct dentry *dentry)
 
 static void unblock_revalidate(struct dentry *dentry)
 {
-	/* store_release ensures wait_var_event() sees the update */
 	smp_store_release(&dentry->d_fsdata, NULL);
+	smp_mb();
 	wake_up_var(&dentry->d_fsdata);
 }
 
