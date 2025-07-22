@@ -674,12 +674,31 @@ static u64 __init get_jump_table_addr(void)
 	return ret;
 }
 
+static inline void sev_evict_cache(void *va, int npages)
+{
+	volatile u8 val __always_unused;
+	u8 *bytes = va;
+	int page_idx;
+
+	/*
+	 * For SEV guests, a read from the first/last cache-lines of a 4K page
+	 * using the guest key is sufficient to cause a flush of all cache-lines
+	 * associated with that 4K page without incurring all the overhead of a
+	 * full CLFLUSH sequence.
+	 */
+	for (page_idx = 0; page_idx < npages; page_idx++) {
+		val = bytes[page_idx * PAGE_SIZE];
+		val = bytes[page_idx * PAGE_SIZE + PAGE_SIZE - 1];
+	}
+}
+
 static void pvalidate_pages(unsigned long vaddr, unsigned long npages, bool validate)
 {
-	unsigned long vaddr_end;
+	unsigned long vaddr_start, vaddr_end;
 	int rc;
 
-	vaddr = vaddr & PAGE_MASK;
+	vaddr_start = vaddr & PAGE_MASK;
+	vaddr = vaddr_start;
 	vaddr_end = vaddr + (npages << PAGE_SHIFT);
 
 	while (vaddr < vaddr_end) {
@@ -689,6 +708,9 @@ static void pvalidate_pages(unsigned long vaddr, unsigned long npages, bool vali
 
 		vaddr = vaddr + PAGE_SIZE;
 	}
+
+	if (validate)
+		sev_evict_cache((void *)vaddr_start, npages);
 }
 
 static void __head early_set_pages_state(unsigned long paddr, unsigned long npages, enum psc_op op)
