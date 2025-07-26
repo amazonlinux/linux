@@ -35,6 +35,14 @@
 #define __DISABLE_EXPORTS
 
 /*
+ * Override module_init to place functions in our custom .fips140_initcalls section
+ * This ensures all crypto module_init functions go to the same place
+ */
+#define module_init(initfn) \
+	static initcall_t __initcall_##initfn __used \
+	__attribute__((__section__(".fips140_initcalls"))) = initfn
+
+/*
  * Redirect all calls to algorithm registration functions to the wrapper
  * functions defined within the module.
  */
