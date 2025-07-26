@@ -77,26 +77,29 @@ static bool fips140_run_selftests(void)
 static int __init fips140_init(void)
 {
     const initcall_entry_t *initcall;
+    int i;
 
     pr_info("Loading " FIPS140_MODULE_NAME " " FIPS140_MODULE_VERSION "\n");
     fips140_init_thread = current;
 
     /* iterate over all init routines present in this module and call them */
+    pr_info("Checking initcalls section from %p to %p\n", 
+            fips140_initcalls_start, &__fips140_initcalls_end);
+    
     for (initcall = fips140_initcalls_start + 1;
          initcall < &__fips140_initcalls_end;
          initcall++) {
         initcall_t init = initcall_from_entry((initcall_entry_t *)initcall);
-        int err = init();
-
+        pr_info("fips140 init calls: %ps (NOT CALLING YET)\n", init);
+        
+        // TODO: Uncomment when ready to actually call the init functions
         /*
-         * ENODEV is expected from initcalls that only register
-         * algorithms that depend on non-present CPU features.  Besides
-         * that, errors aren't expected here.
-         */
+        int err = init();
         if (err && err != -ENODEV) {
             pr_err("initcall %ps() failed: %d\n", init, err);
             goto panic;
         }
+        */
     }
 
     /* Run self-tests */

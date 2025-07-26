@@ -36,6 +36,9 @@ fips140-objs := \
 
 obj-m += fips140.o
 
+# Use custom linker script to collect initcalls
+LDFLAGS_fips140.o += -T $(src)/fips140.lds
+
 # Apply FIPS140_CFLAGS to the main module files (but not fips140-module.o)
 CFLAGS_fips140-alg-registration.o += $(FIPS140_CFLAGS)
 CFLAGS_fips140-selftests.o += $(FIPS140_CFLAGS)
