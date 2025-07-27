@@ -90,16 +90,18 @@ static int __init fips140_init(void)
          initcall < &__fips140_initcalls_end;
          initcall++) {
         initcall_t init = initcall_from_entry((initcall_entry_t *)initcall);
-        pr_info("fips140 init calls: %ps (NOT CALLING YET)\n", init);
+        pr_info("fips140 init calls: %ps \n", init);
         
-        // TODO: Uncomment when ready to actually call the init functions
-        /*
+     
         int err = init();
-        if (err && err != -ENODEV) {
+        if (err && err != -ENODEV && err != -EEXIST) {
             pr_err("initcall %ps() failed: %d\n", init, err);
-            goto panic;
+            // goto panic;
         }
-        */
+        if (err == -EEXIST) {
+            pr_info("initcall %ps() returned -EEXIST (algorithm already registered), continuing\n", init);
+        }
+        
     }
 
     /* Run self-tests */

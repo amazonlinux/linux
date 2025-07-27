@@ -3,9 +3,35 @@
  * Algorithm registration wrappers for FIPS 140 module
  */
 
+/*
+ * This file is the one place in fips140.ko that needs to call the kernel's real
+ * algorithm registration functions, so #undefine all the macros from
+ * fips140-defs.h so that the "fips140_" prefix doesn't automatically get added.
+ */
+#undef aead_register_instance
+#undef ahash_register_instance
+#undef crypto_register_aead
+#undef crypto_register_aeads
+#undef crypto_register_ahash
+#undef crypto_register_ahashes
+#undef crypto_register_alg
+#undef crypto_register_algs
+#undef crypto_register_rng
+#undef crypto_register_rngs
+#undef crypto_register_shash
+#undef crypto_register_shashes
+#undef crypto_register_skcipher
+#undef crypto_register_skciphers
+#undef shash_register_instance
+#undef skcipher_register_instance
+
 #include <linux/module.h>
 #include <linux/completion.h>
 #include <crypto/algapi.h>
+#include <crypto/internal/aead.h>
+#include <crypto/internal/hash.h>
+#include <crypto/internal/rng.h>
+#include <crypto/internal/skcipher.h>
 #include <crypto/aead.h>
 #include <crypto/hash.h>
 #include <crypto/skcipher.h>
