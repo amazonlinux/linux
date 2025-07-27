@@ -711,6 +711,11 @@ long change_protection(struct mmu_gather *tlb,
 	WARN_ON_ONCE(cp_flags & MM_CP_PROT_NUMA);
 #endif
 
+#ifdef CONFIG_ARCH_SUPPORTS_NUMA_BALANCING
+	if (cp_flags & MM_CP_DAMON)
+		newprot = PAGE_NONE;
+#endif
+
 	if (is_vm_hugetlb_page(vma))
 		pages = hugetlb_change_protection(vma, start, end, newprot,
 						  cp_flags);
