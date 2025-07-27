@@ -829,6 +829,10 @@ static const struct damon_sysfs_ops_name damon_sysfs_ops_names[] = {
 		.ops_id = DAMON_OPS_PADDR,
 		.name = "paddr",
 	},
+	{
+		.ops_id = DAMON_OPS_PADDR_FAULT,
+		.name = "paddr_fault",
+	},
 };
 
 struct damon_sysfs_context {
