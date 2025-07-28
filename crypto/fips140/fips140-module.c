@@ -274,16 +274,14 @@ static void __init unregister_existing_fips140_algos(void)
              * so we can't fully unregister it. However, we do
              * need to ensure that new users will get the FIPS code.
              *
-             * We move the algorithm to a private list so that algorithm 
-             * lookups won't find it anymore. To further distinguish it 
-             * from the FIPS algorithms, we also append "+orig" to its name.
+             * WORKAROUND: Keep the algorithm available in the main list
+             * but mark it with lower priority so FIPS algorithms take precedence.
+             * This prevents breaking dependencies for algorithms that need it.
              */
-            pr_info("Found already-live algorithm '%s' ('%s'), marking as original\n",
+            pr_info("Found already-live algorithm '%s' ('%s'), keeping available with lower priority\n",
                     calg->cra_name, calg->cra_driver_name);
-            calg->cra_priority = 0;
-            strlcat(calg->cra_name, "+orig", CRYPTO_MAX_ALG_NAME);
-            strlcat(calg->cra_driver_name, "+orig", CRYPTO_MAX_ALG_NAME);
-            list_move(&calg->cra_list, &existing_live_algos);
+            calg->cra_priority = 0;  // Lower priority so FIPS algorithms are preferred
+            // Note: We do NOT rename or move the algorithm - keep it available
         }
     }
     up_write(&crypto_alg_sem);
