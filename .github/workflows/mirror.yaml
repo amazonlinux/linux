@@ -1,0 +1,28 @@
+name: Mirror
+
+on:
+  push:
+    branches:
+      - mirror
+  schedule:
+    - cron: 0 */2 * * *
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    name: Mirror
+    steps:
+      - name: Clone
+        run: |
+          git clone git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git linux-stable
+          git -C linux-stable remote add openela https://github.com/openela/kernel-lts.git
+          git -C linux-stable remote update
+
+      - name: Push
+        working-directory: linux-stable
+        env:
+          LINUX_AMZN: https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/amazonlinux/linux.git
+        run: |
+          git push ${LINUX_AMZN} '+refs/remotes/origin/*:refs/heads/*' '+refs/tags/*:refs/tags/*'
+          git push ${LINUX_AMZN} '+refs/remotes/openela/linux-4.14.y:refs/heads/linux-4.14.y'
