@@ -27,12 +27,94 @@
 #include <linux/init.h>
 
 #include "fips140-module.h"
+#include "../internal.h"
 
 #define CRYPTO_INTERNAL "CRYPTO_INTERNAL"
 
 /* External declarations for crypto internal structures */
 extern struct list_head crypto_alg_list;
 extern struct rw_semaphore crypto_alg_sem;
+extern void crypto_remove_spawns(struct crypto_alg *alg, struct list_head *list,
+				 struct crypto_alg *nalg);
+
+/*
+ * fips140_algs[] lists the algorithms that this module unregisters from the
+ * kernel crypto API so that it can register its own implementation(s) of them.
+ *
+ * We only unregister algorithms that we actually provide in fips140.ko to
+ * avoid breaking kernel functionality.
+ */
+static struct fips140_alg {
+	/*
+	 * Either cra_name or cra_driver_name is set.
+	 *
+	 * cra_name makes the entry match all software implementations of a
+	 * given algorithm. This is used when the module is meant to replace
+	 * *all* software implementations of the algorithm.
+	 *
+	 * cra_driver_name makes the entry match a single implementation of an
+	 * algorithm. This is used for specific algorithm implementations.
+	 */
+	const char *cra_name;
+	const char *cra_driver_name;
+
+	/*
+	 * approved is true if fips140_is_approved_service() should return that
+	 * the algorithm is approved.
+	 */
+	bool approved;
+
+	/*
+	 * unregistered_inkern gets set to true at runtime if at least one
+	 * algorithm matching this entry was unregistered from the kernel.
+	 */
+	bool unregistered_inkern;
+} fips140_algs[] = {
+	/* Approved algorithms - only include what we actually implement */
+	{ .cra_name = "aes", .approved = true },
+	{ .cra_name = "sha256", .approved = true },
+	{ .cra_name = "hmac(sha256)", .approved = true },
+	
+	/* Add more algorithms here as we implement them in the module */
+};
+
+/*
+ * Return true if the crypto API algorithm @calg is matched by the fips140
+ * module algorithm specification @falg.
+ */
+static bool __init fips140_alg_matches(const struct fips140_alg *falg,
+				       const struct crypto_alg *calg)
+{
+	/*
+	 * All software algorithms are synchronous. Hardware algorithms must be
+	 * covered by their own FIPS 140 certification.
+	 */
+	if (calg->cra_flags & CRYPTO_ALG_ASYNC)
+		return false;
+
+	if (falg->cra_name != NULL &&
+	    strcmp(falg->cra_name, calg->cra_name) == 0)
+		return true;
+
+	if (falg->cra_driver_name != NULL &&
+	    strcmp(falg->cra_driver_name, calg->cra_driver_name) == 0)
+		return true;
+
+	return false;
+}
+
+/* Find the entry in fips140_algs[], if any, that @calg is matched by. */
+static struct fips140_alg *__init
+fips140_find_matching_alg(const struct crypto_alg *calg)
+{
+	size_t i;
+
+	for (i = 0; i < ARRAY_SIZE(fips140_algs); i++) {
+		if (fips140_alg_matches(&fips140_algs[i], calg))
+			return &fips140_algs[i];
+	}
+	return NULL;
+}
 
 /* Module information */
 #define FIPS140_MODULE_NAME "FIPS 140 Kernel Cryptographic Module"
@@ -56,10 +138,14 @@ const initcall_entry_t *fips140_initcalls_start = &__fips140_initcalls_start;
 /* FIPS 140-3 service indicator */
 bool fips140_is_approved_service(const char *name)
 {
-    if (!strcmp(name, "sha256") || 
-        !strcmp(name, "aes") ||
-        !strcmp(name, "hmac(sha256)"))
-        return true;
+    size_t i;
+
+    for (i = 0; i < ARRAY_SIZE(fips140_algs); i++) {
+        if (fips140_algs[i].approved &&
+            fips140_algs[i].cra_name != NULL &&
+            strcmp(name, fips140_algs[i].cra_name) == 0)
+            return true;
+    }
     return false;
 }
 EXPORT_SYMBOL_GPL(fips140_is_approved_service);
@@ -70,6 +156,39 @@ const char *fips140_module_version(void)
     return FIPS140_MODULE_NAME " " FIPS140_MODULE_VERSION;
 }
 EXPORT_SYMBOL_GPL(fips140_module_version);
+
+static LIST_HEAD(existing_live_algos);
+
+/*
+ * Release a list of algorithms which have been removed from crypto_alg_list.
+ *
+ * Note that even though the list is a private list, we have to hold
+ * crypto_alg_sem while iterating through it because crypto_unregister_alg() may
+ * run concurrently (as we haven't taken a reference to the algorithms on the
+ * list), and crypto_unregister_alg() will remove the algorithm from whichever
+ * list it happens to be on, while holding crypto_alg_sem.
+ */
+static void fips140_remove_final(struct list_head *list)
+{
+	struct crypto_alg *alg;
+	struct crypto_alg *n;
+
+	/*
+	 * We need to take crypto_alg_sem to safely traverse the list (see
+	 * comment above), but we have to drop it when doing each
+	 * crypto_alg_put() as that may take crypto_alg_sem again.
+	 */
+	down_write(&crypto_alg_sem);
+	list_for_each_entry_safe(alg, n, list, cra_list) {
+		list_del_init(&alg->cra_list);
+		up_write(&crypto_alg_sem);
+
+		crypto_alg_put(alg);
+
+		down_write(&crypto_alg_sem);
+	}
+	up_write(&crypto_alg_sem);
+}
 
 /*
  * Print all currently registered crypto algorithms
@@ -103,13 +222,81 @@ static void __init print_existing_crypto_algos(void)
  */
 static void __init unregister_existing_fips140_algos(void)
 {
-    pr_info("Starting algorithm unregistration process...\n");
-    
-    /* First, let's see what we're working with */
+    struct crypto_alg *calg, *tmp;
+    LIST_HEAD(remove_list);
+    LIST_HEAD(spawns);
+    int unregistered_count = 0;
+
+    pr_info("=== BEFORE UNREGISTRATION ===\n");
     print_existing_crypto_algos();
     
-    /* TODO: Implement actual unregistration logic */
-    pr_info("Algorithm unregistration completed (currently just printing)\n");
+    pr_info("Starting algorithm unregistration process...\n");
+
+    down_write(&crypto_alg_sem);
+
+    /*
+     * Find all registered algorithms that we care about, and move them to a
+     * private list so that they are no longer exposed via the algo lookup
+     * API. Subsequently, we will unregister them if they are not in active
+     * use. If they are, we can't fully unregister them but we can ensure
+     * that new users won't use them.
+     */
+    list_for_each_entry_safe(calg, tmp, &crypto_alg_list, cra_list) {
+        struct fips140_alg *falg = fips140_find_matching_alg(calg);
+
+        if (!falg)
+            continue;
+
+        pr_info("Found matching algorithm: '%s' ('%s'), refcnt=%d\n",
+                calg->cra_name, calg->cra_driver_name,
+                refcount_read(&calg->cra_refcnt));
+
+        falg->unregistered_inkern = true;
+        unregistered_count++;
+
+        if (refcount_read(&calg->cra_refcnt) == 1) {
+            /*
+             * This algorithm is not currently in use, but there may
+             * be template instances holding references to it via
+             * spawns. So let's tear it down like
+             * crypto_unregister_alg() would, but without releasing
+             * the lock, to prevent races with concurrent TFM
+             * allocations.
+             */
+            pr_info("Removing unused algorithm: '%s' ('%s')\n",
+                    calg->cra_name, calg->cra_driver_name);
+            calg->cra_flags |= CRYPTO_ALG_DEAD;
+            list_move(&calg->cra_list, &remove_list);
+            crypto_remove_spawns(calg, &spawns, NULL);
+        } else {
+            /*
+             * This algorithm is live, i.e. it has TFMs allocated,
+             * so we can't fully unregister it. However, we do
+             * need to ensure that new users will get the FIPS code.
+             *
+             * We move the algorithm to a private list so that algorithm 
+             * lookups won't find it anymore. To further distinguish it 
+             * from the FIPS algorithms, we also append "+orig" to its name.
+             */
+            pr_info("Found already-live algorithm '%s' ('%s'), marking as original\n",
+                    calg->cra_name, calg->cra_driver_name);
+            calg->cra_priority = 0;
+            strlcat(calg->cra_name, "+orig", CRYPTO_MAX_ALG_NAME);
+            strlcat(calg->cra_driver_name, "+orig", CRYPTO_MAX_ALG_NAME);
+            list_move(&calg->cra_list, &existing_live_algos);
+        }
+    }
+    up_write(&crypto_alg_sem);
+
+    fips140_remove_final(&remove_list);
+    fips140_remove_final(&spawns);
+
+    pr_info("Algorithm unregistration completed: %d algorithms processed\n", 
+            unregistered_count);
+    
+    pr_info("=== AFTER UNREGISTRATION ===\n");
+    print_existing_crypto_algos();
+
 }
 
 /* Simple self-test function */
@@ -152,6 +339,9 @@ static int __init fips140_init(void)
         }
         
     }
+
+    pr_info("=== AFTER RE-REGISTRATION (initcalls completed) ===\n");
+    print_existing_crypto_algos();
 
     /* Run self-tests */
     if (!fips140_run_selftests()) {
