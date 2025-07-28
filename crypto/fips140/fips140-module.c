@@ -22,11 +22,17 @@
 #include <linux/err.h>
 #include <crypto/hash.h>
 #include <crypto/aes.h>
+#include <crypto/internal/hash.h>
+#include <crypto/algapi.h>
 #include <linux/init.h>
 
 #include "fips140-module.h"
 
 #define CRYPTO_INTERNAL "CRYPTO_INTERNAL"
+
+/* External declarations for crypto internal structures */
+extern struct list_head crypto_alg_list;
+extern struct rw_semaphore crypto_alg_sem;
 
 /* Module information */
 #define FIPS140_MODULE_NAME "FIPS 140 Kernel Cryptographic Module"
@@ -65,6 +71,47 @@ const char *fips140_module_version(void)
 }
 EXPORT_SYMBOL_GPL(fips140_module_version);
 
+/*
+ * Print all currently registered crypto algorithms
+ * This helps us understand what's already in the system before we start replacing them
+ */
+static void __init print_existing_crypto_algos(void)
+{
+    struct crypto_alg *calg;
+    int count = 0;
+
+    pr_info("=== Currently registered crypto algorithms ===\n");
+    
+    down_read(&crypto_alg_sem);
+    list_for_each_entry(calg, &crypto_alg_list, cra_list) {
+        pr_info("Algorithm #%d: name='%s', driver='%s', priority=%d, refcnt=%d, flags=0x%x\n",
+                ++count,
+                calg->cra_name,
+                calg->cra_driver_name,
+                calg->cra_priority,
+                refcount_read(&calg->cra_refcnt),
+                calg->cra_flags);
+    }
+    up_read(&crypto_alg_sem);
+    
+    pr_info("=== Total algorithms found: %d ===\n", count);
+}
+
+/*
+ * Unregister existing FIPS 140 algorithms from the kernel
+ * Simplified implementation for current needs
+ */
+static void __init unregister_existing_fips140_algos(void)
+{
+    pr_info("Starting algorithm unregistration process...\n");
+    
+    /* First, let's see what we're working with */
+    print_existing_crypto_algos();
+    
+    /* TODO: Implement actual unregistration logic */
+    pr_info("Algorithm unregistration completed (currently just printing)\n");
+}
+
 /* Simple self-test function */
 static bool fips140_run_selftests(void)
 {
@@ -77,10 +124,12 @@ static bool fips140_run_selftests(void)
 static int __init fips140_init(void)
 {
     const initcall_entry_t *initcall;
-    int i;
 
     pr_info("Loading " FIPS140_MODULE_NAME " " FIPS140_MODULE_VERSION "\n");
     fips140_init_thread = current;
+
+    /* First step: unregister existing algorithms that we will replace */
+    unregister_existing_fips140_algos();
 
     /* iterate over all init routines present in this module and call them */
     pr_info("Checking initcalls section from %p to %p\n", 
