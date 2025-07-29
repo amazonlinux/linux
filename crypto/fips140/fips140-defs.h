@@ -62,3 +62,14 @@
 #define crypto_register_skciphers	fips140_crypto_register_skciphers
 #define shash_register_instance		fips140_shash_register_instance
 #define skcipher_register_instance	fips140_skcipher_register_instance
+
+/*
+ * Redirections for unexported kernel functions (not crypto API)
+ * These functions are not exported by the main kernel but are needed
+ * by crypto algorithms. We redirect them to fips140_ prefixed versions
+ * that are implemented in crypto/fips140/builtin/ and compiled into
+ * the main kernel.
+ */
+#define restrict_link_by_builtin_trusted fips140_restrict_link_by_builtin_trusted
+#define __SCK__might_resched fips140___SCK__might_resched
+#define __SCK__preempt_schedule fips140___SCK__preempt_schedule
