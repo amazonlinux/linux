@@ -54,6 +54,8 @@ config CRYPTO_FIPS_VERSION
 	  This option provides the ability to override the FIPS Module Version.
 	  By default the KERNELRELEASE value is used.
 
+source "crypto/fips140/Kconfig"
+
 config CRYPTO_ALGAPI
 	tristate
 	select CRYPTO_ALGAPI2
