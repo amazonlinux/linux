@@ -1,0 +1,26 @@
+# SPDX-License-Identifier: GPL-2.0
+#
+# x86-specific crypto objects for FIPS 140 module
+#
+
+# Add x86-specific crypto objects to the FIPS module
+crypto-fips-objs += aesni-intel_glue.o aesni-intel_asm.o
+crypto-fips-objs += aes-gcm-aesni-x86_64.o
+crypto-fips-objs += aes-gcm-avx10-x86_64.o
+crypto-fips-objs += aes-ctr-avx-x86_64.o
+crypto-fips-objs += aes-xts-avx-x86_64.o
+crypto-fips-objs += ghash-clmulni-intel_glue.o ghash-clmulni-intel_asm.o
+crypto-fips-objs += sha1_ssse3_glue.o sha1_ssse3_asm.o
+crypto-fips-objs += sha1_avx2_x86_64_asm.o
+crypto-fips-objs += sha1_ni_asm.o
+crypto-fips-objs += sha256_ssse3_glue.o sha256-ssse3-asm.o
+crypto-fips-objs += sha256-avx-asm.o sha256-avx2-asm.o
+crypto-fips-objs += sha256_ni_asm.o
+crypto-fips-objs += sha512_ssse3_glue.o sha512-ssse3-asm.o
+crypto-fips-objs += sha512-avx-asm.o sha512-avx2-asm.o
+
+# Rules for building arch-specific objects
+$(obj)/%-fips.o: $(srctree)/arch/x86/crypto/%.c FORCE
+	$(call if_changed_rule,cc_o_c)
+$(obj)/%-fips.o: $(srctree)/arch/x86/crypto/%.S FORCE
+	$(call if_changed_rule,as_o_S)
