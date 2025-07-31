@@ -95,7 +95,8 @@ crypto-fips-objs-$(CONFIG_CRYPTO_TEA) += tea.o
 crypto-fips-objs-$(CONFIG_CRYPTO_TWOFISH) += twofish_generic.o
 crypto-fips-objs-$(CONFIG_CRYPTO_TWOFISH_COMMON) += twofish_common.o
 crypto-fips-objs-$(CONFIG_CRYPTO_XXHASH) += xxhash_generic.o
-crypto-fips-objs += $(crypto-fips-objs-y)
+# Include both built-in (y) and module (m) configurations
+crypto-fips-objs += $(crypto-fips-objs-y) $(crypto-fips-objs-m)
 
 # Architecture-specific crypto algorithms (following main kernel Makefile pattern)
 ifeq ($(ARCH),arm)

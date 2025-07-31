@@ -3,21 +3,40 @@
 # x86-specific crypto objects for FIPS 140 module
 #
 
-# Add x86-specific crypto objects to the FIPS module
-crypto-fips-objs += aesni-intel_glue.o aesni-intel_asm.o
-crypto-fips-objs += aes-gcm-aesni-x86_64.o
-crypto-fips-objs += aes-gcm-avx10-x86_64.o
-crypto-fips-objs += aes-ctr-avx-x86_64.o
-crypto-fips-objs += aes-xts-avx-x86_64.o
-crypto-fips-objs += ghash-clmulni-intel_glue.o ghash-clmulni-intel_asm.o
-crypto-fips-objs += sha1_ssse3_glue.o sha1_ssse3_asm.o
-crypto-fips-objs += sha1_avx2_x86_64_asm.o
-crypto-fips-objs += sha1_ni_asm.o
-crypto-fips-objs += sha256_ssse3_glue.o sha256-ssse3-asm.o
-crypto-fips-objs += sha256-avx-asm.o sha256-avx2-asm.o
-crypto-fips-objs += sha256_ni_asm.o
-crypto-fips-objs += sha512_ssse3_glue.o sha512-ssse3-asm.o
-crypto-fips-objs += sha512-avx-asm.o sha512-avx2-asm.o
+# AES-NI Intel algorithms
+crypto-fips-objs-$(CONFIG_CRYPTO_AES_NI_INTEL) += aesni-intel_glue.o aesni-intel_asm.o
+ifeq ($(CONFIG_64BIT),y)
+crypto-fips-objs-$(CONFIG_CRYPTO_AES_NI_INTEL) += aes-ctr-avx-x86_64.o
+crypto-fips-objs-$(CONFIG_CRYPTO_AES_NI_INTEL) += aes-gcm-aesni-x86_64.o
+crypto-fips-objs-$(CONFIG_CRYPTO_AES_NI_INTEL) += aes-xts-avx-x86_64.o
+# AES-GCM AVX10 requires both VAES and VPCLMULQDQ
+ifeq ($(CONFIG_AS_VAES)$(CONFIG_AS_VPCLMULQDQ),yy)
+crypto-fips-objs-$(CONFIG_CRYPTO_AES_NI_INTEL) += aes-gcm-avx10-x86_64.o
+endif
+endif
+
+# GHASH CLMUL algorithms
+crypto-fips-objs-$(CONFIG_CRYPTO_GHASH_CLMUL_NI_INTEL) += ghash-clmulni-intel_glue.o ghash-clmulni-intel_asm.o
+
+# SHA1 SSSE3 algorithms
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA1_SSSE3) += sha1_ssse3_glue.o sha1_ssse3_asm.o
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA1_SSSE3) += sha1_avx2_x86_64_asm.o
+# SHA1-NI requires assembler support
+ifeq ($(CONFIG_AS_SHA1_NI),y)
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA1_SSSE3) += sha1_ni_asm.o
+endif
+
+# SHA256 SSSE3 algorithms
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA256_SSSE3) += sha256_ssse3_glue.o sha256-ssse3-asm.o
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA256_SSSE3) += sha256-avx-asm.o sha256-avx2-asm.o
+# SHA256-NI requires assembler support
+ifeq ($(CONFIG_AS_SHA256_NI),y)
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA256_SSSE3) += sha256_ni_asm.o
+endif
+
+# SHA512 SSSE3 algorithms
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA512_SSSE3) += sha512_ssse3_glue.o sha512-ssse3-asm.o
+crypto-fips-objs-$(CONFIG_CRYPTO_SHA512_SSSE3) += sha512-avx-asm.o sha512-avx2-asm.o
 
 # Rules for building arch-specific objects
 $(obj)/%-fips.o: $(srctree)/arch/x86/crypto/%.c FORCE
