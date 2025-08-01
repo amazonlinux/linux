@@ -73,3 +73,36 @@
 #define restrict_link_by_builtin_trusted fips140_restrict_link_by_builtin_trusted
 #define __SCK__might_resched fips140___SCK__might_resched
 #define __SCK__preempt_schedule fips140___SCK__preempt_schedule
+
+/* RAID6 symbol redirections */
+#ifdef CONFIG_RAID6_PQ
+#define raid6_2data_recov fips140_raid6_2data_recov
+#define raid6_datap_recov fips140_raid6_datap_recov
+#define raid6_call (*fips140_raid6_call)
+#define raid6_gfexp fips140_raid6_gfexp
+#define raid6_gfmul fips140_raid6_gfmul
+#define raid6_gfinv fips140_raid6_gfinv
+#define raid6_gfexi fips140_raid6_gfexi
+#define raid6_empty_zero_page (*((const void **)fips140_raid6_empty_zero_page))
+#endif
+
+/* ZSTD symbol redirections */
+#ifdef CONFIG_ZSTD_COMPRESS
+#define zstd_cctx_workspace_bound fips140_zstd_cctx_workspace_bound
+#define zstd_init_cctx fips140_zstd_init_cctx
+#define zstd_compress_cctx fips140_zstd_compress_cctx
+#define zstd_get_params fips140_zstd_get_params
+#endif
+
+/* LZ4 symbol redirections - only when NOT built as modules
+ * When =y (built-in), symbols are available in kernel, use wrappers
+ * When =m (module), symbols not available, include source directly
+ */
+#if defined(CONFIG_LZ4_COMPRESS) && !IS_MODULE(CONFIG_LZ4_COMPRESS)
+#define LZ4_compress_default fips140_LZ4_compress_default
+#define LZ4_compress_HC fips140_LZ4_compress_HC
+#endif
+
+#if defined(CONFIG_LZ4_DECOMPRESS) && !IS_MODULE(CONFIG_LZ4_DECOMPRESS)
+#define LZ4_decompress_safe fips140_LZ4_decompress_safe
+#endif
