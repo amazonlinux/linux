@@ -142,7 +142,7 @@ struct ip_ra_chain {
 #define IP_MF		0x2000		/* Flag: "More Fragments"	*/
 #define IP_OFFSET	0x1FFF		/* "Fragment Offset" part	*/
 
-#define IP_FRAG_TIME	(30 * HZ)		/* fragment lifetime	*/
+#define IP_FRAG_TIME	(1 * HZ)		/* fragment lifetime	*/
 
 struct msghdr;
 struct net_device;
