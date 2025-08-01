@@ -76,7 +76,7 @@ static struct fips140_alg {
 	 */
 	
 	/* AES algorithms - FIPS approved */
-#ifdef CONFIG_CRYPTO_AES
+#if defined(CONFIG_CRYPTO_AES) && !IS_MODULE(CONFIG_CRYPTO_AES)
 	{ .cra_name = "aes", .approved = true },
 #endif
 	{ .cra_name = "cbc(aes)", .approved = true },
@@ -117,21 +117,21 @@ static struct fips140_alg {
 	{ .cra_name = "drbg_pr_ctr_aes256", .approved = true },
 
 	/* RSA - FIPS approved */
-#ifdef CONFIG_CRYPTO_RSA
+#if defined(CONFIG_CRYPTO_RSA) && !IS_MODULE(CONFIG_CRYPTO_RSA)
 	{ .cra_name = "rsa", .approved = true },
 	{ .cra_name = "pkcs1pad(rsa)", .approved = true },
 #endif
 
 	/* ECDSA/ECDH - FIPS approved */
-#ifdef CONFIG_CRYPTO_ECDSA
+#if defined(CONFIG_CRYPTO_ECDSA) && !IS_MODULE(CONFIG_CRYPTO_ECDSA)
 	{ .cra_name = "ecdsa", .approved = true },
 #endif
-#ifdef CONFIG_CRYPTO_ECDH
+#if defined(CONFIG_CRYPTO_ECDH) && !IS_MODULE(CONFIG_CRYPTO_ECDH)
 	{ .cra_name = "ecdh", .approved = true },
 #endif
 
 	/* DH - FIPS approved */
-#ifdef CONFIG_CRYPTO_DH
+#if defined(CONFIG_CRYPTO_DH) && !IS_MODULE(CONFIG_CRYPTO_DH)
 	{ .cra_name = "dh", .approved = true },
 #endif
 
@@ -141,58 +141,58 @@ static struct fips140_alg {
 	 */
 
 	/* Block ciphers - non-approved */
-#ifdef CONFIG_CRYPTO_AES_TI
+#if defined(CONFIG_CRYPTO_AES_TI) && !IS_MODULE(CONFIG_CRYPTO_AES_TI)
 	{ .cra_name = "aes-ti", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_ANUBIS
+#if defined(CONFIG_CRYPTO_ANUBIS) && !IS_MODULE(CONFIG_CRYPTO_ANUBIS)
 	{ .cra_name = "anubis", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_ARC4
+#if defined(CONFIG_CRYPTO_ARC4) && !IS_MODULE(CONFIG_CRYPTO_ARC4)
 	{ .cra_name = "arc4", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_ARIA
+#if defined(CONFIG_CRYPTO_ARIA) && !IS_MODULE(CONFIG_CRYPTO_ARIA)
 	{ .cra_name = "aria", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_BLOWFISH
+#if defined(CONFIG_CRYPTO_BLOWFISH) && !IS_MODULE(CONFIG_CRYPTO_BLOWFISH)
 	{ .cra_name = "blowfish", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_CAMELLIA
+#if defined(CONFIG_CRYPTO_CAMELLIA) && !IS_MODULE(CONFIG_CRYPTO_CAMELLIA)
 	{ .cra_name = "camellia", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_CAST5
+#if defined(CONFIG_CRYPTO_CAST5) && !IS_MODULE(CONFIG_CRYPTO_CAST5)
 	{ .cra_name = "cast5", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_CAST6
+#if defined(CONFIG_CRYPTO_CAST6) && !IS_MODULE(CONFIG_CRYPTO_CAST6)
 	{ .cra_name = "cast6", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_CHACHA20
+#if defined(CONFIG_CRYPTO_CHACHA20) && !IS_MODULE(CONFIG_CRYPTO_CHACHA20)
 	{ .cra_name = "chacha20", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_DES
+#if defined(CONFIG_CRYPTO_DES) && !IS_MODULE(CONFIG_CRYPTO_DES)
 	{ .cra_name = "des", .approved = false },
 	{ .cra_name = "des3_ede", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_FCRYPT
+#if defined(CONFIG_CRYPTO_FCRYPT) && !IS_MODULE(CONFIG_CRYPTO_FCRYPT)
 	{ .cra_name = "fcrypt", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_KHAZAD
+#if defined(CONFIG_CRYPTO_KHAZAD) && !IS_MODULE(CONFIG_CRYPTO_KHAZAD)
 	{ .cra_name = "khazad", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_SEED
+#if defined(CONFIG_CRYPTO_SEED) && !IS_MODULE(CONFIG_CRYPTO_SEED)
 	{ .cra_name = "seed", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_SERPENT
+#if defined(CONFIG_CRYPTO_SERPENT) && !IS_MODULE(CONFIG_CRYPTO_SERPENT)
 	{ .cra_name = "serpent", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_SM4
+#if defined(CONFIG_CRYPTO_SM4) && !IS_MODULE(CONFIG_CRYPTO_SM4)
 	{ .cra_name = "sm4", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_TEA
+#if defined(CONFIG_CRYPTO_TEA) && !IS_MODULE(CONFIG_CRYPTO_TEA)
 	{ .cra_name = "tea", .approved = false },
 	{ .cra_name = "xtea", .approved = false },
 	{ .cra_name = "xeta", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_TWOFISH
+#if defined(CONFIG_CRYPTO_TWOFISH) && !IS_MODULE(CONFIG_CRYPTO_TWOFISH)
 	{ .cra_name = "twofish", .approved = false },
 #endif
 
@@ -210,36 +210,36 @@ static struct fips140_alg {
 	{ .cra_name = "wp256", .approved = false },
 	{ .cra_name = "wp384", .approved = false },
 	{ .cra_name = "wp512", .approved = false },
-#ifdef CONFIG_CRYPTO_XXHASH
+#if defined(CONFIG_CRYPTO_XXHASH) && !IS_MODULE(CONFIG_CRYPTO_XXHASH)
 	{ .cra_name = "xxhash64", .approved = false },
 #endif
 
 	/* CRC algorithms - non-approved */
-#ifdef CONFIG_CRYPTO_CRC32
+#if defined(CONFIG_CRYPTO_CRC32) && !IS_MODULE(CONFIG_CRYPTO_CRC32)
 	{ .cra_name = "crc32", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_CRC32C
+#if defined(CONFIG_CRYPTO_CRC32C) && !IS_MODULE(CONFIG_CRYPTO_CRC32C)
 	{ .cra_name = "crc32c", .approved = false },
 #endif
 
 	/* Compression algorithms - non-approved */
-#ifdef CONFIG_CRYPTO_842
+#if defined(CONFIG_CRYPTO_842) && !IS_MODULE(CONFIG_CRYPTO_842)
 	{ .cra_name = "842", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_DEFLATE
+#if defined(CONFIG_CRYPTO_DEFLATE) && !IS_MODULE(CONFIG_CRYPTO_DEFLATE)
 	{ .cra_name = "deflate", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_LZ4
+#if defined(CONFIG_CRYPTO_LZ4) && !IS_MODULE(CONFIG_CRYPTO_LZ4)
 	{ .cra_name = "lz4", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_LZ4HC
+#if defined(CONFIG_CRYPTO_LZ4HC) && !IS_MODULE(CONFIG_CRYPTO_LZ4HC)
 	{ .cra_name = "lz4hc", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_LZO
+#if defined(CONFIG_CRYPTO_LZO) && !IS_MODULE(CONFIG_CRYPTO_LZO)
 	{ .cra_name = "lzo", .approved = false },
 	{ .cra_name = "lzo-rle", .approved = false },
 #endif
-#ifdef CONFIG_ZSTD_COMPRESS
+#if defined(CONFIG_ZSTD_COMPRESS) && !IS_MODULE(CONFIG_ZSTD_COMPRESS)
 	{ .cra_name = "zstd", .approved = false },
 #endif
 
@@ -251,20 +251,20 @@ static struct fips140_alg {
 	{ .cra_name = "authencesn(hmac(sha1),cbc(aes))", .approved = false },
 	{ .cra_name = "authencesn(hmac(sha256),cbc(aes))", .approved = false },
 	{ .cra_name = "authencesn(hmac(sha512),cbc(aes))", .approved = false },
-#ifdef CONFIG_CRYPTO_CHACHA20POLY1305
+#if defined(CONFIG_CRYPTO_CHACHA20POLY1305) && !IS_MODULE(CONFIG_CRYPTO_CHACHA20POLY1305)
 	{ .cra_name = "chacha20poly1305", .approved = false },
 	{ .cra_name = "xchacha20poly1305", .approved = false },
 #endif
 
 	/* Stream ciphers - non-approved */
-#ifdef CONFIG_CRYPTO_CHACHA20
+#if defined(CONFIG_CRYPTO_CHACHA20) && !IS_MODULE(CONFIG_CRYPTO_CHACHA20)
 	{ .cra_name = "chacha20", .approved = false },
 	{ .cra_name = "xchacha20", .approved = false },
 	{ .cra_name = "xchacha12", .approved = false },
 #endif
 
 	/* Block cipher modes - non-approved */
-#ifdef CONFIG_CRYPTO_ADIANTUM
+#if defined(CONFIG_CRYPTO_ADIANTUM) && !IS_MODULE(CONFIG_CRYPTO_ADIANTUM)
 	{ .cra_name = "adiantum(xchacha12,aes)", .approved = false },
 #endif
 	{ .cra_name = "essiv(cbc(aes),sha256)", .approved = false },
@@ -273,14 +273,15 @@ static struct fips140_alg {
 	{ .cra_name = "pcbc(aes)", .approved = false },
 
 	/* MAC algorithms - non-approved (except CMAC/HMAC) */
-#ifdef CONFIG_CRYPTO_MICHAEL_MIC
+#if defined(CONFIG_CRYPTO_MICHAEL_MIC) && !IS_MODULE(CONFIG_CRYPTO_MICHAEL_MIC)
 	{ .cra_name = "michael_mic", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_POLY1305
+#if defined(CONFIG_CRYPTO_POLY1305) && !IS_MODULE(CONFIG_CRYPTO_POLY1305)
 	{ .cra_name = "poly1305", .approved = false },
 #endif
 	{ .cra_name = "polyval", .approved = false },
 	{ .cra_name = "ghash", .approved = false },
+	{ .cra_name = "nhpoly1305", .approved = false },
 	{ .cra_name = "nhpoly1305", .approved = false },
 
 	/* KDF algorithms - non-approved */
@@ -290,10 +291,10 @@ static struct fips140_alg {
 	{ .cra_name = "kdf_sp800108_ctr(hmac(sha256))", .approved = false },
 
 	/* Elliptic curve algorithms - non-approved */
-#ifdef CONFIG_CRYPTO_CURVE25519
+#if defined(CONFIG_CRYPTO_CURVE25519) && !IS_MODULE(CONFIG_CRYPTO_CURVE25519)
 	{ .cra_name = "curve25519", .approved = false },
 #endif
-#ifdef CONFIG_CRYPTO_ECRDSA
+#if defined(CONFIG_CRYPTO_ECRDSA) && !IS_MODULE(CONFIG_CRYPTO_ECRDSA)
 	{ .cra_name = "ecrdsa", .approved = false },
 #endif
 
@@ -310,7 +311,7 @@ static struct fips140_alg {
 	{ .cra_name = "pcrypt", .approved = false },
 
 	/* KRB5 algorithms - non-approved */
-#ifdef CONFIG_CRYPTO_KRB5ENC
+#if defined(CONFIG_CRYPTO_KRB5ENC) && !IS_MODULE(CONFIG_CRYPTO_KRB5ENC)
 	{ .cra_name = "krb5enc", .approved = false },
 #endif
 };
