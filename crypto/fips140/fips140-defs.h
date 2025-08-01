@@ -75,7 +75,7 @@
 #define __SCK__preempt_schedule fips140___SCK__preempt_schedule
 
 /* RAID6 symbol redirections */
-#ifdef CONFIG_RAID6_PQ
+#if defined(CONFIG_RAID6_PQ) && !IS_MODULE(CONFIG_RAID6_PQ)
 #define raid6_2data_recov fips140_raid6_2data_recov
 #define raid6_datap_recov fips140_raid6_datap_recov
 #define raid6_call (*fips140_raid6_call)
@@ -87,7 +87,7 @@
 #endif
 
 /* ZSTD symbol redirections */
-#ifdef CONFIG_ZSTD_COMPRESS
+#if defined(CONFIG_ZSTD_COMPRESS) && !IS_MODULE(CONFIG_ZSTD_COMPRESS)
 #define zstd_cctx_workspace_bound fips140_zstd_cctx_workspace_bound
 #define zstd_init_cctx fips140_zstd_init_cctx
 #define zstd_compress_cctx fips140_zstd_compress_cctx
@@ -105,4 +105,11 @@
 
 #if defined(CONFIG_LZ4_DECOMPRESS) && !IS_MODULE(CONFIG_LZ4_DECOMPRESS)
 #define LZ4_decompress_safe fips140_LZ4_decompress_safe
+#endif
+
+/* Poly1305 core function redirections - only when built-in */
+#if defined(CONFIG_CRYPTO_LIB_POLY1305_GENERIC) && !IS_MODULE(CONFIG_CRYPTO_LIB_POLY1305_GENERIC)
+#define poly1305_core_setkey fips140_poly1305_core_setkey
+#define poly1305_core_blocks fips140_poly1305_core_blocks
+#define poly1305_core_emit fips140_poly1305_core_emit
 #endif

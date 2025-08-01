@@ -15,11 +15,11 @@ crypto-fips-objs := aegis128-core.o authenc.o authencesn.o \
 		    cbc.o ccm.o cipher.o cmac.o \
 		    crypto_null.o ctr.o \
 		    cts.o \
-		    drbg.o ecb.o ecc.o echainiv.o essiv.o fips.o gcm.o \
+		    ecb.o ecc.o echainiv.o essiv.o fips.o gcm.o \
 		    geniv.o ghash-generic.o hash_info.o hctr2.o hkdf.o hmac.o \
 		    jitterentropy.o jitterentropy-kcapi.o kdf_sp800108.o \
 		    lrw.o md4.o md5.o \
-		    nhpoly1305.o pcbc.o polyval-generic.o \
+		    pcbc.o polyval-generic.o \
 		    rmd160.o seqiv.o \
 		    sha1_generic.o sha256_generic.o sha3_generic.o sha512_generic.o \
 		    sm3.o streebog_generic.o \
@@ -27,6 +27,12 @@ crypto-fips-objs := aegis128-core.o authenc.o authencesn.o \
 		    xts.o \
 		    krb5/krb5_kdf.o krb5/rfc3961_simplified.o krb5/rfc3962_aes.o \
 		    krb5/rfc6803_camellia.o krb5/rfc8009_aes2.o
+
+# AES and DRBG (DRBG depends on AES, so both are conditional on CONFIG_CRYPTO_AES)
+crypto-fips-objs-$(CONFIG_CRYPTO_AES) += aes_generic.o drbg.o
+
+# nhpoly1305 depends on poly1305 core functions, so only include when nhpoly1305 is configured
+crypto-fips-objs-$(CONFIG_CRYPTO_NHPOLY1305) += nhpoly1305.o
 
 # Conditional lib-crypto objects (following lib/crypto/Makefile pattern)
 crypto-fips-objs-$(CONFIG_CRYPTO_LIB_AES) += lib-crypto-aes.o
@@ -62,7 +68,6 @@ crypto-fips-objs-$(CONFIG_CRYPTO_CURVE25519) += curve25519-generic.o
 crypto-fips-objs-$(CONFIG_ZSTD_COMPRESS) += zstd.o
 crypto-fips-objs-$(CONFIG_CRYPTO_842) += 842.o
 crypto-fips-objs-$(CONFIG_CRYPTO_ADIANTUM) += adiantum.o
-crypto-fips-objs-$(CONFIG_CRYPTO_AES) += aes_generic.o
 crypto-fips-objs-$(CONFIG_CRYPTO_AES_TI) += aes_ti.o
 crypto-fips-objs-$(CONFIG_CRYPTO_ANUBIS) += anubis.o
 crypto-fips-objs-$(CONFIG_CRYPTO_ARC4) += arc4.o
@@ -86,16 +91,11 @@ crypto-fips-objs-$(CONFIG_CRYPTO_ECRDSA) += ecrdsa.o ecrdsa_params.asn1.o ecrdsa
 crypto-fips-objs-$(CONFIG_CRYPTO_FCRYPT) += fcrypt.o
 crypto-fips-objs-$(CONFIG_CRYPTO_KHAZAD) += khazad.o
 crypto-fips-objs-$(CONFIG_CRYPTO_KRB5ENC) += krb5enc.o
-# LZ4 handling: include objects only when CONFIG_LZ4_DECOMPRESS=m
-# When =y, we use kernel symbols directly via wrappers
-ifeq ($(CONFIG_LZ4_DECOMPRESS),m)
+# LZ4 handling
 crypto-fips-objs-$(CONFIG_CRYPTO_LZ4) += lz4.o
 crypto-fips-objs-$(CONFIG_CRYPTO_LZ4) += lib-lz4_decompress.o
-endif
-ifeq ($(CONFIG_LZ4_COMPRESS),m)
 crypto-fips-objs-$(CONFIG_CRYPTO_LZ4HC) += lz4hc.o
 crypto-fips-objs-$(CONFIG_CRYPTO_LZ4HC) += lib-lz4_compress.o lib-lz4hc_compress.o
-endif
 crypto-fips-objs-$(CONFIG_CRYPTO_LZO) += lzo.o lzo-rle.o
 crypto-fips-objs-$(CONFIG_CRYPTO_MICHAEL_MIC) += michael_mic.o
 crypto-fips-objs-$(CONFIG_CRYPTO_PCRYPT) += pcrypt.o
@@ -109,8 +109,8 @@ crypto-fips-objs-$(CONFIG_CRYPTO_TEA) += tea.o
 crypto-fips-objs-$(CONFIG_CRYPTO_TWOFISH) += twofish_generic.o
 crypto-fips-objs-$(CONFIG_CRYPTO_TWOFISH_COMMON) += twofish_common.o
 crypto-fips-objs-$(CONFIG_CRYPTO_XXHASH) += xxhash_generic.o
-# Include both built-in (y) and module (m) configurations
-crypto-fips-objs += $(crypto-fips-objs-y) $(crypto-fips-objs-m)
+# Include only built-in (y) configurations
+crypto-fips-objs += $(crypto-fips-objs-y)
 
 # Architecture-specific crypto algorithms (following main kernel Makefile pattern)
 ifeq ($(ARCH),arm)

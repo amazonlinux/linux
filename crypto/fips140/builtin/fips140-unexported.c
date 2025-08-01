@@ -16,11 +16,12 @@
 #include <linux/sched.h>
 #include <linux/static_call.h>
 
-#ifdef CONFIG_RAID6_PQ
+#if defined(CONFIG_RAID6_PQ) && !IS_MODULE(CONFIG_RAID6_PQ)
 #include <linux/raid/pq.h>
 
 /*
  * RAID6 symbol wrappers
+ * Only needed when RAID6_PQ is built-in (=y)
  * These are needed by async_tx operations
  */
 int fips140_raid6_2data_recov(int disks, size_t bytes, int faila, int failb, void **ptrs)
@@ -52,13 +53,14 @@ EXPORT_SYMBOL_GPL(fips140_raid6_gfexi);
 
 const void *fips140_raid6_empty_zero_page = &raid6_empty_zero_page;
 EXPORT_SYMBOL_GPL(fips140_raid6_empty_zero_page);
-#endif /* CONFIG_RAID6_PQ */
+#endif /* CONFIG_RAID6_PQ && !IS_MODULE(CONFIG_RAID6_PQ) */
 
-#ifdef CONFIG_ZSTD_COMPRESS
+#if defined(CONFIG_ZSTD_COMPRESS) && !IS_MODULE(CONFIG_ZSTD_COMPRESS)
 #include <linux/zstd.h>
 
 /*
  * ZSTD symbol wrappers
+ * Only needed when ZSTD_COMPRESS is built-in (=y)
  * These are needed by zstd compression algorithms
  */
 size_t fips140_zstd_cctx_workspace_bound(const zstd_compression_parameters *cparams)
@@ -85,7 +87,7 @@ zstd_parameters fips140_zstd_get_params(int compression_level, unsigned long lon
 	return zstd_get_params(compression_level, estimated_src_size);
 }
 EXPORT_SYMBOL_GPL(fips140_zstd_get_params);
-#endif /* CONFIG_ZSTD_COMPRESS */
+#endif /* CONFIG_ZSTD_COMPRESS && !IS_MODULE(CONFIG_ZSTD_COMPRESS) */
 
 #if defined(CONFIG_LZ4_COMPRESS) && !IS_MODULE(CONFIG_LZ4_COMPRESS)
 #include <linux/lz4.h>
@@ -121,6 +123,36 @@ int fips140_LZ4_decompress_safe(const char *src, char *dst, int compressedSize, 
 }
 EXPORT_SYMBOL_GPL(fips140_LZ4_decompress_safe);
 #endif /* CONFIG_LZ4_DECOMPRESS && !IS_MODULE(CONFIG_LZ4_DECOMPRESS) */
+
+#if defined(CONFIG_CRYPTO_LIB_POLY1305_GENERIC) && !IS_MODULE(CONFIG_CRYPTO_LIB_POLY1305_GENERIC)
+#include <crypto/poly1305.h>
+
+/*
+ * Poly1305 core function wrappers
+ * Only needed when CRYPTO_LIB_POLY1305_GENERIC is built-in (=y)
+ * These are needed by poly1305 algorithms
+ */
+void fips140_poly1305_core_setkey(struct poly1305_core_key *key, const u8 raw_key[16])
+{
+	poly1305_core_setkey(key, raw_key);
+}
+EXPORT_SYMBOL_GPL(fips140_poly1305_core_setkey);
+
+void fips140_poly1305_core_blocks(struct poly1305_state *state,
+				  const struct poly1305_core_key *key,
+				  const void *src, unsigned int nblocks, u32 hibit)
+{
+	poly1305_core_blocks(state, key, src, nblocks, hibit);
+}
+EXPORT_SYMBOL_GPL(fips140_poly1305_core_blocks);
+
+void fips140_poly1305_core_emit(const struct poly1305_state *state,
+				const u32 nonce[4], void *dst)
+{
+	poly1305_core_emit(state, nonce, dst);
+}
+EXPORT_SYMBOL_GPL(fips140_poly1305_core_emit);
+#endif /* CONFIG_CRYPTO_LIB_POLY1305_GENERIC && !IS_MODULE(CONFIG_CRYPTO_LIB_POLY1305_GENERIC) */
 
 /*
  * Wrapper for restrict_link_by_builtin_trusted
