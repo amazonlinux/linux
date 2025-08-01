@@ -26,13 +26,19 @@ crypto-fips-objs := aegis128-core.o authenc.o authencesn.o \
 		    wp512.o xcbc.o xctr.o xor.o \
 		    xts.o \
 		    krb5/krb5_kdf.o krb5/rfc3961_simplified.o krb5/rfc3962_aes.o \
-		    krb5/rfc6803_camellia.o krb5/rfc8009_aes2.o \
-		    lib-crypto-aes.o lib-crypto-arc4.o lib-crypto-chacha.o \
-		    lib-crypto-des.o lib-crypto-gf128mul.o lib-crypto-memneq.o \
-		    lib-crypto-poly1305.o lib-crypto-poly1305-donna64.o \
-		    lib-crypto-libchacha.o lib-crypto-sha1.o lib-crypto-sha256.o \
-		    lib-crypto-utils.o lib-lz4-lz4_compress.o lib-lz4-lz4_decompress.o \
-		    lib-lz4-lz4hc_compress.o
+		    krb5/rfc6803_camellia.o krb5/rfc8009_aes2.o
+
+# Conditional lib-crypto objects (following lib/crypto/Makefile pattern)
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_AES) += lib-crypto-aes.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_ARC4) += lib-crypto-arc4.o
+crypto-fips-objs-y += lib-crypto-chacha.o  # chacha is always builtin
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_CHACHA_GENERIC) += lib-crypto-libchacha.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_DES) += lib-crypto-des.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_GF128MUL) += lib-crypto-gf128mul.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_UTILS) += lib-crypto-memneq.o lib-crypto-utils.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_POLY1305_GENERIC) += lib-crypto-poly1305.o lib-crypto-poly1305-donna64.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_SHA1) += lib-crypto-sha1.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LIB_SHA256) += lib-crypto-sha256.o
 
 # Conditional crypto objects (following main crypto Makefiles pattern)
 crypto-fips-objs-$(CONFIG_FIPS_SIGNATURE_SELFTEST_RSA) += asymmetric_keys/selftest_rsa.o
@@ -80,8 +86,16 @@ crypto-fips-objs-$(CONFIG_CRYPTO_ECRDSA) += ecrdsa.o ecrdsa_params.asn1.o ecrdsa
 crypto-fips-objs-$(CONFIG_CRYPTO_FCRYPT) += fcrypt.o
 crypto-fips-objs-$(CONFIG_CRYPTO_KHAZAD) += khazad.o
 crypto-fips-objs-$(CONFIG_CRYPTO_KRB5ENC) += krb5enc.o
+# LZ4 handling: include objects only when CONFIG_LZ4_DECOMPRESS=m
+# When =y, we use kernel symbols directly via wrappers
+ifeq ($(CONFIG_LZ4_DECOMPRESS),m)
 crypto-fips-objs-$(CONFIG_CRYPTO_LZ4) += lz4.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LZ4) += lib-lz4_decompress.o
+endif
+ifeq ($(CONFIG_LZ4_COMPRESS),m)
 crypto-fips-objs-$(CONFIG_CRYPTO_LZ4HC) += lz4hc.o
+crypto-fips-objs-$(CONFIG_CRYPTO_LZ4HC) += lib-lz4_compress.o lib-lz4hc_compress.o
+endif
 crypto-fips-objs-$(CONFIG_CRYPTO_LZO) += lzo.o lzo-rle.o
 crypto-fips-objs-$(CONFIG_CRYPTO_MICHAEL_MIC) += michael_mic.o
 crypto-fips-objs-$(CONFIG_CRYPTO_PCRYPT) += pcrypt.o
@@ -143,22 +157,26 @@ crypto-fips-objs := $(foreach o,$(crypto-fips-objs),$(o:.o=-fips.o))
 $(obj)/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/%-fips.o: $(srctree)/crypto/%.c FORCE
 	$(call if_changed_rule,cc_o_c)
+$(obj)/asymmetric_keys/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/asymmetric_keys/%-fips.o: $(srctree)/crypto/asymmetric_keys/%.c FORCE
 	@mkdir -p $(obj)/asymmetric_keys
 	$(call if_changed_rule,cc_o_c)
+$(obj)/async_tx/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/async_tx/%-fips.o: $(srctree)/crypto/async_tx/%.c FORCE
 	@mkdir -p $(obj)/async_tx
 	$(call if_changed_rule,cc_o_c)
+$(obj)/krb5/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/krb5/%-fips.o: $(srctree)/crypto/krb5/%.c FORCE
 	@mkdir -p $(obj)/krb5
 	$(call if_changed_rule,cc_o_c)
+$(obj)/lib-%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/lib-%-fips.o: $(srctree)/lib/%.c FORCE
 	$(call if_changed_rule,cc_o_c)
+$(obj)/lib-crypto-%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/lib-crypto-%-fips.o: $(srctree)/lib/crypto/%.c FORCE
 	$(call if_changed_rule,cc_o_c)
-$(obj)/lib-lz4-%-fips.o: $(srctree)/lib/lz4/%.c FORCE
-	$(call if_changed_rule,cc_o_c)
-$(obj)/lib-zstd-%-fips.o: $(srctree)/lib/zstd/%.c FORCE
+$(obj)/lib-lz4%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
+$(obj)/lib-lz4%-fips.o: $(srctree)/lib/lz4/lz4%.c FORCE
 	$(call if_changed_rule,cc_o_c)
 
 fips140-objs := \
