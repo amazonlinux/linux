@@ -443,23 +443,8 @@ static int __init damon_pa_initcall(void)
 		.apply_scheme = damon_pa_apply_scheme,
 		.get_scheme_score = damon_pa_scheme_score,
 	};
-	struct damon_operations fault_ops = {
-		.id = DAMON_OPS_PADDR_FAULT,
-		.init = NULL,
-		.update = NULL,
-		.prepare_access_checks = damon_pa_fault_prepare_access_checks,
-		.check_accesses = NULL,
-		.target_valid = NULL,
-		.cleanup = NULL,
-		.apply_scheme = damon_pa_apply_scheme,
-		.get_scheme_score = damon_pa_scheme_score,
-	};
-	int err;
 
-	err = damon_register_ops(&ops);
-	if (err)
-		return err;
-	return damon_register_ops(&fault_ops);
+	return damon_register_ops(&ops);
 };
 
 subsys_initcall(damon_pa_initcall);
