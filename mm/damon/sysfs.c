@@ -814,6 +814,7 @@ static const struct kobj_type damon_sysfs_attrs_ktype = {
 struct damon_sysfs_ops_attrs {
 	struct kobject kobj;
 	bool use_reports;
+	bool write_only;
 };
 
 static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
@@ -826,6 +827,7 @@ static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
 
 	ops_attrs->kobj = (struct kobject){};
 	ops_attrs->use_reports = false;
+	ops_attrs->write_only = false;
 	return ops_attrs;
 }
 
@@ -852,6 +854,29 @@ static ssize_t use_reports_store(struct kobject *kobj,
 	return count;
 }
 
+static ssize_t write_only_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+
+	return sysfs_emit(buf, "%c\n", ops_attrs->write_only ? 'Y' : 'N');
+}
+
+static ssize_t write_only_store(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+	bool write_only;
+	int err = kstrtobool(buf, &write_only);
+
+	if (err)
+		return err;
+	ops_attrs->write_only = write_only;
+	return count;
+}
+
 static void damon_sysfs_ops_attrs_release(struct kobject *kobj)
 {
 	kfree(container_of(kobj, struct damon_sysfs_ops_attrs, kobj));
@@ -860,8 +885,12 @@ static void damon_sysfs_ops_attrs_release(struct kobject *kobj)
 static struct kobj_attribute damon_sysfs_ops_attrs_use_reports_attr =
 		__ATTR_RW_MODE(use_reports, 0600);
 
+static struct kobj_attribute damon_sysfs_ops_attrs_write_only_attr =
+		__ATTR_RW_MODE(write_only, 0600);
+
 static struct attribute *damon_sysfs_ops_attrs_attrs[] = {
 	&damon_sysfs_ops_attrs_use_reports_attr.attr,
+	&damon_sysfs_ops_attrs_write_only_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(damon_sysfs_ops_attrs);
