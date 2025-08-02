@@ -789,7 +789,8 @@ put_folio:
 }
 
 static bool damon_va_eligible_report(struct damon_access_report *report,
-		struct damon_target *t)
+		struct damon_target *t,
+		struct damon_operations_attrs *ops_attrs)
 {
 	return report->pid == t->pid;
 }

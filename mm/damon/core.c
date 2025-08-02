@@ -2623,7 +2623,8 @@ static void kdamond_apply_access_report(struct damon_access_report *report,
 {
 	struct damon_region *r;
 
-	if (ctx->ops.eligible_report && !ctx->ops.eligible_report(report, t))
+	if (ctx->ops.eligible_report && !ctx->ops.eligible_report(report, t,
+				&ctx->ops_attrs))
 		return;
 
 	/* todo: make search faster, e.g., binary search? */

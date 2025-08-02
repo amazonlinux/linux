@@ -588,6 +588,18 @@ enum damon_ops_id {
 };
 
 /**
+ *
+ * struct damon_operations_attrs - Monitoring operations control attributes.
+ *
+ * @use_reports:	Whether to use damon_report_access()-ed information.
+ * @write_only:		Ignore none-write accesses.
+ */
+struct damon_operations_attrs {
+	bool use_reports;
+	bool write_only;
+};
+
+/**
  * struct damon_operations - Monitoring operations for given use cases.
  *
  * @id:				Identifier of this operations set.
@@ -624,7 +636,8 @@ enum damon_ops_id {
  * It should also return max number of observed accesses that made as a result
  * of its update.  The value will be used for regions adjustment threshold.
  * @eligible_report should check if the given access report is eligible to be
- * used by this operations set for the given target.
+ * used by this operations set for the given target and operations set
+ * attributes.
  * @get_scheme_score should return the priority score of a region for a scheme
  * as an integer in [0, &DAMOS_MAX_SCORE].
  * @apply_scheme is called from @kdamond when a region for user provided
@@ -644,7 +657,8 @@ struct damon_operations {
 	void (*prepare_access_checks)(struct damon_ctx *context);
 	unsigned int (*check_accesses)(struct damon_ctx *context);
 	bool (*eligible_report)(struct damon_access_report *report,
-			struct damon_target *t);
+			struct damon_target *t,
+			struct damon_operations_attrs *ops_attrs);
 	int (*get_scheme_score)(struct damon_ctx *context,
 			struct damon_target *t, struct damon_region *r,
 			struct damos *scheme);
@@ -654,18 +668,6 @@ struct damon_operations {
 	bool (*target_valid)(struct damon_target *t);
 	void (*cleanup_target)(struct damon_target *t);
 	void (*cleanup)(struct damon_ctx *context);
-};
-
-/**
- *
- * struct damon_operations_attrs - Monitoring operations control attributes.
- *
- * @use_reports:	Whether to use damon_report_access()-ed information.
- * @write_only:		Ignore none-write accesses.
- */
-struct damon_operations_attrs {
-	bool use_reports;
-	bool write_only;
 };
 
 /*
