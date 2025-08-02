@@ -1555,6 +1555,7 @@ static int damon_sysfs_apply_inputs(struct damon_ctx *ctx,
 	if (err)
 		return err;
 	ctx->ops_attrs.use_reports = sys_ctx->ops_attrs->use_reports;
+	ctx->ops_attrs.write_only = sys_ctx->ops_attrs->write_only;
 	ctx->addr_unit = sys_ctx->addr_unit;
 	/* addr_unit is respected by only DAMON_OPS_PADDR */
 	if (sys_ctx->ops_id == DAMON_OPS_PADDR)
