@@ -659,9 +659,11 @@ struct damon_operations {
  * struct damon_operations_attrs - Monitoring operations control attributes.
  *
  * @use_reports:	Whether to use damon_report_access()-ed information.
+ * @write_only:		Ignore none-write accesses.
  */
 struct damon_operations_attrs {
 	bool use_reports;
+	bool write_only;
 };
 
 /*
