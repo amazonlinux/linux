@@ -2726,10 +2726,10 @@ static int kdamond_fn(void *data)
 		kdamond_usleep(sample_interval);
 		ctx->passed_sample_intervals++;
 
-		if (ctx->ops.check_accesses)
-			max_nr_accesses = ctx->ops.check_accesses(ctx);
-		else
+		if (ctx->ops_attrs.use_reports)
 			max_nr_accesses = kdamond_check_reported_accesses(ctx);
+		else if (ctx->ops.check_accesses)
+			max_nr_accesses = ctx->ops.check_accesses(ctx);
 
 		if (ctx->passed_sample_intervals >= next_aggregation_sis)
 			kdamond_merge_regions(ctx,
