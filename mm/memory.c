@@ -6165,6 +6165,7 @@ static vm_fault_t do_damon_page(struct vm_fault *vmf, bool huge_pmd)
 	struct damon_access_report access_report = {
 		.addr = vmf->address,
 		.size = 1,
+		.is_write = vmf->flags & FAULT_FLAG_WRITE,
 	};
 	struct vm_area_struct *vma = vmf->vma;
 	struct folio *folio;
