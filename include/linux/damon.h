@@ -655,6 +655,16 @@ struct damon_operations {
 	void (*cleanup)(struct damon_ctx *context);
 };
 
+/**
+ *
+ * struct damon_operations_attrs - Monitoring operations control attributes.
+ *
+ * @use_reports:	Whether to use damon_report_access()-ed information.
+ */
+struct damon_operations_attrs {
+	bool use_reports;
+};
+
 /*
  * struct damon_call_control - Control damon_call().
  *
@@ -817,6 +827,7 @@ struct damon_ctx {
 	struct mutex kdamond_lock;
 
 	struct damon_operations ops;
+	struct damon_operations_attrs ops_attrs;
 	unsigned long addr_unit;
 	unsigned long min_sz_region;
 
