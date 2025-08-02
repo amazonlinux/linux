@@ -184,6 +184,15 @@ static unsigned int damon_pa_check_accesses(struct damon_ctx *ctx)
 	return max_nr_accesses;
 }
 
+static bool damon_pa_eligible_report(struct damon_access_report *report,
+		struct damon_target *t,
+		struct damon_operations_attrs *ops_attrs)
+{
+	if (ops_attrs->write_only && report->is_write)
+		return false;
+	return true;
+}
+
 /*
  * damos_pa_filter_out - Return true if the page should be filtered out.
  */
@@ -438,6 +447,7 @@ static int __init damon_pa_initcall(void)
 		.update = NULL,
 		.prepare_access_checks = damon_pa_prepare_access_checks,
 		.check_accesses = damon_pa_check_accesses,
+		.eligible_report = damon_pa_eligible_report,
 		.target_valid = NULL,
 		.cleanup = NULL,
 		.apply_scheme = damon_pa_apply_scheme,
