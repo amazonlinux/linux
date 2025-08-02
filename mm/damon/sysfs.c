@@ -808,6 +808,71 @@ static const struct kobj_type damon_sysfs_attrs_ktype = {
 };
 
 /*
+ * operation attrs directory
+ */
+
+struct damon_sysfs_ops_attrs {
+	struct kobject kobj;
+	bool use_reports;
+};
+
+static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = kmalloc(sizeof(*ops_attrs),
+			GFP_KERNEL);
+
+	if (!ops_attrs)
+		return NULL;
+
+	ops_attrs->kobj = (struct kobject){};
+	ops_attrs->use_reports = false;
+	return ops_attrs;
+}
+
+static ssize_t use_reports_show(struct kobject *kobj,
+		struct kobj_attribute *attr, char *buf)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+
+	return sysfs_emit(buf, "%c\n", ops_attrs->use_reports ? 'Y' : 'N');
+}
+
+static ssize_t use_reports_store(struct kobject *kobj,
+		struct kobj_attribute *attr, const char *buf, size_t count)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+	bool use;
+	int err = kstrtobool(buf, &use);
+
+	if (err)
+		return err;
+	ops_attrs->use_reports = use;
+	return count;
+}
+
+static void damon_sysfs_ops_attrs_release(struct kobject *kobj)
+{
+	kfree(container_of(kobj, struct damon_sysfs_ops_attrs, kobj));
+}
+
+static struct kobj_attribute damon_sysfs_ops_attrs_use_reports_attr =
+		__ATTR_RW_MODE(use_reports, 0600);
+
+static struct attribute *damon_sysfs_ops_attrs_attrs[] = {
+	&damon_sysfs_ops_attrs_use_reports_attr.attr,
+	NULL,
+};
+ATTRIBUTE_GROUPS(damon_sysfs_ops_attrs);
+
+static const struct kobj_type damon_sysfs_ops_attrs_ktype = {
+	.release = damon_sysfs_ops_attrs_release,
+	.sysfs_ops = &kobj_sysfs_ops,
+	.default_groups = damon_sysfs_ops_attrs_groups,
+};
+
+/*
  * context directory
  */
 
@@ -834,6 +899,7 @@ static const struct damon_sysfs_ops_name damon_sysfs_ops_names[] = {
 struct damon_sysfs_context {
 	struct kobject kobj;
 	enum damon_ops_id ops_id;
+	struct damon_sysfs_ops_attrs *ops_attrs;
 	unsigned long addr_unit;
 	struct damon_sysfs_attrs *attrs;
 	struct damon_sysfs_targets *targets;
@@ -852,6 +918,23 @@ static struct damon_sysfs_context *damon_sysfs_context_alloc(
 	context->ops_id = ops_id;
 	context->addr_unit = 1;
 	return context;
+}
+
+static int damon_sysfs_context_set_ops_attrs(
+		struct damon_sysfs_context *context)
+{
+	struct damon_sysfs_ops_attrs *attrs = damon_sysfs_ops_attrs_alloc();
+	int err;
+
+	if (!attrs)
+		return -ENOMEM;
+	err = kobject_init_and_add(&attrs->kobj, &damon_sysfs_ops_attrs_ktype,
+			&context->kobj, "operations_attrs");
+	if (err)
+		kobject_put(&attrs->kobj);
+	else
+		context->ops_attrs = attrs;
+	return err;
 }
 
 static int damon_sysfs_context_set_attrs(struct damon_sysfs_context *context)
@@ -914,9 +997,13 @@ static int damon_sysfs_context_add_dirs(struct damon_sysfs_context *context)
 {
 	int err;
 
+	err = damon_sysfs_context_set_ops_attrs(context);
+	if  (err)
+		return err;
+
 	err = damon_sysfs_context_set_attrs(context);
 	if (err)
-		return err;
+		goto put_ops_attrs_out;
 
 	err = damon_sysfs_context_set_targets(context);
 	if (err)
@@ -933,11 +1020,15 @@ put_targets_attrs_out:
 put_attrs_out:
 	kobject_put(&context->attrs->kobj);
 	context->attrs = NULL;
+put_ops_attrs_out:
+	kobject_put(&context->ops_attrs->kobj);
+	context->ops_attrs = NULL;
 	return err;
 }
 
 static void damon_sysfs_context_rm_dirs(struct damon_sysfs_context *context)
 {
+	kobject_put(&context->ops_attrs->kobj);
 	damon_sysfs_attrs_rm_dirs(context->attrs);
 	kobject_put(&context->attrs->kobj);
 	damon_sysfs_targets_rm_dirs(context->targets);
