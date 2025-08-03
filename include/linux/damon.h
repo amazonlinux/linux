@@ -112,6 +112,7 @@ struct damon_target {
  * @addr:		The start address of the reporting region.
  * @size:		The size of the reporting region.
  * @is_write:		Whether the access is write.
+ * @cpu:		CPU that made the access.
  *
  * @pid could be stale, and hence shouldn't be de-referenced.
  */
@@ -120,6 +121,7 @@ struct damon_access_report {
 	unsigned long addr;
 	unsigned long size;
 	bool is_write;
+	unsigned int cpu;
 /* private: */
 	unsigned long report_jiffies;	/* when this report is made */
 };
