@@ -815,6 +815,7 @@ struct damon_sysfs_ops_attrs {
 	struct kobject kobj;
 	bool use_reports;
 	bool write_only;
+	cpumask_t cpus;
 };
 
 static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
@@ -828,6 +829,7 @@ static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
 	ops_attrs->kobj = (struct kobject){};
 	ops_attrs->use_reports = false;
 	ops_attrs->write_only = false;
+	cpumask_setall(&ops_attrs->cpus);
 	return ops_attrs;
 }
 
@@ -877,6 +879,29 @@ static ssize_t write_only_store(struct kobject *kobj,
 	return count;
 }
 
+static ssize_t cpus_show(struct kobject *kobj, struct kobj_attribute *attr,
+		char *buf)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+
+	return sysfs_emit(buf, "%*pbl\n", cpumask_pr_args(&ops_attrs->cpus));
+}
+
+static ssize_t cpus_store(struct kobject *kobj, struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+	cpumask_t cpus;
+	int err = cpulist_parse(buf, &cpus);
+
+	if (err)
+		return err;
+	ops_attrs->cpus = cpus;
+	return count;
+}
+
 static void damon_sysfs_ops_attrs_release(struct kobject *kobj)
 {
 	kfree(container_of(kobj, struct damon_sysfs_ops_attrs, kobj));
@@ -888,9 +913,13 @@ static struct kobj_attribute damon_sysfs_ops_attrs_use_reports_attr =
 static struct kobj_attribute damon_sysfs_ops_attrs_write_only_attr =
 		__ATTR_RW_MODE(write_only, 0600);
 
+static struct kobj_attribute damon_sysfs_ops_attrs_cpus_attr =
+		__ATTR_RW_MODE(cpus, 0600);
+
 static struct attribute *damon_sysfs_ops_attrs_attrs[] = {
 	&damon_sysfs_ops_attrs_use_reports_attr.attr,
 	&damon_sysfs_ops_attrs_write_only_attr.attr,
+	&damon_sysfs_ops_attrs_cpus_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(damon_sysfs_ops_attrs);
@@ -1556,6 +1585,7 @@ static int damon_sysfs_apply_inputs(struct damon_ctx *ctx,
 		return err;
 	ctx->ops_attrs.use_reports = sys_ctx->ops_attrs->use_reports;
 	ctx->ops_attrs.write_only = sys_ctx->ops_attrs->write_only;
+	ctx->ops_attrs.cpus = sys_ctx->ops_attrs->cpus;
 	ctx->addr_unit = sys_ctx->addr_unit;
 	/* addr_unit is respected by only DAMON_OPS_PADDR */
 	if (sys_ctx->ops_id == DAMON_OPS_PADDR)
