@@ -190,6 +190,8 @@ static bool damon_pa_eligible_report(struct damon_access_report *report,
 {
 	if (ops_attrs->write_only && report->is_write)
 		return false;
+	if (!cpumask_test_cpu(report->cpu, &ops_attrs->cpus))
+		return false;
 	return true;
 }
 
