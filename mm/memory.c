@@ -6166,6 +6166,7 @@ static vm_fault_t do_damon_page(struct vm_fault *vmf, bool huge_pmd)
 		.addr = vmf->address,
 		.size = 1,
 		.is_write = vmf->flags & FAULT_FLAG_WRITE,
+		.cpu = smp_processor_id(),
 	};
 	struct vm_area_struct *vma = vmf->vma;
 	struct folio *folio;
