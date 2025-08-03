@@ -595,10 +595,12 @@ enum damon_ops_id {
  *
  * @use_reports:	Whether to use damon_report_access()-ed information.
  * @write_only:		Ignore none-write accesses.
+ * @cpus:		Ignore accesses from CPUs not in this mask.
  */
 struct damon_operations_attrs {
 	bool use_reports;
 	bool write_only;
+	cpumask_t cpus;
 };
 
 /**
