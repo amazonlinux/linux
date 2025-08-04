@@ -90,6 +90,10 @@ fips140_find_matching_alg(const struct crypto_alg *calg)
 struct task_struct *fips140_init_thread;
 EXPORT_SYMBOL_GPL(fips140_init_thread);
 
+/* Completion to signal that self-tests are done */
+DECLARE_COMPLETION(fips140_tests_done);
+EXPORT_SYMBOL_GPL(fips140_tests_done);
+
 /* Section markers for initcalls collected from other files */
 const initcall_entry_t __fips140_initcalls_start __section(".initcalls._start");
 const initcall_entry_t __fips140_initcalls_end __section(".initcalls._end");
@@ -313,7 +317,7 @@ static int __init fips140_init(void)
         goto panic;
     }
 
-    complete_all(&fips140_tests_done);
+    // complete_all(&fips140_tests_done);
     pr_info("Module successfully loaded\n");
     return 0;
 
