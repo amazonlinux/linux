@@ -302,4 +302,40 @@ bool fips140_is_approved_service(const char *name);
 /* FIPS 140-3 module version information */
 const char *fips140_module_version(void);
 
+/* Algorithm registration wrapper functions */
+struct crypto_alg;
+struct aead_alg;
+struct ahash_alg;
+struct shash_alg;
+struct skcipher_alg;
+struct rng_alg;
+struct crypto_template;
+struct aead_instance;
+struct ahash_instance;
+struct shash_instance;
+struct skcipher_instance;
+
+int fips140_crypto_register_alg(struct crypto_alg *alg);
+int fips140_crypto_register_aead(struct aead_alg *alg);
+int fips140_crypto_register_ahash(struct ahash_alg *alg);
+int fips140_crypto_register_shash(struct shash_alg *alg);
+int fips140_crypto_register_skcipher(struct skcipher_alg *alg);
+int fips140_crypto_register_rng(struct rng_alg *alg);
+
+int fips140_crypto_register_algs(struct crypto_alg *algs, int count);
+int fips140_crypto_register_aeads(struct aead_alg *algs, int count);
+int fips140_crypto_register_ahashes(struct ahash_alg *algs, int count);
+int fips140_crypto_register_shashes(struct shash_alg *algs, int count);
+int fips140_crypto_register_skciphers(struct skcipher_alg *algs, int count);
+int fips140_crypto_register_rngs(struct rng_alg *algs, int count);
+
+int fips140_aead_register_instance(struct crypto_template *tmpl,
+				   struct aead_instance *inst);
+int fips140_ahash_register_instance(struct crypto_template *tmpl,
+				    struct ahash_instance *inst);
+int fips140_shash_register_instance(struct crypto_template *tmpl,
+				    struct shash_instance *inst);
+int fips140_skcipher_register_instance(struct crypto_template *tmpl,
+				       struct skcipher_instance *inst);
+
 #endif /* _CRYPTO_FIPS140_MODULE_H */
