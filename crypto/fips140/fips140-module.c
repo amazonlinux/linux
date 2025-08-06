@@ -308,6 +308,9 @@ static int __init fips140_init(void)
         
     }
 
+    pr_info("=== NEWLY REGISTERED FIPS 140 ALGORITHMS ===\n");
+    fips140_print_registered_algorithms();
+
     pr_info("=== AFTER RE-REGISTRATION (initcalls completed) ===\n");
     print_existing_crypto_algos();
 
