@@ -338,4 +338,19 @@ int fips140_shash_register_instance(struct crypto_template *tmpl,
 int fips140_skcipher_register_instance(struct crypto_template *tmpl,
 				       struct skcipher_instance *inst);
 
+/* Forward declaration for algorithm registration tracking */
+struct fips140_registered_alg;
+
+/* Registration tracking API */
+void fips140_print_registered_algorithms(void);
+void fips140_get_registered_algorithms(struct list_head **algs_list, 
+                                       struct mutex **list_mutex);
+void fips140_mark_algorithm_tested(const char *cra_name, 
+                                   const char *cra_driver_name, 
+                                   bool passed);
+void fips140_get_test_statistics(int *total_registered, int *total_tested, 
+                                 int *total_passed);
+bool fips140_check_all_algorithms_tested(void);
+void fips140_cleanup_registered_algorithms(void);
+
 #endif /* _CRYPTO_FIPS140_MODULE_H */
