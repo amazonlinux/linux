@@ -154,6 +154,9 @@ $(obj)/asymmetric_keys/x509_akid.asn1-fips.o: $(obj)/asymmetric_keys/x509_akid.a
 # Transform to -fips.o naming
 crypto-fips-objs := $(foreach o,$(crypto-fips-objs),$(o:.o=-fips.o))
 
+# Add FIPS 140 test suites to get FIPS140_CFLAGS and common macros
+crypto-fips-objs += fips140-testsuites.o
+
 $(obj)/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/%-fips.o: $(srctree)/crypto/%.c FORCE
 	$(call if_changed_rule,cc_o_c)
