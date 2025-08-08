@@ -302,6 +302,9 @@ bool fips140_is_approved_service(const char *name);
 /* FIPS 140-3 module version information */
 const char *fips140_module_version(void);
 
+/* FIPS 140-3 self-tests */
+bool fips140_run_selftests(void);
+
 /* Algorithm registration wrapper functions */
 struct crypto_alg;
 struct aead_alg;
