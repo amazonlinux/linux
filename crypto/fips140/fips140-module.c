@@ -267,14 +267,6 @@ static void __init unregister_existing_fips140_algos(void)
 
 }
 
-/* Simple self-test function */
-static bool fips140_run_selftests(void)
-{
-    pr_info("Running FIPS 140 self-tests...\n");
-    /* In a real implementation, we would run actual self-tests here */
-    return true;
-}
-
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {

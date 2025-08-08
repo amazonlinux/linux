@@ -100,6 +100,29 @@ struct fips140_kpp_test_suite {
 #define __VECS(tv)	{ ____VECS(tv) }
 
 /*
+ * Algorithm test descriptor structure (from testmgr.c)
+ */
+struct fips140_alg_test_desc {
+	const char *alg;
+	const char *generic_driver;
+	int (*test)(const struct fips140_alg_test_desc *desc, const char *driver,
+		    u32 type, u32 mask);
+	int fips_allowed;
+
+	union {
+		struct fips140_aead_test_suite aead;
+		struct fips140_cipher_test_suite cipher;
+		struct fips140_comp_test_suite comp;
+		struct fips140_hash_test_suite hash;
+		struct fips140_cprng_test_suite cprng;
+		struct fips140_drbg_test_suite drbg;
+		struct fips140_akcipher_test_suite akcipher;
+		struct fips140_sig_test_suite sig;
+		struct fips140_kpp_test_suite kpp;
+	} suite;
+};
+
+/*
  * Test vector structures and data (extracted from crypto/testmgr.h)
  */
 
