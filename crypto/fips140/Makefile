@@ -207,3 +207,27 @@ CFLAGS_fips140-selftests.o += $(FIPS140_CFLAGS)
 CFLAGS_jitterentropy-fips.o := -O0
 KASAN_SANITIZE_jitterentropy-fips.o = n
 UBSAN_SANITIZE_jitterentropy-fips.o = n
+
+# Explicit rule to create fips140.ko from fips140.o
+$(obj)/fips140.ko: $(addprefix $(obj)/,$(fips140-objs)) FORCE
+	$(call if_changed,link_module)
+
+# Generate embedded module object for builtin loading
+ifeq ($(ARCH),x86)
+quiet_cmd_embed_ko = EMBED   $@
+      cmd_embed_ko = $(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
+		--rename-section .data=.fips140_data,alloc,load,readonly,data,contents \
+		$< $@
+
+$(obj)/fips140-embedded.o: $(obj)/fips140.ko FORCE
+	$(call if_changed,embed_ko)
+endif
+
+# Only include embedded object if building fips140-embedded target and fips140.ko exists
+ifdef FIPS140_EMBED
+# Include loader in built-in.a for linking into vmlinux
+obj-y += fips140-loader.o
+ifneq ($(wildcard $(obj)/fips140.ko),)
+obj-y += fips140-embedded.o
+endif
+endif

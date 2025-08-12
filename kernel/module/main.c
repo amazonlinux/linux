@@ -3810,3 +3810,228 @@ static int module_debugfs_init(void)
 }
 module_init(module_debugfs_init);
 #endif
+
+/*
+ * _load_module for FIPS - copy of load_module but skips signature verification
+ */
+static int _load_module(struct load_info *info, const char __user *uargs, int flags)
+{
+	struct module *mod;
+	bool module_allocated = false;
+	long err = 0;
+	char *after_dashes;
+
+	/* Skip signature check for embedded FIPS module */
+
+	/*
+	 * Do basic sanity checks against the ELF header and
+	 * sections. Cache useful sections and set the
+	 * info->mod to the userspace passed struct module.
+	 */
+	err = elf_validity_cache_copy(info, flags);
+	if (err)
+		goto free_copy;
+
+	err = early_mod_check(info, flags);
+	if (err)
+		goto free_copy;
+
+	/* Figure out module layout, and allocate all the memory. */
+	mod = layout_and_allocate(info, flags);
+	if (IS_ERR(mod)) {
+		err = PTR_ERR(mod);
+		goto free_copy;
+	}
+
+	module_allocated = true;
+
+	audit_log_kern_module(mod->name);
+
+	/* Reserve our place in the list. */
+	err = add_unformed_module(mod);
+	if (err)
+		goto free_module;
+
+	/*
+	 * We are tainting your kernel if your module gets into
+	 * the modules linked list somehow.
+	 */
+	if (!(flags & MODULE_INIT_MEM))
+		module_augment_kernel_taints(mod, info);
+
+	/* To avoid stressing percpu allocator, do this once we're unique. */
+	err = percpu_modalloc(mod, info);
+	if (err)
+		goto unlink_mod;
+
+	/* Now module is in final location, initialize linked lists, etc. */
+	err = module_unload_init(mod);
+	if (err)
+		goto unlink_mod;
+
+	init_param_lock(mod);
+
+	/*
+	 * Now we've got everything in the final locations, we can
+	 * find optional sections.
+	 */
+	err = find_module_sections(mod, info);
+	if (err)
+		goto free_unload;
+
+	err = check_export_symbol_versions(mod);
+	if (err)
+		goto free_unload;
+
+	/* Set up MODINFO_ATTR fields */
+	setup_modinfo(mod, info);
+
+	/* Fix up syms, so that st_value is a pointer to location. */
+	err = simplify_symbols(mod, info);
+	if (err < 0)
+		goto free_modinfo;
+
+	err = apply_relocations(mod, info);
+	if (err < 0)
+		goto free_modinfo;
+
+	err = post_relocation(mod, info);
+	if (err < 0)
+		goto free_modinfo;
+
+	flush_module_icache(mod);
+
+	/* Now copy in args */
+	if (uargs) {
+		mod->args = strndup_user(uargs, ~0UL >> 1);
+		if (IS_ERR(mod->args)) {
+			err = PTR_ERR(mod->args);
+			goto free_arch_cleanup;
+		}
+	} else {
+		mod->args = kstrdup("", GFP_KERNEL);
+	}
+
+	init_build_id(mod, info);
+
+	/* Ftrace init must be called in the MODULE_STATE_UNFORMED state */
+	ftrace_module_init(mod);
+
+	/* Finally it's fully formed, ready to start executing. */
+	err = complete_formation(mod, info);
+	if (err)
+		goto ddebug_cleanup;
+
+	err = prepare_coming_module(mod);
+	if (err)
+		goto bug_cleanup;
+
+	mod->async_probe_requested = async_probe;
+
+	/* Module is ready to execute: parsing args may do that. */
+	after_dashes = parse_args(mod->name, mod->args, mod->kp, mod->num_kp,
+				  -32768, 32767, mod,
+				  unknown_module_param_cb);
+	if (IS_ERR(after_dashes)) {
+		err = PTR_ERR(after_dashes);
+		goto coming_cleanup;
+	} else if (after_dashes) {
+		pr_warn("%s: parameters '%s' after `--' ignored\n",
+		       mod->name, after_dashes);
+	}
+
+	/* Link in to sysfs. */
+	err = mod_sysfs_setup(mod, info, mod->kp, mod->num_kp);
+	if (err < 0)
+		goto coming_cleanup;
+
+	if (is_livepatch_module(mod)) {
+		err = copy_module_elf(mod, info);
+		if (err < 0)
+			goto sysfs_cleanup;
+	}
+
+	if (codetag_load_module(mod))
+		goto sysfs_cleanup;
+
+	/* Get rid of temporary copy. */
+	free_copy(info, flags);
+
+	/* Done! */
+	trace_module_load(mod);
+
+	return do_init_module(mod);
+
+ sysfs_cleanup:
+	mod_sysfs_teardown(mod);
+ coming_cleanup:
+	mod->state = MODULE_STATE_GOING;
+	destroy_params(mod->kp, mod->num_kp);
+	blocking_notifier_call_chain(&module_notify_list,
+				     MODULE_STATE_GOING, mod);
+	klp_module_going(mod);
+ bug_cleanup:
+	mod->state = MODULE_STATE_GOING;
+	/* module_bug_cleanup needs module_mutex protection */
+	mutex_lock(&module_mutex);
+	module_bug_cleanup(mod);
+	mutex_unlock(&module_mutex);
+
+ ddebug_cleanup:
+	ftrace_release_mod(mod);
+	synchronize_rcu();
+	kfree(mod->args);
+ free_arch_cleanup:
+	module_arch_cleanup(mod);
+ free_modinfo:
+	free_modinfo(mod);
+ free_unload:
+	module_unload_free(mod);
+ unlink_mod:
+	mutex_lock(&module_mutex);
+	/* Unlink carefully: kallsyms could be walking list. */
+	list_del_rcu(&mod->list);
+	mod_tree_remove(mod);
+	wake_up_all(&module_wq);
+	/* Wait for RCU-sched synchronizing before releasing mod->list. */
+	synchronize_rcu();
+	mutex_unlock(&module_mutex);
+ free_module:
+	mod_stat_bump_invalid(info, flags);
+	/* Free lock-classes; relies on the preceding sync_rcu() */
+	for_class_mod_mem_type(type, core_data) {
+		lockdep_free_key_range(mod->mem[type].base,
+				       mod->mem[type].size);
+	}
+
+	module_memory_restore_rox(mod);
+	module_deallocate(mod, info);
+ free_copy:
+	/*
+	 * The info->len is always set. We distinguish between
+	 * failures once the proper module was allocated and
+	 * before that.
+	 */
+	if (!module_allocated)
+		mod_stat_bump_becoming(info, flags);
+	free_copy(info, flags);
+	return err;
+}
+
+/*
+ * Load module from kernel memory without signature check.
+ */
+int load_module_mem(const char *mem, size_t size, bool skip_sig_check)
+{
+	int err;
+	struct load_info info = { };
+
+	if (skip_sig_check)
+		info.sig_ok = true;
+	info.hdr = (Elf64_Ehdr *) mem;
+	info.len = size;
+
+	err = _load_module(&info, NULL, MODULE_INIT_MEM);
+	return err;
+}
+EXPORT_SYMBOL(load_module_mem);
