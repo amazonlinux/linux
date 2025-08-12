@@ -136,20 +136,28 @@ CFLAGS_aegis128-neon-inner-fips.o += -isystem $(shell $(CC) -print-file-name=inc
 # Get the arch to add its objects to $(crypto-fips-objs) before transformation
 -include $(srctree)/arch/$(ARCH)/crypto/fips140/Kbuild.fips140
 
-# ASN.1 dependencies (following main crypto Makefile pattern)
-$(obj)/rsapubkey.asn1-fips.o: $(obj)/rsapubkey.asn1.c $(obj)/rsapubkey.asn1.h
-$(obj)/rsaprivkey.asn1-fips.o: $(obj)/rsaprivkey.asn1.c $(obj)/rsaprivkey.asn1.h
+
+# ASN.1 generation rules - generate our own ASN.1 files in FIPS module
+$(obj)/%.asn1.c $(obj)/%.asn1.h: $(srctree)/crypto/%.asn1 $(objtree)/scripts/asn1_compiler
+	$(objtree)/scripts/asn1_compiler $< $(obj)/$*.asn1.c $(obj)/$*.asn1.h
+
+$(obj)/asymmetric_keys/%.asn1.c $(obj)/asymmetric_keys/%.asn1.h: $(srctree)/crypto/asymmetric_keys/%.asn1 $(objtree)/scripts/asn1_compiler
+	@mkdir -p $(obj)/asymmetric_keys
+	$(objtree)/scripts/asn1_compiler $< $(obj)/asymmetric_keys/$*.asn1.c $(obj)/asymmetric_keys/$*.asn1.h
+
+# ASN.1 compilation rule for generated files
+$(obj)/%.asn1-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS) -I$(obj)
+$(obj)/%.asn1-fips.o: $(obj)/%.asn1.c $(obj)/%.asn1.h  FORCE
+	$(call if_changed_rule,cc_o_c)
+$(obj)/asymmetric_keys/%.asn1-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS) -I$(obj)
+$(obj)/asymmetric_keys/%.asn1-fips.o: $(obj)/asymmetric_keys/%.asn1.c $(obj)/asymmetric_keys/%.asn1.h FORCE
+	@mkdir -p $(obj)/asymmetric_keys
+	$(call if_changed_rule,cc_o_c)
+
+# Header dependencies for files that include ASN.1 headers
 $(obj)/rsa_helper-fips.o: $(obj)/rsapubkey.asn1.h $(obj)/rsaprivkey.asn1.h
 $(obj)/ecdsa-x962-fips.o: $(obj)/ecdsasignature.asn1.h
-$(obj)/ecdsasignature.asn1-fips.o: $(obj)/ecdsasignature.asn1.c $(obj)/ecdsasignature.asn1.h
 $(obj)/ecrdsa-fips.o: $(obj)/ecrdsa_params.asn1.h $(obj)/ecrdsa_pub_key.asn1.h
-$(obj)/ecrdsa_params.asn1-fips.o: $(obj)/ecrdsa_params.asn1.c $(obj)/ecrdsa_params.asn1.h
-$(obj)/ecrdsa_pub_key.asn1-fips.o: $(obj)/ecrdsa_pub_key.asn1.c $(obj)/ecrdsa_pub_key.asn1.h
-$(obj)/asymmetric_keys/mscode.asn1-fips.o: $(obj)/asymmetric_keys/mscode.asn1.c $(obj)/asymmetric_keys/mscode.asn1.h
-$(obj)/asymmetric_keys/pkcs7.asn1-fips.o: $(obj)/asymmetric_keys/pkcs7.asn1.c $(obj)/asymmetric_keys/pkcs7.asn1.h
-$(obj)/asymmetric_keys/pkcs8.asn1-fips.o: $(obj)/asymmetric_keys/pkcs8.asn1.c $(obj)/asymmetric_keys/pkcs8.asn1.h
-$(obj)/asymmetric_keys/x509.asn1-fips.o: $(obj)/asymmetric_keys/x509.asn1.c $(obj)/asymmetric_keys/x509.asn1.h
-$(obj)/asymmetric_keys/x509_akid.asn1-fips.o: $(obj)/asymmetric_keys/x509_akid.asn1.c $(obj)/asymmetric_keys/x509_akid.asn1.h
 
 # Transform to -fips.o naming
 crypto-fips-objs := $(foreach o,$(crypto-fips-objs),$(o:.o=-fips.o))
@@ -157,10 +165,10 @@ crypto-fips-objs := $(foreach o,$(crypto-fips-objs),$(o:.o=-fips.o))
 # Add FIPS 140 test suites to get FIPS140_CFLAGS and common macros
 crypto-fips-objs += fips140-testsuites.o
 
-$(obj)/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
+$(obj)/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS) -I$(obj)
 $(obj)/%-fips.o: $(srctree)/crypto/%.c FORCE
 	$(call if_changed_rule,cc_o_c)
-$(obj)/asymmetric_keys/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
+$(obj)/asymmetric_keys/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS) -I$(obj)
 $(obj)/asymmetric_keys/%-fips.o: $(srctree)/crypto/asymmetric_keys/%.c FORCE
 	@mkdir -p $(obj)/asymmetric_keys
 	$(call if_changed_rule,cc_o_c)
