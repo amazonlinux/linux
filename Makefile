@@ -787,6 +787,17 @@ endif # KBUILD_EXTMOD
 # Defaults to vmlinux, but the arch makefile usually adds further targets
 all: vmlinux
 
+ifdef CONFIG_CRYPTO_FIPS140_MOD
+# FIPS 140 embedded build - run 'make fips140-embedded' to build with embedded module
+PHONY += fips140-embedded
+fips140-embedded:
+	@echo "FIPS 140: Running first build..."
+	+$(MAKE) all FIPS140_EMBED=y
+	@echo "FIPS 140: Running second build..."
+	+$(MAKE) all FIPS140_EMBED=y
+	@echo "FIPS 140: Embedded module build complete"
+endif
+
 CFLAGS_GCOV	:= -fprofile-arcs -ftest-coverage
 ifdef CONFIG_CC_IS_GCC
 CFLAGS_GCOV	+= -fno-tree-loop-im

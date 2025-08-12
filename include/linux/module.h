@@ -1020,3 +1020,5 @@ static inline unsigned long find_kallsyms_symbol_value(struct module *mod,
 #endif  /* CONFIG_MODULES && CONFIG_KALLSYMS */
 
 #endif /* _LINUX_MODULE_H */
+/* Load module from memory */
+extern int load_module_mem(const char *mem, size_t size, bool skip_sig_check);

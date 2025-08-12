@@ -235,9 +235,17 @@ static void __init unregister_existing_fips140_algos(void)
              */
             pr_info("Removing unused algorithm: '%s' ('%s')\n",
                     calg->cra_name, calg->cra_driver_name);
-            calg->cra_flags |= CRYPTO_ALG_DEAD;
             list_move(&calg->cra_list, &remove_list);
-            crypto_remove_spawns(calg, &spawns, NULL);
+            calg->cra_flags |= CRYPTO_ALG_DEAD;
+            if (!calg) {
+                pr_err("ERROR: calg is NULL!\n");
+            } else if (!calg->cra_type) {
+                pr_info("SKIP: calg->cra_type is NULL for %s, skipping crypto_remove_spawns\n", calg->cra_name);
+                /* Skip crypto_remove_spawns for algorithms with NULL cra_type during early boot */
+            } else {
+                crypto_remove_spawns(calg, &spawns, NULL);
+                pr_info("DEBUG: crypto_remove_spawns completed successfully\n");
+            }
         } else {
             /*
              * This algorithm is live, i.e. it has TFMs allocated,
@@ -312,7 +320,7 @@ static int __init fips140_init(void)
         goto panic;
     }
 
-    // complete_all(&fips140_tests_done);
+    complete_all(&fips140_tests_done);
     pr_info("Module successfully loaded\n");
     return 0;
 
