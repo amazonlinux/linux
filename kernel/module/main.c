@@ -2466,6 +2466,9 @@ static int check_modinfo(struct module *mod, struct load_info *info, int flags)
 	const char *modmagic = get_modinfo(info, "vermagic");
 	int err;
 
+	if (flags & MODULE_INIT_MEM)
+		return 0;
+
 	if (flags & MODULE_INIT_IGNORE_VERMAGIC)
 		modmagic = NULL;
 
@@ -3628,6 +3631,10 @@ SYSCALL_DEFINE3(finit_module, int, fd, const char __user *, uargs, int, flags)
 
 	pr_debug("finit_module: fd=%d, uargs=%p, flags=%i\n", fd, uargs, flags);
 
+	/*
+	 * Deliberately omitting MODULE_INIT_MEM as it is for internal use
+	 * only.
+	 */
 	if (flags & ~(MODULE_INIT_IGNORE_MODVERSIONS
 		      |MODULE_INIT_IGNORE_VERMAGIC
 		      |MODULE_INIT_COMPRESSED_FILE))
