@@ -53,4 +53,4 @@ static int __init fips140_early_load(void)
 	return 0;
 }
 
-late_initcall(fips140_early_load);
+arch_initcall_sync(fips140_early_load);
