@@ -1604,6 +1604,30 @@ static inline bool damon_sysfs_kdamond_running(
 		damon_is_running(kdamond->damon_ctx);
 }
 
+static int damon_sysfs_set_ops_attrs_tids(
+		struct damon_operations_attrs *ops_attrs,
+		int *sysfs_tids)
+{
+	int i;
+
+	if (!sysfs_tids)
+		return 0;
+
+	/* todo: keep old tids after failure? */
+	if (ops_attrs->nr_tids) {
+		kfree(ops_attrs->tids);
+		ops_attrs->nr_tids = 0;
+	}
+	ops_attrs->tids = kmalloc_array(sysfs_tids[0],
+			sizeof(*ops_attrs->tids), GFP_KERNEL);
+	if (!ops_attrs->tids)
+		return -ENOMEM;
+	for (i = 0; i < sysfs_tids[0]; i++)
+		ops_attrs->tids[i] = sysfs_tids[i + 1];
+	ops_attrs->nr_tids = sysfs_tids[0];
+	return 0;
+}
+
 static int damon_sysfs_apply_inputs(struct damon_ctx *ctx,
 		struct damon_sysfs_context *sys_ctx)
 {
@@ -1615,6 +1639,11 @@ static int damon_sysfs_apply_inputs(struct damon_ctx *ctx,
 	ctx->ops_attrs.use_reports = sys_ctx->ops_attrs->use_reports;
 	ctx->ops_attrs.write_only = sys_ctx->ops_attrs->write_only;
 	ctx->ops_attrs.cpus = sys_ctx->ops_attrs->cpus;
+	err = damon_sysfs_set_ops_attrs_tids(
+			&ctx->ops_attrs, sys_ctx->ops_attrs->tids);
+	if (err)
+		return err;
+
 	ctx->addr_unit = sys_ctx->addr_unit;
 	/* addr_unit is respected by only DAMON_OPS_PADDR */
 	if (sys_ctx->ops_id == DAMON_OPS_PADDR)
