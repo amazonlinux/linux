@@ -579,6 +579,9 @@ void damon_destroy_ctx(struct damon_ctx *ctx)
 	damon_for_each_scheme_safe(s, next_s, ctx)
 		damon_destroy_scheme(s);
 
+	if (ctx->ops_attrs.nr_tids)
+		kfree(ctx->ops_attrs.tids);
+
 	kfree(ctx);
 }
 
