@@ -6164,6 +6164,7 @@ static vm_fault_t do_damon_page(struct vm_fault *vmf, bool huge_pmd)
 {
 	struct damon_access_report access_report = {
 		.addr = vmf->address,
+		.tid = task_pid_vnr(current),
 		.size = 1,
 		.is_write = vmf->flags & FAULT_FLAG_WRITE,
 		.cpu = smp_processor_id(),
