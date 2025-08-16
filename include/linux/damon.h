@@ -598,11 +598,15 @@ enum damon_ops_id {
  * @use_reports:	Whether to use damon_report_access()-ed information.
  * @write_only:		Ignore none-write accesses.
  * @cpus:		Ignore accesses from CPUs not in this mask.
+ * @tids:		Array of pids to monitor accesses for.
+ * @nr_tids:		Size of @tids.
  */
 struct damon_operations_attrs {
 	bool use_reports;
 	bool write_only;
 	cpumask_t cpus;
+	pid_t *tids;
+	int nr_tids;
 };
 
 /**
