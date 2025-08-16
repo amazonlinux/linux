@@ -907,7 +907,26 @@ static ssize_t cpus_store(struct kobject *kobj, struct kobj_attribute *attr,
 static ssize_t tids_show(struct kobject *kobj, struct kobj_attribute *attr,
 		char *buf)
 {
-	return sysfs_emit(buf, "to be constructed\n");
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+	char *str;
+	int i, ret;
+
+	if (!ops_attrs->tids)
+		return sysfs_emit(buf, "\n");
+
+	str = kcalloc(2048, sizeof(*str), GFP_KERNEL);
+	if (!str)
+		return -ENOMEM;
+	for (i = 0; i < ops_attrs->tids[0]; i++) {
+		snprintf(&str[strlen(str)], 2048 - strlen(str),
+				"%d", ops_attrs->tids[i + 1]);
+		if (i < ops_attrs->tids[0] - 1)
+			snprintf(&str[strlen(str)], 2048 - strlen(str), ",");
+	}
+	ret = sysfs_emit(buf, "%s\n", str);
+	kfree(str);
+	return ret;
 }
 
 static ssize_t tids_store(struct kobject *kobj, struct kobj_attribute *attr,
