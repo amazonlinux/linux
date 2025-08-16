@@ -109,6 +109,7 @@ struct damon_target {
  * struct damon_access_report - Represent single acces report information.
  * @pid:		The PID of the virtual address space of the address.
  *			NULL if it is of the physical address.
+ * @tid:		The task id of the accessing task.
  * @addr:		The start address of the reporting region.
  * @size:		The size of the reporting region.
  * @is_write:		Whether the access is write.
@@ -118,6 +119,7 @@ struct damon_target {
  */
 struct damon_access_report {
 	struct pid *pid;
+	pid_t tid;
 	unsigned long addr;
 	unsigned long size;
 	bool is_write;
