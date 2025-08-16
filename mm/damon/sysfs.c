@@ -816,6 +816,7 @@ struct damon_sysfs_ops_attrs {
 	bool use_reports;
 	bool write_only;
 	cpumask_t cpus;
+	int *tids;	/* first entry is the size */
 };
 
 static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
@@ -830,6 +831,7 @@ static struct damon_sysfs_ops_attrs *damon_sysfs_ops_attrs_alloc(void)
 	ops_attrs->use_reports = false;
 	ops_attrs->write_only = false;
 	cpumask_setall(&ops_attrs->cpus);
+	ops_attrs->tids = NULL;
 	return ops_attrs;
 }
 
@@ -902,8 +904,31 @@ static ssize_t cpus_store(struct kobject *kobj, struct kobj_attribute *attr,
 	return count;
 }
 
+static ssize_t tids_show(struct kobject *kobj, struct kobj_attribute *attr,
+		char *buf)
+{
+	return sysfs_emit(buf, "to be constructed\n");
+}
+
+static ssize_t tids_store(struct kobject *kobj, struct kobj_attribute *attr,
+		const char *buf, size_t count)
+{
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+	int err;
+
+	err = parse_int_array(buf, count, &ops_attrs->tids);
+	if (err)
+		return err;
+	return count;
+}
+
 static void damon_sysfs_ops_attrs_release(struct kobject *kobj)
 {
+	struct damon_sysfs_ops_attrs *ops_attrs = container_of(kobj,
+			struct damon_sysfs_ops_attrs, kobj);
+
+	kfree(ops_attrs->tids);
 	kfree(container_of(kobj, struct damon_sysfs_ops_attrs, kobj));
 }
 
@@ -916,10 +941,14 @@ static struct kobj_attribute damon_sysfs_ops_attrs_write_only_attr =
 static struct kobj_attribute damon_sysfs_ops_attrs_cpus_attr =
 		__ATTR_RW_MODE(cpus, 0600);
 
+static struct kobj_attribute damon_sysfs_ops_attrs_tids_attr =
+		__ATTR_RW_MODE(tids, 0600);
+
 static struct attribute *damon_sysfs_ops_attrs_attrs[] = {
 	&damon_sysfs_ops_attrs_use_reports_attr.attr,
 	&damon_sysfs_ops_attrs_write_only_attr.attr,
 	&damon_sysfs_ops_attrs_cpus_attr.attr,
+	&damon_sysfs_ops_attrs_tids_attr.attr,
 	NULL,
 };
 ATTRIBUTE_GROUPS(damon_sysfs_ops_attrs);
