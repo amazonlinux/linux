@@ -188,11 +188,19 @@ static bool damon_pa_eligible_report(struct damon_access_report *report,
 		struct damon_target *t,
 		struct damon_operations_attrs *ops_attrs)
 {
+	int i;
+
 	if (ops_attrs->write_only && report->is_write)
 		return false;
 	if (!cpumask_test_cpu(report->cpu, &ops_attrs->cpus))
 		return false;
-	return true;
+	if (!ops_attrs->nr_tids)
+		return true;
+	for (i = 0; i < ops_attrs->nr_tids; i++) {
+		if (report->tid == ops_attrs->tids[i])
+			return true;
+	}
+	return false;
 }
 
 /*
