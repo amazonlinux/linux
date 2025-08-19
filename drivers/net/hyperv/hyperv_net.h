@@ -949,6 +949,7 @@ struct net_device_context {
 	struct net_device __rcu *vf_netdev;
 	struct netvsc_vf_pcpu_stats __percpu *vf_stats;
 	struct delayed_work vf_takeover;
+	struct delayed_work vfns_work;
 
 	/* 1: allocated, serial number is valid. 0: not allocated */
 	u32 vf_alloc;
@@ -958,6 +959,8 @@ struct net_device_context {
 	/* completion variable to confirm vf association */
 	struct completion vf_add;
 };
+
+void netvsc_vfns_work(struct work_struct *w);
 
 /* Per channel data */
 struct netvsc_channel {
