@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause
 /*
- * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "kcompat.h"
@@ -31,8 +31,8 @@ static const struct pci_device_id efa_pci_tbl[] = {
 };
 
 #define DRV_MODULE_VER_MAJOR           2
-#define DRV_MODULE_VER_MINOR           13
-#define DRV_MODULE_VER_SUBMINOR        0
+#define DRV_MODULE_VER_MINOR           17
+#define DRV_MODULE_VER_SUBMINOR        2
 
 #ifndef DRV_MODULE_VERSION
 #define DRV_MODULE_VERSION \
@@ -162,8 +162,7 @@ static int efa_request_irq(struct efa_dev *dev, struct efa_irq *irq)
 	return 0;
 }
 
-static void efa_setup_comp_irq(struct efa_dev *dev, struct efa_eq *eq,
-			       int vector)
+static void efa_setup_comp_irq(struct efa_dev *dev, struct efa_eq *eq, u32 vector)
 {
 	u32 cpu;
 
@@ -331,7 +330,7 @@ static void efa_destroy_eq(struct efa_dev *dev, struct efa_eq *eq)
 	efa_free_irq(dev, &eq->irq);
 }
 
-static int efa_create_eq(struct efa_dev *dev, struct efa_eq *eq, u8 msix_vec)
+static int efa_create_eq(struct efa_dev *dev, struct efa_eq *eq, u32 msix_vec)
 {
 	int err;
 
@@ -354,21 +353,17 @@ err_free_comp_irq:
 
 static int efa_create_eqs(struct efa_dev *dev)
 {
-	unsigned int neqs = dev->dev_attr.max_eq;
-	int err;
-	int i;
+	u32 neqs = dev->dev_attr.max_eq;
+	int err, i;
 
-	neqs = min_t(unsigned int, neqs,
-		     dev->num_irq_vectors - EFA_COMP_EQS_VEC_BASE);
-
+	neqs = min_t(u32, neqs, dev->num_irq_vectors - EFA_COMP_EQS_VEC_BASE);
 	dev->neqs = neqs;
 	dev->eqs = kcalloc(neqs, sizeof(*dev->eqs), GFP_KERNEL);
 	if (!dev->eqs)
 		return -ENOMEM;
 
 	for (i = 0; i < neqs; i++) {
-		err = efa_create_eq(dev, &dev->eqs[i],
-				    i + EFA_COMP_EQS_VEC_BASE);
+		err = efa_create_eq(dev, &dev->eqs[i], i + EFA_COMP_EQS_VEC_BASE);
 		if (err)
 			goto err_destroy_eqs;
 	}
@@ -557,7 +552,6 @@ static void efa_ib_device_remove(struct efa_dev *dev)
 	kfree(dev->qp_table);
 	efa_dealloc_dev_uar(dev);
 	efa_destroy_eqs(dev);
-	efa_com_dev_reset(&dev->edev, EFA_REGS_RESET_NORMAL);
 	efa_release_doorbell_bar(dev);
 }
 
@@ -737,13 +731,14 @@ err_disable_device:
 	return ERR_PTR(err);
 }
 
-static void efa_remove_device(struct pci_dev *pdev)
+static void efa_remove_device(struct pci_dev *pdev, bool on_error)
 {
 	struct efa_dev *dev = pci_get_drvdata(pdev);
 	struct efa_com_dev *edev;
 
 	edev = &dev->edev;
 	efa_sysfs_destroy(dev);
+	efa_com_dev_reset(edev, on_error ? EFA_REGS_RESET_INIT_ERR : EFA_REGS_RESET_NORMAL);
 	efa_com_admin_destroy(edev);
 	efa_free_irq(dev, &dev->admin_irq);
 	efa_disable_msix(dev);
@@ -771,7 +766,7 @@ static int efa_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	return 0;
 
 err_remove_device:
-	efa_remove_device(pdev);
+	efa_remove_device(pdev, true);
 	return err;
 }
 
@@ -780,7 +775,7 @@ static void efa_remove(struct pci_dev *pdev)
 	struct efa_dev *dev = pci_get_drvdata(pdev);
 
 	efa_ib_device_remove(dev);
-	efa_remove_device(pdev);
+	efa_remove_device(pdev, false);
 }
 
 static void efa_shutdown(struct pci_dev *pdev)
