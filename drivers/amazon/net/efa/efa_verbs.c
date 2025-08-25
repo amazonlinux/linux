@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
 /*
- * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "kcompat.h"
@@ -72,6 +72,11 @@ struct efa_user_mmap_entry {
 	op(EFA_RDMA_WRITE_BYTES, "rdma_write_bytes") \
 	op(EFA_RDMA_WRITE_WR_ERR, "rdma_write_wr_err") \
 	op(EFA_RDMA_WRITE_RECV_BYTES, "rdma_write_recv_bytes") \
+	op(EFA_RETRANS_BYTES, "retrans_bytes") \
+	op(EFA_RETRANS_PKTS, "retrans_pkts") \
+	op(EFA_RETRANS_TIMEOUT_EVENS, "retrans_timeout_events") \
+	op(EFA_UNRESPONSIVE_REMOTE_EVENTS, "unresponsive_remote_events") \
+	op(EFA_IMPAIRED_REMOTE_CONN_EVENTS, "impaired_remote_conn_events") \
 
 #define EFA_STATS_ENUM(ename, name) ename,
 #define EFA_STATS_STR(ename, nam) \
@@ -1396,8 +1401,12 @@ int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 		xa_erase(&dev->cqs_xa, cq->cq_idx);
 		synchronize_irq(cq->eq->irq.irqn);
 	}
-	efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size,
-			DMA_FROM_DEVICE);
+
+	if (cq->umem)
+		ib_umem_release(cq->umem);
+	else
+		efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size, DMA_FROM_DEVICE);
+	kfree(cq->sub_cq_arr);
 	return 0;
 }
 
@@ -1559,8 +1568,8 @@ err_out:
 	atomic64_inc(&dev->stats.create_cq_err);
 	return err;
 }
-int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-		  struct ib_udata *udata)
+int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
+		       struct ib_umem *umem, struct ib_udata *udata)
 {
 	struct efa_ucontext *ucontext = rdma_udata_to_drv_context(
 		udata, struct efa_ucontext, ibucontext);
@@ -1640,11 +1649,30 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 
 	cq->ucontext = ucontext;
 	cq->size = PAGE_ALIGN(cmd.cq_entry_size * entries * cmd.num_sub_cqs);
-	cq->cpu_addr = efa_zalloc_mapped(dev, &cq->dma_addr, cq->size,
-					 DMA_FROM_DEVICE);
-	if (!cq->cpu_addr) {
-		err = -ENOMEM;
-		goto err_out;
+
+	if (umem) {
+		if (umem->length < cq->size) {
+			ibdev_dbg(&dev->ibdev, "External memory too small\n");
+			err = -EINVAL;
+			goto err_free_mem;
+		}
+
+		if (!ib_umem_is_contiguous(umem)) {
+			ibdev_dbg(&dev->ibdev, "Non contiguous CQ unsupported\n");
+			err = -EINVAL;
+			goto err_free_mem;
+		}
+
+		cq->cpu_addr = NULL;
+		cq->dma_addr = ib_umem_start_dma_addr(umem);
+		cq->umem = umem;
+	} else {
+		cq->cpu_addr = efa_zalloc_mapped(dev, &cq->dma_addr, cq->size,
+						 DMA_FROM_DEVICE);
+		if (!cq->cpu_addr) {
+			err = -ENOMEM;
+			goto err_out;
+		}
 	}
 
 	params.uarn = cq->ucontext->uarn;
@@ -1661,7 +1689,7 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 
 	err = efa_com_create_cq(&dev->edev, &params, &result);
 	if (err)
-		goto err_free_mapped;
+		goto err_free_mem;
 
 	resp.db_off = result.db_off;
 	resp.cq_idx = result.cq_idx;
@@ -1669,7 +1697,9 @@ int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	cq->ibcq.cqe = result.actual_depth;
 	WARN_ON_ONCE(entries != result.actual_depth);
 
-	err = cq_mmap_entries_setup(dev, cq, &resp, result.db_valid);
+	if (!umem)
+		err = cq_mmap_entries_setup(dev, cq, &resp, result.db_valid);
+
 	if (err) {
 		ibdev_dbg(ibdev, "Could not setup cq[%u] mmap entries\n",
 			  cq->cq_idx);
@@ -1707,13 +1737,21 @@ err_remove_mmap:
 	efa_cq_user_mmap_entries_remove(cq);
 err_destroy_cq:
 	efa_destroy_cq_idx(dev, cq->cq_idx);
-err_free_mapped:
-	efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size,
-			DMA_FROM_DEVICE);
+err_free_mem:
+	if (umem)
+		ib_umem_release(umem);
+	else
+		efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size, DMA_FROM_DEVICE);
 
 err_out:
 	atomic64_inc(&dev->stats.create_cq_err);
 	return err;
+}
+
+int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
+		  struct ib_udata *udata)
+{
+	return efa_create_cq_umem(ibcq, attr, NULL, udata);
 }
 
 static int umem_to_page_list(struct efa_dev *dev,
@@ -1729,7 +1767,7 @@ static int umem_to_page_list(struct efa_dev *dev,
 	ibdev_dbg(&dev->ibdev, "hp_cnt[%u], pages_in_hp[%u]\n",
 		  hp_cnt, pages_in_hp);
 
-	rdma_umem_for_each_dma_block(umem, &biter, BIT(hp_shift))
+	efa_rdma_umem_for_each_dma_block(umem, &biter, BIT(hp_shift))
 		page_list[hp_idx++] = rdma_block_iter_dma_address(&biter);
 
 	return 0;
@@ -2126,9 +2164,9 @@ static int efa_register_mr(struct ib_pd *ibpd, struct efa_mr *mr, u64 start,
 		goto skip_umem_pg_sz;
 	}
 
-	pg_sz = ib_umem_find_best_pgsz(mr->umem,
-				       dev->dev_attr.page_size_cap,
-				       virt_addr);
+	pg_sz = efa_umem_find_best_pgsz(mr->umem,
+					dev->dev_attr.page_size_cap,
+					virt_addr);
 	if (!pg_sz) {
 		ibdev_dbg(&dev->ibdev, "Failed to find a suitable page size in page_size_cap %#llx\n",
 			  dev->dev_attr.page_size_cap);
@@ -2814,6 +2852,7 @@ static int efa_fill_port_stats(struct efa_dev *dev, struct rdma_hw_stats *stats,
 	struct efa_com_rdma_write_stats *rws;
 	struct efa_com_rdma_read_stats *rrs;
 	struct efa_com_messages_stats *ms;
+	struct efa_com_network_stats *ns;
 	struct efa_com_basic_stats *bs;
 	int err;
 
@@ -2865,6 +2904,18 @@ static int efa_fill_port_stats(struct efa_dev *dev, struct rdma_hw_stats *stats,
 		stats->value[EFA_RDMA_WRITE_WR_ERR] = rws->write_wr_err;
 		stats->value[EFA_RDMA_WRITE_RECV_BYTES] = rws->write_recv_bytes;
 	}
+
+	params.type = EFA_ADMIN_GET_STATS_TYPE_NETWORK;
+	err = efa_com_get_stats(&dev->edev, &params, &result);
+	if (err)
+		return err;
+
+	ns = &result.network_stats;
+	stats->value[EFA_RETRANS_BYTES] = ns->retrans_bytes;
+	stats->value[EFA_RETRANS_PKTS] = ns->retrans_pkts;
+	stats->value[EFA_RETRANS_TIMEOUT_EVENS] = ns->retrans_timeout_events;
+	stats->value[EFA_UNRESPONSIVE_REMOTE_EVENTS] = ns->unresponsive_remote_events;
+	stats->value[EFA_IMPAIRED_REMOTE_CONN_EVENTS] = ns->impaired_remote_conn_events;
 
 	return ARRAY_SIZE(efa_port_stats_descs);
 }
