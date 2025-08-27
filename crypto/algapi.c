@@ -411,6 +411,14 @@ int crypto_register_alg(struct crypto_alg *alg)
 	LIST_HEAD(algs_to_put);
 	int err;
 
+#ifdef CONFIG_CRYPTO_FIPS140_MOD
+	if (alg->cra_module == fips140_module_ptr) {
+		alg->cra_flags |= CRYPTO_ALG_FIPS_PROVIDED;
+		if (alg->cra_priority < 4096)
+			alg->cra_priority += 4096;
+	}
+#endif
+
 	alg->cra_flags &= ~CRYPTO_ALG_DEAD;
 	err = crypto_check_alg(alg);
 	if (err)
@@ -611,6 +619,14 @@ int crypto_register_instance(struct crypto_template *tmpl,
 	u32 fips_internal = 0;
 	LIST_HEAD(algs_to_put);
 	int err;
+
+#ifdef CONFIG_CRYPTO_FIPS140_MOD
+	if (tmpl->module == fips140_module_ptr) {
+		inst->alg.cra_flags |= CRYPTO_ALG_FIPS_PROVIDED;
+		if (inst->alg.cra_priority < 4096)
+			inst->alg.cra_priority += 4096;
+	}
+#endif
 
 	err = crypto_check_alg(&inst->alg);
 	if (err)

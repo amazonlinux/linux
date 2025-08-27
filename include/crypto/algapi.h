@@ -276,4 +276,8 @@ static inline bool crypto_tfm_req_chain(struct crypto_tfm *tfm)
 	return tfm->__crt_alg->cra_flags & CRYPTO_ALG_REQ_CHAIN;
 }
 
+#ifdef CONFIG_CRYPTO_FIPS140_MOD
+extern struct module *fips140_module_ptr;
+#endif
+
 #endif	/* _CRYPTO_ALGAPI_H */

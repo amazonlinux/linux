@@ -11,22 +11,12 @@
  * algorithm registration functions, so #undefine all the macros from
  * fips140-defs.h so that the "fips140_" prefix doesn't automatically get added.
  */
-#undef aead_register_instance
-#undef ahash_register_instance
-#undef crypto_register_aead
-#undef crypto_register_aeads
-#undef crypto_register_ahash
-#undef crypto_register_ahashes
 #undef crypto_register_alg
 #undef crypto_register_algs
-#undef crypto_register_rng
-#undef crypto_register_rngs
-#undef crypto_register_shash
-#undef crypto_register_shashes
-#undef crypto_register_skcipher
-#undef crypto_register_skciphers
-#undef shash_register_instance
-#undef skcipher_register_instance
+#undef crypto_register_template
+#undef crypto_register_templates
+#undef crypto_register_instance
+
 
 #include <linux/list.h>
 #include <linux/slab.h>
@@ -320,7 +310,6 @@ EXPORT_SYMBOL_GPL(fips140_check_all_algorithms_tested);
 int fips140_crypto_register_alg(struct crypto_alg *alg)
 {
     int err;
-    
     // Call the original registration function from your existing code
     err = crypto_register_alg(alg);
     if (err) {
@@ -340,237 +329,31 @@ int fips140_crypto_register_alg(struct crypto_alg *alg)
     return 0;
 }
 
-/**
- * fips140_crypto_register_skcipher - Register and record a skcipher algorithm
- */
-int fips140_crypto_register_skcipher(struct skcipher_alg *alg)
-{
-    int err;
-    
-    // Your existing preparation logic (if any)
-    // err = fips140_prepare_skcipher_alg(alg);
-    // if (err) return err;
-    
-    err = crypto_register_skcipher(alg);
-    if (err) {
-        pr_err("fips140: Failed to register skcipher %s: %d\n", 
-               alg->base.cra_name, err);
-        return err;
-    }
-    
-    // Record the algorithm
-    err = fips140_record_algorithm(&alg->base);
-    if (err) {
-        pr_warn("fips140: Failed to record skcipher %s: %d\n", 
-                alg->base.cra_name, err);
-    }
-    
-    return 0;
-}
-
-/**
- * fips140_crypto_register_shash - Register and record a shash algorithm
- */
-int fips140_crypto_register_shash(struct shash_alg *alg)
-{
-    int err;
-    
-    err = crypto_register_shash(alg);
-    if (err) {
-        pr_err("fips140: Failed to register shash %s: %d\n", 
-               alg->base.cra_name, err);
-        return err;
-    }
-    
-    err = fips140_record_algorithm(&alg->base);
-    if (err) {
-        pr_warn("fips140: Failed to record shash %s: %d\n", 
-                alg->base.cra_name, err);
-    }
-    
-    return 0;
-}
-
-/**
- * fips140_crypto_register_ahash - Register and record an ahash algorithm
- */
-int fips140_crypto_register_ahash(struct ahash_alg *alg)
-{
-    int err;
-    
-    err = crypto_register_ahash(alg);
-    if (err) {
-        pr_err("fips140: Failed to register ahash %s: %d\n", 
-               alg->halg.base.cra_name, err);
-        return err;
-    }
-    
-    err = fips140_record_algorithm(&alg->halg.base);
-    if (err) {
-        pr_warn("fips140: Failed to record ahash %s: %d\n", 
-                alg->halg.base.cra_name, err);
-    }
-    
-    return 0;
-}
-
-/**
- * fips140_crypto_register_aead - Register and record an aead algorithm
- */
-int fips140_crypto_register_aead(struct aead_alg *alg)
-{
-    int err;
-    
-    err = crypto_register_aead(alg);
-    if (err) {
-        pr_err("fips140: Failed to register aead %s: %d\n", 
-               alg->base.cra_name, err);
-        return err;
-    }
-    
-    err = fips140_record_algorithm(&alg->base);
-    if (err) {
-        pr_warn("fips140: Failed to record aead %s: %d\n", 
-                alg->base.cra_name, err);
-    }
-    
-    return 0;
-}
-
-/**
- * fips140_crypto_register_rng - Register and record an rng algorithm
- */
-int fips140_crypto_register_rng(struct rng_alg *alg)
-{
-    int err;
-    
-    err = crypto_register_rng(alg);
-    if (err) {
-        pr_err("fips140: Failed to register rng %s: %d\n", 
-               alg->base.cra_name, err);
-        return err;
-    }
-    
-    err = fips140_record_algorithm(&alg->base);
-    if (err) {
-        pr_warn("fips140: Failed to record rng %s: %d\n", 
-                alg->base.cra_name, err);
-    }
-    
-    return 0;
-}
-
-/*
- * Bulk registration functions
- */
 
 int fips140_crypto_register_algs(struct crypto_alg *algs, int count)
 {
-    int i, err;
-    
-    for (i = 0; i < count; i++) {
-        err = fips140_crypto_register_alg(&algs[i]);
-        if (err)
-            goto err_undo_algs;
-    }
-    
-    return 0;
-
-err_undo_algs:
-    for (--i; i >= 0; --i)
-        crypto_unregister_alg(&algs[i]);
-    return err;
+    return crypto_register_algs(algs, count);
 }
+EXPORT_SYMBOL_GPL(fips140_crypto_register_algs);
 
-int fips140_crypto_register_skciphers(struct skcipher_alg *algs, int count)
+int fips140_crypto_register_template(struct crypto_template *tmpl)
 {
-    int i, err;
-    
-    for (i = 0; i < count; i++) {
-        err = fips140_crypto_register_skcipher(&algs[i]);
-        if (err)
-            goto err_undo_skciphers;
-    }
-    
-    return 0;
-
-err_undo_skciphers:
-    for (--i; i >= 0; --i)
-        crypto_unregister_skcipher(&algs[i]);
-    return err;
+    return crypto_register_template(tmpl);
 }
+EXPORT_SYMBOL_GPL(fips140_crypto_register_template);
 
-int fips140_crypto_register_shashes(struct shash_alg *algs, int count)
+int fips140_crypto_register_templates(struct crypto_template *tmpls, int count)
 {
-    int i, err;
-    
-    for (i = 0; i < count; i++) {
-        err = fips140_crypto_register_shash(&algs[i]);
-        if (err)
-            goto err_undo_shashes;
-    }
-    
-    return 0;
-
-err_undo_shashes:
-    for (--i; i >= 0; --i)
-        crypto_unregister_shash(&algs[i]);
-    return err;
+    return crypto_register_templates(tmpls, count);
 }
+EXPORT_SYMBOL_GPL(fips140_crypto_register_templates);
 
-int fips140_crypto_register_ahashes(struct ahash_alg *algs, int count)
+int fips140_crypto_register_instance(struct crypto_template *tmpl, struct crypto_instance *inst)
 {
-    int i, err;
-    
-    for (i = 0; i < count; i++) {
-        err = fips140_crypto_register_ahash(&algs[i]);
-        if (err)
-            goto err_undo_ahashes;
-    }
-    
-    return 0;
-
-err_undo_ahashes:
-    for (--i; i >= 0; --i)
-        crypto_unregister_ahash(&algs[i]);
-    return err;
+    return crypto_register_instance(tmpl, inst);
 }
+EXPORT_SYMBOL_GPL(fips140_crypto_register_instance);
 
-int fips140_crypto_register_aeads(struct aead_alg *algs, int count)
-{
-    int i, err;
-    
-    for (i = 0; i < count; i++) {
-        err = fips140_crypto_register_aead(&algs[i]);
-        if (err)
-            goto err_undo_aeads;
-    }
-    
-    return 0;
-
-err_undo_aeads:
-    for (--i; i >= 0; --i)
-        crypto_unregister_aead(&algs[i]);
-    return err;
-}
-
-int fips140_crypto_register_rngs(struct rng_alg *algs, int count)
-{
-    int i, err;
-    
-    for (i = 0; i < count; i++) {
-        err = fips140_crypto_register_rng(&algs[i]);
-        if (err)
-            goto err_undo_rngs;
-    }
-    
-    return 0;
-
-err_undo_rngs:
-    for (--i; i >= 0; --i)
-        crypto_unregister_rng(&algs[i]);
-    return err;
-}
 
 /**
  * fips140_cleanup_registered_algorithms - Clean up the registration tracking
@@ -597,41 +380,3 @@ void fips140_cleanup_registered_algorithms(void)
     pr_info("fips140: Cleaned up algorithm registration tracking\n");
 }
 EXPORT_SYMBOL_GPL(fips140_cleanup_registered_algorithms);
-
-/*
- * Instance registration functions (stubs for now)
- * These are declared in the header but may not be implemented yet
- */
-
-int fips140_aead_register_instance(struct crypto_template *tmpl,
-                                   struct aead_instance *inst)
-{
-    // For now, just call the original function
-    // You can add tracking logic here later if needed
-    return aead_register_instance(tmpl, inst);
-}
-EXPORT_SYMBOL_GPL(fips140_aead_register_instance);
-
-int fips140_ahash_register_instance(struct crypto_template *tmpl,
-                                    struct ahash_instance *inst)
-{
-    // For now, just call the original function
-    return ahash_register_instance(tmpl, inst);
-}
-EXPORT_SYMBOL_GPL(fips140_ahash_register_instance);
-
-int fips140_shash_register_instance(struct crypto_template *tmpl,
-                                    struct shash_instance *inst)
-{
-    // For now, just call the original function
-    return shash_register_instance(tmpl, inst);
-}
-EXPORT_SYMBOL_GPL(fips140_shash_register_instance);
-
-int fips140_skcipher_register_instance(struct crypto_template *tmpl,
-                                       struct skcipher_instance *inst)
-{
-    // For now, just call the original function
-    return skcipher_register_instance(tmpl, inst);
-}
-EXPORT_SYMBOL_GPL(fips140_skcipher_register_instance);

@@ -128,6 +128,16 @@
 /* Set if the algorithm supports request chains and virtual addresses. */
 #define CRYPTO_ALG_REQ_CHAIN		0x00040000
 
+#ifdef CONFIG_CRYPTO_FIPS140_MOD
+/*
+ * The algorithm is provided by the FIPS module.
+ *
+ * NOTE: an algorithm can be provided by the FIPS module and not be
+ * approved, depending on the exact parameters like key size, etc.
+ */
+#define CRYPTO_ALG_FIPS_PROVIDED	0x00080000
+#endif
+
 /*
  * Transform masks and values (for crt_flags).
  */

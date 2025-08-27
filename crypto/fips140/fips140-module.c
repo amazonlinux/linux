@@ -275,13 +275,23 @@ static void __init unregister_existing_fips140_algos(void)
 
 }
 
+/* Initialize FIPS environment and tracking */
+static void fips140_env_init(void)
+{
+    fips140_module_ptr = THIS_MODULE;
+    fips140_init_thread = current;
+    pr_info("FIPS environment initialized\n");
+}
+
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
     const initcall_entry_t *initcall;
 
+    /* Initialize FIPS environment first */
+    fips140_env_init();
+
     pr_info("Loading " FIPS140_MODULE_NAME " " FIPS140_MODULE_VERSION "\n");
-    fips140_init_thread = current;
 
     /* First step: unregister existing algorithms that we will replace */
     unregister_existing_fips140_algos();

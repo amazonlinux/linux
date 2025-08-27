@@ -9,6 +9,9 @@
 #include <linux/completion.h>
 #include <linux/sched.h>
 
+/* FIPS module pointer for tracking */
+extern struct module *fips140_module_ptr;
+
 /* Completion to signal that self-tests are done */
 extern struct completion fips140_tests_done;
 

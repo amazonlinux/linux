@@ -5,4 +5,4 @@
 # for unexported kernel functions needed by the FIPS module
 #
 
-obj-y += fips140-unexported.o
+obj-y += fips140-unexported.o fips140-builtin.o
