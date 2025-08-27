@@ -280,4 +280,32 @@ static inline bool crypto_tfm_req_chain(struct crypto_tfm *tfm)
 extern struct module *fips140_module_ptr;
 #endif
 
+#if defined(CONFIG_CRYPTO_FIPS140_MOD) && defined(BUILD_FIPS140_KO)
+#define crypto_module_init(fn) \
+	static unsigned long __used __section(".initcall6.init") \
+		_fips_initcall_##fn = (unsigned long) &fn;
+#define crypto_module_exit(fn) /* no-op */
+#define crypto_arch_initcall(fn) \
+	static unsigned long __used __section(".initcall3.init") \
+		_fips_initcall_##fn = (unsigned long) &fn;
+#define crypto_arch_exitcall(fn) /* no-op */
+#define crypto_subsys_initcall(fn) \
+	static unsigned long __used __section(".initcall4.init") \
+		_fips_initcall_##fn = (unsigned long) &fn;
+#define crypto_subsys_exitcall(fn) /* no-op */
+#define crypto_late_initcall(fn) \
+	static unsigned long __used __section(".initcall7.init") \
+		_fips_initcall_##fn = (unsigned long) &fn;
+#define crypto_late_exitcall(fn) /* no-op */
+#else
+#define crypto_module_init(fn) module_init(fn)
+#define crypto_module_exit(fn) module_exit(fn)
+#define crypto_arch_initcall(fn) arch_initcall(fn)
+#define crypto_arch_exitcall(fn) arch_exitcall(fn)
+#define crypto_subsys_initcall(fn) subsys_initcall(fn)
+#define crypto_subsys_exitcall(fn) subsys_exitcall(fn)
+#define crypto_late_initcall(fn) late_initcall(fn)
+#define crypto_late_exitcall(fn) late_exitcall(fn)
+#endif
+
 #endif	/* _CRYPTO_ALGAPI_H */

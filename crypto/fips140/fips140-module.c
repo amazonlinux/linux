@@ -13,8 +13,7 @@
  * Since this .c file is the real entry point of fips140.ko, it needs to be
  * compiled normally, so undo the hacks that were done in fips140-defs.h.
  */
-#define MODULE
-#undef KBUILD_MODFILE
+
 #undef __DISABLE_EXPORTS
 
 #include <linux/module.h>

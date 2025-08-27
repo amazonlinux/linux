@@ -4,28 +4,6 @@
  * the "-include" compiler flag.
  */
 
-/*
- * fips140.ko is built from various unmodified or minimally modified kernel
- * source files, many of which are normally meant to be buildable into different
- * modules themselves.  That results in conflicting instances of module_init()
- * and related macros such as MODULE_LICENSE().
- *
- * To solve that, we undefine MODULE to trick the kernel headers into thinking
- * the code is being compiled as built-in.  That causes module_init() and
- * related macros to be expanded as they would be for built-in code; e.g.,
- * module_init() adds the function to the .initcalls section of the binary.
- *
- * The .c files that contain the real module_init, module license, and module
- * parameters for fips140.ko are then responsible for redefining MODULE.  The
- * real module_init executes all initcalls that were collected into .initcalls.
- */
-#undef MODULE
-
-/*
- * Defining KBUILD_MODFILE is also required, since the kernel headers expect it
- * to be defined when code that can be a module is compiled as built-in.
- */
-#define KBUILD_MODFILE "crypto/fips140"
 
 /*
  * Disable symbol exports by default.  fips140.ko includes various files that
