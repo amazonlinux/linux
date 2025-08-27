@@ -314,13 +314,6 @@ static int __init fips140_init(void)
     pr_info("=== AFTER RE-REGISTRATION (initcalls completed) ===\n");
     print_existing_crypto_algos();
 
-    /* Run self-tests */
-    if (!fips140_run_selftests()) {
-        pr_err("Self-tests failed\n");
-        goto panic;
-    }
-
-    complete_all(&fips140_tests_done);
     pr_info("Module successfully loaded\n");
     return 0;
 

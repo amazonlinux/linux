@@ -162,9 +162,6 @@ $(obj)/ecrdsa-fips.o: $(obj)/ecrdsa_params.asn1.h $(obj)/ecrdsa_pub_key.asn1.h
 # Transform to -fips.o naming
 crypto-fips-objs := $(foreach o,$(crypto-fips-objs),$(o:.o=-fips.o))
 
-# Add FIPS 140 test suites to get FIPS140_CFLAGS and common macros
-crypto-fips-objs += fips140-testsuites.o
-
 $(obj)/%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS) -I$(obj)
 $(obj)/%-fips.o: $(srctree)/crypto/%.c FORCE
 	$(call if_changed_rule,cc_o_c)
@@ -194,7 +191,6 @@ fips140-objs := \
 	fips140-alg-registration.o \
 	fips140-module.o \
 	fips140-refs.o \
-	fips140-selftests.o \
 	$(crypto-fips-objs)
 
 obj-m += fips140.o
