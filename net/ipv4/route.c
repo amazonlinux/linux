@@ -1054,6 +1054,8 @@ static void __ip_rt_update_pmtu(struct rtable *rt, struct flowi4 *fl4, u32 mtu)
 	if (old_mtu < mtu)
 		return;
 
+	rcu_read_lock();
+	net = dst_dev_net_rcu(dst);
 	if (mtu < ip_rt_min_pmtu) {
 		lock = true;
 		mtu = min(old_mtu, ip_rt_min_pmtu);
@@ -1329,9 +1331,12 @@ static void set_class_tag(struct rtable *rt, u32 tag)
 static unsigned int ipv4_default_advmss(const struct dst_entry *dst)
 {
 	unsigned int header_size = sizeof(struct tcphdr) + sizeof(struct iphdr);
-	unsigned int advmss = max_t(unsigned int, ipv4_mtu(dst) - header_size,
-				    ip_rt_min_advmss);
+	unsigned int advmss;
 
+	rcu_read_lock();
+	advmss = max_t(unsigned int, ipv4_mtu(dst) - header_size,
+				   ip_rt_min_advmss);
+	rcu_read_unlock();
 	return min(advmss, IPV4_MAX_PMTU - header_size);
 }
 
