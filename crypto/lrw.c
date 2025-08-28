@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <crypto/algapi.h>
 /* LRW: as defined by Cyril Guyot in
  *	http://grouper.ieee.org/groups/1619/email/pdf00017.pdf
  *
@@ -420,8 +421,8 @@ static void __exit lrw_module_exit(void)
 	crypto_unregister_template(&lrw_tmpl);
 }
 
-subsys_initcall(lrw_module_init);
-module_exit(lrw_module_exit);
+crypto_subsys_initcall(lrw_module_init);
+crypto_module_exit(lrw_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("LRW block cipher mode");

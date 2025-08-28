@@ -139,8 +139,8 @@ static void __exit poly1305_mod_exit(void)
 	crypto_unregister_shash(&poly1305_alg);
 }
 
-subsys_initcall(poly1305_mod_init);
-module_exit(poly1305_mod_exit);
+crypto_subsys_initcall(poly1305_mod_init);
+crypto_module_exit(poly1305_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Martin Willi <martin@strongswan.org>");

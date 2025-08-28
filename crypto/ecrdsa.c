@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0+
 /*
  * Elliptic Curve (Russian) Digital Signature Algorithm for Cryptographic API
@@ -288,8 +289,8 @@ static void __exit ecrdsa_mod_fini(void)
 	crypto_unregister_sig(&ecrdsa_alg);
 }
 
-module_init(ecrdsa_mod_init);
-module_exit(ecrdsa_mod_fini);
+crypto_module_init(ecrdsa_mod_init);
+crypto_module_exit(ecrdsa_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Vitaly Chikunov <vt@altlinux.org>");

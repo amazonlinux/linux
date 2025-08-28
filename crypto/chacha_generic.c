@@ -125,8 +125,8 @@ static void __exit chacha_generic_mod_fini(void)
 	crypto_unregister_skciphers(algs, ARRAY_SIZE(algs));
 }
 
-subsys_initcall(chacha_generic_mod_init);
-module_exit(chacha_generic_mod_fini);
+crypto_subsys_initcall(chacha_generic_mod_init);
+crypto_module_exit(chacha_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Martin Willi <martin@strongswan.org>");

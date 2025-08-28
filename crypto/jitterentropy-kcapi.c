@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 /*
  * Non-physical true random number generator based on timing jitter --
  * Linux Kernel Crypto API specific code
@@ -367,8 +368,8 @@ static void __exit jent_mod_exit(void)
 	crypto_unregister_rng(&jent_alg);
 }
 
-module_init(jent_mod_init);
-module_exit(jent_mod_exit);
+crypto_module_init(jent_mod_init);
+crypto_module_exit(jent_mod_exit);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_AUTHOR("Stephan Mueller <smueller@chronox.de>");

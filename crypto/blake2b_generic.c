@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: (GPL-2.0-only OR Apache-2.0)
 /*
  * Generic implementation of the BLAKE2b digest algorithm.  Based on the BLAKE2b
@@ -171,8 +172,8 @@ static void __exit blake2b_mod_fini(void)
 	crypto_unregister_shashes(blake2b_algs, ARRAY_SIZE(blake2b_algs));
 }
 
-subsys_initcall(blake2b_mod_init);
-module_exit(blake2b_mod_fini);
+crypto_subsys_initcall(blake2b_mod_init);
+crypto_module_exit(blake2b_mod_fini);
 
 MODULE_AUTHOR("David Sterba <kdave@kernel.org>");
 MODULE_DESCRIPTION("BLAKE2b generic implementation");

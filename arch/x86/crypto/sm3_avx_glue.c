@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
+#include <crypto/algapi.h>
 /*
  * SM3 Secure Hash Algorithm, AVX assembler accelerated.
  * specified in: https://datatracker.ietf.org/doc/html/draft-sca-cfrg-sm3-02
@@ -124,8 +125,8 @@ static void __exit sm3_avx_mod_exit(void)
 	crypto_unregister_shash(&sm3_avx_alg);
 }
 
-module_init(sm3_avx_mod_init);
-module_exit(sm3_avx_mod_exit);
+crypto_module_init(sm3_avx_mod_init);
+crypto_module_exit(sm3_avx_mod_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Tianjia Zhang <tianjia.zhang@linux.alibaba.com>");

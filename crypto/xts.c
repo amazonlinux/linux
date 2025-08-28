@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* XTS: as defined in IEEE1619/D16
  *	http://grouper.ieee.org/groups/1619/email/pdf00086.pdf
@@ -466,8 +467,8 @@ static void __exit xts_module_exit(void)
 	crypto_unregister_template(&xts_tmpl);
 }
 
-subsys_initcall(xts_module_init);
-module_exit(xts_module_exit);
+crypto_subsys_initcall(xts_module_init);
+crypto_module_exit(xts_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("XTS block cipher mode");

@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Software async crypto daemon.
@@ -1138,8 +1139,8 @@ static void __exit cryptd_exit(void)
 	crypto_unregister_template(&cryptd_tmpl);
 }
 
-subsys_initcall(cryptd_init);
-module_exit(cryptd_exit);
+crypto_subsys_initcall(cryptd_init);
+crypto_module_exit(cryptd_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Software async crypto daemon");

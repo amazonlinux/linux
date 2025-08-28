@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * algif_skcipher: User-space interface for skcipher algorithms
@@ -435,7 +436,7 @@ static void __exit algif_skcipher_exit(void)
 	BUG_ON(err);
 }
 
-module_init(algif_skcipher_init);
-module_exit(algif_skcipher_exit);
+crypto_module_init(algif_skcipher_init);
+crypto_module_exit(algif_skcipher_exit);
 MODULE_DESCRIPTION("Userspace interface for skcipher algorithms");
 MODULE_LICENSE("GPL");

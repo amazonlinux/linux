@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <crypto/algapi.h>
 /*
  * CCM: Counter with CBC-MAC
  *
@@ -940,8 +941,8 @@ static void __exit crypto_ccm_module_exit(void)
 				    ARRAY_SIZE(crypto_ccm_tmpls));
 }
 
-subsys_initcall(crypto_ccm_module_init);
-module_exit(crypto_ccm_module_exit);
+crypto_subsys_initcall(crypto_ccm_module_init);
+crypto_module_exit(crypto_ccm_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Counter with CBC MAC");

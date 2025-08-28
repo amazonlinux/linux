@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * CMAC: Cipher Block Mode for Authentication
@@ -307,8 +308,8 @@ static void __exit crypto_cmac_module_exit(void)
 	crypto_unregister_template(&crypto_cmac_tmpl);
 }
 
-subsys_initcall(crypto_cmac_module_init);
-module_exit(crypto_cmac_module_exit);
+crypto_subsys_initcall(crypto_cmac_module_init);
+crypto_module_exit(crypto_cmac_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("CMAC keyed hash algorithm");

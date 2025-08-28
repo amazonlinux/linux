@@ -240,8 +240,8 @@ static void __exit aria_avx512_exit(void)
 				  aria_simd_algs);
 }
 
-module_init(aria_avx512_init);
-module_exit(aria_avx512_exit);
+crypto_module_init(aria_avx512_init);
+crypto_module_exit(aria_avx512_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Taehee Yoo <ap420073@gmail.com>");

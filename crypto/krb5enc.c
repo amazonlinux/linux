@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * AEAD wrapper for Kerberos 5 RFC3961 simplified profile.
@@ -496,8 +497,8 @@ static void __exit crypto_krb5enc_module_exit(void)
 	crypto_unregister_template(&crypto_krb5enc_tmpl);
 }
 
-subsys_initcall(crypto_krb5enc_module_init);
-module_exit(crypto_krb5enc_module_exit);
+crypto_subsys_initcall(crypto_krb5enc_module_init);
+crypto_module_exit(crypto_krb5enc_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Simple AEAD wrapper for Kerberos 5 RFC3961");

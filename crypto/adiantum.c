@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0
 /*
  * Adiantum length-preserving encryption mode
@@ -639,8 +640,8 @@ static void __exit adiantum_module_exit(void)
 	crypto_unregister_template(&adiantum_tmpl);
 }
 
-subsys_initcall(adiantum_module_init);
-module_exit(adiantum_module_exit);
+crypto_subsys_initcall(adiantum_module_init);
+crypto_module_exit(adiantum_module_exit);
 
 MODULE_DESCRIPTION("Adiantum length-preserving encryption mode");
 MODULE_LICENSE("GPL v2");

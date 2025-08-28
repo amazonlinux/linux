@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* ECDH key-agreement protocol
  *
@@ -240,8 +241,8 @@ static void __exit ecdh_exit(void)
 	crypto_unregister_kpp(&ecdh_nist_p384);
 }
 
-subsys_initcall(ecdh_init);
-module_exit(ecdh_exit);
+crypto_subsys_initcall(ecdh_init);
+crypto_module_exit(ecdh_exit);
 MODULE_ALIAS_CRYPTO("ecdh");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("ECDH generic algorithm");

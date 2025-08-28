@@ -187,8 +187,8 @@ static void __exit blowfish_fini(void)
 				    ARRAY_SIZE(bf_skcipher_algs));
 }
 
-module_init(blowfish_init);
-module_exit(blowfish_fini);
+crypto_module_init(blowfish_init);
+crypto_module_exit(blowfish_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Blowfish Cipher Algorithm, asm optimized");

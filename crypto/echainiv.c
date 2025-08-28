@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * echainiv: Encrypted Chain IV Generator
@@ -157,8 +158,8 @@ static void __exit echainiv_module_exit(void)
 	crypto_unregister_template(&echainiv_tmpl);
 }
 
-subsys_initcall(echainiv_module_init);
-module_exit(echainiv_module_exit);
+crypto_subsys_initcall(echainiv_module_init);
+crypto_module_exit(echainiv_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Encrypted Chain IV Generator");

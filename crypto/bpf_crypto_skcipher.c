@@ -4,6 +4,7 @@
 #include <linux/module.h>
 #include <linux/bpf_crypto.h>
 #include <crypto/skcipher.h>
+#include <crypto/algapi.h>
 
 static void *bpf_crypto_lskcipher_alloc_tfm(const char *algo)
 {
@@ -77,7 +78,7 @@ static void __exit bpf_crypto_skcipher_exit(void)
 	WARN_ON_ONCE(err);
 }
 
-module_init(bpf_crypto_skcipher_init);
-module_exit(bpf_crypto_skcipher_exit);
+crypto_module_init(bpf_crypto_skcipher_init);
+crypto_module_exit(bpf_crypto_skcipher_exit);
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Symmetric key cipher support for BPF");

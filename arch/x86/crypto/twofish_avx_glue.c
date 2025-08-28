@@ -125,8 +125,8 @@ static void __exit twofish_exit(void)
 				  twofish_simd_algs);
 }
 
-module_init(twofish_init);
-module_exit(twofish_exit);
+crypto_module_init(twofish_init);
+crypto_module_exit(twofish_exit);
 
 MODULE_DESCRIPTION("Twofish Cipher Algorithm, AVX optimized");
 MODULE_LICENSE("GPL");

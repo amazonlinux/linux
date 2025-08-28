@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include <crypto/algapi.h>
 /*
  * Copyright 2012 Xyratex Technology Limited
  */
@@ -172,8 +173,8 @@ static void __exit crc32_mod_fini(void)
 	crypto_unregister_shashes(algs, num_algs);
 }
 
-subsys_initcall(crc32_mod_init);
-module_exit(crc32_mod_fini);
+crypto_subsys_initcall(crc32_mod_init);
+crypto_module_exit(crc32_mod_fini);
 
 MODULE_AUTHOR("Alexander Boyko <alexander_boyko@xyratex.com>");
 MODULE_DESCRIPTION("CRC32 calculations wrapper for lib/crc32");

@@ -332,7 +332,23 @@ int fips140_crypto_register_alg(struct crypto_alg *alg)
 
 int fips140_crypto_register_algs(struct crypto_alg *algs, int count)
 {
-    return crypto_register_algs(algs, count);
+    int err, i;
+    
+    err = crypto_register_algs(algs, count);
+    if (err)
+        return err;
+    
+    for (i = 0; i < count; i++) {
+        // Record the algorithm for testing
+        err = fips140_record_algorithm(&algs[i]);
+        if (err) {
+            pr_warn("fips140: Failed to record algorithm %s: %d\n", 
+                    algs[i].cra_name, err);
+            // Don't fail registration just because recording failed
+        }
+    }
+    
+    return 0;
 }
 EXPORT_SYMBOL_GPL(fips140_crypto_register_algs);
 
@@ -350,7 +366,21 @@ EXPORT_SYMBOL_GPL(fips140_crypto_register_templates);
 
 int fips140_crypto_register_instance(struct crypto_template *tmpl, struct crypto_instance *inst)
 {
-    return crypto_register_instance(tmpl, inst);
+    int err;
+    
+    err = crypto_register_instance(tmpl, inst);
+    if (err)
+        return err;
+    
+    // Record the algorithm for testing
+    err = fips140_record_algorithm(&inst->alg);
+    if (err) {
+        pr_warn("fips140: Failed to record algorithm %s: %d\n", 
+                inst->alg.cra_name, err);
+        // Don't fail registration just because recording failed
+    }
+    
+    return 0;
 }
 EXPORT_SYMBOL_GPL(fips140_crypto_register_instance);
 

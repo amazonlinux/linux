@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Cryptographic API.
@@ -212,8 +213,8 @@ static void __exit crc32c_mod_fini(void)
 	crypto_unregister_shashes(algs, num_algs);
 }
 
-subsys_initcall(crc32c_mod_init);
-module_exit(crc32c_mod_fini);
+crypto_subsys_initcall(crc32c_mod_init);
+crypto_module_exit(crc32c_mod_fini);
 
 MODULE_AUTHOR("Clay Haapala <chaapala@cisco.com>");
 MODULE_DESCRIPTION("CRC32c (Castagnoli) calculations wrapper for lib/crc32c");

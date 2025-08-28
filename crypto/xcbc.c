@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (C)2006 USAGI/WIDE Project
@@ -255,8 +256,8 @@ static void __exit crypto_xcbc_module_exit(void)
 	crypto_unregister_template(&crypto_xcbc_tmpl);
 }
 
-subsys_initcall(crypto_xcbc_module_init);
-module_exit(crypto_xcbc_module_exit);
+crypto_subsys_initcall(crypto_xcbc_module_init);
+crypto_module_exit(crypto_xcbc_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("XCBC keyed hash algorithm");

@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Testing module to load key from trusted PKCS#7 message
  *
@@ -91,5 +92,5 @@ static void __exit pkcs7_key_cleanup(void)
 	unregister_key_type(&key_type_pkcs7);
 }
 
-module_init(pkcs7_key_init);
-module_exit(pkcs7_key_cleanup);
+crypto_module_init(pkcs7_key_init);
+crypto_module_exit(pkcs7_key_cleanup);

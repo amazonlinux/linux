@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 /*
  * Cryptographic API.
  *
@@ -1169,8 +1170,8 @@ MODULE_ALIAS_CRYPTO("wp512");
 MODULE_ALIAS_CRYPTO("wp384");
 MODULE_ALIAS_CRYPTO("wp256");
 
-subsys_initcall(wp512_mod_init);
-module_exit(wp512_mod_fini);
+crypto_subsys_initcall(wp512_mod_init);
+crypto_module_exit(wp512_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Whirlpool Message Digest Algorithm");

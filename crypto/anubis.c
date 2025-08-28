@@ -694,8 +694,8 @@ static void __exit anubis_mod_fini(void)
 	crypto_unregister_alg(&anubis_alg);
 }
 
-subsys_initcall(anubis_mod_init);
-module_exit(anubis_mod_fini);
+crypto_subsys_initcall(anubis_mod_init);
+crypto_module_exit(anubis_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Anubis Cryptographic Algorithm");

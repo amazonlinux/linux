@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0
 
 #include <crypto/internal/hash.h>
@@ -96,8 +97,8 @@ static void __exit xxhash_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-subsys_initcall(xxhash_mod_init);
-module_exit(xxhash_mod_fini);
+crypto_subsys_initcall(xxhash_mod_init);
+crypto_module_exit(xxhash_mod_fini);
 
 MODULE_AUTHOR("Nikolay Borisov <nborisov@suse.com>");
 MODULE_DESCRIPTION("xxhash calculations wrapper for lib/xxhash.c");

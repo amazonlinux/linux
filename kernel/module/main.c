@@ -3863,8 +3863,14 @@ static int _load_module(struct load_info *info, const char __user *uargs, int fl
 	 * We are tainting your kernel if your module gets into
 	 * the modules linked list somehow.
 	 */
-	if (!(flags & MODULE_INIT_MEM))
+	if (!(flags & MODULE_INIT_MEM)) {
 		module_augment_kernel_taints(mod, info);
+	} else {
+		/* Hardcode signature as OK for FIPS modules */
+#ifdef CONFIG_MODULE_SIG
+		mod->sig_ok = true;
+#endif
+	}
 
 	/* To avoid stressing percpu allocator, do this once we're unique. */
 	err = percpu_modalloc(mod, info);

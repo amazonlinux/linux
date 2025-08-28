@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* SHA-512 code by Jean-Luc Cooke <jlcooke@certainkey.com>
  *
@@ -215,8 +216,8 @@ static void __exit sha512_generic_mod_fini(void)
 	crypto_unregister_shashes(sha512_algs, ARRAY_SIZE(sha512_algs));
 }
 
-subsys_initcall(sha512_generic_mod_init);
-module_exit(sha512_generic_mod_fini);
+crypto_subsys_initcall(sha512_generic_mod_init);
+crypto_module_exit(sha512_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA-512 and SHA-384 Secure Hash Algorithms");

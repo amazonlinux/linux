@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * algif_aead: User-space interface for AEAD algorithms
@@ -586,8 +587,8 @@ static void __exit algif_aead_exit(void)
 	BUG_ON(err);
 }
 
-module_init(algif_aead_init);
-module_exit(algif_aead_exit);
+crypto_module_init(algif_aead_init);
+crypto_module_exit(algif_aead_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Stephan Mueller <smueller@chronox.de>");
 MODULE_DESCRIPTION("AEAD kernel crypto API user space interface");

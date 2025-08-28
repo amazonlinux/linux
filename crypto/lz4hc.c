@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Cryptographic API.
@@ -91,8 +92,8 @@ static void __exit lz4hc_mod_fini(void)
 	crypto_unregister_scomp(&scomp);
 }
 
-subsys_initcall(lz4hc_mod_init);
-module_exit(lz4hc_mod_fini);
+crypto_subsys_initcall(lz4hc_mod_init);
+crypto_module_exit(lz4hc_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("LZ4HC Compression Algorithm");

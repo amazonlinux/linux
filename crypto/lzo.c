@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Cryptographic API.
@@ -95,8 +96,8 @@ static void __exit lzo_mod_fini(void)
 	crypto_unregister_scomp(&scomp);
 }
 
-subsys_initcall(lzo_mod_init);
-module_exit(lzo_mod_fini);
+crypto_subsys_initcall(lzo_mod_init);
+crypto_module_exit(lzo_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("LZO Compression Algorithm");

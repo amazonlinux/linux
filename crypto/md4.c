@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 /* 
  * Cryptographic API.
  *
@@ -233,8 +234,8 @@ static void __exit md4_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-subsys_initcall(md4_mod_init);
-module_exit(md4_mod_fini);
+crypto_subsys_initcall(md4_mod_init);
+crypto_module_exit(md4_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("MD4 Message Digest Algorithm");

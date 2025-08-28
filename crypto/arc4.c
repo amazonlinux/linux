@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <crypto/algapi.h>
 /*
  * Cryptographic API
  *
@@ -73,8 +74,8 @@ static void __exit arc4_exit(void)
 	crypto_unregister_lskcipher(&arc4_alg);
 }
 
-subsys_initcall(arc4_init);
-module_exit(arc4_exit);
+crypto_subsys_initcall(arc4_init);
+crypto_module_exit(arc4_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("ARC4 Cipher Algorithm");

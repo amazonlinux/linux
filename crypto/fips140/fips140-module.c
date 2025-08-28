@@ -94,15 +94,8 @@ DECLARE_COMPLETION(fips140_tests_done);
 EXPORT_SYMBOL_GPL(fips140_tests_done);
 
 /* Section markers for initcalls collected from other files */
-const initcall_entry_t __fips140_initcalls_start __section(".initcalls._start");
-const initcall_entry_t __fips140_initcalls_end __section(".initcalls._end");
-
-/*
- * We need this little detour to prevent Clang from detecting out of bounds
- * accesses to the above *_start symbols, which exist only to delineate the
- * corresponding sections, and so their sizes are not relevant to us.
- */
-const initcall_entry_t *fips140_initcalls_start = &__fips140_initcalls_start;
+extern initcall_t __fips140_initcalls_start[];
+extern initcall_t __fips140_initcalls_end[];
 
 /* FIPS 140-3 service indicator */
 bool fips140_is_approved_service(const char *name)
@@ -285,7 +278,6 @@ static void fips140_env_init(void)
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
-    const initcall_entry_t *initcall;
 
     /* Initialize FIPS environment first */
     fips140_env_init();
@@ -297,15 +289,22 @@ static int __init fips140_init(void)
 
     /* iterate over all init routines present in this module and call them */
     pr_info("Checking initcalls section from %p to %p\n", 
-            fips140_initcalls_start, &__fips140_initcalls_end);
+            __fips140_initcalls_start, __fips140_initcalls_end);
     
-    for (initcall = fips140_initcalls_start + 1;
-         initcall < &__fips140_initcalls_end;
-         initcall++) {
-        initcall_t init = initcall_from_entry((initcall_entry_t *)initcall);
+    for (initcall_t *initcall_ptr = __fips140_initcalls_start;
+         initcall_ptr < __fips140_initcalls_end;
+         initcall_ptr++) {
+        initcall_t init = *initcall_ptr;
+        
+        /* Validate the function pointer before calling it */
+        if (!init || (unsigned long)init == 0xffffffffffffffff) {
+            pr_err("Invalid initcall function pointer: %p at offset %ld\n", 
+                   init, (initcall_ptr - __fips140_initcalls_start) * sizeof(*initcall_ptr));
+            break;
+        }
+        
         pr_info("fips140 init calls: %ps \n", init);
         
-     
         int err = init();
         if (err && err != -ENODEV && err != -EEXIST) {
             pr_err("initcall %ps() failed: %d\n", init, err);
@@ -317,8 +316,8 @@ static int __init fips140_init(void)
         
     }
 
-    pr_info("=== NEWLY REGISTERED FIPS 140 ALGORITHMS ===\n");
-    fips140_print_registered_algorithms();
+    // pr_info("=== NEWLY REGISTERED FIPS 140 ALGORITHMS ===\n");
+    // fips140_print_registered_algorithms();
 
     pr_info("=== AFTER RE-REGISTRATION (initcalls completed) ===\n");
     print_existing_crypto_algos();

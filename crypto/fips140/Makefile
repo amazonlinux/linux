@@ -15,7 +15,7 @@ crypto-fips-objs := aegis128-core.o authenc.o authencesn.o \
 		    cbc.o ccm.o cipher.o cmac.o \
 		    crypto_null.o ctr.o \
 		    cts.o \
-		    ecb.o ecc.o echainiv.o essiv.o fips.o gcm.o \
+		    ecb.o ecc.o echainiv.o essiv.o gcm.o \
 		    geniv.o ghash-generic.o hash_info.o hctr2.o hkdf.o hmac.o \
 		    jitterentropy.o jitterentropy-kcapi.o kdf_sp800108.o \
 		    lrw.o md4.o md5.o \
@@ -187,6 +187,9 @@ $(obj)/lib-lz4%-fips.o: KBUILD_CFLAGS += $(FIPS140_CFLAGS)
 $(obj)/lib-lz4%-fips.o: $(srctree)/lib/lz4/lz4%.c FORCE
 	$(call if_changed_rule,cc_o_c)
 
+# Use custom linker script to collect initcalls
+LDFLAGS_fips140.o += -T $(src)/fips140.lds
+
 fips140-objs := \
 	fips140-alg-registration.o \
 	fips140-module.o \
@@ -196,7 +199,7 @@ fips140-objs := \
 obj-m += fips140.o
 
 # Apply FIPS140_CFLAGS to the main module files (but not fips140-module.o)
-CFLAGS_fips140-alg-registration.o += $(FIPS140_CFLAGS)
+# Note: fips140-alg-registration.o should NOT get FIPS140_CFLAGS because it implements the wrapper functions
 CFLAGS_fips140-selftests.o += $(FIPS140_CFLAGS)
 
 # Special compilation flags for jitterentropy

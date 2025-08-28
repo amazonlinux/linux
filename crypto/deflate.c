@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Cryptographic API.
@@ -248,8 +249,8 @@ static void __exit deflate_mod_fini(void)
 	crypto_unregister_scomp(&scomp);
 }
 
-subsys_initcall(deflate_mod_init);
-module_exit(deflate_mod_fini);
+crypto_subsys_initcall(deflate_mod_init);
+crypto_module_exit(deflate_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Deflate Compression Algorithm for IPCOMP");

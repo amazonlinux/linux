@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Crypto API wrapper for the generic SHA256 code from lib/crypto/sha256.c
@@ -98,8 +99,8 @@ static void __exit sha256_generic_mod_fini(void)
 	crypto_unregister_shashes(sha256_algs, ARRAY_SIZE(sha256_algs));
 }
 
-subsys_initcall(sha256_generic_mod_init);
-module_exit(sha256_generic_mod_fini);
+crypto_subsys_initcall(sha256_generic_mod_init);
+crypto_module_exit(sha256_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA-224 and SHA-256 Secure Hash Algorithm");

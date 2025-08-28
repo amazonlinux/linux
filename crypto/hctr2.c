@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0
 /*
  * HCTR2 length-preserving encryption mode
@@ -570,8 +571,8 @@ static void __exit hctr2_module_exit(void)
 					   ARRAY_SIZE(hctr2_tmpls));
 }
 
-subsys_initcall(hctr2_module_init);
-module_exit(hctr2_module_exit);
+crypto_subsys_initcall(hctr2_module_init);
+crypto_module_exit(hctr2_module_exit);
 
 MODULE_DESCRIPTION("HCTR2 length-preserving encryption mode");
 MODULE_LICENSE("GPL v2");

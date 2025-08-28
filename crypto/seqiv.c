@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * seqiv: Sequence Number IV Generator
@@ -179,8 +180,8 @@ static void __exit seqiv_module_exit(void)
 	crypto_unregister_template(&seqiv_tmpl);
 }
 
-subsys_initcall(seqiv_module_init);
-module_exit(seqiv_module_exit);
+crypto_subsys_initcall(seqiv_module_init);
+crypto_module_exit(seqiv_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Sequence Number IV Generator");

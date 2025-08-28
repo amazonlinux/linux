@@ -871,8 +871,8 @@ static void __exit khazad_mod_fini(void)
 }
 
 
-subsys_initcall(khazad_mod_init);
-module_exit(khazad_mod_fini);
+crypto_subsys_initcall(khazad_mod_init);
+crypto_module_exit(khazad_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Khazad Cryptographic Algorithm");

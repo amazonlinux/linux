@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Self-testing for signature checking.
  *
@@ -65,7 +66,7 @@ static int __init fips_signature_selftest_init(void)
 	return 0;
 }
 
-late_initcall(fips_signature_selftest_init);
+crypto_late_initcall(fips_signature_selftest_init);
 
 MODULE_DESCRIPTION("X.509 self tests");
 MODULE_AUTHOR("Red Hat, Inc.");

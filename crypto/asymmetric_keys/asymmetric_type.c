@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* Asymmetric public-key cryptography key type
  *
@@ -671,5 +672,5 @@ static void __exit asymmetric_key_cleanup(void)
 	unregister_key_type(&key_type_asymmetric);
 }
 
-module_init(asymmetric_key_init);
-module_exit(asymmetric_key_cleanup);
+crypto_module_init(asymmetric_key_init);
+crypto_module_exit(asymmetric_key_cleanup);

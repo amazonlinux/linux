@@ -280,8 +280,8 @@ static void __exit poly1305_simd_mod_exit(void)
 		crypto_unregister_shash(&alg);
 }
 
-module_init(poly1305_simd_mod_init);
-module_exit(poly1305_simd_mod_exit);
+crypto_module_init(poly1305_simd_mod_init);
+crypto_module_exit(poly1305_simd_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jason A. Donenfeld <Jason@zx2c4.com>");

@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Cryptographic API.
@@ -304,8 +305,8 @@ static void __exit aria_fini(void)
 	crypto_unregister_alg(&aria_alg);
 }
 
-subsys_initcall(aria_init);
-module_exit(aria_fini);
+crypto_subsys_initcall(aria_init);
+crypto_module_exit(aria_fini);
 
 MODULE_DESCRIPTION("ARIA Cipher Algorithm");
 MODULE_LICENSE("GPL");

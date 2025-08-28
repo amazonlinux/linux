@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Crypto user configuration API.
@@ -498,8 +499,8 @@ static void __exit crypto_user_exit(void)
 	unregister_pernet_subsys(&crypto_netlink_net_ops);
 }
 
-module_init(crypto_user_init);
-module_exit(crypto_user_exit);
+crypto_module_init(crypto_user_init);
+crypto_module_exit(crypto_user_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Steffen Klassert <steffen.klassert@secunet.com>");
 MODULE_DESCRIPTION("Crypto userspace configuration API");

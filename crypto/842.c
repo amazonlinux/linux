@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Cryptographic API for the 842 software compression algorithm.
@@ -74,13 +75,13 @@ static int __init crypto842_mod_init(void)
 {
 	return crypto_register_scomp(&scomp);
 }
-subsys_initcall(crypto842_mod_init);
+crypto_subsys_initcall(crypto842_mod_init);
 
 static void __exit crypto842_mod_exit(void)
 {
 	crypto_unregister_scomp(&scomp);
 }
-module_exit(crypto842_mod_exit);
+crypto_module_exit(crypto842_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("842 Software Compression Algorithm");

@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Cryptographic API.
@@ -196,8 +197,8 @@ static void __exit zstd_mod_fini(void)
 	crypto_unregister_scomp(&scomp);
 }
 
-subsys_initcall(zstd_mod_init);
-module_exit(zstd_mod_fini);
+crypto_subsys_initcall(zstd_mod_init);
+crypto_module_exit(zstd_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Zstd Compression Algorithm");

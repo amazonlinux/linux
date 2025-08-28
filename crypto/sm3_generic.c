@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * SM3 secure hash, as specified by OSCCA GM/T 0004-2012 SM3 and
@@ -77,8 +78,8 @@ static void __exit sm3_generic_mod_fini(void)
 	crypto_unregister_shash(&sm3_alg);
 }
 
-subsys_initcall(sm3_generic_mod_init);
-module_exit(sm3_generic_mod_fini);
+crypto_subsys_initcall(sm3_generic_mod_init);
+crypto_module_exit(sm3_generic_mod_fini);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("SM3 Secure Hash Algorithm");

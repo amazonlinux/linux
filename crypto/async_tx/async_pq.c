@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright(c) 2007 Yuri Tikhonov <yur@emcraft.com>
@@ -456,8 +457,8 @@ static void __exit async_pq_exit(void)
 	__free_page(pq_scribble_page);
 }
 
-module_init(async_pq_init);
-module_exit(async_pq_exit);
+crypto_module_init(async_pq_init);
+crypto_module_exit(async_pq_exit);
 
 MODULE_DESCRIPTION("asynchronous raid6 syndrome generation/validation");
 MODULE_LICENSE("GPL");

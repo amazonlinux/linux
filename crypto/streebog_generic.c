@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0+ OR BSD-2-Clause
 /*
  * Streebog hash function as specified by GOST R 34.11-2012 and
@@ -1082,8 +1083,8 @@ static void __exit streebog_mod_fini(void)
 	crypto_unregister_shashes(algs, ARRAY_SIZE(algs));
 }
 
-subsys_initcall(streebog_mod_init);
-module_exit(streebog_mod_fini);
+crypto_subsys_initcall(streebog_mod_init);
+crypto_module_exit(streebog_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Vitaly Chikunov <vt@altlinux.org>");

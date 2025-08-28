@@ -1064,8 +1064,8 @@ static void __exit camellia_fini(void)
 	crypto_unregister_alg(&camellia_alg);
 }
 
-subsys_initcall(camellia_init);
-module_exit(camellia_fini);
+crypto_subsys_initcall(camellia_init);
+crypto_module_exit(camellia_fini);
 
 MODULE_DESCRIPTION("Camellia Cipher Algorithm");
 MODULE_LICENSE("GPL");

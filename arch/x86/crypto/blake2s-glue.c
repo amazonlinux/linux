@@ -4,6 +4,7 @@
  */
 
 #include <crypto/internal/blake2s.h>
+#include <crypto/algapi.h>
 
 #include <linux/types.h>
 #include <linux/jump_label.h>
@@ -71,4 +72,4 @@ static int __init blake2s_mod_init(void)
 	return 0;
 }
 
-subsys_initcall(blake2s_mod_init);
+crypto_subsys_initcall(blake2s_mod_init);

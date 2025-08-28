@@ -123,8 +123,8 @@ static void __exit serpent_sse2_exit(void)
 				  serpent_simd_algs);
 }
 
-module_init(serpent_sse2_init);
-module_exit(serpent_sse2_exit);
+crypto_module_init(serpent_sse2_init);
+crypto_module_exit(serpent_sse2_exit);
 
 MODULE_DESCRIPTION("Serpent Cipher Algorithm, SSE2 optimized");
 MODULE_LICENSE("GPL");

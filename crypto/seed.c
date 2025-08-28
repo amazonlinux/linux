@@ -460,8 +460,8 @@ static void __exit seed_fini(void)
 	crypto_unregister_alg(&seed_alg);
 }
 
-subsys_initcall(seed_init);
-module_exit(seed_fini);
+crypto_subsys_initcall(seed_init);
+crypto_module_exit(seed_fini);
 
 MODULE_DESCRIPTION("SEED Cipher Algorithm");
 MODULE_LICENSE("GPL");

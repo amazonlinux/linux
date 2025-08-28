@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include <crypto/algapi.h>
 /*
  * The AEGIS-128 Authenticated-Encryption Algorithm
  *   Glue for AES-NI + SSE4.1 implementation
@@ -264,8 +265,8 @@ static void __exit crypto_aegis128_aesni_module_exit(void)
 	simd_unregister_aeads(&crypto_aegis128_aesni_alg, 1, &simd_alg);
 }
 
-module_init(crypto_aegis128_aesni_module_init);
-module_exit(crypto_aegis128_aesni_module_exit);
+crypto_module_init(crypto_aegis128_aesni_module_init);
+crypto_module_exit(crypto_aegis128_aesni_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ondrej Mosnacek <omosnacek@gmail.com>");

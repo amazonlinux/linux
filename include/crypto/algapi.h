@@ -282,20 +282,20 @@ extern struct module *fips140_module_ptr;
 
 #if defined(CONFIG_CRYPTO_FIPS140_MOD) && defined(BUILD_FIPS140_KO)
 #define crypto_module_init(fn) \
-	static unsigned long __used __section(".initcall6.init") \
-		_fips_initcall_##fn = (unsigned long) &fn;
+	static initcall_t __used __section(".fips_initcall6") \
+		__fips_##fn = fn;
 #define crypto_module_exit(fn) /* no-op */
 #define crypto_arch_initcall(fn) \
-	static unsigned long __used __section(".initcall3.init") \
-		_fips_initcall_##fn = (unsigned long) &fn;
+	static initcall_t __used __section(".fips_initcall3") \
+		__fips_##fn = fn;
 #define crypto_arch_exitcall(fn) /* no-op */
 #define crypto_subsys_initcall(fn) \
-	static unsigned long __used __section(".initcall4.init") \
-		_fips_initcall_##fn = (unsigned long) &fn;
+	static initcall_t __used __section(".fips_initcall4") \
+		__fips_##fn = fn;
 #define crypto_subsys_exitcall(fn) /* no-op */
 #define crypto_late_initcall(fn) \
-	static unsigned long __used __section(".initcall7.init") \
-		_fips_initcall_##fn = (unsigned long) &fn;
+	static initcall_t __used __section(".fips_initcall7") \
+		__fips_##fn = fn;
 #define crypto_late_exitcall(fn) /* no-op */
 #else
 #define crypto_module_init(fn) module_init(fn)

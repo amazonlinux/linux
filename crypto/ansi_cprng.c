@@ -1,3 +1,4 @@
+#include <crypto/algapi.h>
 // SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * PRNG: Pseudo Random Number Generator
@@ -467,8 +468,8 @@ MODULE_DESCRIPTION("Software Pseudo Random Number Generator");
 MODULE_AUTHOR("Neil Horman <nhorman@tuxdriver.com>");
 module_param(dbg, int, 0);
 MODULE_PARM_DESC(dbg, "Boolean to enable debugging (0/1 == off/on)");
-subsys_initcall(prng_mod_init);
-module_exit(prng_mod_fini);
+crypto_subsys_initcall(prng_mod_init);
+crypto_module_exit(prng_mod_fini);
 MODULE_ALIAS_CRYPTO("stdrng");
 MODULE_ALIAS_CRYPTO("ansi_cprng");
 MODULE_IMPORT_NS("CRYPTO_INTERNAL");
