@@ -153,8 +153,8 @@ void dst_dev_put(struct dst_entry *dst)
 		dst->ops->ifdown(dst, dev, true);
 	WRITE_ONCE(dst->input, dst_discard);
 	WRITE_ONCE(dst->output, dst_discard_out);
-	WRITE_ONCE(dst->dev, blackhole_netdev);
-	dev_hold(dst->dev);
+	rcu_assign_pointer(dst->dev_rcu, blackhole_netdev);
+	dev_hold(dst->dev_rcu);
 	dev_put(dev);
 }
 EXPORT_SYMBOL(dst_dev_put);
