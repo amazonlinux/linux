@@ -173,7 +173,7 @@ static int crypto_del_rng(struct crypto_rng **rngp, int *refcntp,
 	err = 0;
 
 out:
-	mutex_unlock(&crypto_default_rng_lock);
+	mutex_unlock(lock);
 
 	return err;
 }
