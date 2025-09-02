@@ -597,6 +597,63 @@ static void damon_test_set_filters_default_reject(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, scheme.ops_filters_default_reject, true);
 }
 
+static void damon_test_commit_ctx(struct kunit *test)
+{
+	struct damon_ctx *dst, *src;
+
+	dst = damon_new_ctx();
+	if (!dst) {
+		kunit_skip(test, "dst alloc fail\n");
+		return;
+	}
+	dst->attrs = (struct damon_attrs){
+		.sample_interval = 5000,
+		.aggr_interval = 100000,
+		.ops_update_interval = 60000000,
+		.intervals_goal = {
+			.access_bp = 400,
+			.aggrs = 3,
+			.min_sample_us = 5000,
+			.max_sample_us = 10000000,
+		},
+		.min_nr_regions = 10,
+		.max_nr_regions = 1000,
+	};
+	dst->addr_unit = 1;
+	dst->min_sz_region = 4096;
+
+	src = damon_new_ctx();
+	if (!src) {
+		kunit_skip(test, "src alloc fail\n");
+		damon_destroy_ctx(dst);
+		return;
+	}
+	src->attrs = (struct damon_attrs){
+		.sample_interval = 6000,
+		.aggr_interval = 900000,
+		.ops_update_interval = 180000000,
+		.intervals_goal = {
+			.access_bp = 500,
+			.aggrs = 4,
+			.min_sample_us = 6000,
+			.max_sample_us = 11000000,
+		},
+		.min_nr_regions = 30,
+		.max_nr_regions = 3000,
+	};
+	src->addr_unit = 1024;
+	src->min_sz_region = 4;
+
+	damon_commit_ctx(dst, src);
+
+	dst->attrs.aggr_samples = 0;
+	src->attrs.aggr_samples = 0;
+	KUNIT_EXPECT_EQ(test, memcmp(&dst->attrs, &src->attrs,
+				sizeof(src->attrs)), 0);
+	damon_destroy_ctx(src);
+	damon_destroy_ctx(dst);
+}
+
 static struct kunit_case damon_test_cases[] = {
 	KUNIT_CASE(damon_test_target),
 	KUNIT_CASE(damon_test_regions),
@@ -616,6 +673,7 @@ static struct kunit_case damon_test_cases[] = {
 	KUNIT_CASE(damos_test_filter_out),
 	KUNIT_CASE(damon_test_feed_loop_next_input),
 	KUNIT_CASE(damon_test_set_filters_default_reject),
+	KUNIT_CASE(damon_test_commit_ctx),
 	{},
 };
 
