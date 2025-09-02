@@ -661,6 +661,7 @@ static void damon_test_commit_ctx(struct kunit *test)
 	src = damon_test_commit_ctx_new_src_ctx();
 	if (!src) {
 		kunit_skip(test, "src alloc fail\n");
+		damon_destroy_ctx(dst);
 		return;
 	}
 
