@@ -597,9 +597,21 @@ static void damon_test_set_filters_default_reject(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, scheme.ops_filters_default_reject, true);
 }
 
+static int damon_test_commit_ctx_add_src_targets(struct damon_ctx *ctx)
+{
+	struct damon_target *target;
+
+	target = damon_new_target();
+	if (!target)
+		return -ENOMEM;
+	damon_add_target(ctx, target);
+	return 0;
+}
+
 static struct damon_ctx *damon_test_commit_ctx_new_src_ctx(void)
 {
 	struct damon_ctx *src;
+	int err;
 
 	src = damon_new_ctx();
 	if (!src)
@@ -619,13 +631,30 @@ static struct damon_ctx *damon_test_commit_ctx_new_src_ctx(void)
 	};
 	src->addr_unit = 1024;
 	src->min_sz_region = 4;
+	err = damon_test_commit_ctx_add_src_targets(src);
+	if (err) {
+		damon_destroy_ctx(src);
+		return NULL;
+	}
 
 	return src;
+}
+
+static int damon_test_commit_ctx_add_dst_targets(struct damon_ctx *ctx)
+{
+	struct damon_target *target;
+
+	target = damon_new_target();
+	if (!target)
+		return -ENOMEM;
+	damon_add_target(ctx, target);
+	return 0;
 }
 
 static struct damon_ctx *damon_test_commit_ctx_new_dst_ctx(void)
 {
 	struct damon_ctx *dst;
+	int err;
 
 	dst = damon_new_ctx();
 	if (!dst)
@@ -645,6 +674,11 @@ static struct damon_ctx *damon_test_commit_ctx_new_dst_ctx(void)
 	};
 	dst->addr_unit = 1;
 	dst->min_sz_region = 4096;
+	err = damon_test_commit_ctx_add_dst_targets(dst);
+	if (err) {
+		damon_destroy_ctx(dst);
+		return NULL;
+	}
 
 	return dst;
 }
