@@ -597,15 +597,39 @@ static void damon_test_set_filters_default_reject(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, scheme.ops_filters_default_reject, true);
 }
 
-static void damon_test_commit_ctx(struct kunit *test)
+static struct damon_ctx *damon_test_commit_ctx_new_src_ctx(void)
 {
-	struct damon_ctx *dst, *src;
+	struct damon_ctx *src;
+
+	src = damon_new_ctx();
+	if (!src)
+		return src;
+	src->attrs = (struct damon_attrs){
+		.sample_interval = 6000,
+		.aggr_interval = 900000,
+		.ops_update_interval = 180000000,
+		.intervals_goal = {
+			.access_bp = 500,
+			.aggrs = 4,
+			.min_sample_us = 6000,
+			.max_sample_us = 11000000,
+		},
+		.min_nr_regions = 30,
+		.max_nr_regions = 3000,
+	};
+	src->addr_unit = 1024;
+	src->min_sz_region = 4;
+
+	return src;
+}
+
+static struct damon_ctx *damon_test_commit_ctx_new_dst_ctx(void)
+{
+	struct damon_ctx *dst;
 
 	dst = damon_new_ctx();
-	if (!dst) {
-		kunit_skip(test, "dst alloc fail\n");
-		return;
-	}
+	if (!dst)
+		return dst;
 	dst->attrs = (struct damon_attrs){
 		.sample_interval = 5000,
 		.aggr_interval = 100000,
@@ -622,27 +646,23 @@ static void damon_test_commit_ctx(struct kunit *test)
 	dst->addr_unit = 1;
 	dst->min_sz_region = 4096;
 
-	src = damon_new_ctx();
-	if (!src) {
-		kunit_skip(test, "src alloc fail\n");
-		damon_destroy_ctx(dst);
+	return dst;
+}
+
+static void damon_test_commit_ctx(struct kunit *test)
+{
+	struct damon_ctx *dst, *src;
+
+	dst = damon_test_commit_ctx_new_dst_ctx();
+	if (!dst) {
+		kunit_skip(test, "dst alloc fail\n");
 		return;
 	}
-	src->attrs = (struct damon_attrs){
-		.sample_interval = 6000,
-		.aggr_interval = 900000,
-		.ops_update_interval = 180000000,
-		.intervals_goal = {
-			.access_bp = 500,
-			.aggrs = 4,
-			.min_sample_us = 6000,
-			.max_sample_us = 11000000,
-		},
-		.min_nr_regions = 30,
-		.max_nr_regions = 3000,
-	};
-	src->addr_unit = 1024;
-	src->min_sz_region = 4;
+	src = damon_test_commit_ctx_new_src_ctx();
+	if (!src) {
+		kunit_skip(test, "src alloc fail\n");
+		return;
+	}
 
 	damon_commit_ctx(dst, src);
 
