@@ -745,6 +745,23 @@ static void damon_test_commit_ctx_ensure_target_committed(struct kunit *test,
 	}
 }
 
+static int damon_test_nr_schemes(struct damon_ctx *dst)
+{
+	struct damos *scheme;
+	int i = 0;
+
+	damon_for_each_scheme(scheme, dst)
+		i++;
+	return i;
+}
+
+static void damon_test_commit_ctx_ensure_schemes_committed(struct kunit *test,
+		struct damon_ctx *dst, struct damon_ctx *src)
+{
+	KUNIT_EXPECT_EQ(test, damon_test_nr_schemes(dst),
+			damon_test_nr_schemes(src));
+}
+
 static void damon_test_commit_ctx_ensure_committed(struct kunit *test,
 		struct damon_ctx *dst, struct damon_ctx *src)
 {
@@ -754,6 +771,7 @@ static void damon_test_commit_ctx_ensure_committed(struct kunit *test,
 	KUNIT_EXPECT_EQ(test, memcmp(&dst->attrs, &src->attrs,
 				sizeof(src->attrs)), 0);
 	damon_test_commit_ctx_ensure_target_committed(test, dst, src);
+	damon_test_commit_ctx_ensure_schemes_committed(test, dst, src);
 }
 
 static void damon_test_commit_ctx(struct kunit *test)
