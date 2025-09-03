@@ -1921,16 +1921,7 @@ struct cl_io {
 	/**
 	 * Bypass quota check
 	 */
-	unsigned	     ci_noquota:1,
-	/**
-	 * The filesystem must exclusively acquire invalidate_lock before
-	 * invalidating page cache in truncate / hole punch / DLM extent
-	 * lock blocking AST path (and thus calling into ->invalidatepage)
-	 * to block races between page cache invalidation and page cache
-	 * filling functions (fault, read, ...)
-	 */
-			     ci_invalidate_page_cache:1;
-
+	unsigned	     ci_noquota:1;
 	/**
 	 * How many times the read has retried before this one.
 	 * Set by the top level and consumed by the LOV.
