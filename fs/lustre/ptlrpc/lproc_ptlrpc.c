@@ -1339,16 +1339,22 @@ ssize_t ping_show(struct kobject *kobj, struct attribute *attr,
 					      obd_kset.kobj);
 	struct obd_import *imp;
 	struct ptlrpc_request *req;
-	int rc;
+	int rc, imp_deactive;
 
 	ENTRY;
-	with_imp_locked(obd, imp, rc)
+	with_imp_locked(obd, imp, rc) {
 		req = ptlrpc_prep_ping(imp);
+		imp_deactive = imp->imp_deactive;
+	}
 
 	if (rc)
 		RETURN(rc);
-	if (!req)
+	if (!req) {
+		if (imp_deactive) {
+			RETURN(-ENOTCONN);
+		}
 		RETURN(-ENOMEM);
+	}
 
 	req->rq_send_state = LUSTRE_IMP_FULL;
 
