@@ -1119,8 +1119,8 @@ static void __exit crypto_gcm_module_exit(void)
 				    ARRAY_SIZE(crypto_gcm_tmpls));
 }
 
-module_init(crypto_gcm_module_init);
-module_exit(crypto_gcm_module_exit);
+crypto_module_init(crypto_gcm_module_init);
+crypto_module_exit(crypto_gcm_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Galois/Counter Mode");
