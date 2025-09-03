@@ -683,6 +683,21 @@ static struct damon_ctx *damon_test_commit_ctx_new_dst_ctx(void)
 	return dst;
 }
 
+static void damon_test_commit_ctx_ensure_regions_committed(
+		struct damon_target *dst, struct damon_target *src,
+		struct kunit *test)
+{
+	struct damon_region *dst_region, *src_region;
+	int i;
+
+	for (i = 0; i < dst->nr_regions; i++) {
+		dst_region = __nth_region_of(dst, i);
+		src_region = __nth_region_of(src, i);
+		KUNIT_EXPECT_EQ(test, memcmp(dst_region, src_region,
+					sizeof(*dst_region)), 0);
+	}
+}
+
 static int damon_test_nr_targets(struct damon_ctx *ctx)
 {
 	struct damon_target *target;
@@ -725,6 +740,8 @@ static void damon_test_commit_ctx_ensure_target_committed(struct kunit *test,
 		dst_target_cp.list = src_target_cp.list;
 		KUNIT_EXPECT_EQ(test, memcmp(&dst_target_cp, &src_target_cp,
 					sizeof(dst_target_cp)), 0);
+		damon_test_commit_ctx_ensure_regions_committed(dst_target,
+				src_target, test);
 	}
 }
 
