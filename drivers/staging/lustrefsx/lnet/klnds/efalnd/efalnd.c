@@ -13,16 +13,16 @@
  * Author: Yehuda Yitschak <yehuday@amazon.com>
  */
 
-#include <asm/page.h>
-#include <linux/ethtool.h>
-#include <linux/inetdevice.h>
-#include <linux/smp.h>
-#include <linux/dmapool.h>
 #include <linux/delay.h>
 #include <linux/device.h>
+#include <linux/dmapool.h>
+#include <linux/ethtool.h>
 #include <linux/inet.h>
+#include <linux/inetdevice.h>
 #include <linux/pci.h>
 #include <linux/random.h>
+#include <linux/smp.h>
+
 #include <rdma/ib_verbs.h>
 
 #include "kcompat.h"
@@ -201,6 +201,24 @@ kefalnd_get_dstnid_from_msg(struct kefa_msg *msg, struct lnet_nid *dstnid)
 		lnet_nid4_to_nid(msg->msg_v1.dstnid, dstnid);
 }
 
+static inline struct kefa_getr_ack_msg *
+kefalnd_get_getr_ack_from_msg(struct kefa_msg *msg)
+{
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return &msg->msg_v2.u.getr_ack;
+
+	return &msg->msg_v1.u.getr_ack;
+}
+
+static inline struct kefa_completion_msg *
+kefalnd_get_completion_from_msg(struct kefa_msg *msg)
+{
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		return &msg->msg_v2.u.completion;
+
+	return &msg->msg_v1.u.completion;
+}
+
 static int
 kefalnd_obj_pool_init(struct kefa_ni *efa_ni, struct kefa_obj_pool *pool, u32 pool_size,
 		      int cpt, size_t obj_size)
@@ -336,7 +354,7 @@ kefalnd_get_tx_by_idx(struct kefa_ni *efa_ni, u64 tx_idx)
 	return (struct kefa_tx *)tx_pool->obj_arr + tx_idx;
 }
 
-static void
+static inline void
 kefalnd_init_tx_protocol_sge(struct kefa_tx *tx, u32 lkey, u64 addr, unsigned int len)
 {
 	struct ib_sge *sge = &tx->sge;
@@ -348,16 +366,53 @@ kefalnd_init_tx_protocol_sge(struct kefa_tx *tx, u32 lkey, u64 addr, unsigned in
 	};
 }
 
-void
-kefalnd_init_tx_protocol_msg(struct kefa_tx *tx, int type, int body_nob)
+static int
+kefalnd_init_msg(struct kefa_msg *msg, struct kefa_conn *conn, u8 proto_ver, int type,
+		 int body_nob)
 {
-	int nob = offsetof(struct kefa_msg, msg_v1.u) + body_nob;
+	struct kefa_hdr *hdr = &msg->hdr;
+	struct kefa_msg_v1 *msg_v1;
+	struct kefa_msg_v2 *msg_v2;
+	int nob;
+
+	hdr->magic = EFALND_MSG_MAGIC;
+	hdr->proto_ver = proto_ver;
+	hdr->type = type;
+
+	if (proto_ver == EFALND_PROTO_VER_1) {
+		msg_v1 = &msg->msg_v1;
+		nob = offsetof(struct kefa_msg, msg_v1.u) + body_nob;
+		LASSERT(nob <= EFALND_MSG_SIZE);
+		hdr->nob = nob;
+
+		msg_v1->srcnid = lnet_nid_to_nid4(&conn->local_nid);
+		msg_v1->dstnid = lnet_nid_to_nid4(&conn->remote_nid);
+		msg_v1->credits = 0;
+		msg_v1->dst_conn_id = EFALND_INV_CONN;
+	} else {
+		msg_v2 = &msg->msg_v2;
+		nob = offsetof(struct kefa_msg, msg_v2.u) + body_nob;
+		LASSERT(nob <= EFALND_MSG_SIZE);
+		hdr->nob = nob;
+
+		msg_v2->srcnid = conn->local_nid;
+		msg_v2->dstnid = conn->remote_nid;
+		msg_v2->credits = 0;
+		msg_v2->dst_conn_id = EFALND_INV_CONN;
+	}
+
+	return nob;
+}
+
+void
+kefalnd_init_tx_protocol_msg(struct kefa_tx *tx, struct kefa_conn *conn, int type, int body_nob,
+			     u8 proto_ver)
+{
 	struct ib_srd_rdma_wr *wrq;
+	int total_nob;
 
-	LASSERT(nob <= EFALND_MSG_SIZE);
-
+	total_nob = kefalnd_init_msg(tx->msg, conn, proto_ver, type, body_nob);
 	tx->type = type;
-	kefalnd_init_msg(tx->msg, type, body_nob);
 
 	wrq = &tx->wrq;
 	*wrq = (struct ib_srd_rdma_wr) {
@@ -371,7 +426,7 @@ kefalnd_init_tx_protocol_msg(struct kefa_tx *tx, int type, int body_nob)
 		},
 	};
 
-	kefalnd_init_tx_protocol_sge(tx, tx->lkey, tx->msgaddr, nob);
+	kefalnd_init_tx_protocol_sge(tx, tx->lkey, tx->msgaddr, total_nob);
 }
 
 static struct kefa_remote_qp *
@@ -418,7 +473,7 @@ __must_hold(&conn->lock)
 		} else {
 			wr = &tx->wrq.wr.wr;
 			kefalnd_set_tx_remote_data(conn, tx);
-			kefalnd_msg_fill_hdr(conn, tx->msg, conn->proto_ver);
+			kefalnd_msg_set_epoch(tx->msg, conn->remote_epoch);
 		}
 
 		atomic64_set(&tx->send_time, now);
@@ -548,10 +603,10 @@ kefalnd_unmap_tx(struct kefa_tx *tx)
 }
 
 static int
-kefalnd_map_tx(struct kefa_ni *efa_ni, struct kefa_tx *tx, struct kefa_rdma_desc *rd,
-	       bool remote_access_fmr)
+kefalnd_map_tx(struct kefa_ni *efa_ni, struct kefa_tx *tx, bool remote_access_fmr)
 {
 	struct kefa_dev *efa_dev = efa_ni->efa_dev;
+	struct kefa_rdma_desc *rd = &tx->rdma_desc;
 	int i, sg_nsegs, fmr_nsegs;
 	struct ib_send_wr *inv_wr;
 	struct ib_reg_wr *reg_wr;
@@ -662,24 +717,39 @@ kefalnd_bio_vec_to_sgl(struct kefa_ni *efa_ni, struct scatterlist *sg, struct bi
 }
 
 static int
-kefalnd_map_msg_iov(struct kefa_ni *efa_ni, struct kefa_tx *tx, struct kefa_rdma_desc *rd,
-		    int nkiov, struct bio_vec *kiov, int offset, int nob, bool remote_access_fmr)
+kefalnd_map_msg_iov(struct kefa_ni *efa_ni, struct kefa_tx *tx, int nkiov, struct bio_vec *kiov,
+		    int offset, int nob, bool remote_access_fmr)
 {
-	tx->nfrags = kefalnd_bio_vec_to_sgl(efa_ni, tx->frags, kiov, nkiov, offset, nob);
-	if (tx->nfrags < 0)
-		return tx->nfrags;
+	int rc;
+
+	rc = kefalnd_bio_vec_to_sgl(efa_ni, tx->frags, kiov, nkiov, offset, nob);
+	if (rc < 0)
+		goto out;
+
+	tx->nfrags = rc;
 
 	/* Map the SGs to our device */
-	return kefalnd_map_tx(efa_ni, tx, rd, remote_access_fmr);
+	rc = kefalnd_map_tx(efa_ni, tx, remote_access_fmr);
+
+out:
+	if (rc != 0)
+		tx->hstatus = LNET_MSG_STATUS_LOCAL_ERROR;
+
+	return rc;
 }
 
 static void
-kefalnd_init_comp_message(struct kefa_tx *tx, int type, int status, u64 cookie)
+kefalnd_init_comp_message(struct kefa_conn *conn, struct kefa_tx *tx, int type, int status,
+			  u64 cookie)
 {
-	kefalnd_init_tx_protocol_msg(tx, type, sizeof(struct kefa_completion_msg));
+	struct kefa_completion_msg *completion;
 
-	tx->msg->msg_v1.u.completion.cookie = cookie;
-	tx->msg->msg_v1.u.completion.status = kefalnd_errno_to_efa_status(status);
+	kefalnd_init_tx_protocol_msg(tx, conn, type, sizeof(struct kefa_completion_msg),
+				     conn->proto_ver);
+
+	completion = kefalnd_get_completion_from_msg(tx->msg);
+	completion->cookie = cookie;
+	completion->status = kefalnd_errno_to_efa_status(status);
 }
 
 static inline void
@@ -699,7 +769,7 @@ kefalnd_send_sync_msg(struct kefa_tx *tx)
 	       libcfs_nidstr(&tx->conn->remote_nid));
 
 	tx->send_sync = false;
-	kefalnd_init_comp_message(tx, tx->type, tx->status, tx->cookie);
+	kefalnd_init_comp_message(tx->conn, tx, tx->type, tx->status, tx->cookie);
 	kefalnd_launch_tx(tx->conn, tx);
 }
 
@@ -808,9 +878,121 @@ kefalnd_send_completion(struct kefa_ni *efa_ni, struct kefa_conn *conn,
 		return;
 	}
 
-	kefalnd_init_comp_message(tx, type, status, cookie);
+	kefalnd_init_comp_message(conn, tx, type, status, cookie);
 
 	kefalnd_launch_tx(conn, tx);
+}
+
+static inline void
+kefalnd_fill_getr_msg(struct kefa_conn *conn, struct kefa_tx *tx, struct lnet_hdr *hdr,
+		      u8 proto_ver)
+{
+	struct kefa_msg *msg = tx->msg;
+	int body_nob;
+
+	if (proto_ver != EFALND_PROTO_VER_1) {
+		body_nob = sizeof(struct kefa_getr_req_msg_v2);
+		lnet_hdr_to_nid16(hdr, &msg->msg_v2.u.getr_req.hdr);
+		msg->msg_v2.u.getr_req.sink_cookie = kefalnd_tx_to_idx(tx);
+	} else {
+		body_nob = sizeof(struct kefa_getr_req_msg);
+		lnet_hdr_to_nid4(hdr, &msg->msg_v1.u.getr_req.hdr);
+		msg->msg_v1.u.getr_req.sink_cookie = kefalnd_tx_to_idx(tx);
+	}
+
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_GETR_REQ, body_nob, proto_ver);
+}
+
+static inline void
+kefalnd_fill_putr_msg(struct kefa_conn *conn, struct kefa_tx *tx, struct lnet_hdr *hdr,
+		      u8 proto_ver)
+{
+	struct kefa_msg *msg = tx->msg;
+	int body_nob;
+
+	if (proto_ver != EFALND_PROTO_VER_1) {
+		body_nob = sizeof(struct kefa_putr_req_msg_v2);
+		lnet_hdr_to_nid16(hdr, &msg->msg_v2.u.putr_req.hdr);
+		msg->msg_v2.u.putr_req.cookie = kefalnd_tx_to_idx(tx);
+		msg->msg_v2.u.putr_req.rdma_desc = tx->rdma_desc;
+	} else {
+		body_nob = sizeof(struct kefa_putr_req_msg);
+		lnet_hdr_to_nid4(hdr, &msg->msg_v1.u.putr_req.hdr);
+		msg->msg_v1.u.putr_req.cookie = kefalnd_tx_to_idx(tx);
+		msg->msg_v1.u.putr_req.rdma_desc = tx->rdma_desc;
+	}
+
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_PUTR_REQ, body_nob, proto_ver);
+}
+
+static inline void
+kefalnd_fill_imm_msg(struct kefa_conn *conn, struct lnet_msg *lntmsg, struct kefa_tx *tx,
+		     struct lnet_hdr *hdr, u8 proto_ver)
+{
+	struct kefa_msg *msg = tx->msg;
+	int body_nob;
+
+	if (proto_ver != EFALND_PROTO_VER_1) {
+		body_nob = offsetof(struct kefa_immediate_msg_v2, payload[lntmsg->msg_len]);
+		lnet_hdr_to_nid16(hdr, &msg->msg_v2.u.immediate.hdr);
+		lnet_copy_kiov2flat(EFALND_MSG_SIZE, msg,
+				    offsetof(struct kefa_msg, msg_v2.u.immediate.payload),
+				    lntmsg->msg_niov, lntmsg->msg_kiov, lntmsg->msg_offset,
+				    lntmsg->msg_len);
+	} else {
+		body_nob = offsetof(struct kefa_immediate_msg, payload[lntmsg->msg_len]);
+		lnet_hdr_to_nid4(hdr, &msg->msg_v1.u.immediate.hdr);
+		lnet_copy_kiov2flat(EFALND_MSG_SIZE, msg,
+				    offsetof(struct kefa_msg, msg_v1.u.immediate.payload),
+				    lntmsg->msg_niov, lntmsg->msg_kiov, lntmsg->msg_offset,
+				    lntmsg->msg_len);
+	}
+
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_IMMEDIATE, body_nob, proto_ver);
+}
+
+static void kefalnd_reconstruct_tx_msg(struct kefa_tx *tx, struct kefa_conn *conn)
+{
+	struct lnet_msg *lntmsg = tx->lntmsg[0];
+	struct lnet_hdr *hdr;
+	u8 proto_ver;
+
+	LASSERT(lntmsg);
+
+	hdr = &lntmsg->msg_hdr;
+	proto_ver = conn->proto_ver;
+
+	switch (tx->type) {
+	case EFALND_MSG_GETR_REQ:
+		kefalnd_fill_getr_msg(conn, tx, hdr, proto_ver);
+		break;
+
+	case EFALND_MSG_PUTR_REQ:
+		kefalnd_fill_putr_msg(conn, tx, hdr, proto_ver);
+		break;
+
+	case EFALND_MSG_IMMEDIATE:
+		kefalnd_fill_imm_msg(conn, lntmsg, tx, hdr, proto_ver);
+		break;
+
+	default:
+		LASSERTF(0, "Unexpected message type[%u]\n", tx->type);
+		break;
+	}
+}
+
+void kefalnd_reconstruct_conn_pend_msgs(struct kefa_conn *conn)
+{
+	unsigned long flags;
+	struct kefa_tx *tx;
+
+	spin_lock_irqsave(&conn->lock, flags);
+	list_for_each_entry(tx, &conn->pend_tx, list_node) {
+		if (conn->proto_ver != tx->msg->hdr.proto_ver)
+			kefalnd_reconstruct_tx_msg(tx, conn);
+	}
+
+	spin_unlock_irqrestore(&conn->lock, flags);
 }
 
 static int
@@ -821,10 +1003,9 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 	struct lnet_hdr *hdr = &lntmsg->msg_hdr;
 	struct kefa_ni *efa_ni = ni->ni_data;
 	int type = lntmsg->msg_type;
-	struct kefa_msg_v1 *msg_v1;
-	struct kefa_rdma_desc *rd;
 	struct kefa_conn *conn;
 	struct kefa_tx *tx;
+	u8 proto_ver;
 	int nob, rc;
 
 	tx = kefalnd_get_idle_tx(efa_ni);
@@ -834,12 +1015,12 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 
 		return -ENOMEM;
 	}
-	msg_v1 = &tx->msg->msg_v1;
 
 	conn = kefalnd_lookup_or_init_conn(efa_ni, &target->nid, KEFA_CONN_TYPE_INITIATOR);
 	if (IS_ERR(conn)) {
 		EFA_DEV_DEBUG(efa_ni->efa_dev, "can't establish connection to peer NI[%s]\n",
 			      libcfs_nidstr(&target->nid));
+		tx->hstatus = LNET_MSG_STATUS_REMOTE_ERROR;
 		kefalnd_tx_done(tx);
 		return -ENOTCONN;
 	}
@@ -847,6 +1028,8 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 	CDEBUG(D_NET, "Request to send LNet %s from %s to %s size[%u]\n",
 	       lnet_msgtyp2str(type), libcfs_nidstr(&ni->ni_nid), libcfs_nidstr(&target->nid),
 	       type == LNET_MSG_GET ? msg_md->md_length : lntmsg->msg_len);
+
+	proto_ver = conn->proto_ver;
 
 	switch (type) {
 	default:
@@ -859,13 +1042,19 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 
 	case LNET_MSG_GET:
 		/* use RDMA or SEND based on size */
-		nob = offsetof(struct kefa_msg, msg_v1.u.immediate.payload[msg_md->md_length]);
+		if (proto_ver != EFALND_PROTO_VER_1)
+			nob = offsetof(struct kefa_msg,
+				       msg_v2.u.immediate.payload[msg_md->md_length]);
+		else
+			nob = offsetof(struct kefa_msg,
+				       msg_v1.u.immediate.payload[msg_md->md_length]);
+
 		if (nob <= EFALND_NO_RDMA_THRESH && !lntmsg->msg_rdma_force)
 			break;
 
 		/* RDMA based flow */
-		rc = kefalnd_map_msg_iov(efa_ni, tx, &tx->rdma_desc, msg_md->md_niov,
-					 msg_md->md_kiov, 0, msg_md->md_length, false);
+		rc = kefalnd_map_msg_iov(efa_ni, tx, msg_md->md_niov, msg_md->md_kiov, 0,
+					 msg_md->md_length, false);
 		if (rc != 0) {
 			EFA_DEV_ERR(efa_ni->efa_dev,
 				    "can't setup GET destination for peer NI[%s]. err[%d]\n",
@@ -876,16 +1065,13 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 		}
 
 		/* setup the message */
-		lnet_hdr_to_nid4(hdr, &msg_v1->u.getr_req.hdr);
-		kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_GETR_REQ,
-					     sizeof(struct kefa_getr_req_msg));
-
-		msg_v1->u.getr_req.sink_cookie = kefalnd_tx_to_idx(tx);
+		kefalnd_fill_getr_msg(conn, tx, hdr, proto_ver);
 		tx->lntmsg[1] = lnet_create_reply_msg(ni, lntmsg);
 		if (tx->lntmsg[1] == NULL) {
 			EFA_DEV_ERR(efa_ni->efa_dev, "can't create reply for GET for peer NI[%s]\n",
 				    libcfs_nidstr(&target->nid));
 
+			tx->hstatus = LNET_MSG_STATUS_LOCAL_ERROR;
 			kefalnd_tx_done(tx);
 			return -EIO;
 		}
@@ -900,13 +1086,18 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 	case LNET_MSG_REPLY:
 	case LNET_MSG_PUT:
 		/* use RDMA or SEND based on size */
-		nob = offsetof(struct kefa_msg, msg_v1.u.immediate.payload[lntmsg->msg_len]);
+		if (proto_ver != EFALND_PROTO_VER_1)
+			nob = offsetof(struct kefa_msg,
+				       msg_v2.u.immediate.payload[lntmsg->msg_len]);
+		else
+			nob = offsetof(struct kefa_msg,
+				       msg_v1.u.immediate.payload[lntmsg->msg_len]);
+
 		if (nob <= EFALND_NO_RDMA_THRESH && !lntmsg->msg_rdma_force)
 			break;
 
 		/* RDMA based flow */
-		rd = &msg_v1->u.putr_req.rdma_desc;
-		rc = kefalnd_map_msg_iov(efa_ni, tx, rd, lntmsg->msg_niov, lntmsg->msg_kiov,
+		rc = kefalnd_map_msg_iov(efa_ni, tx, lntmsg->msg_niov, lntmsg->msg_kiov,
 					 lntmsg->msg_offset, lntmsg->msg_len, true);
 		if (rc != 0) {
 			EFA_DEV_ERR(efa_ni->efa_dev,
@@ -918,11 +1109,7 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 		}
 
 		/* setup the message */
-		lnet_hdr_to_nid4(hdr, &msg_v1->u.putr_req.hdr);
-		kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_PUTR_REQ,
-					     sizeof(struct kefa_putr_req_msg));
-
-		msg_v1->u.putr_req.cookie = kefalnd_tx_to_idx(tx);
+		kefalnd_fill_putr_msg(conn, tx, hdr, proto_ver);
 		/* finalise lntmsg[0,1] on completion */
 		tx->lntmsg[0] = lntmsg;
 		atomic_inc(&tx->ref_cnt); /* wait for PUT_DONE */
@@ -932,13 +1119,7 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 	}
 
 	/* SEND based (non-RDMA flow) */
-	lnet_hdr_to_nid4(hdr, &msg_v1->u.immediate.hdr);
-	lnet_copy_kiov2flat(EFALND_MSG_SIZE, tx->msg,
-			    offsetof(struct kefa_msg, msg_v1.u.immediate.payload), lntmsg->msg_niov,
-			    lntmsg->msg_kiov, lntmsg->msg_offset, lntmsg->msg_len);
-
-	nob = offsetof(struct kefa_immediate_msg, payload[lntmsg->msg_len]);
-	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_IMMEDIATE, nob);
+	kefalnd_fill_imm_msg(conn, lntmsg, tx, hdr, proto_ver);
 
 	/* finalise lntmsg on completion */
 	tx->lntmsg[0] = lntmsg;
@@ -1010,13 +1191,12 @@ kefalnd_handle_putr_req(struct kefa_ni *efa_ni, struct kefa_conn *conn, struct l
 	}
 
 	if (likely(nob != 0))
-		rc = kefalnd_map_msg_iov(efa_ni, tx, &tx->rdma_desc, lntmsg->msg_niov,
-					 lntmsg->msg_kiov, lntmsg->msg_offset, nob, false);
+		rc = kefalnd_map_msg_iov(efa_ni, tx, lntmsg->msg_niov, lntmsg->msg_kiov,
+					 lntmsg->msg_offset, nob, false);
 	if (unlikely(rc != 0)) {
 		EFA_DEV_ERR(efa_ni->efa_dev, "can't setup GET src for peer NI[%s]. err[%d]\n",
 			    libcfs_nidstr(&conn->remote_nid), rc);
 
-		tx->hstatus = LNET_MSG_STATUS_LOCAL_ERROR;
 		kefalnd_tx_done(tx);
 		kefalnd_send_completion(efa_ni, conn, EFALND_MSG_PUTR_DONE, rc, src_cookie);
 		return rc;
@@ -1056,7 +1236,7 @@ static int
 kefalnd_handle_getr_req(struct kefa_ni *efa_ni, struct kefa_conn *conn, struct lnet_msg *lntmsg,
 			u64 sink_cookie)
 {
-	struct kefa_rdma_desc *rd;
+	struct kefa_getr_ack_msg *getr_ack;
 	struct kefa_tx *tx;
 	unsigned int nob;
 	int rc = 0;
@@ -1077,15 +1257,13 @@ kefalnd_handle_getr_req(struct kefa_ni *efa_ni, struct kefa_conn *conn, struct l
 		return -ENOMEM;
 	}
 
-	rd = &tx->msg->msg_v1.u.getr_ack.rdma_desc;
 	if (nob != 0)
-		rc = kefalnd_map_msg_iov(efa_ni, tx, rd, lntmsg->msg_niov, lntmsg->msg_kiov,
+		rc = kefalnd_map_msg_iov(efa_ni, tx, lntmsg->msg_niov, lntmsg->msg_kiov,
 					 lntmsg->msg_offset, nob, true);
 	if (rc != 0) {
 		EFA_DEV_ERR(efa_ni->efa_dev, "can't setup GET src for peer NI[%s]. err[%d]\n",
 			    libcfs_nidstr(&conn->remote_nid), rc);
 
-		tx->hstatus = LNET_MSG_STATUS_LOCAL_ERROR;
 		kefalnd_tx_done(tx);
 		kefalnd_send_completion(efa_ni, conn, EFALND_MSG_NACK, rc, sink_cookie);
 		return rc;
@@ -1099,9 +1277,13 @@ kefalnd_handle_getr_req(struct kefa_ni *efa_ni, struct kefa_conn *conn, struct l
 		tx->lntmsg[0] = lntmsg;
 	}
 
-	tx->msg->msg_v1.u.getr_ack.sink_cookie = sink_cookie;
-	tx->msg->msg_v1.u.getr_ack.src_cookie = kefalnd_tx_to_idx(tx);
-	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_GETR_ACK, sizeof(struct kefa_getr_ack_msg));
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_GETR_ACK,
+				     sizeof(struct kefa_getr_ack_msg), conn->proto_ver);
+
+	getr_ack = kefalnd_get_getr_ack_from_msg(tx->msg);
+	getr_ack->sink_cookie = sink_cookie;
+	getr_ack->src_cookie = kefalnd_tx_to_idx(tx);
+	getr_ack->rdma_desc = tx->rdma_desc;
 
 	atomic_inc(&tx->ref_cnt); /* Wait for GETR_DONE */
 	atomic_set(&tx->waiting_resp, true);
@@ -1451,24 +1633,6 @@ kefalnd_handle_lnet_request_msg(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	rc = lnet_parse(efa_ni->lnet_ni, &hdr, &hdr.src_nid, rx, rdma_req);
 	if (rc < 0)
 		EFA_DEV_ERR(efa_ni->efa_dev, "error parsing lnet msg\n");
-}
-
-static inline struct kefa_getr_ack_msg *
-kefalnd_get_getr_ack_from_msg(struct kefa_msg *msg)
-{
-	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
-		return &msg->msg_v2.u.getr_ack;
-
-	return &msg->msg_v1.u.getr_ack;
-}
-
-static inline struct kefa_completion_msg *
-kefalnd_get_completion_from_msg(struct kefa_msg *msg)
-{
-	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
-		return &msg->msg_v2.u.completion;
-
-	return &msg->msg_v1.u.completion;
 }
 
 static void
@@ -2542,6 +2706,7 @@ kefalnd_dev_search(char *ifname)
 static int
 kefalnd_select_ipif(struct lnet_ni *ni, u32 *ip_addr)
 {
+	char *ipif_name = *kefalnd_tunables.kefa_ipif_name;
 	struct lnet_inetdev *ifaces = NULL;
 	int i, nip, rc;
 
@@ -2552,7 +2717,7 @@ kefalnd_select_ipif(struct lnet_ni *ni, u32 *ip_addr)
 	}
 	nip = rc;
 
-	if (!*kefalnd_tunables.kefa_ipif_name) {
+	if (!ipif_name || strlen(ipif_name) == 0) {
 		CDEBUG(D_NET, "Using first interface %s because ipif_name was not provided\n",
 		       ifaces[0].li_name);
 		*ip_addr = ifaces[0].li_ipaddr;
@@ -2561,7 +2726,7 @@ kefalnd_select_ipif(struct lnet_ni *ni, u32 *ip_addr)
 	}
 
 	for (i = 0; i < nip; i++) {
-		if (strncmp(*kefalnd_tunables.kefa_ipif_name, ifaces[i].li_name,
+		if (strncmp(ipif_name, ifaces[i].li_name,
 			    sizeof(ifaces[i].li_name)) == 0) {
 			CDEBUG(D_NET, "Found matching interface %s\n", ifaces[i].li_name);
 			*ip_addr = ifaces[i].li_ipaddr;
@@ -2569,7 +2734,7 @@ kefalnd_select_ipif(struct lnet_ni *ni, u32 *ip_addr)
 			goto complete;
 		}
 	}
-	CERROR("No interface %s found\n", *kefalnd_tunables.kefa_ipif_name);
+	CERROR("No interface %s found\n", ipif_name);
 	rc = -ENODEV;
 
 complete:
@@ -2808,7 +2973,7 @@ kefalnd_startup(struct lnet_ni *ni)
 	new_nid = kefalnd_create_efa_nid(ip_addr, pci_dev->bus->number,
 					 pci_dev->devfn);
 	ni->ni_nid.nid_addr[0] = cpu_to_be32(LNET_NIDADDR(new_nid));
-	efa_ni->self_peer_ni = kefalnd_lookup_or_create_peer_ni(LNET_NIDADDR(new_nid),
+	efa_ni->self_peer_ni = kefalnd_lookup_or_create_peer_ni(new_nid,
 								&efa_dev->gid,
 								efa_dev->cm_qp->ib_qp->qp_num,
 								efa_dev->cm_qp->qkey);
