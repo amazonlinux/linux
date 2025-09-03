@@ -25,7 +25,7 @@ obj-$(CONFIG_CRYPTO_SKCIPHER2) += bpf_crypto_skcipher.o
 endif
 
 crypto-objs-$(CONFIG_CRYPTO_SEQIV) += seqiv.o
-obj-$(CONFIG_CRYPTO_ECHAINIV) += echainiv.o
+crypto-objs-$(CONFIG_CRYPTO_ECHAINIV) += echainiv.o
 
 crypto_hash-y += ahash.o
 crypto_hash-y += shash.o
