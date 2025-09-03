@@ -378,8 +378,8 @@ static void __exit pcrypt_exit(void)
 	kset_unregister(pcrypt_kset);
 }
 
-module_init(pcrypt_init);
-module_exit(pcrypt_exit);
+crypto_module_init(pcrypt_init);
+crypto_module_exit(pcrypt_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Steffen Klassert <steffen.klassert@secunet.com>");
