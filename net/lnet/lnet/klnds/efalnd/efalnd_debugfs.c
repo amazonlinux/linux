@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0
 
 /*
- * Copyright (c) 2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
@@ -15,8 +15,9 @@
 
 #define DEBUG_SUBSYSTEM S_LND
 
-#include <linux/inet.h>
 #include <linux/debugfs.h>
+#include <linux/inet.h>
+
 #include <lprocfs_status.h>
 
 #include "kcompat.h"
