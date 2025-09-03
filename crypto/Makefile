@@ -24,7 +24,7 @@ ifeq ($(CONFIG_BPF_SYSCALL),y)
 obj-$(CONFIG_CRYPTO_SKCIPHER2) += bpf_crypto_skcipher.o
 endif
 
-obj-$(CONFIG_CRYPTO_SEQIV) += seqiv.o
+crypto-objs-$(CONFIG_CRYPTO_SEQIV) += seqiv.o
 obj-$(CONFIG_CRYPTO_ECHAINIV) += echainiv.o
 
 crypto_hash-y += ahash.o
