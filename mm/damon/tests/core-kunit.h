@@ -683,6 +683,15 @@ static struct damon_ctx *damon_test_commit_ctx_new_dst_ctx(void)
 	return dst;
 }
 
+static void damon_test_commit_ctx_ensure_committed(struct kunit *test,
+		struct damon_ctx *dst, struct damon_ctx *src)
+{
+	dst->attrs.aggr_samples = 0;
+	src->attrs.aggr_samples = 0;
+	KUNIT_EXPECT_EQ(test, memcmp(&dst->attrs, &src->attrs,
+				sizeof(src->attrs)), 0);
+}
+
 static void damon_test_commit_ctx(struct kunit *test)
 {
 	struct damon_ctx *dst, *src;
@@ -698,13 +707,8 @@ static void damon_test_commit_ctx(struct kunit *test)
 		damon_destroy_ctx(dst);
 		return;
 	}
-
 	damon_commit_ctx(dst, src);
-
-	dst->attrs.aggr_samples = 0;
-	src->attrs.aggr_samples = 0;
-	KUNIT_EXPECT_EQ(test, memcmp(&dst->attrs, &src->attrs,
-				sizeof(src->attrs)), 0);
+	damon_test_commit_ctx_ensure_committed(test, dst, src);
 	damon_destroy_ctx(src);
 	damon_destroy_ctx(dst);
 }
