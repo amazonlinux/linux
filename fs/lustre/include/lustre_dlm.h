@@ -60,7 +60,7 @@ extern struct kset *ldlm_svc_kset;
 
 #define OBD_LDLM_DEVICENAME  "ldlm"
 
-#define LDLM_DEFAULT_LRU_SIZE (100 * num_online_cpus())
+#define LDLM_DEFAULT_LRU_SIZE (max((100 * num_online_cpus()), 1600))
 #define LDLM_DEFAULT_LRU_MAX_AGE	600	/* 600 seconds = 10 min */
 #define LDLM_CTIME_AGE_LIMIT (10)
 /* if client lock is unused for that time it can be cancelled if any other
