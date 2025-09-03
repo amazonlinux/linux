@@ -13,6 +13,7 @@
  */
 
 #include <linux/jiffies.h>
+
 #include <rdma/ib_verbs.h>
 
 #include "efalnd.h"
@@ -96,7 +97,7 @@ kefalnd_post_conn_message(struct kefa_conn *conn, struct kefa_tx *tx)
 
 	atomic_set(&tx->ref_cnt, 1);
 	atomic64_set(&tx->send_time, ktime_get_seconds());
-	kefalnd_msg_fill_hdr(conn, tx->msg, conn->proto_ver);
+	kefalnd_msg_set_epoch(tx->msg, conn->remote_epoch);
 
 	spin_lock_irqsave(&conn->lock, flags);
 	list_add_tail(&tx->list_node, &conn->active_tx);
@@ -161,7 +162,11 @@ kefalnd_send_conn_req_ack(struct kefa_conn *conn, int status)
 		return -ENOMEM;
 	}
 
-	ack_msg = &tx->msg->msg_v1.u.conn_request_ack;
+	nob = status ? sizeof(struct kefa_conn_req_ack) :
+			offsetof(struct kefa_conn_req_ack, data_qps[efa_dev->nqps]);
+
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_CONN_REQ_ACK, nob, conn->proto_ver);
+	ack_msg = kefalnd_get_conn_req_ack_from_msg(tx->msg);
 	ack_msg->lnd_ver = kefalnd_get_lnd_version();
 	ack_msg->src_epoch = conn->efa_ni->ni_epoch;
 	ack_msg->caps = 0;
@@ -169,15 +174,7 @@ kefalnd_send_conn_req_ack(struct kefa_conn *conn, int status)
 
 	ack_msg->src_conn_id = EFALND_INV_CONN;
 	ack_msg->status = kefalnd_errno_to_efa_status(status);
-	if (status) {
-		nob = sizeof(struct kefa_conn_req_ack);
-		ack_msg->nqps = 0;
-	} else {
-		nob = offsetof(struct kefa_conn_req_ack, data_qps[efa_dev->nqps]);
-		ack_msg->nqps = kefalnd_select_conn_qps(efa_dev, &ack_msg->data_qps[0]);
-	}
-
-	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_REQ_ACK, nob);
+	ack_msg->nqps = status ? 0 : kefalnd_select_conn_qps(efa_dev, &ack_msg->data_qps[0]);
 
 	rc = kefalnd_post_conn_message(conn, tx);
 	if (rc)
@@ -208,9 +205,9 @@ kefalnd_send_conn_req(struct kefa_conn *conn)
 	}
 
 	nob = offsetof(struct kefa_conn_req_msg, data_qps[efa_dev->nqps]);
-	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_REQ, nob);
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_CONN_REQ, nob, conn->proto_ver);
 
-	req = &tx->msg->msg_v1.u.conn_request;
+	req = kefalnd_get_conn_req_from_msg(tx->msg);
 	req->lnd_ver = kefalnd_get_lnd_version();
 	memcpy(req->src_gid, efa_dev->gid.raw, sizeof(req->src_gid));
 	req->src_epoch = conn->efa_ni->ni_epoch;
@@ -249,10 +246,10 @@ kefalnd_send_conn_probe_resp(struct kefa_conn *conn, int status)
 		return -ENOMEM;
 	}
 
-	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_PROBE_RESP,
-				     sizeof(struct kefa_conn_probe_resp_msg));
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_CONN_PROBE_RESP,
+				     sizeof(struct kefa_conn_probe_resp_msg), conn->proto_ver);
 
-	probe_resp = &tx->msg->msg_v1.u.conn_probe_resp;
+	probe_resp = kefalnd_get_probe_resp_from_msg(tx->msg);
 	probe_resp->lnd_ver = kefalnd_get_lnd_version();
 	probe_resp->src_epoch = conn->efa_ni->ni_epoch;
 	probe_resp->caps = 0;
@@ -288,9 +285,10 @@ kefalnd_send_conn_probe(struct kefa_conn *conn)
 		return -ENOMEM;
 	}
 
-	kefalnd_init_tx_protocol_msg(tx, EFALND_MSG_CONN_PROBE, sizeof(struct kefa_conn_probe_msg));
+	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_CONN_PROBE,
+				     sizeof(struct kefa_conn_probe_msg), EFALND_PROTO_VER_1);
 
-	probe = &tx->msg->msg_v1.u.conn_probe;
+	probe = kefalnd_get_probe_from_msg(tx->msg);
 	probe->lnd_ver = kefalnd_get_lnd_version();
 	probe->src_epoch = conn->efa_ni->ni_epoch;
 	memcpy(probe->src_gid, efa_dev->gid.raw, sizeof(probe->src_gid));
@@ -366,6 +364,7 @@ kefalnd_create_conn(struct kefa_ni *efa_ni, struct lnet_nid *peer_nid,
 	conn->type = conn_type;
 	INIT_LIST_HEAD(&conn->pend_tx);
 	INIT_LIST_HEAD(&conn->active_tx);
+	INIT_LIST_HEAD(&conn->abort_tx);
 	INIT_HLIST_NODE(&conn->ni_node);
 	spin_lock_init(&conn->lock);
 
@@ -565,6 +564,13 @@ kefalnd_lookup_or_init_conn(struct kefa_ni *efa_ni, struct lnet_nid *nid,
 
 	read_unlock_irqrestore(&efa_ni->conn_lock, flags);
 
+	if (!nid_is_nid4(nid)) {
+		EFA_DEV_ERR(efa_ni->efa_dev,
+			    "Can't establish connection to non IPv4 NI[%s]\n", libcfs_nidstr(nid));
+
+		return ERR_PTR(-EPROTONOSUPPORT);
+	}
+
 	/* Create the new conn here since we can't sleep inside the critical section */
 	new_conn = kefalnd_create_conn(efa_ni, nid, conn_type);
 	if (IS_ERR(new_conn))
@@ -661,6 +667,8 @@ kefalnd_handle_conn_req_ack(struct kefa_ni *efa_ni, struct lnet_nid *srcnid,
 		hstatus = LNET_MSG_STATUS_LOCAL_ABORTED;
 		goto cleanup_conn;
 	}
+
+	kefalnd_reconstruct_conn_pend_msgs(conn);
 
 	spin_lock_irqsave(&conn->lock, flags);
 	kefalnd_set_conn_state_locked(conn, KEFA_CONN_ACTIVE);
@@ -1052,8 +1060,7 @@ kefalnd_handle_conn_establishment(struct kefa_ni *efa_ni, struct kefa_msg *msg)
 }
 
 static void
-kefalnd_cleanup_conn_txs(struct kefa_conn *conn, struct list_head *abort_tx,
-			 struct list_head *cancel_tx)
+kefalnd_cleanup_conn_txs(struct kefa_conn *conn, struct list_head *cancel_tx)
 {
 	int timeout = lnet_get_lnd_timeout();
 	time64_t now = ktime_get_seconds();
@@ -1069,7 +1076,15 @@ kefalnd_cleanup_conn_txs(struct kefa_conn *conn, struct list_head *abort_tx,
 		if (tx_send_time == 0 || now < tx_send_time + timeout)
 			break;
 
-		list_move_tail(&tx->list_node, abort_tx);
+		/* We must call abort TX after increasing the refcount to prevent
+		 * calling TX done which can lead to deadlock.
+		 * Also we abort the Tx only if its refcount is not already 0 which means
+		 * its completion is in progress.
+		 */
+		if (atomic_inc_not_zero(&tx->ref_cnt)) {
+			kefalnd_abort_tx(tx, LNET_MSG_STATUS_NETWORK_TIMEOUT, -ETIMEDOUT);
+			list_move_tail(&tx->list_node, &conn->abort_tx);
+		}
 	}
 
 	list_splice_init(&conn->pend_tx, cancel_tx);
@@ -1083,8 +1098,8 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 	struct kefa_conn *removed_conn[MAX_IDLE_CONN] = { 0 };
 	struct kefa_conn *idle_conn[MAX_IDLE_CONN] = { 0 };
 	int init_timeout, resp_timeout, timeout, bkt, i = 0;
-	struct list_head abort_tx, cancel_tx;
 	struct kefa_tx *tx, *temp_tx;
+	struct list_head cancel_tx;
 	struct kefa_conn *conn;
 	unsigned long flags;
 	int num_removed = 0;
@@ -1092,7 +1107,6 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 	time64_t now;
 
 	now = ktime_get_seconds();
-	INIT_LIST_HEAD(&abort_tx);
 	INIT_LIST_HEAD(&cancel_tx);
 	init_timeout = efa_ni->lnet_ni->ni_net->net_tunables.lct_peer_timeout;
 	resp_timeout = init_timeout + RESP_CONN_EXTRA_TIME;
@@ -1116,34 +1130,41 @@ kefalnd_cleanup_ni_conns(struct kefa_ni *efa_ni)
 
 	write_lock_irqsave(&efa_ni->conn_lock, flags);
 	for (i = 0; i < num_idle; i++) {
+		conn = idle_conn[i];
 		/* Validate last used under write lock to make sure no TX is racing
 		 * with the daemon.
 		 */
-		timeout = idle_conn[i]->type == KEFA_CONN_TYPE_INITIATOR ?
+		timeout = conn->type == KEFA_CONN_TYPE_INITIATOR ?
 				init_timeout : resp_timeout;
 
-		if (now > idle_conn[i]->last_use_time + timeout)
-			kefalnd_deactivate_conn_locked(idle_conn[i]);
+		if (now > conn->last_use_time + timeout)
+			kefalnd_deactivate_conn_locked(conn);
 
-		if (idle_conn[i]->state == KEFA_CONN_DEACTIVATING)
-			kefalnd_cleanup_conn_txs(idle_conn[i], &abort_tx, &cancel_tx);
+		if (conn->state == KEFA_CONN_DEACTIVATING)
+			kefalnd_cleanup_conn_txs(conn, &cancel_tx);
 
-		if (now > idle_conn[i]->last_use_time + timeout &&
-		    list_empty(&idle_conn[i]->active_tx)) {
-			kefalnd_remove_conn_locked(idle_conn[i]);
-			removed_conn[num_removed] = idle_conn[i];
+		if (now > conn->last_use_time + timeout && list_empty(&conn->active_tx) &&
+		    list_empty(&conn->abort_tx)) {
+			kefalnd_remove_conn_locked(conn);
+			removed_conn[num_removed] = conn;
 			num_removed++;
 		}
 	}
 
 	write_unlock_irqrestore(&efa_ni->conn_lock, flags);
 
-	list_for_each_entry_safe(tx, temp_tx, &abort_tx, list_node) {
-		kefalnd_abort_tx(tx, LNET_MSG_STATUS_NETWORK_TIMEOUT, -ETIMEDOUT);
-	}
+	for (i = 0; i < num_idle; i++) {
+		conn = idle_conn[i];
+		list_for_each_entry_safe(tx, temp_tx, &conn->abort_tx, list_node) {
+			/* We only complete the TX when the only refcount is by the CM */
+			if (atomic_read(&tx->ref_cnt) == 1) {
+				atomic_dec(&tx->ref_cnt);
+				kefalnd_tx_done(tx);
+			}
+		}
 
-	list_for_each_entry_safe(tx, temp_tx, &cancel_tx, list_node) {
-		kefalnd_force_cancel_tx(tx, LNET_MSG_STATUS_LOCAL_ABORTED, -ETIMEDOUT);
+		list_for_each_entry_safe(tx, temp_tx, &cancel_tx, list_node)
+			kefalnd_force_cancel_tx(tx, LNET_MSG_STATUS_LOCAL_ABORTED, -ETIMEDOUT);
 	}
 
 	for (i = 0; i < num_removed; i++)
