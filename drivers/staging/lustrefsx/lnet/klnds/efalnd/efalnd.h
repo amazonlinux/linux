@@ -18,21 +18,23 @@
 
 #define DEBUG_SUBSYSTEM S_LND
 
-#include <linux/rhashtable.h>
 #include <linux/bvec.h>
-#include <lnet/lib-types.h>
+#include <linux/rhashtable.h>
+
 #include <lnet/lib-lnet.h>
+#include <lnet/lib-types.h>
 #include <lnet/lnet_rdma.h>
 #ifdef KERNEL_INCLUDE_RDMA_EFA
 #include <rdma/efa_verbs.h>
 #else
 #include <efa_verbs.h>
 #endif
+
 #include "efalnd_proto.h"
 
 #define EFALND_MAJOR_VER        1
-#define EFALND_MINOR_VER        1
-#define EFALND_SUBMINOR_VER     1
+#define EFALND_MINOR_VER        2
+#define EFALND_SUBMINOR_VER     0
 #define EFALND_MAJOR_SHIFT	8
 
 #define KEFA_IFNAME_SIZE		256
@@ -286,6 +288,7 @@ struct kefa_conn {
 	struct kefa_ni *efa_ni;
 
 	/* Low frequency fields */
+	struct list_head abort_tx;		/* Only CM iterates this list */
 	enum kefa_conn_type type;
 	struct lnet_nid local_nid;
 	struct kefa_peer_ni *peer_ni;		/* my peer NI */
@@ -340,25 +343,12 @@ kefalnd_thread_stop(void)
 }
 
 static inline void
-kefalnd_init_msg(struct kefa_msg *msg, int type, int body_nob)
+kefalnd_msg_set_epoch(struct kefa_msg *msg, u64 remote_epoch)
 {
-	msg->hdr.type = type;
-	msg->hdr.nob = offsetof(struct kefa_msg, msg_v1.u) + body_nob;
-}
-
-static inline void
-kefalnd_msg_fill_hdr(struct kefa_conn *conn, struct kefa_msg *msg, u8 proto_ver)
-{
-	struct kefa_msg_v1 *msg_v1 = &msg->msg_v1;
-
-	msg->hdr.magic = EFALND_MSG_MAGIC;
-	msg->hdr.proto_ver = proto_ver;
-
-	msg_v1->credits = 0;
-	msg_v1->srcnid = lnet_nid_to_nid4(&conn->local_nid);
-	msg_v1->dstnid = lnet_nid_to_nid4(&conn->remote_nid);
-	msg_v1->dst_epoch = conn->remote_epoch;
-	msg_v1->dst_conn_id = EFALND_INV_CONN;
+	if (msg->hdr.proto_ver != EFALND_PROTO_VER_1)
+		msg->msg_v2.dst_epoch = remote_epoch;
+	else
+		msg->msg_v1.dst_epoch = remote_epoch;
 }
 
 static inline int kefalnd_dma_map_sg(struct kefa_dev *efa_dev,
@@ -401,15 +391,17 @@ void kefalnd_tx_done(struct kefa_tx *tx);
 void kefalnd_abort_tx(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status);
 /* Should be used only on TXs that we don't expect to get any completions for */
 void kefalnd_force_cancel_tx(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status);
-void kefalnd_init_tx_protocol_msg(struct kefa_tx *tx, int type, int body_nob);
+void kefalnd_init_tx_protocol_msg(struct kefa_tx *tx, struct kefa_conn *conn, int type,
+				  int body_nob, u8 proto_ver);
 struct kefa_tx *kefalnd_get_idle_tx(struct kefa_ni *efa_ni);
 void kefalnd_conn_post_tx_locked(struct kefa_conn *conn);
 void kefalnd_get_srcnid_from_msg(struct kefa_msg *msg, struct lnet_nid *srcnid);
 void kefalnd_get_dstnid_from_msg(struct kefa_msg *msg, struct lnet_nid *dstnid);
+void kefalnd_reconstruct_conn_pend_msgs(struct kefa_conn *conn);
 
 struct kefa_peer_ni *kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev,
 						 struct lnet_nid *efa_nid);
-struct kefa_peer_ni *kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid,
+struct kefa_peer_ni *kefalnd_lookup_or_create_peer_ni(lnet_nid_t nid, union ib_gid *gid,
 						      u16 cm_qpn, u32 cm_qkey);
 void kefalnd_update_peer_ni(struct kefa_peer_ni *peer_ni, union ib_gid *gid,
 			    u16 cm_qpn, u32 cm_qkey);
