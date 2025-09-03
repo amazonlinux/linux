@@ -320,7 +320,7 @@
 #define HAVE_ETHTOOL_LINK_SETTINGS 1
 
 /* Define to 1 if you have the <ext2fs/ext2fs.h> header file. */
-#define HAVE_EXT2FS_EXT2FS_H 1
+/* #undef HAVE_EXT2FS_EXT2FS_H */
 
 /* ext4_bread takes 4 arguments */
 /* #undef HAVE_EXT4_BREAD_4ARGS */
@@ -538,9 +538,6 @@
 /* address_spaace_operaions->invalidate_folio() member exists */
 #define HAVE_INVALIDATE_FOLIO 1
 
-/* address_space invalidate_lock member exists */
-#define HAVE_INVALIDATE_LOCK 1
-
 /* address_space_operations.invalidatepage needs 3 arguments */
 /* #undef HAVE_INVALIDATE_RANGE */
 
@@ -747,7 +744,7 @@
 #define HAVE_LIBPTHREAD 1
 
 /* readline library is available */
-#define HAVE_LIBREADLINE 1
+/* #undef HAVE_LIBREADLINE */
 
 /* linux/blk-integrity.h is present */
 #define HAVE_LINUX_BLK_INTEGRITY_HEADER 1
@@ -1286,7 +1283,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_648_g12ba450_dirty"
+#define LUSTRE_VERSION_STRING "2.15.6_668_gcc235da"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1316,7 +1313,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_648_g12ba450_dirty"
+#define PACKAGE_STRING "Lustre 2.15.6_668_gcc235da"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1325,7 +1322,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_648_g12ba450_dirty"
+#define PACKAGE_VERSION "2.15.6_668_gcc235da"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1369,7 +1366,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_648_g12ba450_dirty"
+#define VERSION "2.15.6_668_gcc235da"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) (value)
