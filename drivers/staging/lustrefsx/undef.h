@@ -536,9 +536,6 @@
 /* address_spaace_operaions->invalidate_folio() member exists */
 #undef HAVE_INVALIDATE_FOLIO
 
-/* address_space invalidate_lock member exists */
-#undef HAVE_INVALIDATE_LOCK
-
 /* address_space_operations.invalidatepage needs 3 arguments */
 #undef HAVE_INVALIDATE_RANGE
 
