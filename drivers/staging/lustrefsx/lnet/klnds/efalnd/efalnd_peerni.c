@@ -47,13 +47,15 @@
  * Author: Timothy Day <timday@amazon.com>
  */
 
-#include <asm/page.h>
+#include <linux/delay.h>
+#include <linux/dmapool.h>
 #include <linux/ethtool.h>
+#include <linux/inet.h>
 #include <linux/inetdevice.h>
 #include <linux/smp.h>
-#include <linux/dmapool.h>
-#include <linux/delay.h>
-#include <linux/inet.h>
+
+#include <asm/page.h>
+
 #include <rdma/ib_verbs.h>
 
 #include "kcompat.h"
@@ -117,7 +119,7 @@ static struct kefa_peer_ni *get_peer_ni(u32 nid_addr)
 }
 
 struct kefa_peer_ni *
-kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u32 cm_qkey)
+kefalnd_lookup_or_create_peer_ni(lnet_nid_t nid, union ib_gid *gid, u16 cm_qpn, u32 cm_qkey)
 {
 	struct kefa_peer_ni *new_peer_ni, *old_peer_ni;
 
@@ -125,7 +127,7 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 	if (!new_peer_ni)
 		return ERR_PTR(-ENOMEM);
 
-	new_peer_ni->remote_nid_addr = nid_addr;
+	new_peer_ni->remote_nid_addr = LNET_NIDADDR(nid);
 	new_peer_ni->gid = *gid;
 	new_peer_ni->cm_qp.qp_num = cm_qpn;
 	new_peer_ni->cm_qp.qkey = cm_qkey;
@@ -145,7 +147,7 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 
 	if (IS_ERR(old_peer_ni)) {
 		CDEBUG(EFALND_CD, "Failed to insert mapping for peer NI[%s]\n",
-		       libcfs_nid2str(nid_addr));
+		       libcfs_nid2str(nid));
 
 		rcu_read_unlock();
 		CFS_FREE_PTR(new_peer_ni);
@@ -154,7 +156,7 @@ kefalnd_lookup_or_create_peer_ni(u32 nid_addr, union ib_gid *gid, u16 cm_qpn, u3
 
 	if (old_peer_ni) {
 		CDEBUG(EFALND_CD, "Found pre-existing mapping for peer NI[%s]\n",
-		       libcfs_nid2str(nid_addr));
+		       libcfs_nid2str(nid));
 
 		if (!kref_get_unless_zero(&old_peer_ni->refcount))
 			old_peer_ni =  ERR_PTR(-ENODEV);
@@ -264,7 +266,7 @@ kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev, struct lnet_nid *efa_nid)
 		kefa_nid_md = (struct kefa_nid_md_entry *)&mapping->nid_mappings[i];
 		memcpy(gid.raw, &kefa_nid_md->gid, sizeof(kefa_nid_md->gid));
 
-		new_peer_ni = kefalnd_lookup_or_create_peer_ni(LNET_NIDADDR(kefa_nid_md->nid),
+		new_peer_ni = kefalnd_lookup_or_create_peer_ni(kefa_nid_md->nid,
 							       &gid, kefa_nid_md->qp_num,
 							       kefa_nid_md->qkey);
 
