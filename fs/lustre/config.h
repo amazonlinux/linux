@@ -538,9 +538,6 @@
 /* address_spaace_operaions->invalidate_folio() member exists */
 #define HAVE_INVALIDATE_FOLIO 1
 
-/* address_space invalidate_lock member exists */
-#define HAVE_INVALIDATE_LOCK 1
-
 /* address_space_operations.invalidatepage needs 3 arguments */
 /* #undef HAVE_INVALIDATE_RANGE */
 
@@ -1286,7 +1283,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_648_g12ba450_dirty"
+#define LUSTRE_VERSION_STRING "2.15.6_668_gcc235da"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1316,7 +1313,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_648_g12ba450_dirty"
+#define PACKAGE_STRING "Lustre 2.15.6_668_gcc235da"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1325,7 +1322,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_648_g12ba450_dirty"
+#define PACKAGE_VERSION "2.15.6_668_gcc235da"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1369,7 +1366,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_648_g12ba450_dirty"
+#define VERSION "2.15.6_668_gcc235da"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) ((void *)(value))
