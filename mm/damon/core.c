@@ -2324,6 +2324,11 @@ static void damos_adjust_quota(struct damon_ctx *c, struct damos *s)
 		if (quota->esz && quota->charged_sz >= quota->esz)
 			s->stat.qt_exceeds++;
 		quota->total_charged_sz += quota->charged_sz;
+		if (quota->total_charged_sz > ULONG_MAX / 2 ||
+				quota->total_charged_ns > ULONG_MAX / 2) {
+			quota->total_charged_sz /= 2;
+			quota->total_charged_ns /= 2;
+		}
 		quota->charged_from = jiffies;
 		quota->charged_sz = 0;
 		if (trace_damos_esz_enabled())
