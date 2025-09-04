@@ -512,6 +512,9 @@
 /* 'iterate_shared' is available */
 #undef HAVE_ITERATE_SHARED
 
+/* 'iter_file_splice_write' exists */
+#undef HAVE_ITER_FILE_SPLICE_WRITE
+
 /* struct address_space has i_pages */
 #undef HAVE_I_PAGES
 
@@ -992,7 +995,7 @@
 /* kernel has vfs_rename with 6 args */
 #undef HAVE_VFS_RENAME_6ARGS
 
-/* '__vfs_setxattr is available */
+/* '__vfs_setxattr' is available */
 #undef HAVE_VFS_SETXATTR
 
 /* kernel has vfs_unlink with 3 args */
