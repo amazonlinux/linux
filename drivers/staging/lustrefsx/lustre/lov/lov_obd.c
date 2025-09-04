@@ -237,8 +237,10 @@ static int lov_connect(const struct lu_env *env,
                         continue;
                 }
                 /* connect to administrative disabled ost */
-                if (!lov->lov_tgts[i]->ltd_exp)
-                        continue;
+                if (!lov->lov_tgts[i]->ltd_exp) {
+					lov->lov_tgts[i]->ltd_obd->obd_inactive=1;
+					continue;
+				}
 
 		rc = lov_notify(obd, lov->lov_tgts[i]->ltd_exp->exp_obd,
 				OBD_NOTIFY_CONNECT);
@@ -993,6 +995,10 @@ static int lov_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
 		if (!lov->lov_tgts[index])
 			/* Try again with the next index */
 			RETURN(-EAGAIN);
+
+		if (!lov->lov_tgts[index]->ltd_exp && !lov->lov_tgts[index]->ltd_active) {
+  		 	RETURN(-ENODATA);
+  		}
 
 		osc_obd = class_exp2obd(lov->lov_tgts[index]->ltd_exp);
 		if (!osc_obd)
