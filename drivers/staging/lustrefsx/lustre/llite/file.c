@@ -4904,6 +4904,9 @@ struct file_operations ll_file_operations = {
 	.mmap		= ll_file_mmap,
 	.llseek		= ll_file_seek,
 	.splice_read	= ll_file_splice_read,
+#ifdef HAVE_ITER_FILE_SPLICE_WRITE
+	.splice_write	= iter_file_splice_write,
+#endif
 	.fsync		= ll_fsync,
 	.flush		= ll_flush
 };
@@ -4928,6 +4931,9 @@ struct file_operations ll_file_operations_flock = {
 	.mmap		= ll_file_mmap,
 	.llseek		= ll_file_seek,
 	.splice_read	= ll_file_splice_read,
+#ifdef HAVE_ITER_FILE_SPLICE_WRITE
+	.splice_write	= iter_file_splice_write,
+#endif
 	.fsync		= ll_fsync,
 	.flush		= ll_flush,
 	.flock		= ll_file_flock,
@@ -4955,6 +4961,9 @@ struct file_operations ll_file_operations_noflock = {
 	.mmap		= ll_file_mmap,
 	.llseek		= ll_file_seek,
 	.splice_read	= ll_file_splice_read,
+#ifdef HAVE_ITER_FILE_SPLICE_WRITE
+	.splice_write	= iter_file_splice_write,
+#endif
 	.fsync		= ll_fsync,
 	.flush		= ll_flush,
 	.flock		= ll_file_noflock,
