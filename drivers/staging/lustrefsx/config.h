@@ -514,6 +514,9 @@
 /* 'iterate_shared' is available */
 #define HAVE_ITERATE_SHARED 1
 
+/* 'iter_file_splice_write' exists */
+#define HAVE_ITER_FILE_SPLICE_WRITE 1
+
 /* struct address_space has i_pages */
 #define HAVE_I_PAGES 1
 
@@ -994,7 +997,7 @@
 /* kernel has vfs_rename with 6 args */
 /* #undef HAVE_VFS_RENAME_6ARGS */
 
-/* '__vfs_setxattr is available */
+/* '__vfs_setxattr' is available */
 #define HAVE_VFS_SETXATTR 1
 
 /* kernel has vfs_unlink with 3 args */
@@ -1095,7 +1098,7 @@
 #define LUSTRE_PATCH 8
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.12.8_221_gacb5e01"
+#define LUSTRE_VERSION_STRING "2.12.8_233_g76a0994"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1131,7 +1134,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.12.8_221_gacb5e01"
+#define PACKAGE_STRING "Lustre 2.12.8_233_g76a0994"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1140,7 +1143,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.12.8_221_gacb5e01"
+#define PACKAGE_VERSION "2.12.8_233_g76a0994"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1181,7 +1184,7 @@
 /* #undef USE_LU_REF */
 
 /* Version number of package */
-#define VERSION "2.12.8_221_gacb5e01"
+#define VERSION "2.12.8_233_g76a0994"
 
 /* zfs fix version */
 /* #undef ZFS_FIX */
