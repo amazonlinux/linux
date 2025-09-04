@@ -81,6 +81,7 @@ ksocknal_create_route(__u32 ipaddr, int port)
         route->ksnr_deleted = 0;
         route->ksnr_conn_count = 0;
         route->ksnr_share_count = 0;
+        route->ksnr_retry_count = 0;
 
         return (route);
 }
