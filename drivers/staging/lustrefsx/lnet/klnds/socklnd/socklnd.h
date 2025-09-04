@@ -75,7 +75,7 @@
 
 #define SOCKNAL_PEER_HASH_SIZE  101             /* # peer_ni lists */
 #define SOCKNAL_RESCHED         100             /* # scheduler loops before reschedule */
-#define SOCKNAL_INSANITY_RECONN 5000            /* connd is trying on reconn infinitely */
+#define SOCKNAL_MAX_RETRIES	3
 #define SOCKNAL_ENOMEM_RETRY    1		/* seconds between retries */
 
 #define SOCKNAL_SINGLE_FRAG_TX      0           /* disable multi-fragment sends */
@@ -390,6 +390,7 @@ struct ksock_route {
         unsigned int          ksnr_deleted:1;   /* been removed from peer_ni? */
         unsigned int          ksnr_share_count; /* created explicitly? */
         int                   ksnr_conn_count;  /* # conns established by this route */
+        unsigned int          ksnr_retry_count; /* counts retry attempts */
 };
 
 #define SOCKNAL_KEEPALIVE_PING          1       /* cookie for keepalive ping */
