@@ -1344,8 +1344,12 @@ ssize_t ping_show(struct kobject *kobj, struct attribute *attr,
 	LPROCFS_CLIMP_CHECK(obd);
 	req = ptlrpc_prep_ping(obd->u.cli.cl_import);
 	LPROCFS_CLIMP_EXIT(obd);
-	if (!req)
+	if (!req) {
+		if (obd->u.cli.cl_import->imp_deactive) {
+			RETURN(-ENOTCONN);
+		}
 		RETURN(-ENOMEM);
+	}
 
 	req->rq_send_state = LUSTRE_IMP_FULL;
 
