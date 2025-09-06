@@ -435,6 +435,40 @@ static void damos_test_commit_filter(struct kunit *test)
 	damos_destroy_filter(dst_filter);
 }
 
+static void damos_test_commit_quota_goal(struct kunit *test)
+{
+	struct damos_quota_goal *dst_goal, *src_goal;
+	struct damos_quota_goal dst_goal_cp, src_goal_cp;
+
+	dst_goal = damos_new_quota_goal(DAMOS_QUOTA_SOME_MEM_PSI_US, 1000);
+	if (!dst_goal)
+		kunit_skip(test, "dst_gaol alloc fail\n");
+	src_goal = damos_new_quota_goal(DAMOS_QUOTA_USER_INPUT, 4242);
+	if (!src_goal) {
+		kfree(dst_goal);
+		kunit_skip(test, "src_goal alloc fail\n");
+	}
+	src_goal->current_value = 123;
+
+	damos_commit_quota_goal(dst_goal, src_goal);
+
+	memcpy(&dst_goal_cp, dst_goal, sizeof(dst_goal_cp));
+	memcpy(&src_goal_cp, src_goal, sizeof(src_goal_cp));
+	dst_goal_cp.list = src_goal_cp.list;
+	dst_goal_cp.nid = src_goal_cp.nid;
+	dst_goal_cp.memcg_id = src_goal_cp.memcg_id;
+	KUNIT_EXPECT_EQ(test, dst_goal_cp.metric, src_goal_cp.metric);
+	KUNIT_EXPECT_EQ(test, dst_goal_cp.target_value, src_goal_cp.target_value);
+	KUNIT_EXPECT_EQ(test, dst_goal_cp.current_value, src_goal_cp.current_value);
+	KUNIT_EXPECT_EQ(test, dst_goal_cp.nid, src_goal_cp.nid);
+	KUNIT_EXPECT_EQ(test, dst_goal_cp.memcg_id, src_goal_cp.memcg_id);
+	KUNIT_EXPECT_EQ(test, memcmp(&dst_goal_cp, &src_goal_cp,
+				sizeof(dst_goal_cp)), 0);
+
+	damos_destroy_quota_goal(dst_goal);
+	damos_destroy_quota_goal(src_goal);
+}
+
 static void damos_test_filter_out(struct kunit *test)
 {
 	struct damon_target *t;
@@ -810,6 +844,7 @@ static struct kunit_case damon_test_cases[] = {
 	KUNIT_CASE(damon_test_set_attrs),
 	KUNIT_CASE(damon_test_moving_sum),
 	KUNIT_CASE(damos_test_new_filter),
+	KUNIT_CASE(damos_test_commit_quota_goal),
 	KUNIT_CASE(damos_test_commit_filter),
 	KUNIT_CASE(damos_test_filter_out),
 	KUNIT_CASE(damon_test_feed_loop_next_input),
