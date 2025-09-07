@@ -485,6 +485,14 @@ static void damos_test_commit_quota_goal(struct kunit *test)
 	src->current_value = 789;
 	damos_commit_quota_goal(dst, src);
 	damos_test_commit_quota_goal_ensure_committed(test, dst, src, 456);
+
+	src->metric = DAMOS_QUOTA_NODE_MEM_FREE_BP;
+	src->target_value = 12;
+	src->current_value = 345;
+	src->nid = 3;
+	damos_commit_quota_goal(dst, src);
+	damos_test_commit_quota_goal_ensure_committed(test, dst, src, 0);
+
 	damos_destroy_quota_goal(dst);
 	damos_destroy_quota_goal(src);
 }
