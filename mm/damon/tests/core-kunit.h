@@ -514,6 +514,19 @@ static void damos_test_commit_quota_goal(struct kunit *test)
 		kunit_skip(test, "NODE_MEM_FREE_BP test error\n");
 		return;
 	}
+	if (damos_test_commit_quota_goal_for(test, dst,
+				DAMOS_QUOTA_NODE_MEM_USED_BP, 12, 345, 6)) {
+		kfree(dst);
+		kunit_skip(test, "NODE_MEM_USED_BP test error\n");
+		return;
+	}
+	if (damos_test_commit_quota_goal_for(test, dst,
+				DAMOS_QUOTA_USER_INPUT, 789, 12, 0)) {
+		kfree(dst);
+		kunit_skip(test, "USER_INPUT test error\n");
+		return;
+	}
+
 	damos_destroy_quota_goal(dst);
 }
 
