@@ -468,33 +468,53 @@ static void damos_test_commit_quota_goal_ensure_committed(struct kunit *test,
 	KUNIT_EXPECT_EQ(test, memcmp(&dst_cp, &src_cp, sizeof(dst_cp)), 0);
 }
 
+static int damos_test_commit_quota_goal_for(struct kunit *test,
+		struct damos_quota_goal *dst,
+		enum damos_quota_goal_metric src_metric,
+		unsigned long src_target_val, unsigned long src_current_val,
+		int src_nid)
+{
+	struct damos_quota_goal *src;
+	u64 dst_last_psi_total;
+
+	src = damos_new_quota_goal(src_metric, src_target_val);
+	src->current_value = src_current_val;
+	if (src_nid)
+		src->nid = src_nid;
+
+	if (dst->metric == DAMOS_QUOTA_SOME_MEM_PSI_US)
+		dst_last_psi_total = dst->last_psi_total;
+	else
+		dst_last_psi_total = 0;
+	damos_commit_quota_goal(dst, src);
+	damos_test_commit_quota_goal_ensure_committed(test, dst, src,
+			dst_last_psi_total);
+	damos_destroy_quota_goal(src);
+	return 0;
+}
+
 static void damos_test_commit_quota_goal(struct kunit *test)
 {
-	struct damos_quota_goal *dst, *src;
+	struct damos_quota_goal *dst;
 
 	dst = damos_new_quota_goal(DAMOS_QUOTA_SOME_MEM_PSI_US, 1000);
 	if (!dst)
 		kunit_skip(test, "dst_gaol alloc fail\n");
 	dst->current_value = 123;
 	dst->last_psi_total = 456;
-	src = damos_new_quota_goal(DAMOS_QUOTA_USER_INPUT, 789);
-	if (!src) {
+	if (damos_test_commit_quota_goal_for(test, dst, DAMOS_QUOTA_USER_INPUT,
+				789, 12, 0)) {
 		kfree(dst);
-		kunit_skip(test, "src alloc fail\n");
+		kunit_skip(test, "USER_INPUT test error\n");
+		return;
 	}
-	src->current_value = 789;
-	damos_commit_quota_goal(dst, src);
-	damos_test_commit_quota_goal_ensure_committed(test, dst, src, 456);
-
-	src->metric = DAMOS_QUOTA_NODE_MEM_FREE_BP;
-	src->target_value = 12;
-	src->current_value = 345;
-	src->nid = 3;
-	damos_commit_quota_goal(dst, src);
-	damos_test_commit_quota_goal_ensure_committed(test, dst, src, 0);
-
+	if (damos_test_commit_quota_goal_for(test, dst,
+				DAMOS_QUOTA_NODE_MEM_FREE_BP, 345, 678, 9)) {
+		kfree(dst);
+		kunit_skip(test, "NODE_MEM_FREE_BP test error\n");
+		return;
+	}
 	damos_destroy_quota_goal(dst);
-	damos_destroy_quota_goal(src);
 }
 
 static void damos_test_filter_out(struct kunit *test)
