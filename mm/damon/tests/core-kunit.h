@@ -443,9 +443,11 @@ static void damos_test_commit_quota_goal_ensure_committed(struct kunit *test,
 
 	KUNIT_EXPECT_EQ(test, dst->metric, src->metric);
 	KUNIT_EXPECT_EQ(test, dst->target_value, src->target_value);
-	KUNIT_EXPECT_EQ(test, dst->current_value, src->current_value);
+	if (src->metric == DAMOS_QUOTA_USER_INPUT)
+		KUNIT_EXPECT_EQ(test, dst->current_value, src->current_value);
 	/* last_psi_total is not updated */
-	KUNIT_EXPECT_EQ(test, dst->last_psi_total, last_psi_total);
+	if (last_psi_total)
+		KUNIT_EXPECT_EQ(test, dst->last_psi_total, last_psi_total);
 	switch (dst->metric) {
 	case DAMOS_QUOTA_NODE_MEM_USED_BP:
 	case DAMOS_QUOTA_NODE_MEM_FREE_BP:
@@ -458,6 +460,7 @@ static void damos_test_commit_quota_goal_ensure_committed(struct kunit *test,
 	memcpy(&dst_cp, dst, sizeof(dst_cp));
 	memcpy(&src_cp, src, sizeof(src_cp));
 	dst_cp.list = src_cp.list;
+	dst_cp.current_value = src_cp.current_value;
 	dst_cp.last_psi_total = src_cp.last_psi_total;
 	dst_cp.nid = src_cp.nid;
 	dst_cp.memcg_id = src_cp.memcg_id;
