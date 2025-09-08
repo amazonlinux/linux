@@ -456,7 +456,11 @@ static void damos_test_commit_quota_goal_ensure_committed(struct kunit *test,
 		break;
 	}
 
-	/* further check entire bits */
+	/*
+	 * Adding parameter fields without updating relevant commit code is
+	 * common.  Comapre entire bits except known unupdated fields, to fail
+	 * on such cases.
+	 */
 	memcpy(&dst_cp, dst, sizeof(dst_cp));
 	memcpy(&src_cp, src, sizeof(src_cp));
 	dst_cp.list = src_cp.list;
@@ -561,6 +565,11 @@ static void damos_test_commit_quota(struct kunit *test)
 	KUNIT_EXPECT_EQ(test, dst.weight_nr_accesses, src.weight_nr_accesses);
 	KUNIT_EXPECT_EQ(test, dst.weight_age, src.weight_age);
 
+	/*
+	 * Adding parameter fields without updating relevant commit code is
+	 * common.  Comapre entire bits except known unupdated fields, to fail
+	 * on such cases.
+	 */
 	dst.goals = src.goals;
 	dst.esz = src.esz;
 	KUNIT_EXPECT_EQ(test, memcmp(&dst, &src, sizeof(dst)), 0);
