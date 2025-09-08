@@ -379,6 +379,23 @@ void damos_destroy_quota_goal(struct damos_quota_goal *g)
 	damos_free_quota_goal(g);
 }
 
+int damos_alloc_migrate_dests(struct damos_migrate_dests *dests, int nr_dests)
+{
+	dests->node_id_arr = kmalloc_array(nr_dests,
+			sizeof(*dests->node_id_arr), GFP_KERNEL);
+	if (!dests->node_id_arr)
+		return -ENOMEM;
+	dests->weight_arr = kmalloc_array(nr_dests, sizeof(*dests->weight_arr),
+			GFP_KERNEL);
+	if (!dests->weight_arr) {
+		kfree(dests->node_id_arr);
+		dests->node_id_arr = NULL;
+		return -ENOMEM;
+	}
+	dests->nr_dests = nr_dests;
+	return 0;
+}
+
 /* initialize fields of @quota that normally API users wouldn't set */
 static struct damos_quota *damos_quota_init(struct damos_quota *quota)
 {
