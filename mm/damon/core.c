@@ -389,11 +389,16 @@ int damos_alloc_migrate_dests(struct damos_migrate_dests *dests, int nr_dests)
 			GFP_KERNEL);
 	if (!dests->weight_arr) {
 		kfree(dests->node_id_arr);
-		dests->node_id_arr = NULL;
 		return -ENOMEM;
 	}
 	dests->nr_dests = nr_dests;
 	return 0;
+}
+
+void damos_free_migrate_dests(struct damos_migrate_dests *dests)
+{
+	kfree(dests->node_id_arr);
+	kfree(dests->weight_arr);
 }
 
 /* initialize fields of @quota that normally API users wouldn't set */

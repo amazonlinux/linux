@@ -999,6 +999,7 @@ void damos_add_quota_goal(struct damos_quota *q, struct damos_quota_goal *g);
 void damos_destroy_quota_goal(struct damos_quota_goal *goal);
 
 int damos_alloc_migrate_dests(struct damos_migrate_dests *dests, int nr_dests);
+void damos_free_migrate_dests(struct damos_migrate_dests *dests);
 
 struct damos *damon_new_scheme(struct damos_access_pattern *pattern,
 			enum damos_action action,
