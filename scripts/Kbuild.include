@@ -196,6 +196,10 @@ if-changed-cond = $(newer-prereqs)$(cmd-check)$(check-FORCE)
 # Execute command if command has changed or prerequisite(s) are updated.
 if_changed = $(if $(if-changed-cond),$(cmd_and_savecmd),@:)
 
+# if_changed variant that doesn't require FORCE prerequisite
+if-changed-cond-no-force = $(newer-prereqs)$(cmd-check)
+if_changed_no_force = $(if $(if-changed-cond-no-force),$(cmd_and_savecmd),@:)
+
 cmd_and_savecmd =                                                            \
 	$(cmd);                                                              \
 	printf '%s\n' 'savedcmd_$@ := $(make-cmd)' > $(dot-target).cmd
