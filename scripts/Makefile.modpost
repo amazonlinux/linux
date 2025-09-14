@@ -65,6 +65,15 @@ endif
 ifdef KBUILD_MODULES
 modpost-args += -T modules.order
 modpost-deps += modules.order
+
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+# Add crypto-mod.o to modules.order if crypto-module.a exists and not already added
+ifneq ($(wildcard $(objtree)/crypto-module.a),)
+ifeq ($(shell grep -c "crypto-mod.o" modules.order 2>/dev/null || echo 0),0)
+$(shell echo "crypto-mod.o" >> modules.order)
+endif
+endif
+endif
 endif
 
 ifeq ($(KBUILD_EXTMOD),)
@@ -143,6 +152,26 @@ quiet_cmd_modpost = MODPOST $@
 	$(MODPOST) $(modpost-args)
 
 targets += $(output-symdump)
+
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+# Configurable crypto module name
+crypto-module-name := fips140
+
+# Add crypto module dependency if crypto-module.a exists
+ifneq ($(wildcard $(objtree)/crypto-module.a),)
+$(output-symdump): $(objtree)/$(crypto-module-name).o
+
+$(objtree)/$(crypto-module-name).o: $(objtree)/crypto-module.a FORCE
+	@echo "  LD      $@"
+	@$(LD) -r $(KBUILD_LDFLAGS) $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) --whole-archive $< --no-whole-archive -o $@
+	@echo "$(crypto-module-name).o: crypto-module.a" > .$(crypto-module-name).o.cmd
+	@echo "$(crypto-module-name).o" > $(crypto-module-name).mod
+	@if ! grep -q "$(crypto-module-name).o" modules.order 2>/dev/null; then \
+		echo "$(crypto-module-name).o" >> modules.order; \
+	fi
+endif
+endif
+
 $(output-symdump): $(modpost-deps) FORCE
 	$(call if_changed,modpost)
 
