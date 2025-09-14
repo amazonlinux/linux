@@ -28,7 +28,12 @@ $(MODLIB)/modules.order: modules.order FORCE
 	$(call cmd,install_modorder)
 
 quiet_cmd_install_modorder = INSTALL $@
-      cmd_install_modorder = sed 's:^\(.*\)\.o$$:kernel/\1.ko:' $< > $@
+      cmd_install_modorder = sed 's:^\(.*\)\.o$$:kernel/\1.ko:' $< > $@; \
+	$(if $(CONFIG_CRYPTO_FIPS140_EXTMOD), \
+		if [ -f crypto/fips140/.fips140.order ]; then \
+			sed 's:^\(.*\)\.o$$:kernel/\1.ko:' crypto/fips140/.fips140.order >> $@; \
+		fi \
+	)
 
 # Install modules.builtin(.modinfo,.ranges) even when CONFIG_MODULES is disabled.
 install-y += $(addprefix $(MODLIB)/, modules.builtin modules.builtin.modinfo)
@@ -41,6 +46,12 @@ $(addprefix $(MODLIB)/, modules.builtin modules.builtin.modinfo modules.builtin.
 endif
 
 modules := $(call read-file, modules.order)
+
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+ifneq ($(wildcard crypto/fips140/.fips140.order),)
+modules += $(call read-file, crypto/fips140/.fips140.order)
+endif
+endif
 
 ifeq ($(KBUILD_EXTMOD),)
 dst := $(MODLIB)/kernel
