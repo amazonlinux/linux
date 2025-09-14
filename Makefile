@@ -1240,6 +1240,38 @@ PHONY += vmlinux
 #  vmlinux: private export LDFLAGS_vmlinux := $(LDFLAGS_vmlinux)
 vmlinux: private _LDFLAGS_vmlinux := $(LDFLAGS_vmlinux)
 vmlinux: export LDFLAGS_vmlinux = $(_LDFLAGS_vmlinux)
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+vmlinux: fips140-ready
+# Ensure fips140.ko is built before embedding
+fips140-ready: crypto/fips140/fips140.o crypto/fips140/.fips140.order crypto/fips140/fips140.mod vmlinux.o | modules_prepare
+	$(Q)$(MAKE) KBUILD_MODULES= -f $(srctree)/scripts/Makefile.modpost
+	$(Q)$(MAKE) KBUILD_MODULES=y crypto-module-gen=1 -f $(srctree)/scripts/Makefile.modpost
+ifneq ($(KBUILD_MODPOST_NOFINAL),1)
+	$(Q)$(MAKE) KBUILD_MODULES=y crypto-module-gen=1 -f $(srctree)/scripts/Makefile.modfinal
+endif
+	@:
+
+# Generate fips140.o from crypto-module.a files
+crypto/fips140/fips140.o: crypto-module.a FORCE
+	$(call if_changed,ld_fips140)
+crypto/fips140/.fips140.order: crypto/fips140/fips140.o
+	echo "crypto/fips140/fips140.o" > $@
+crypto/fips140/fips140.mod: crypto-module.a FORCE
+	$(call if_changed,fips140_mod)
+crypto/fips140/.fips140.symvers: fips140-ready
+	@:
+modpost: crypto/fips140/.fips140.symvers
+quiet_cmd_ld_fips140 = LD [M]  $@
+      cmd_ld_fips140 = $(LD) -r $(KBUILD_LDFLAGS) $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) --build-id=none --whole-archive $< --no-whole-archive -o $@
+
+cmd_fips140_mod = ar -t $< > $@
+
+# Add to targets so .cmd file is included
+targets += crypto/fips140/fips140.o crypto/fips140/fips140.mod
+
+# Bridge rule: crypto-module.a depends on directory build (like built-in.a)
+crypto-module.a: . ;
+endif
 vmlinux: vmlinux.o $(KBUILD_LDS) modpost
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.vmlinux
 
@@ -2008,7 +2040,7 @@ prepare: outputmakefile
 # Error messages still appears in the original language
 PHONY += $(build-dir)
 $(build-dir): prepare
-	$(Q)$(MAKE) $(build)=$@ need-builtin=1 need-modorder=1 $(single-goals)
+	$(Q)$(MAKE) $(build)=$@ need-builtin=1 need-modorder=1 need-crypto=1 $(single-goals)
 
 clean-dirs := $(addprefix _clean_, $(clean-dirs))
 PHONY += $(clean-dirs) clean

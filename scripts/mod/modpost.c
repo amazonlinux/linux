@@ -43,6 +43,8 @@ static bool extended_modversions;
 static bool external_module;
 /* Only warn about unresolved symbols */
 static bool warn_unresolved;
+/* Crypto module generation mode */
+static bool crypto_module_gen;
 
 static int sec_mismatch_count;
 static bool sec_mismatch_warn_only = true;
@@ -1737,6 +1739,9 @@ static void check_exports(struct module *mod)
 		const char *basename;
 		exp = find_symbol(s->name);
 		if (!exp) {
+			/* Skip undefined symbol errors for crypto module generation */
+			if (crypto_module_gen)
+				continue;
 			if (!s->weak && nr_unresolved++ < MAX_UNRESOLVED_REPORTS)
 				modpost_log(!warn_unresolved,
 					    "\"%s\" [%s.ko] undefined!\n",
@@ -2178,9 +2183,13 @@ static void write_dump(const char *fname)
 	struct buffer buf = { };
 	struct module *mod;
 	struct symbol *sym;
+	bool is_fips_symvers = crypto_module_gen && (strcmp(fname, "crypto/fips140/.fips140.symvers") == 0);
 
 	list_for_each_entry(mod, &modules, list) {
 		if (mod->dump_file)
+			continue;
+		/* Skip vmlinux symbols when writing .fips140.symvers */
+		if (is_fips_symvers && mod->is_vmlinux)
 			continue;
 		list_for_each_entry(sym, &mod->exported_symbols, list) {
 			if (trim_unused_exports && !sym->used)
@@ -2253,7 +2262,7 @@ int main(int argc, char **argv)
 	LIST_HEAD(dump_lists);
 	struct dump_list *dl, *dl2;
 
-	while ((opt = getopt(argc, argv, "ei:MmnT:to:au:WwENd:xb")) != -1) {
+	while ((opt = getopt(argc, argv, "ei:MmnT:to:au:WwENd:xbc")) != -1) {
 		switch (opt) {
 		case 'e':
 			external_module = true;
@@ -2308,6 +2317,9 @@ int main(int argc, char **argv)
 		case 'x':
 			extended_modversions = true;
 			break;
+		case 'c':
+			crypto_module_gen = true;
+			break;
 		default:
 			exit(1);
 		}
@@ -2353,8 +2365,14 @@ int main(int argc, char **argv)
 	if (missing_namespace_deps)
 		write_namespace_deps_files(missing_namespace_deps);
 
-	if (dump_write)
-		write_dump(dump_write);
+	if (dump_write) {
+		if (crypto_module_gen) {
+		 	/* generate .fips140.symvers for FIPS crypto modules */
+			write_dump("crypto/fips140/.fips140.symvers");
+		}else {
+			write_dump(dump_write);
+		}
+	}
 	if (sec_mismatch_count && !sec_mismatch_warn_only)
 		error("Section mismatches detected.\n"
 		      "Set CONFIG_SECTION_MISMATCH_WARN_ONLY=y to allow them.\n");
