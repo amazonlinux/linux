@@ -51,6 +51,7 @@ modpost-args =										\
 	$(if $(KBUILD_NSDEPS),-d modules.nsdeps)					\
 	$(if $(CONFIG_MODULE_ALLOW_MISSING_NAMESPACE_IMPORTS)$(KBUILD_NSDEPS),-N)	\
 	$(if $(findstring 1, $(KBUILD_EXTRA_WARN)),-W)					\
+	$(if $(crypto-module-gen),-c)							\
 	-o $@
 
 modpost-deps := $(MODPOST)
@@ -63,8 +64,20 @@ endif
 # Read out modules.order to pass in modpost.
 # Otherwise, allmodconfig would fail with "Argument list too long".
 ifdef KBUILD_MODULES
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+ifeq ($(crypto-module-gen),1)
+# For crypto-module-gen, use .fips140.order instead of modules.order
+modpost-args += -T crypto/fips140/.fips140.order
+modpost-deps += crypto/fips140/.fips140.order
+else
 modpost-args += -T modules.order
 modpost-deps += modules.order
+endif
+else
+modpost-args += -T modules.order
+modpost-deps += modules.order
+endif
+
 endif
 
 ifeq ($(KBUILD_EXTMOD),)
@@ -108,6 +121,18 @@ else
 modpost-args += vmlinux.o
 modpost-deps += vmlinux.o
 output-symdump := $(if $(KBUILD_MODULES), Module.symvers, vmlinux.symvers)
+endif
+
+# Include .fips140.symvers for regular module builds if it exists
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+ifeq ($(KBUILD_MODULES),y)
+ifneq ($(crypto-module-gen),1)
+ifneq ($(wildcard crypto/fips140/.fips140.symvers),)
+modpost-args += -i crypto/fips140/.fips140.symvers
+modpost-deps += crypto/fips140/.fips140.symvers
+endif
+endif
+endif
 endif
 
 else
