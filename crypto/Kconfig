@@ -1454,6 +1454,7 @@ endif
 endif
 
 source "drivers/crypto/Kconfig"
+source "crypto/fips140/Kconfig"
 source "crypto/asymmetric_keys/Kconfig"
 source "certs/Kconfig"
 source "crypto/krb5/Kconfig"
