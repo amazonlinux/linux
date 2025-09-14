@@ -29,6 +29,21 @@ ldflags-y  :=
 subdir-asflags-y :=
 subdir-ccflags-y :=
 
+crypto-objs-flags-y := -DFIPS_MODULE=1
+crypto-objs-y :=
+crypto-module-folders := $(srcroot)/crypto $(srcroot)/arch/$(ARCH)/crypto
+# Global crypto directory checking logic
+define is-crypto-related-dir
+$(eval full-path := $(abspath $(obj)/$(1)))
+$(eval norm-folders := $(foreach dir,$(crypto-module-folders),$(abspath $(dir))))
+$(eval check-exact := $(filter $(norm-folders),$(full-path)))
+$(eval check-subdir := $(foreach dir,$(norm-folders),$(filter $(dir)/%,$(full-path))))
+$(eval check-ancestor := $(foreach dir,$(norm-folders),$(if $(filter $(full-path)/%,$(dir)),$(full-path))))
+$(eval result := $(strip $(check-exact) $(check-subdir) $(check-ancestor)))
+$(result)
+endef
+is-crypto-related := $(call is-crypto-related-dir, ./)
+
 # Read auto.conf if it exists, otherwise ignore
 -include $(objtree)/include/config/auto.conf
 
@@ -44,6 +59,16 @@ KBUILD_RUSTFLAGS += $(subdir-rustflags-y)
 
 # Figure out what we need to build from the various variables
 # ===========================================================================
+
+
+# Add crypto-objs-m to obj-m unconditionally
+obj-m += $(crypto-objs-m)
+
+# When CRYPTO_FIPS140_EXTMOD is not defined, add crypto-objs-y to obj-y and clear crypto-objs-y
+ifndef CONFIG_CRYPTO_FIPS140_EXTMOD
+obj-y += $(crypto-objs-y)
+crypto-objs-y :=
+endif
 
 # When an object is listed to be built compiled-in and modular,
 # only build the compiled-in version
@@ -71,11 +96,26 @@ else
 obj-m := $(filter-out %/, $(obj-m))
 endif
 
+# Capture obj-y directories before conversion
+obj-y-dirs := $(filter %/, $(obj-y))
+
 ifdef need-builtin
 obj-y		:= $(patsubst %/, %/built-in.a, $(obj-y))
 else
 obj-y		:= $(filter-out %/, $(obj-y))
 endif
+
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+# Add obj-y directories to crypto-objs-y only if they are crypto-related
+crypto-objs-y	+= $(foreach dir,$(obj-y-dirs),$(if $(strip $(call is-crypto-related-dir,$(patsubst %/,%,$(dir)))),$(dir)))
+
+ifdef need-crypto
+crypto-objs-y	:= $(patsubst %/, %/crypto-module.a, $(crypto-objs-y))
+else
+crypto-objs-y	:= $(filter-out %/, $(crypto-objs-y))
+endif
+endif
+
 
 # Expand $(foo-objs) $(foo-y) etc. by replacing their individuals
 suffix-search = $(strip $(foreach s, $3, $($(1:%$(strip $2)=%$s))))
@@ -88,11 +128,17 @@ real-search = $(foreach m, $1, $(if $(call suffix-search, $m, $2, $3 -), $(call 
 multi-obj-y := $(call multi-search, $(obj-y), .o, -objs -y)
 multi-obj-m := $(call multi-search, $(obj-m), .o, -objs -y -m)
 multi-obj-ym := $(multi-obj-y) $(multi-obj-m)
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+multi-crypto-objs-y := $(call multi-search, $(crypto-objs-y), .o, -objs -y)
+endif
 
 # Replace multi-part objects by their individual parts,
 # including built-in.a from subdirectories
 real-obj-y := $(call real-search, $(obj-y), .o, -objs -y)
 real-obj-m := $(call real-search, $(obj-m), .o, -objs -y -m)
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+real-crypto-objs-y := $(call real-search, $(crypto-objs-y), .o, -objs -y)
+endif
 
 always-y += $(always-m)
 
@@ -117,8 +163,14 @@ obj-m		:= $(addprefix $(obj)/, $(obj-m))
 lib-y		:= $(addprefix $(obj)/, $(lib-y))
 real-obj-y	:= $(addprefix $(obj)/, $(real-obj-y))
 real-obj-m	:= $(addprefix $(obj)/, $(real-obj-m))
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+real-crypto-objs-y := $(addprefix $(obj)/, $(real-crypto-objs-y))
+endif
 multi-obj-m	:= $(addprefix $(obj)/, $(multi-obj-m))
 subdir-ym	:= $(addprefix $(obj)/, $(subdir-ym))
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+multi-crypto-objs-y := $(addprefix $(obj)/, $(multi-crypto-objs-y))
+endif
 endif
 
 ifndef obj
@@ -137,7 +189,9 @@ endif
 # subdir-builtin and subdir-modorder may contain duplications. Use $(sort ...)
 subdir-builtin := $(sort $(filter %/built-in.a, $(real-obj-y)))
 subdir-modorder := $(sort $(filter %/modules.order, $(obj-m)))
-
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+subdir-crypto := $(sort $(filter %/crypto-module.a, $(real-crypto-objs-y)))
+endif
 targets-for-builtin := $(extra-y)
 
 ifneq ($(strip $(lib-y) $(lib-m) $(lib-)),)
@@ -146,6 +200,15 @@ endif
 
 ifdef need-builtin
 targets-for-builtin += $(obj)/built-in.a
+endif
+
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+targets-for-crypto :=
+ifdef need-crypto
+ifneq ($(is-crypto-related),)
+targets-for-crypto += $(obj)/crypto-module.a
+endif
+endif
 endif
 
 targets-for-modules := $(foreach x, o mod, \
@@ -431,6 +494,9 @@ $(obj)/%.o: $(obj)/%.S FORCE
 
 targets += $(filter-out $(subdir-builtin), $(real-obj-y))
 targets += $(filter-out $(subdir-modorder), $(real-obj-m))
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+targets += $(filter-out $(subdir-crypto), $(real-crypto-objs-y))
+endif
 targets += $(lib-y) $(always-y)
 
 # Linker scripts preprocessor (.lds.S -> .lds)
@@ -457,6 +523,9 @@ $(obj)/%.asn1.c $(obj)/%.asn1.h: $(src)/%.asn1 $(objtree)/scripts/asn1_compiler
 # To build objects in subdirs, we need to descend into the directories
 $(subdir-builtin): $(obj)/%/built-in.a: $(obj)/% ;
 $(subdir-modorder): $(obj)/%/modules.order: $(obj)/% ;
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+$(subdir-crypto): $(obj)/%/crypto-module.a: $(obj)/% ;
+endif
 
 #
 # Rule to compile a set of .o files into one .a file (without symbol table)
@@ -472,6 +541,37 @@ quiet_cmd_ar_builtin = AR      $@
 $(obj)/built-in.a: $(real-obj-y) FORCE
 	$(call if_changed,ar_builtin)
 
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+quiet_cmd_ar_crypto = AR      $@
+      cmd_ar_crypto = rm -f $@; \
+	$(if $(real-crypto-objs-y), printf "$(obj)/%s " $(patsubst $(obj)/%,%,$(real-crypto-objs-y)) | xargs) \
+	$(AR) cDPrST $@
+
+# Configurable crypto module name
+crypto-module-name := fips140
+
+ifneq ($(is-crypto-related),)
+$(obj)/crypto-module.a: $(real-crypto-objs-y) FORCE
+	$(if $(strip $(real-crypto-objs-y)),$(call if_changed,ar_crypto),@echo "  AR      $@" && rm -f $@ && $(AR) cDPrST $@)
+
+# Set module flags for crypto objects when building crypto-module.a
+ifdef need-crypto
+$(real-crypto-objs-y): private part-of-module := y
+$(real-crypto-objs-y): private modname := $(crypto-module-name)
+$(real-crypto-objs-y): private objtool-enabled := y
+$(real-crypto-objs-y): private KBUILD_CFLAGS += $(crypto-objs-flags-y)
+
+# Multi-part crypto objects
+$(multi-crypto-objs-y): private objtool-enabled := $(delay-objtool)
+$(multi-crypto-objs-y): private part-of-module := y
+$(multi-crypto-objs-y): private modname := $(crypto-module-name)
+$(multi-crypto-objs-y): private KBUILD_CFLAGS += $(crypto-objs-flags-y)
+$(multi-crypto-objs-y): %.o: %.mod FORCE
+	$(call if_changed_rule,ld_multi_m)
+$(call multi_depend, $(multi-crypto-objs-y), .o, -objs -y -m)
+endif
+endif
+endif
 # This is a list of build artifacts from the current Makefile and its
 # sub-directories. The timestamp should be updated when any of the member files.
 
@@ -536,6 +636,7 @@ endif
 
 $(obj)/: $(if $(KBUILD_BUILTIN), $(targets-for-builtin)) \
 	 $(if $(KBUILD_MODULES), $(targets-for-modules)) \
+	 $(targets-for-crypto) \
 	 $(subdir-ym) $(always-y)
 	@:
 
@@ -556,6 +657,7 @@ $(subdir-ym):
 	$(Q)$(MAKE) $(build)=$@ \
 	need-builtin=$(if $(filter $@/built-in.a, $(subdir-builtin)),1) \
 	need-modorder=$(if $(filter $@/modules.order, $(subdir-modorder)),1) \
+	need-crypto=$(if $(and $(CONFIG_CRYPTO_FIPS140_EXTMOD), $(filter $@/crypto-module.a, $(subdir-crypto))),1) \
 	$(filter $@/%, $(single-subdir-goals))
 
 # Add FORCE to the prerequisites of a target to force it to be always rebuilt.
