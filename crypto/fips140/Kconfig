@@ -1,0 +1,15 @@
+config CRYPTO_FIPS140_EXTMOD
+	tristate "FIPS 140 compliant algorithms as a kernel module"
+	depends on CRYPTO && X86
+	select CRYPTO_FIPS
+	help
+	  This option enables building a kernel module that contains
+	  copies of crypto algorithms that are built in a way that
+	  complies with the FIPS 140 standard.
+
+	  The module registers the algorithms it contains with the
+	  kernel crypto API, and the kernel crypto API's FIPS 140 mode
+	  can be enabled to restrict crypto algorithm usage to only
+	  those provided by this module.
+
+	  If unsure, say N.
