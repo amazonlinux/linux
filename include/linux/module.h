@@ -115,18 +115,40 @@ extern void cleanup_module(void);
 #define postcore_initcall(fn)		module_init(fn)
 #define postcore_initcall_sync(fn)	module_init(fn)
 #define arch_initcall(fn)		module_init(fn)
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && defined(FIPS_MODULE) && !defined(FIPS140_CORE)
+#define subsys_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall0") \
+		__fips_##fn = fn;
+#else
 #define subsys_initcall(fn)		module_init(fn)
+#endif
 #define subsys_initcall_sync(fn)	module_init(fn)
 #define fs_initcall(fn)			module_init(fn)
 #define fs_initcall_sync(fn)		module_init(fn)
 #define rootfs_initcall(fn)		module_init(fn)
 #define device_initcall(fn)		module_init(fn)
 #define device_initcall_sync(fn)	module_init(fn)
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && defined(FIPS_MODULE) && !defined(FIPS140_CORE)
+#define late_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall2") \
+		__fips_##fn = fn;
+#else
 #define late_initcall(fn)		module_init(fn)
+#endif
 #define late_initcall_sync(fn)		module_init(fn)
 
 #define console_initcall(fn)		module_init(fn)
 
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && defined(FIPS_MODULE) && !defined(FIPS140_CORE)
+/* FIPS module: place init/exit in special sections for fips140 loader */
+#define module_init(initfn) \
+	static initcall_t __used __section(".fips_initcall1") \
+		__fips_##initfn = initfn;
+
+#define module_exit(exitfn) \
+	static unsigned long __used __section(".fips_exitcall") \
+		__fips_##exitfn = (unsigned long)&exitfn;
+#else
 /* Each module must use one module_init(). */
 #define module_init(initfn)					\
 	static inline initcall_t __maybe_unused __inittest(void)		\
@@ -142,6 +164,7 @@ extern void cleanup_module(void);
 	void cleanup_module(void) __copy(exitfn)		\
 		__attribute__((alias(#exitfn)));		\
 	___ADDRESSABLE(cleanup_module, __exitdata);
+#endif /* CONFIG_CRYPTO_FIPS140_EXTMOD && FIPS_MODULE && !FIPS140_CORE */
 
 #endif
 
