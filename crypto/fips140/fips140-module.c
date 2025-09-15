@@ -16,9 +16,37 @@
 
 #define CRYPTO_INTERNAL "CRYPTO_INTERNAL"
 
+static int __init run_initcalls(void)
+{
+	extern unsigned long __fips140_initcalls_start[];
+	extern unsigned long __fips140_initcalls_end[];
+
+	for (unsigned long *initcall = __fips140_initcalls_start;
+		initcall != __fips140_initcalls_end; ++initcall)
+	{
+		int ret;
+		initcall_t fn;
+
+		fn = (initcall_t) *initcall;
+		pr_info("FIPS 140: calling %pS\n", fn);
+
+		ret = fn();
+		if (!ret || ret == -ENODEV)
+			continue;
+
+		panic("FIPS 140: initcall %pS failed: %d\n", fn, ret);
+	}
+
+	return 0;
+}
+
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
+    pr_info("loading " FIPS140_MODULE_NAME "\n");
+
+	run_initcalls();
+
     return 0;
 }
 
