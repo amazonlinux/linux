@@ -1262,7 +1262,7 @@ crypto/fips140/.fips140.symvers: fips140-ready
 	@:
 modpost: crypto/fips140/.fips140.symvers
 quiet_cmd_ld_fips140 = LD [M]  $@
-      cmd_ld_fips140 = $(LD) -r $(KBUILD_LDFLAGS) $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) --build-id=none --whole-archive $< --no-whole-archive -o $@
+      cmd_ld_fips140 = $(LD) -r $(KBUILD_LDFLAGS) $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) --build-id=none -T $(srctree)/crypto/fips140/fips140.lds --whole-archive $< --no-whole-archive -o $@
 
 cmd_fips140_mod = ar -t $< > $@
 
