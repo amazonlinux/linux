@@ -62,16 +62,54 @@ struct crypto_api_key {
 
 #else /* defined(FIPS_MODULE) */
 
+/* Consolidated version of different DECLARE_CRYPTO_API versions,
+   within FIPS module, API remains the same, only declare static 
+   call key */
+#define DECLARE_CRYPTO_API(name, ret_type, args_decl, args_call)	\
+	ret_type name args_decl;					\
+	DECLARE_STATIC_CALL(crypto_##name##_key, name);		
+
 /*
- * These are the definitions that get used for the FIPS module and
- * its kernel modules.
+ * These are the definitions that get used for the main kernel.
  *
- * In this case, all crypto API functions resolve directly to their
- * implementations, since they are all part of the FIPS module.
- *
- * We still need to declare the static call keys so we can update
- * them when the FIPS modules have all been loaded.
+ * In this case, initialize crypto static call key with original name
  */
+
+#define DEFINE_CRYPTO_API_STUB(name) \
+	static struct crypto_api_key __##name##_key \
+		__used \
+		__section("__crypto_api_keys") \
+		__aligned(__alignof__(struct crypto_api_key)) = \
+	{ \
+		.key = &STATIC_CALL_KEY(crypto_##name##_key), \
+		.tramp = STATIC_CALL_TRAMP_ADDR(crypto_##name##_key), \
+		.func = &name, \
+	};
+
+#define crypto_module_init(fn) \
+	static initcall_t __used __section(".fips_initcall6") \
+		__fips_##fn = fn;
+#define crypto_module_exit(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
+#define crypto_arch_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall3") \
+		__fips_##fn = fn;
+#define crypto_arch_exitcall(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
+#define crypto_subsys_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall4") \
+		__fips_##fn = fn;
+#define crypto_subsys_exitcall(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
+#define crypto_late_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall7") \
+		__fips_##fn = fn;
+#define crypto_late_exitcall(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
 
 #endif /* defined(FIPS_MODULE) */
 #endif /* defined(CONFIG_CRYPTO_FIPS140_EXTMOD) */
