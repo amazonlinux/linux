@@ -163,7 +163,7 @@ $(output-symdump): $(objtree)/$(crypto-module-name).o
 
 $(objtree)/$(crypto-module-name).o: $(objtree)/crypto-module.a FORCE
 	@echo "  LD      $@"
-	@$(LD) -r $(KBUILD_LDFLAGS) $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) --whole-archive $< --no-whole-archive -o $@
+	@$(LD) -r $(KBUILD_LDFLAGS) $(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE) -T $(srctree)/crypto/fips140/fips140.lds --whole-archive $< --no-whole-archive -o $@
 	@echo "$(crypto-module-name).o: crypto-module.a" > .$(crypto-module-name).o.cmd
 	@echo "$(crypto-module-name).o" > $(crypto-module-name).mod
 	@if ! grep -q "$(crypto-module-name).o" modules.order 2>/dev/null; then \
