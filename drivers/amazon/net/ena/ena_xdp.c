@@ -6,29 +6,6 @@
 #include "ena_xdp.h"
 #ifdef ENA_XDP_SUPPORT
 
-#ifdef ENA_XDP_MB_SUPPORT
-static bool ena_xdp_too_many_tx_frags(u8 nr_frags, u16 sgl_size,
-				      u32 header_len, u8 tx_max_header_size,
-				      bool is_llq)
-{
-	if (likely(nr_frags < sgl_size))
-		return false;
-
-	/* In non-LLQ case: The linear part of the xdp_buff will be the first
-	 * buffer of the packet in addition to the frag buffers.
-	 *
-	 * In LLQ case: If the linear part of the xdp_buff fits the header
-	 * part of the LLQ entry perfectly, the linear part of the xdp_buff
-	 * will not be used as the first buffer.
-	 */
-	if (unlikely(is_llq && (nr_frags == sgl_size) &&
-	    (header_len == tx_max_header_size)))
-		return false;
-
-	return true;
-}
-
-#endif  /* ENA_XDP_MB_SUPPORT */
 static int ena_xdp_tx_map_frame(struct ena_ring *tx_ring,
 				struct ena_tx_buffer *tx_info,
 				struct xdp_frame *xdpf,
@@ -70,13 +47,13 @@ static int ena_xdp_tx_map_frame(struct ena_ring *tx_ring,
 		}
 
 		sh_info = xdp_get_shared_info_from_frame(xdpf);
-		too_many_tx_frags = ena_xdp_too_many_tx_frags(sh_info->nr_frags,
-							      tx_ring->sgl_size,
-							      header_len,
-							      tx_max_header_size,
-							      is_llq);
+		too_many_tx_frags = ena_too_many_tx_frags(sh_info->nr_frags,
+							  tx_ring->sgl_size,
+							  header_len,
+							  tx_max_header_size,
+							  is_llq);
 
-		if (too_many_tx_frags) {
+		if (unlikely(too_many_tx_frags)) {
 			netdev_err_once(adapter->netdev,
 					"xdp: dropped multi-buffer packets with too many frags\n");
 
@@ -672,6 +649,7 @@ static int ena_clean_xdp_irq(struct ena_ring *tx_ring, u32 budget)
 	u16 next_to_clean, req_id;
 	int rc, tx_pkts = 0;
 	u32 total_done = 0;
+	u64 hw_timestamp;
 
 	next_to_clean = tx_ring->next_to_clean;
 
@@ -679,8 +657,9 @@ static int ena_clean_xdp_irq(struct ena_ring *tx_ring, u32 budget)
 		struct ena_tx_buffer *tx_info;
 		struct xdp_frame *xdpf;
 
-		rc = ena_com_tx_comp_req_id_get(tx_ring->ena_com_io_cq,
-						&req_id);
+		rc = ena_com_tx_comp_metadata_get(tx_ring->ena_com_io_cq,
+						  &req_id,
+						  &hw_timestamp);
 		if (rc) {
 			handle_tx_comp_poll_error(tx_ring, req_id, rc);
 			break;
@@ -730,14 +709,16 @@ static bool ena_xdp_clean_tx_zc(struct ena_ring *tx_ring, u32 budget)
 	struct xsk_buff_pool *xsk_pool = tx_ring->xsk_pool;
 	int rc, cleaned_pkts, zc_pkts, acked_pkts;
 	struct ena_tx_buffer *tx_info;
+	u64 hw_timestamp;
 	u32 total_done;
 	u16 req_id;
 
 	acked_pkts = 0;
 
 	while (acked_pkts < budget) {
-		rc = ena_com_tx_comp_req_id_get(tx_ring->ena_com_io_cq,
-						&req_id);
+		rc = ena_com_tx_comp_metadata_get(tx_ring->ena_com_io_cq,
+						  &req_id,
+						  &hw_timestamp);
 		if (rc) {
 			handle_tx_comp_poll_error(tx_ring, req_id, rc);
 			break;
@@ -1110,6 +1091,8 @@ int ena_xdp_io_poll(struct napi_struct *napi, int budget)
 
 	tx_ring = ena_napi->tx_ring;
 
+	WRITE_ONCE(tx_ring->tx_stats.last_napi_jiffies, jiffies);
+
 	if (!test_bit(ENA_FLAG_DEV_UP, &tx_ring->adapter->flags) ||
 	    test_bit(ENA_FLAG_TRIGGER_RESET, &tx_ring->adapter->flags)) {
 		napi_complete_done(napi, 0);
@@ -1184,7 +1167,6 @@ int ena_xdp_io_poll(struct napi_struct *napi, int budget)
 	u64_stats_update_begin(&tx_ring->syncp);
 	tx_ring->tx_stats.tx_poll++;
 	u64_stats_update_end(&tx_ring->syncp);
-	tx_ring->tx_stats.last_napi_jiffies = jiffies;
 
 	return ret;
 }
