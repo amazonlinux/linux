@@ -19,6 +19,7 @@
 #include <linux/interrupt.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#include <linux/net_tstamp.h>
 #ifdef ENA_XDP_SUPPORT
 #include <net/xdp.h>
 #endif
@@ -31,8 +32,8 @@
 #include "ena_eth_com.h"
 
 #define DRV_MODULE_GEN_MAJOR	2
-#define DRV_MODULE_GEN_MINOR	14
-#define DRV_MODULE_GEN_SUBMINOR	1
+#define DRV_MODULE_GEN_MINOR	15
+#define DRV_MODULE_GEN_SUBMINOR	0
 
 #define DRV_MODULE_NAME		"ena"
 #ifndef DRV_MODULE_GENERATION
@@ -419,6 +420,12 @@ enum ena_llq_header_size_policy_t {
 	ENA_LLQ_HEADER_SIZE_POLICY_LARGE
 };
 
+struct hw_timestamp_state {
+	struct hwtstamp_config ts_cfg;
+	u8 hw_tx_supported;
+	u8 hw_rx_supported;
+};
+
 /* adapter specific private data structure */
 struct ena_adapter {
 	struct ena_com_dev *ena_dev;
@@ -512,6 +519,8 @@ struct ena_adapter {
 #endif
 	u32 xdp_first_ring;
 	u32 xdp_num_queues;
+
+	struct hw_timestamp_state hw_ts_state;
 };
 
 #define ENA_RESET_STATS_ENTRY(reset_reason, stat) \
@@ -792,6 +801,36 @@ static inline void ena_rx_release_packet_buffers(struct ena_ring *rx_ring,
 					ENA_DMA_ATTR_SKIP_CPU_SYNC);
 		rx_ring->rx_buffer_info[req_id].page = NULL;
 	}
+}
+
+static inline bool ena_too_many_tx_frags(u8 nr_frags, u16 sgl_size,
+					 u32 header_len, u8 tx_max_header_size,
+					 bool is_llq)
+{
+	if (likely(nr_frags < sgl_size))
+		return false;
+
+	/* If the number of frags is the maximum allowed number of bufs in a
+	 * tx packet then usually the buffer holding the linear part of the
+	 * skb/xdp_frame will add another buffer to the packet, increasing the
+	 * number of buffers in the packet over the allowed limit.
+	 *
+	 * Except for the following cases:
+	 * 1. In LLQ case: If the linear part of the skb/xdp_frame fits the
+	 *    header part of the LLQ entry perfectly, the linear part of the
+	 *    skb/xdp_frame will not be used as the first buffer.
+	 * 2. In non-LLQ case: if the size of the linear part is 0, then the
+	 *    linear part will not become an extra buffer.
+	 */
+	if (unlikely(nr_frags == sgl_size)) {
+		if (likely(is_llq && (header_len <= tx_max_header_size)))
+			return false;
+
+		if (unlikely(!is_llq && !header_len))
+			return false;
+	}
+
+	return true;
 }
 
 #endif /* !(ENA_H) */
