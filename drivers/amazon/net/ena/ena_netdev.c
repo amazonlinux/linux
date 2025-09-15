@@ -97,6 +97,7 @@ MODULE_DEVICE_TABLE(pci, ena_pci_tbl);
 
 static int ena_rss_init_default(struct ena_adapter *adapter);
 static void check_for_admin_com_state(struct ena_adapter *adapter);
+int ena_configure_hw_timestamping(struct ena_adapter *adapter);
 static void ena_set_dev_offloads(struct ena_com_dev_get_features_ctx *feat,
 				 struct ena_adapter *adapter);
 
@@ -873,8 +874,9 @@ void ena_unmap_tx_buff(struct ena_ring *tx_ring,
  */
 static void ena_free_tx_bufs(struct ena_ring *tx_ring)
 {
-	bool is_xdp_ring, print_once = true;
-	u32 i;
+	unsigned long longest_jiffies_since_submitted = 0;
+	u32 i, uncompleted_skbs = 0;
+	bool is_xdp_ring;
 
 	is_xdp_ring = ENA_IS_XDP_INDEX(tx_ring->adapter, tx_ring->qid);
 
@@ -886,16 +888,14 @@ static void ena_free_tx_bufs(struct ena_ring *tx_ring)
 			continue;
 
 		jiffies_since_submitted = jiffies - tx_info->tx_sent_jiffies;
-		if (print_once) {
-			netif_notice(tx_ring->adapter, ifdown, tx_ring->netdev,
-				     "Free uncompleted tx skb qid %d, idx 0x%x, %u msecs since submission\n",
-				     tx_ring->qid, i, jiffies_to_msecs(jiffies_since_submitted));
-			print_once = false;
-		} else {
-			netif_dbg(tx_ring->adapter, ifdown, tx_ring->netdev,
-				  "Free uncompleted tx skb qid %d, idx 0x%x, %u msecs since submission\n",
-				  tx_ring->qid, i, jiffies_to_msecs(jiffies_since_submitted));
-		}
+		if (jiffies_since_submitted > longest_jiffies_since_submitted)
+			longest_jiffies_since_submitted = jiffies_since_submitted;
+
+		netif_dbg(tx_ring->adapter, ifdown, tx_ring->netdev,
+			 "Free uncompleted tx skb qid %d, idx 0x%x, %u msecs since submission\n",
+			 tx_ring->qid, i, jiffies_to_msecs(jiffies_since_submitted));
+
+		uncompleted_skbs++;
 
 		ena_unmap_tx_buff(tx_ring, tx_info);
 
@@ -908,6 +908,13 @@ static void ena_free_tx_bufs(struct ena_ring *tx_ring)
 	if (!is_xdp_ring)
 		netdev_tx_reset_queue(netdev_get_tx_queue(tx_ring->netdev,
 							  tx_ring->qid));
+
+	if (uncompleted_skbs)
+		netif_info(tx_ring->adapter, ifdown, tx_ring->netdev,
+			   "Freed %u uncompleted tx skbs, qid %d, longest msecs since submission %u\n",
+			   uncompleted_skbs,
+			   tx_ring->qid,
+			   jiffies_to_msecs(longest_jiffies_since_submitted));
 }
 
 static void ena_free_all_tx_bufs(struct ena_adapter *adapter)
@@ -959,7 +966,7 @@ static void ena_destroy_all_io_queues(struct ena_adapter *adapter)
 
 void ena_get_and_dump_head_rx_cdesc(struct ena_com_io_cq *io_cq)
 {
-	struct ena_eth_io_rx_cdesc_base *cdesc;
+	struct ena_eth_io_rx_cdesc_ext *cdesc;
 
 	cdesc = ena_com_get_next_rx_cdesc(io_cq);
 	ena_com_dump_single_rx_cdesc(io_cq, cdesc);
@@ -967,7 +974,7 @@ void ena_get_and_dump_head_rx_cdesc(struct ena_com_io_cq *io_cq)
 
 void ena_get_and_dump_head_tx_cdesc(struct ena_com_io_cq *io_cq)
 {
-	struct ena_eth_io_tx_cdesc *cdesc;
+	struct ena_eth_io_tx_cdesc_ext *cdesc;
 	u16 target_cdesc_idx;
 
 	target_cdesc_idx = io_cq->head & (io_cq->q_depth - 1);
@@ -1021,11 +1028,23 @@ int validate_tx_req_id(struct ena_ring *tx_ring, u16 req_id)
 	return handle_invalid_req_id(tx_ring, req_id, tx_info);
 }
 
+static inline bool ena_hw_tx_timestamp_requested(struct ena_adapter *adapter)
+{
+	return adapter->hw_ts_state.ts_cfg.tx_type == HWTSTAMP_TX_ON;
+}
+
+static inline bool ena_hw_rx_timestamp_requested(struct ena_adapter *adapter)
+{
+	return adapter->hw_ts_state.ts_cfg.rx_filter == HWTSTAMP_FILTER_ALL;
+}
+
 static int ena_clean_tx_irq(struct ena_ring *tx_ring, u32 budget)
 {
+	struct skb_shared_hwtstamps tx_hw_timestamp = {};
 	u32 total_done = 0, tx_bytes = 0;
 	u16 req_id, next_to_clean;
 	struct netdev_queue *txq;
+	u64 hw_timestamp = 0;
 	int rc, tx_pkts = 0;
 	bool above_thresh;
 
@@ -1036,8 +1055,9 @@ static int ena_clean_tx_irq(struct ena_ring *tx_ring, u32 budget)
 		struct ena_tx_buffer *tx_info;
 		struct sk_buff *skb;
 
-		rc = ena_com_tx_comp_req_id_get(tx_ring->ena_com_io_cq,
-						&req_id);
+		rc = ena_com_tx_comp_metadata_get(tx_ring->ena_com_io_cq,
+						  &req_id,
+						  &hw_timestamp);
 		if (rc) {
 			handle_tx_comp_poll_error(tx_ring, req_id, rc);
 			break;
@@ -1065,6 +1085,12 @@ static int ena_clean_tx_irq(struct ena_ring *tx_ring, u32 budget)
 
 		tx_bytes += tx_info->total_tx_size;
 		tx_info->total_tx_size = 0;
+
+		if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_IN_PROGRESS)) {
+			tx_hw_timestamp.hwtstamp = ns_to_ktime(hw_timestamp);
+			skb_tstamp_tx(skb, &tx_hw_timestamp);
+		}
+
 		dev_kfree_skb(skb);
 		tx_pkts++;
 		total_done += tx_info->tx_descs;
@@ -1185,12 +1211,11 @@ void ena_fill_rx_frags(struct ena_ring *rx_ring,
 		       struct sk_buff *skb)
 {
 	int tailroom = SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
-	int page_offset, buf_offset, pkt_offset, len;
+	int buf_offset, pkt_offset, len;
 	struct ena_rx_buffer *rx_info;
 	dma_addr_t pre_reuse_paddr;
 	struct page *rx_info_page;
-	u16 buf_len, req_id, buf;
-	bool reuse_rx_buf_page;
+	u16 req_id, buf;
 
 	for (buf = 1; buf < descs; ++buf) {
 		len = ena_bufs[buf].len;
@@ -1201,8 +1226,6 @@ void ena_fill_rx_frags(struct ena_ring *rx_ring,
 		/* rx_info->buf_offset includes rx_ring->rx_headroom */
 		buf_offset = rx_info->buf_offset;
 		pkt_offset = buf_offset - rx_ring->rx_headroom;
-		buf_len = SKB_DATA_ALIGN(len + buf_offset + tailroom);
-		page_offset = rx_info->page_offset;
 
 		pre_reuse_paddr = dma_unmap_addr(&rx_info->ena_buf, paddr);
 
@@ -1214,6 +1237,10 @@ void ena_fill_rx_frags(struct ena_ring *rx_ring,
 		rx_info_page = rx_info->page;
 
 		if (skb) {
+			u16 buf_len = SKB_DATA_ALIGN(len + buf_offset + tailroom);
+			int page_offset = rx_info->page_offset;
+			bool reuse_rx_buf_page;
+
 			reuse_rx_buf_page = ena_try_rx_buf_page_reuse(rx_info,
 								      buf_len,
 								      len,
@@ -1587,6 +1614,9 @@ static int ena_clean_rx_irq(struct ena_ring *rx_ring, struct napi_struct *napi,
 
 		skb_record_rx_queue(skb, rx_ring->qid);
 
+		if (unlikely(ena_hw_rx_timestamp_requested(rx_ring->adapter)))
+			skb_hwtstamps(skb)->hwtstamp = ns_to_ktime(ena_rx_ctx.timestamp);
+
 		if ((rx_ring->ena_bufs[0].len <= rx_ring->rx_copybreak) &&
 		    likely(ena_rx_ctx.descs == 1))
 			rx_copybreak_pkt++;
@@ -1774,6 +1804,8 @@ static int ena_io_poll(struct napi_struct *napi, int budget)
 	tx_ring = ena_napi->tx_ring;
 	rx_ring = ena_napi->rx_ring;
 
+	WRITE_ONCE(tx_ring->tx_stats.last_napi_jiffies, jiffies);
+
 	tx_budget = tx_ring->ring_size / ENA_TX_POLL_BUDGET_DIVIDER;
 
 	if (!test_bit(ENA_FLAG_DEV_UP, &tx_ring->adapter->flags) ||
@@ -1839,8 +1871,6 @@ static int ena_io_poll(struct napi_struct *napi, int budget)
 #ifdef ENA_BUSY_POLL_SUPPORT
 	ena_bp_unlock_napi(rx_ring);
 #endif
-	tx_ring->tx_stats.last_napi_jiffies = jiffies;
-
 	return ret;
 }
 
@@ -2132,13 +2162,11 @@ static void ena_disable_io_intr_sync(struct ena_adapter *adapter)
 		synchronize_irq(adapter->irq_tbl[i].vector);
 }
 
-static void ena_del_napi_in_range(struct ena_adapter *adapter,
-				  int first_index,
-				  int count)
+static void ena_del_napi(struct ena_adapter *adapter, int count)
 {
 	int i;
 
-	for (i = first_index; i < first_index + count; i++) {
+	for (i = 0; i < count; i++) {
 #ifdef ENA_BUSY_POLL_SUPPORT
 		napi_hash_del(&adapter->ena_napi[i].napi);
 #endif /* ENA_BUSY_POLL_SUPPORT */
@@ -2156,13 +2184,12 @@ static void ena_del_napi_in_range(struct ena_adapter *adapter,
 #endif /* ENA_BUSY_POLL_SUPPORT */
 }
 
-static void ena_init_napi_in_range(struct ena_adapter *adapter,
-				   int first_index, int count)
+static void ena_init_napi(struct ena_adapter *adapter, int count)
 {
 	int (*napi_handler)(struct napi_struct *napi, int budget);
 	int i;
 
-	for (i = first_index; i < first_index + count; i++) {
+	for (i = 0; i < count; i++) {
 		struct ena_napi *napi = &adapter->ena_napi[i];
 		struct ena_ring *rx_ring, *tx_ring;
 
@@ -2196,14 +2223,12 @@ static void ena_init_napi_in_range(struct ena_adapter *adapter,
 }
 
 #ifdef ENA_BUSY_POLL_SUPPORT
-static void ena_napi_disable_in_range(struct ena_adapter *adapter,
-				      int first_index,
-				      int count)
+static void ena_napi_disable(struct ena_adapter *adapter, int count)
 {
 	struct ena_ring *rx_ring;
 	int i, timeout;
 
-	for (i = first_index; i < first_index + count; i++) {
+	for (i = 0; i < count; i++) {
 		napi_disable(&adapter->ena_napi[i].napi);
 
 		rx_ring = &adapter->rx_ring[i];
@@ -2223,14 +2248,12 @@ static void ena_napi_disable_in_range(struct ena_adapter *adapter,
 	}
 }
 #else
-static void ena_napi_disable_in_range(struct ena_adapter *adapter,
-				      int first_index,
-				      int count)
+static void ena_napi_disable(struct ena_adapter *adapter, int count)
 {
 	struct napi_struct *napi;
 	int i;
 
-	for (i = first_index; i < first_index + count; i++) {
+	for (i = 0; i < count; i++) {
 		napi = &adapter->ena_napi[i].napi;
 #ifdef ENA_NAPI_IRQ_AND_QUEUE_ASSOC
 		if (!ENA_IS_XDP_INDEX(adapter, i)) {
@@ -2247,14 +2270,12 @@ static void ena_napi_disable_in_range(struct ena_adapter *adapter,
 }
 #endif
 
-static void ena_napi_enable_in_range(struct ena_adapter *adapter,
-				     int first_index,
-				     int count)
+static void ena_napi_enable(struct ena_adapter *adapter, int count)
 {
 	struct napi_struct *napi;
 	int i;
 
-	for (i = first_index; i < first_index + count; i++) {
+	for (i = 0; i < count; i++) {
 		napi = &adapter->ena_napi[i].napi;
 		napi_enable(napi);
 #ifdef ENA_NAPI_IRQ_AND_QUEUE_ASSOC
@@ -2339,9 +2360,8 @@ static int ena_up_complete(struct ena_adapter *adapter)
 	/* enable transmits */
 	netif_tx_start_all_queues(adapter->netdev);
 
-	ena_napi_enable_in_range(adapter,
-				 0,
-				 adapter->xdp_num_queues + adapter->num_io_queues);
+	ena_napi_enable(adapter,
+			adapter->xdp_num_queues + adapter->num_io_queues);
 
 	return 0;
 }
@@ -2368,6 +2388,7 @@ static int ena_create_io_tx_queue(struct ena_adapter *adapter, int qid)
 	ctx.mem_queue_type = ena_dev->tx_mem_queue_type;
 	ctx.msix_vector = msix_vector;
 	ctx.queue_size = tx_ring->ring_size;
+	ctx.use_extended_cdesc = ena_dev->use_extended_tx_cdesc;
 
 	rc = ena_com_create_io_queue(ena_dev, &ctx);
 	if (unlikely(rc)) {
@@ -2434,6 +2455,7 @@ static int ena_create_io_rx_queue(struct ena_adapter *adapter, int qid)
 	ctx.mem_queue_type = ENA_ADMIN_PLACEMENT_POLICY_HOST;
 	ctx.msix_vector = msix_vector;
 	ctx.queue_size = rx_ring->ring_size;
+	ctx.use_extended_cdesc = ena_dev->use_extended_rx_cdesc;
 
 	rc = ena_com_create_io_queue(ena_dev, &ctx);
 	if (unlikely(rc)) {
@@ -2630,7 +2652,7 @@ int ena_up(struct ena_adapter *adapter)
 	 * interrupt, causing the ISR to fire immediately while the poll
 	 * function wasn't set yet, causing a null dereference
 	 */
-	ena_init_napi_in_range(adapter, 0, io_queue_count);
+	ena_init_napi(adapter, io_queue_count);
 
 	/* If the device stopped supporting interrupt moderation, need
 	 * to disable adaptive interrupt moderation.
@@ -2697,7 +2719,7 @@ err_up:
 err_create_queues_with_backoff:
 	ena_free_io_irq(adapter);
 err_req_irq:
-	ena_del_napi_in_range(adapter, 0, io_queue_count);
+	ena_del_napi(adapter, io_queue_count);
 
 	return rc;
 }
@@ -2717,7 +2739,7 @@ void ena_down(struct ena_adapter *adapter)
 	netif_tx_disable(adapter->netdev);
 
 	/* After this point the napi handler won't enable the tx queue */
-	ena_napi_disable_in_range(adapter, 0, io_queue_count);
+	ena_napi_disable(adapter, io_queue_count);
 
 	if (test_bit(ENA_FLAG_TRIGGER_RESET, &adapter->flags)) {
 		int rc;
@@ -2734,7 +2756,7 @@ void ena_down(struct ena_adapter *adapter)
 
 	ena_disable_io_intr_sync(adapter);
 	ena_free_io_irq(adapter);
-	ena_del_napi_in_range(adapter, 0, io_queue_count);
+	ena_del_napi(adapter, io_queue_count);
 
 	ena_free_all_tx_bufs(adapter);
 	ena_free_all_rx_bufs(adapter);
@@ -3010,16 +3032,16 @@ static void ena_tx_csum(struct ena_com_tx_ctx *ena_tx_ctx,
 static int ena_check_and_linearize_skb(struct ena_ring *tx_ring,
 				       struct sk_buff *skb)
 {
-	int num_frags, header_len, rc;
+	bool is_llq = likely(tx_ring->tx_mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_DEV);
+	bool too_many_tx_frags;
+	int rc;
 
-	num_frags = skb_shinfo(skb)->nr_frags;
-	header_len = skb_headlen(skb);
-
-	if (num_frags < tx_ring->sgl_size)
-		return 0;
-
-	if ((num_frags == tx_ring->sgl_size) &&
-	    (header_len < tx_ring->tx_max_header_size))
+	too_many_tx_frags = ena_too_many_tx_frags(skb_shinfo(skb)->nr_frags,
+						  tx_ring->sgl_size,
+						  skb_headlen(skb),
+						  tx_ring->tx_max_header_size,
+						  is_llq);
+	if (likely(!too_many_tx_frags))
 		return 0;
 
 	ena_increase_stat(&tx_ring->tx_stats.linearize, 1, &tx_ring->syncp);
@@ -3226,6 +3248,10 @@ static netdev_tx_t ena_start_xmit(struct sk_buff *skb, struct net_device *dev)
 					  &tx_ring->syncp);
 		}
 	}
+
+	if (unlikely(skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP &&
+		     ena_hw_tx_timestamp_requested(tx_ring->adapter)))
+		skb_shinfo(skb)->tx_flags |= SKBTX_IN_PROGRESS;
 
 	skb_tx_timestamp(skb);
 
@@ -3569,6 +3595,213 @@ static int ena_rx_flow_steer(struct net_device *dev,
 }
 
 #endif /* CONFIG_RFS_ACCEL */
+int ena_configure_hw_timestamping(struct ena_adapter *adapter)
+{
+	struct ena_com_dev *ena_dev = adapter->ena_dev;
+	u8 tx_hw_support, rx_hw_support;
+	u8 tx_enable, rx_enable;
+	int rc;
+
+	if (!ena_com_hw_timestamping_supported(ena_dev)) {
+		netdev_dbg(adapter->netdev, "HW timestamping is not supported\n");
+		rc = -EOPNOTSUPP;
+		goto out;
+	}
+
+	tx_enable = ena_hw_tx_timestamp_requested(adapter);
+	rx_enable = ena_hw_rx_timestamp_requested(adapter);
+
+	tx_hw_support = (adapter->hw_ts_state.hw_tx_supported ==
+			 ENA_ADMIN_HW_TIMESTAMP_TX_SUPPORT_ALL);
+	rx_hw_support = (adapter->hw_ts_state.hw_rx_supported ==
+			 ENA_ADMIN_HW_TIMESTAMP_RX_SUPPORT_ALL);
+
+	/* Check for configuration mismatch */
+	if ((tx_enable && !tx_hw_support) || (rx_enable && !rx_hw_support)) {
+		netdev_err(adapter->netdev,
+			   "HW timestamping configuration mismatch. TX/RX req: %d/%d, TX/RX supp: %d/%d\n",
+			   tx_enable, rx_enable,
+			   tx_hw_support, rx_hw_support);
+		rc = -EOPNOTSUPP;
+		goto out;
+	}
+
+	rc = ena_com_set_hw_timestamping_configuration(ena_dev,
+						       tx_enable,
+						       rx_enable);
+	if (rc) {
+		netdev_err(adapter->netdev,
+			   "Failed to set HW timestamping configuration, error: %d\n",
+			   rc);
+		goto out;
+	}
+
+	ena_dev->use_extended_tx_cdesc = tx_enable;
+	ena_dev->use_extended_rx_cdesc = rx_enable;
+
+	return 0;
+
+out:
+	/* In case of failure, set requested configuration to off/none.
+	 * Also remove the need to use extended completion descriptors.
+	 */
+	adapter->hw_ts_state.ts_cfg.tx_type = HWTSTAMP_TX_OFF;
+	adapter->hw_ts_state.ts_cfg.rx_filter = HWTSTAMP_FILTER_NONE;
+
+	adapter->ena_dev->use_extended_tx_cdesc = false;
+	adapter->ena_dev->use_extended_rx_cdesc = false;
+
+	return rc;
+}
+
+static int ena_set_timestamp_config_internal(struct ena_adapter *adapter,
+					     struct hwtstamp_config *config)
+{
+	int rc_ts, rc = 0;
+	bool dev_was_up;
+
+	if (!ena_com_hw_timestamping_supported(adapter->ena_dev)) {
+		netdev_err(adapter->netdev, "HW timestamping is not supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	switch (config->tx_type) {
+	case HWTSTAMP_TX_OFF:
+	case HWTSTAMP_TX_ON:
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	switch (config->rx_filter) {
+	case HWTSTAMP_FILTER_NONE:
+		break;
+	case HWTSTAMP_FILTER_PTP_V1_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V1_L4_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L2_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_L4_EVENT:
+	case HWTSTAMP_FILTER_PTP_V2_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L2_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_L4_SYNC:
+	case HWTSTAMP_FILTER_PTP_V2_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_L2_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V2_L4_DELAY_REQ:
+	case HWTSTAMP_FILTER_PTP_V1_L4_EVENT:
+#ifdef ENA_HAVE_HWTSTAMP_FILTER_NTP_ALL
+	case HWTSTAMP_FILTER_NTP_ALL:
+#endif /* ENA_HAVE_HWTSTAMP_FILTER_NTP_ALL */
+	case HWTSTAMP_FILTER_ALL:
+		config->rx_filter = HWTSTAMP_FILTER_ALL;
+		break;
+	default:
+		return -ERANGE;
+	}
+
+	/* Store the configuration internally */
+	memcpy(&adapter->hw_ts_state.ts_cfg,
+	       config,
+	       sizeof(adapter->hw_ts_state.ts_cfg));
+
+	dev_was_up = test_bit(ENA_FLAG_DEV_UP, &adapter->flags);
+	ena_close(adapter->netdev);
+
+	/* Needs to be called before queues are created in ena_up().
+	 * In case the procedure fails, return to default configuration and
+	 * continue with driver initialization.
+	 */
+	rc_ts = ena_configure_hw_timestamping(adapter);
+
+	if (dev_was_up)
+		rc = ena_up(adapter);
+
+	return rc_ts ? rc_ts : rc;
+}
+
+static int ena_set_timestamp_config(struct ena_adapter *adapter, struct ifreq *ifr)
+{
+	struct hwtstamp_config config;
+	int rc;
+
+	if (copy_from_user(&config, ifr->ifr_data, sizeof(config)))
+		return -EFAULT;
+
+	rc = ena_set_timestamp_config_internal(adapter, &config);
+	if (rc) {
+		netdev_err(adapter->netdev,
+			   "Unable to set HW timestamp configuration, error = %d\n",
+			   rc);
+		return rc;
+	}
+
+	return copy_to_user(ifr->ifr_data, &config, sizeof(config)) ? -EFAULT : 0;
+}
+
+#ifdef SIOCGHWTSTAMP
+static int ena_get_timestamp_config(struct ena_adapter *adapter, struct ifreq *ifr)
+{
+	if (!ena_com_hw_timestamping_supported(adapter->ena_dev))
+		return -EOPNOTSUPP;
+
+	return copy_to_user(ifr->ifr_data, &adapter->hw_ts_state.ts_cfg,
+			    sizeof(adapter->hw_ts_state.ts_cfg)) ? -EFAULT : 0;
+}
+
+#endif /* SIOCGHWTSTAMP */
+static int ena_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
+{
+	struct ena_adapter *adapter = netdev_priv(dev);
+
+	switch (cmd) {
+	case SIOCSHWTSTAMP:
+		return ena_set_timestamp_config(adapter, ifr);
+#ifdef SIOCGHWTSTAMP
+	case SIOCGHWTSTAMP:
+		return ena_get_timestamp_config(adapter, ifr);
+#endif /* SIOCGHWTSTAMP */
+	default:
+		return -EOPNOTSUPP;
+	}
+}
+
+#ifdef ENA_HAVE_NDO_HWTSTAMP
+static int ena_hwtstamp_get(struct net_device *dev,
+			    struct kernel_hwtstamp_config *kernel_config)
+{
+	struct ena_adapter *adapter = netdev_priv(dev);
+
+	if (!ena_com_hw_timestamping_supported(adapter->ena_dev))
+		return -EOPNOTSUPP;
+
+	kernel_config->flags = 0;
+	kernel_config->tx_type = adapter->hw_ts_state.ts_cfg.tx_type;
+	kernel_config->rx_filter = adapter->hw_ts_state.ts_cfg.rx_filter;
+
+	return 0;
+}
+
+static int ena_hwtstamp_set(struct net_device *dev,
+			    struct kernel_hwtstamp_config *kernel_config,
+			    struct netlink_ext_ack *extack)
+{
+	struct ena_adapter *adapter = netdev_priv(dev);
+	struct hwtstamp_config config;
+	int rc;
+
+	config.flags = 0;
+	config.tx_type = kernel_config->tx_type;
+	config.rx_filter = kernel_config->rx_filter;
+
+	rc = ena_set_timestamp_config_internal(adapter, &config);
+	if (rc)
+		netdev_err(adapter->netdev,
+			   "Unable to set HW timestamp configuration, error: %d\n",
+			   rc);
+
+	return rc;
+}
+
+#endif /* ENA_HAVE_NDO_HWTSTAMP */
 static const struct net_device_ops ena_netdev_ops = {
 	.ndo_open		= ena_open,
 	.ndo_stop		= ena_close,
@@ -3601,6 +3834,15 @@ static const struct net_device_ops ena_netdev_ops = {
 #ifdef CONFIG_RFS_ACCEL
 	.ndo_rx_flow_steer	= ena_rx_flow_steer,
 #endif /* CONFIG_RFS_ACCEL */
+#ifdef ENA_HAVE_NDO_ETH_IOCTL
+	.ndo_eth_ioctl		= ena_ioctl,
+#else
+	.ndo_do_ioctl		= ena_ioctl,
+#endif /* ENA_HAVE_NDO_ETH_IOCTL */
+#ifdef ENA_HAVE_NDO_HWTSTAMP
+	.ndo_hwtstamp_get	= ena_hwtstamp_get,
+	.ndo_hwtstamp_set	= ena_hwtstamp_set
+#endif /* ENA_HAVE_NDO_HWTSTAMP */
 };
 
 static int ena_calc_io_queue_size(struct ena_adapter *adapter,
@@ -3756,9 +3998,9 @@ static void ena_set_forced_llq_size_policy(struct ena_adapter *adapter)
 	}
 }
 
-static int ena_set_llq_configurations(struct ena_adapter *adapter,
-				      struct ena_llq_configurations *llq_config,
-				      struct ena_admin_feature_llq_desc *llq)
+static void ena_set_llq_configurations(struct ena_adapter *adapter,
+				       struct ena_llq_configurations *llq_config,
+				       struct ena_admin_feature_llq_desc *llq)
 {
 	struct ena_com_dev *ena_dev = adapter->ena_dev;
 	bool use_large_llq;
@@ -3788,8 +4030,6 @@ static int ena_set_llq_configurations(struct ena_adapter *adapter,
 		llq_config->llq_ring_entry_size_value = 256;
 		adapter->llq_policy = ENA_LLQ_HEADER_SIZE_POLICY_LARGE;
 	}
-
-	return 0;
 }
 
 static int ena_set_queues_placement_policy(struct pci_dev *pdev,
@@ -3950,11 +4190,7 @@ static int ena_device_init(struct ena_adapter *adapter, struct pci_dev *pdev,
 
 	*wd_state = !!(aenq_groups & BIT(ENA_ADMIN_KEEP_ALIVE));
 
-	rc = ena_set_llq_configurations(adapter, &llq_config, &get_feat_ctx->llq);
-	if (rc) {
-		netdev_err(netdev, "Cannot set llq configuration rc= %d\n", rc);
-		goto err_admin_init;
-	}
+	ena_set_llq_configurations(adapter, &llq_config, &get_feat_ctx->llq);
 
 	rc = ena_set_queues_placement_policy(pdev, ena_dev, &get_feat_ctx->llq,
 					     &llq_config);
@@ -3983,8 +4219,17 @@ static int ena_device_init(struct ena_adapter *adapter, struct pci_dev *pdev,
 		goto err_admin_init;
 	}
 
+	rc = ena_com_get_hw_timestamping_support(ena_dev, &adapter->hw_ts_state.hw_tx_supported,
+						 &adapter->hw_ts_state.hw_rx_supported);
+	if (unlikely(rc && (rc != -EOPNOTSUPP))) {
+		netdev_err(netdev, "Failed to get HW timestamping support, error: %d\n", rc);
+		goto err_phc_destroy;
+	}
+
 	return 0;
 
+err_phc_destroy:
+	ena_phc_destroy(adapter);
 err_admin_init:
 	ena_com_abort_admin_commands(ena_dev);
 	ena_com_wait_for_abort_completion(ena_dev);
@@ -4125,6 +4370,13 @@ int ena_restore_device(struct ena_adapter *adapter)
 		goto err_disable_msix;
 	}
 
+	/* Restore HW packet timestamp configuration, if requested */
+	rc = ena_configure_hw_timestamping(adapter);
+	if (rc && (rc != -EOPNOTSUPP)) {
+		dev_err(&pdev->dev, "Failed to restore HW timestamping configuration\n");
+		goto err_disable_msix;
+	}
+
 	/* If the interface was up before the reset bring it up */
 	if (adapter->dev_up_before_reset) {
 		rc = ena_up(adapter);
@@ -4214,10 +4466,13 @@ static enum ena_regs_reset_reason_types check_cdesc_in_tx_cq(struct ena_adapter 
 							     struct ena_ring *tx_ring)
 {
 	struct net_device *netdev = adapter->netdev;
+	u64 hw_timestamp = 0;
 	u16 req_id;
 	int rc;
 
-	rc = ena_com_tx_comp_req_id_get(tx_ring->ena_com_io_cq, &req_id);
+	rc = ena_com_tx_comp_metadata_get(tx_ring->ena_com_io_cq,
+					  &req_id,
+					  &hw_timestamp);
 
 	/* TX CQ is empty */
 	if (rc == -EAGAIN) {
@@ -4533,7 +4788,8 @@ static void ena_update_host_info(struct ena_admin_host_info *host_info,
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 14, 0)
 static void ena_timer_service(struct timer_list *t)
 {
-	struct ena_adapter *adapter = from_timer(adapter, t, timer_service);
+	struct ena_adapter *adapter = timer_container_of(adapter, t,
+							 timer_service);
 #else
 static void ena_timer_service(unsigned long data)
 {
@@ -4989,6 +5245,10 @@ static int ena_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		dev_err(&pdev->dev, "Cannot init Flow steering rules rc: %d\n", rc);
 		goto err_rss;
 	}
+
+	/* Default requested configuration as disabled */
+	adapter->hw_ts_state.ts_cfg.tx_type = HWTSTAMP_TX_OFF;
+	adapter->hw_ts_state.ts_cfg.rx_filter = HWTSTAMP_FILTER_NONE;
 
 #ifdef ENA_HAVE_NETDEV_XDP_FEATURES
 	if (ena_xdp_legal_queue_count(adapter, adapter->num_io_queues))
