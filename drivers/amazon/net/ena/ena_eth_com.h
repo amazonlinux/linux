@@ -14,14 +14,14 @@
 #define ENA_LLQ_LARGE_HEADER	(256UL - ENA_LLQ_ENTRY_DESC_CHUNK_SIZE)
 
 void ena_com_dump_single_rx_cdesc(struct ena_com_io_cq *io_cq,
-				  struct ena_eth_io_rx_cdesc_base *desc);
+				  struct ena_eth_io_rx_cdesc_ext *desc);
 void ena_com_dump_single_tx_cdesc(struct ena_com_io_cq *io_cq,
-				  struct ena_eth_io_tx_cdesc *desc);
-struct ena_eth_io_rx_cdesc_base *ena_com_get_next_rx_cdesc(
+				  struct ena_eth_io_tx_cdesc_ext *desc);
+struct ena_eth_io_rx_cdesc_ext *ena_com_get_next_rx_cdesc(
 	struct ena_com_io_cq *io_cq);
-struct ena_eth_io_rx_cdesc_base *ena_com_rx_cdesc_idx_to_ptr(
+struct ena_eth_io_rx_cdesc_ext *ena_com_rx_cdesc_idx_to_ptr(
 	struct ena_com_io_cq *io_cq, u16 idx);
-struct ena_eth_io_tx_cdesc *ena_com_tx_cdesc_idx_to_ptr(
+struct ena_eth_io_tx_cdesc_ext *ena_com_tx_cdesc_idx_to_ptr(
 	struct ena_com_io_cq *io_cq, u16 idx);
 
 struct ena_com_tx_ctx {
@@ -60,6 +60,7 @@ struct ena_com_rx_ctx {
 	u16 descs;
 	u16 max_bufs;
 	u8 pkt_offset;
+	u64 timestamp;
 };
 
 int ena_com_prepare_tx(struct ena_com_io_sq *io_sq,
@@ -75,6 +76,16 @@ int ena_com_add_single_rx_desc(struct ena_com_io_sq *io_sq,
 			       u16 req_id);
 
 bool ena_com_cq_empty(struct ena_com_io_cq *io_cq);
+
+static inline bool ena_com_is_extended_tx_cdesc(struct ena_com_io_cq *io_cq)
+{
+	return io_cq->cdesc_entry_size_in_bytes == sizeof(struct ena_eth_io_tx_cdesc_ext);
+}
+
+static inline bool ena_com_is_extended_rx_cdesc(struct ena_com_io_cq *io_cq)
+{
+	return io_cq->cdesc_entry_size_in_bytes == sizeof(struct ena_eth_io_rx_cdesc_ext);
+}
 
 static inline void ena_com_unmask_intr(struct ena_com_io_cq *io_cq,
 				       struct ena_eth_io_intr_reg *intr_reg)
@@ -98,7 +109,7 @@ static inline bool ena_com_sq_have_enough_space(struct ena_com_io_sq *io_sq,
 {
 	int temp;
 
-	if (io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_HOST)
+	if (unlikely(io_sq->mem_queue_type == ENA_ADMIN_PLACEMENT_POLICY_HOST))
 		return ena_com_free_q_entries(io_sq) >= required_buffers;
 
 	/* This calculation doesn't need to be 100% accurate. So to reduce
@@ -159,25 +170,23 @@ static inline bool ena_com_is_doorbell_needed(struct ena_com_io_sq *io_sq,
 	return num_entries_needed > io_sq->entries_in_tx_burst_left;
 }
 
-static inline int ena_com_write_rx_sq_doorbell(struct ena_com_io_sq *io_sq)
+static inline void ena_com_write_rx_sq_doorbell(struct ena_com_io_sq *io_sq)
 {
 	u16 tail = io_sq->tail;
 
 	netdev_dbg(ena_com_io_sq_to_ena_dev(io_sq)->net_device,
-		   "Write submission queue doorbell for queue: %d tail: %d\n", io_sq->qid, tail);
+		   "Write submission queue doorbell for rx queue: %d tail: %d\n", io_sq->qid, tail);
 
 	writel(tail, io_sq->db_addr);
-
-	return 0;
 }
 
-static inline int ena_com_write_tx_sq_doorbell(struct ena_com_io_sq *io_sq)
+static inline void ena_com_write_tx_sq_doorbell(struct ena_com_io_sq *io_sq)
 {
 	u16 max_entries_in_tx_burst = io_sq->llq_info.max_entries_in_tx_burst;
 	u16 tail = io_sq->tail;
 
 	netdev_dbg(ena_com_io_sq_to_ena_dev(io_sq)->net_device,
-		   "Write submission queue doorbell for queue: %d tail: %d\n", io_sq->qid, tail);
+		   "Write submission queue doorbell for tx queue: %d tail: %d\n", io_sq->qid, tail);
 
 	writel(tail, io_sq->db_addr);
 
@@ -187,8 +196,6 @@ static inline int ena_com_write_tx_sq_doorbell(struct ena_com_io_sq *io_sq)
 			   max_entries_in_tx_burst);
 		io_sq->entries_in_tx_burst_left = max_entries_in_tx_burst;
 	}
-
-	return 0;
 }
 
 static inline void ena_com_update_numa_node(struct ena_com_io_cq *io_cq,
@@ -219,23 +226,24 @@ static inline void ena_com_cq_inc_head(struct ena_com_io_cq *io_cq)
 		io_cq->phase ^= 1;
 }
 
-static inline int ena_com_tx_comp_req_id_get(struct ena_com_io_cq *io_cq,
-					     u16 *req_id)
+static inline int ena_com_tx_comp_metadata_get(struct ena_com_io_cq *io_cq,
+					       u16 *req_id,
+					       u64 *hw_timestamp)
 {
 	struct ena_com_dev *dev = ena_com_io_cq_to_ena_dev(io_cq);
+	struct ena_eth_io_tx_cdesc_ext *cdesc;
 	u8 expected_phase, cdesc_phase;
-	struct ena_eth_io_tx_cdesc *cdesc;
 	u16 masked_head;
 	u8 flags;
 
 	masked_head = io_cq->head & (io_cq->q_depth - 1);
 	expected_phase = io_cq->phase;
 
-	cdesc = (struct ena_eth_io_tx_cdesc *)
+	cdesc = (struct ena_eth_io_tx_cdesc_ext *)
 		((uintptr_t)io_cq->cdesc_addr.virt_addr +
 		(masked_head * io_cq->cdesc_entry_size_in_bytes));
 
-	flags = READ_ONCE(cdesc->flags);
+	flags = READ_ONCE(cdesc->base.flags);
 
 	/* When the current completion descriptor phase isn't the same as the
 	 * expected, it mean that the device still didn't update
@@ -248,18 +256,22 @@ static inline int ena_com_tx_comp_req_id_get(struct ena_com_io_cq *io_cq,
 	if (unlikely((flags & ENA_ETH_IO_TX_CDESC_MBZ6_MASK) &&
 		     ena_com_get_cap(dev, ENA_ADMIN_CDESC_MBZ))) {
 		netdev_err(dev->net_device, "Corrupted TX descriptor on q_id: %d, req_id: %u\n",
-			   io_cq->qid, cdesc->req_id);
+			   io_cq->qid, cdesc->base.req_id);
 		return -EFAULT;
 	}
 
 	dma_rmb();
 
-	*req_id = READ_ONCE(cdesc->req_id);
+	*req_id = READ_ONCE(cdesc->base.req_id);
 	if (unlikely(*req_id >= io_cq->q_depth)) {
 		netdev_err(ena_com_io_cq_to_ena_dev(io_cq)->net_device, "Invalid req id %d\n",
-			   cdesc->req_id);
+			   cdesc->base.req_id);
 		return -EINVAL;
 	}
+
+	if (unlikely(ena_com_is_extended_tx_cdesc(io_cq)))
+		*hw_timestamp = (u64)cdesc->timestamp_low |
+				(u64)cdesc->timestamp_high << 32;
 
 	ena_com_cq_inc_head(io_cq);
 
