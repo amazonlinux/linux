@@ -11,6 +11,7 @@
 #ifndef _CRYPTO_INTERNAL_CIPHER_H
 #define _CRYPTO_INTERNAL_CIPHER_H
 
+#include <crypto/api.h>
 #include <crypto/algapi.h>
 
 struct crypto_cipher {
@@ -149,8 +150,9 @@ static inline void crypto_cipher_clear_flags(struct crypto_cipher *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_cipher_setkey(struct crypto_cipher *tfm,
-			 const u8 *key, unsigned int keylen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_cipher_setkey, int,
+	(struct crypto_cipher *tfm, const u8 *key, unsigned int keylen),
+	(tfm, key, keylen));
 
 /**
  * crypto_cipher_encrypt_one() - encrypt one block of plaintext
@@ -161,8 +163,9 @@ int crypto_cipher_setkey(struct crypto_cipher *tfm,
  * Invoke the encryption operation of one block. The caller must ensure that
  * the plaintext and ciphertext buffers are at least one block in size.
  */
-void crypto_cipher_encrypt_one(struct crypto_cipher *tfm,
-			       u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_cipher_encrypt_one, void,
+	(struct crypto_cipher *tfm, u8 *dst, const u8 *src),
+	(tfm, dst, src));
 
 /**
  * crypto_cipher_decrypt_one() - decrypt one block of ciphertext
@@ -173,10 +176,13 @@ void crypto_cipher_encrypt_one(struct crypto_cipher *tfm,
  * Invoke the decryption operation of one block. The caller must ensure that
  * the plaintext and ciphertext buffers are at least one block in size.
  */
-void crypto_cipher_decrypt_one(struct crypto_cipher *tfm,
-			       u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_cipher_decrypt_one, void,
+	(struct crypto_cipher *tfm, u8 *dst, const u8 *src),
+	(tfm, dst, src));
 
-struct crypto_cipher *crypto_clone_cipher(struct crypto_cipher *cipher);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_clone_cipher, struct crypto_cipher *,
+	(struct crypto_cipher *cipher),
+	(cipher));
 
 struct crypto_cipher_spawn {
 	struct crypto_spawn base;
