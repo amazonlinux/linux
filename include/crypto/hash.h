@@ -8,6 +8,7 @@
 #ifndef _CRYPTO_HASH_H
 #define _CRYPTO_HASH_H
 
+#include <crypto/api.h>
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
@@ -319,10 +320,9 @@ static inline struct crypto_ahash *__crypto_ahash_cast(struct crypto_tfm *tfm)
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-struct crypto_ahash *crypto_alloc_ahash(const char *alg_name, u32 type,
-					u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_alloc_ahash, struct crypto_ahash *, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
-struct crypto_ahash *crypto_clone_ahash(struct crypto_ahash *tfm);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_clone_ahash, struct crypto_ahash *, (struct crypto_ahash *tfm), (tfm));
 
 static inline struct crypto_tfm *crypto_ahash_tfm(struct crypto_ahash *tfm)
 {
@@ -350,7 +350,7 @@ static inline void crypto_free_ahash(struct crypto_ahash *tfm)
  * Return: true when the ahash is known to the kernel crypto API; false
  *	   otherwise
  */
-int crypto_has_ahash(const char *alg_name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_has_ahash, int, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
 static inline const char *crypto_ahash_alg_name(struct crypto_ahash *tfm)
 {
@@ -476,8 +476,7 @@ static inline void *ahash_request_ctx(struct ahash_request *req)
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
-			unsigned int keylen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_setkey, int, (struct crypto_ahash *tfm, const u8 *key, unsigned int keylen), (tfm, key, keylen));
 
 /**
  * crypto_ahash_finup() - update and finalize message digest
@@ -490,7 +489,7 @@ int crypto_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
  *
  * Return: see crypto_ahash_final()
  */
-int crypto_ahash_finup(struct ahash_request *req);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_finup, int, (struct ahash_request *req), (req));
 
 /**
  * crypto_ahash_final() - calculate message digest
@@ -524,7 +523,7 @@ static inline int crypto_ahash_final(struct ahash_request *req)
  *
  * Return: see crypto_ahash_final()
  */
-int crypto_ahash_digest(struct ahash_request *req);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_digest, int, (struct ahash_request *req), (req));
 
 /**
  * crypto_ahash_export() - extract current message digest state
@@ -537,7 +536,7 @@ int crypto_ahash_digest(struct ahash_request *req);
  *
  * Return: 0 if the export was successful; < 0 if an error occurred
  */
-int crypto_ahash_export(struct ahash_request *req, void *out);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_export, int, (struct ahash_request *req, void *out), (req, out));
 
 /**
  * crypto_ahash_import() - import message digest state
@@ -550,7 +549,7 @@ int crypto_ahash_export(struct ahash_request *req, void *out);
  *
  * Return: 0 if the import was successful; < 0 if an error occurred
  */
-int crypto_ahash_import(struct ahash_request *req, const void *in);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_import, int, (struct ahash_request *req, const void *in), (req, in));
 
 /**
  * crypto_ahash_init() - (re)initialize message digest handle
@@ -563,7 +562,7 @@ int crypto_ahash_import(struct ahash_request *req, const void *in);
  *
  * Return: see crypto_ahash_final()
  */
-int crypto_ahash_init(struct ahash_request *req);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_init, int, (struct ahash_request *req), (req));
 
 /**
  * crypto_ahash_update() - add data to message digest for processing
@@ -576,7 +575,7 @@ int crypto_ahash_init(struct ahash_request *req);
  *
  * Return: see crypto_ahash_final()
  */
-int crypto_ahash_update(struct ahash_request *req);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_ahash_update, int, (struct ahash_request *req), (req));
 
 /**
  * DOC: Asynchronous Hash Request Handle
@@ -634,7 +633,7 @@ static inline struct ahash_request *ahash_request_alloc_noprof(
  * ahash_request_free() - zeroize and free the request data structure
  * @req: request data structure cipher handle to be freed
  */
-void ahash_request_free(struct ahash_request *req);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, ahash_request_free, void, (struct ahash_request *req), (req));
 
 static inline void ahash_request_zero(struct ahash_request *req)
 {
@@ -756,12 +755,11 @@ static inline void ahash_request_set_virt(struct ahash_request *req,
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-struct crypto_shash *crypto_alloc_shash(const char *alg_name, u32 type,
-					u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_alloc_shash, struct crypto_shash *, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
-struct crypto_shash *crypto_clone_shash(struct crypto_shash *tfm);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_clone_shash, struct crypto_shash *, (struct crypto_shash *tfm), (tfm));
 
-int crypto_has_shash(const char *alg_name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_has_shash, int, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
 static inline struct crypto_tfm *crypto_shash_tfm(struct crypto_shash *tfm)
 {
@@ -885,8 +883,7 @@ static inline void *shash_desc_ctx(struct shash_desc *desc)
  * Context: Softirq or process context.
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_shash_setkey(struct crypto_shash *tfm, const u8 *key,
-			unsigned int keylen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_setkey, int, (struct crypto_shash *tfm, const u8 *key, unsigned int keylen), (tfm, key, keylen));
 
 /**
  * crypto_shash_digest() - calculate message digest for buffer
@@ -903,8 +900,7 @@ int crypto_shash_setkey(struct crypto_shash *tfm, const u8 *key,
  * Return: 0 if the message digest creation was successful; < 0 if an error
  *	   occurred
  */
-int crypto_shash_digest(struct shash_desc *desc, const u8 *data,
-			unsigned int len, u8 *out);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_digest, int, (struct shash_desc *desc, const u8 *data, unsigned int len, u8 *out), (desc, data, len, out));
 
 /**
  * crypto_shash_tfm_digest() - calculate message digest for buffer
@@ -922,11 +918,9 @@ int crypto_shash_digest(struct shash_desc *desc, const u8 *data,
  * Context: Softirq or process context.
  * Return: 0 on success; < 0 if an error occurred.
  */
-int crypto_shash_tfm_digest(struct crypto_shash *tfm, const u8 *data,
-			    unsigned int len, u8 *out);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_tfm_digest, int, (struct crypto_shash *tfm, const u8 *data, unsigned int len, u8 *out), (tfm, data, len, out));
 
-int crypto_hash_digest(struct crypto_ahash *tfm, const u8 *data,
-		       unsigned int len, u8 *out);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_hash_digest, int, (struct crypto_ahash *tfm, const u8 *data, unsigned int len, u8 *out), (tfm, data, len, out));
 
 /**
  * crypto_shash_export() - extract operational state for message digest
@@ -940,7 +934,7 @@ int crypto_hash_digest(struct crypto_ahash *tfm, const u8 *data,
  * Context: Softirq or process context.
  * Return: 0 if the export creation was successful; < 0 if an error occurred
  */
-int crypto_shash_export(struct shash_desc *desc, void *out);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_export, int, (struct shash_desc *desc, void *out), (desc, out));
 
 /**
  * crypto_shash_import() - import operational state
@@ -954,7 +948,7 @@ int crypto_shash_export(struct shash_desc *desc, void *out);
  * Context: Softirq or process context.
  * Return: 0 if the import was successful; < 0 if an error occurred
  */
-int crypto_shash_import(struct shash_desc *desc, const void *in);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_import, int, (struct shash_desc *desc, const void *in), (desc, in));
 
 /**
  * crypto_shash_init() - (re)initialize message digest
@@ -968,7 +962,7 @@ int crypto_shash_import(struct shash_desc *desc, const void *in);
  * Return: 0 if the message digest initialization was successful; < 0 if an
  *	   error occurred
  */
-int crypto_shash_init(struct shash_desc *desc);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_init, int, (struct shash_desc *desc), (desc));
 
 /**
  * crypto_shash_finup() - calculate message digest of buffer
@@ -985,8 +979,7 @@ int crypto_shash_init(struct shash_desc *desc);
  * Return: 0 if the message digest creation was successful; < 0 if an error
  *	   occurred
  */
-int crypto_shash_finup(struct shash_desc *desc, const u8 *data,
-		       unsigned int len, u8 *out);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HASH2, crypto_shash_finup, int, (struct shash_desc *desc, const u8 *data, unsigned int len, u8 *out), (desc, data, len, out));
 
 /**
  * crypto_shash_update() - add data to message digest for processing
