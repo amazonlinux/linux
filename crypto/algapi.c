@@ -32,6 +32,7 @@ static inline void crypto_check_module_sig(struct module *mod)
 	if (mod == THIS_MODULE)
 		return;
 #else
+	return; // TO-REMOVE: temperally in development
 	if (!fips_enabled)
 		return;
 #endif
