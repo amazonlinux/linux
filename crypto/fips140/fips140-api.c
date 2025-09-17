@@ -494,3 +494,25 @@ DEFINE_CRYPTO_API_STUB(public_key_verify_signature);
 DEFINE_CRYPTO_VAR_STUB(public_key_subtype);
 
 #endif
+/*
+ * crypto/asymmetric_keys/x509_cert_parser.c
+ */
+#if IS_BUILTIN(CONFIG_X509_CERTIFICATE_PARSER)
+
+#include <crypto/asymmetric_keys/x509_parser.h>
+
+DEFINE_CRYPTO_API_STUB(x509_free_certificate);
+DEFINE_CRYPTO_API_STUB(x509_cert_parse);
+DEFINE_CRYPTO_API_STUB(x509_decode_time);
+
+#endif
+/*
+ * crypto/asymmetric_keys/x509_loader.c
+ */
+#if IS_BUILTIN(CONFIG_X509_CERTIFICATE_PARSER)
+
+#include <keys/asymmetric-type.h>
+
+DEFINE_CRYPTO_API_STUB(x509_load_certificate_list);
+
+#endif
