@@ -240,8 +240,8 @@ static void __exit ecdh_exit(void)
 	crypto_unregister_kpp(&ecdh_nist_p384);
 }
 
-module_init(ecdh_init);
-module_exit(ecdh_exit);
+crypto_module_init(ecdh_init);
+crypto_module_exit(ecdh_exit);
 MODULE_ALIAS_CRYPTO("ecdh");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("ECDH generic algorithm");
