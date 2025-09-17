@@ -404,3 +404,14 @@ DEFINE_CRYPTO_VAR_STUB(md5_zero_message_hash);
 DEFINE_CRYPTO_API_STUB(crypto_sha3_init);
 
 #endif
+
+/*
+ * crypto/authenc.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_AUTHENC)
+
+#include <crypto/authenc.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_authenc_extractkeys);
+
+#endif

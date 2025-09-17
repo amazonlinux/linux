@@ -7,6 +7,7 @@
 #ifndef _CRYPTO_AUTHENC_H
 #define _CRYPTO_AUTHENC_H
 
+#include <crypto/api.h>
 #include <linux/types.h>
 
 enum {
@@ -26,8 +27,9 @@ struct crypto_authenc_keys {
 	unsigned int enckeylen;
 };
 
-int crypto_authenc_extractkeys(struct crypto_authenc_keys *keys, const u8 *key,
-			       unsigned int keylen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AUTHENC, crypto_authenc_extractkeys, int,
+	(struct crypto_authenc_keys *keys, const u8 *key, unsigned int keylen),
+	(keys, key, keylen));
 int crypto_krb5enc_extractkeys(struct crypto_authenc_keys *keys, const u8 *key,
 			       unsigned int keylen);
 
