@@ -197,3 +197,20 @@ DEFINE_CRYPTO_API_STUB(sig_register_instance);
 DEFINE_CRYPTO_API_STUB(crypto_grab_sig);
 
 #endif
+
+/*
+ * crypto/kpp.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_KPP2)
+
+#include <crypto/kpp.h>
+#include <crypto/internal/kpp.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_alloc_kpp);
+DEFINE_CRYPTO_API_STUB(crypto_grab_kpp);
+DEFINE_CRYPTO_API_STUB(crypto_has_kpp);
+DEFINE_CRYPTO_API_STUB(crypto_register_kpp);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_kpp);
+DEFINE_CRYPTO_API_STUB(kpp_register_instance);
+
+#endif
