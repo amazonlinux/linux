@@ -181,3 +181,19 @@ DEFINE_CRYPTO_API_STUB(crypto_akcipher_sync_encrypt);
 DEFINE_CRYPTO_API_STUB(crypto_akcipher_sync_decrypt);
 
 #endif
+
+/*
+ * crypto/sig.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_SIG2)
+
+#include <crypto/sig.h>
+#include <crypto/internal/sig.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_alloc_sig);
+DEFINE_CRYPTO_API_STUB(crypto_register_sig);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_sig);
+DEFINE_CRYPTO_API_STUB(sig_register_instance);
+DEFINE_CRYPTO_API_STUB(crypto_grab_sig);
+
+#endif
