@@ -100,3 +100,66 @@ DEFINE_CRYPTO_API_STUB(skcipher_walk_aead_decrypt);
 DEFINE_CRYPTO_API_STUB(skcipher_alloc_instance_simple);
 
 #endif
+
+/*
+ * crypto/ahash.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_HASH2)
+
+#include <crypto/hash.h>
+#include <crypto/internal/hash.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_hash_walk_first);
+DEFINE_CRYPTO_API_STUB(crypto_hash_walk_done);
+DEFINE_CRYPTO_API_STUB(shash_ahash_update);
+DEFINE_CRYPTO_API_STUB(shash_ahash_finup);
+DEFINE_CRYPTO_API_STUB(shash_ahash_digest);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_setkey);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_init);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_update);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_finup);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_digest);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_export_core);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_export);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_import_core);
+DEFINE_CRYPTO_API_STUB(crypto_ahash_import);
+DEFINE_CRYPTO_API_STUB(crypto_grab_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_alloc_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_has_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_hash_alg_has_setkey);
+DEFINE_CRYPTO_API_STUB(crypto_clone_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_register_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_register_ahashes);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_ahashes);
+DEFINE_CRYPTO_API_STUB(ahash_register_instance);
+DEFINE_CRYPTO_API_STUB(ahash_request_free);
+DEFINE_CRYPTO_API_STUB(crypto_hash_digest);
+DEFINE_CRYPTO_API_STUB(ahash_free_singlespawn_instance);
+
+/*
+ * crypto/shash.c
+ */
+
+DEFINE_CRYPTO_API_STUB(shash_no_setkey);
+DEFINE_CRYPTO_API_STUB(crypto_shash_setkey);
+DEFINE_CRYPTO_API_STUB(crypto_shash_init);
+DEFINE_CRYPTO_API_STUB(crypto_shash_finup);
+DEFINE_CRYPTO_API_STUB(crypto_shash_digest);
+DEFINE_CRYPTO_API_STUB(crypto_shash_tfm_digest);
+DEFINE_CRYPTO_API_STUB(crypto_shash_export_core);
+DEFINE_CRYPTO_API_STUB(crypto_shash_export);
+DEFINE_CRYPTO_API_STUB(crypto_shash_import_core);
+DEFINE_CRYPTO_API_STUB(crypto_shash_import);
+DEFINE_CRYPTO_API_STUB(crypto_grab_shash);
+DEFINE_CRYPTO_API_STUB(crypto_alloc_shash);
+DEFINE_CRYPTO_API_STUB(crypto_has_shash);
+DEFINE_CRYPTO_API_STUB(crypto_clone_shash);
+DEFINE_CRYPTO_API_STUB(crypto_register_shash);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_shash);
+DEFINE_CRYPTO_API_STUB(crypto_register_shashes);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_shashes);
+DEFINE_CRYPTO_API_STUB(shash_register_instance);
+DEFINE_CRYPTO_API_STUB(shash_free_singlespawn_instance);
+
+#endif
