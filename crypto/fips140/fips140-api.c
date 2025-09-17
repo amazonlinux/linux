@@ -601,13 +601,14 @@ DEFINE_CRYPTO_API_STUB(hkdf_expand);
 
 #endif
 /*
- * crypto/hkdf.c
+ * crypto/dh_helper.c
  */
-#if IS_BUILTIN(CONFIG_CRYPTO_HKDF)
+#if IS_BUILTIN(CONFIG_CRYPTO_DH)
 
-#include <crypto/hkdf.h>
+#include <crypto/dh.h>
 
-DEFINE_CRYPTO_API_STUB(hkdf_extract);
-DEFINE_CRYPTO_API_STUB(hkdf_expand);
+DEFINE_CRYPTO_API_STUB(crypto_dh_key_len);
+DEFINE_CRYPTO_API_STUB(crypto_dh_encode_key);
+DEFINE_CRYPTO_API_STUB(crypto_dh_decode_key);
 
 #endif
