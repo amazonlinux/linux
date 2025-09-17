@@ -11,6 +11,7 @@
 #ifndef _CRYPTO_SCATTERWALK_H
 #define _CRYPTO_SCATTERWALK_H
 
+#include <crypto/api.h>
 #include <linux/errno.h>
 #include <linux/highmem.h>
 #include <linux/mm.h>
@@ -264,22 +265,29 @@ static inline void scatterwalk_done_dst(struct scatter_walk *walk,
 	scatterwalk_advance(walk, nbytes);
 }
 
-void scatterwalk_skip(struct scatter_walk *walk, unsigned int nbytes);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, scatterwalk_skip, void,
+	(struct scatter_walk *walk, unsigned int nbytes),
+	(walk, nbytes));
 
-void memcpy_from_scatterwalk(void *buf, struct scatter_walk *walk,
-			     unsigned int nbytes);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_from_scatterwalk, void,
+	(void *buf, struct scatter_walk *walk, unsigned int nbytes),
+	(buf, walk, nbytes));
 
-void memcpy_to_scatterwalk(struct scatter_walk *walk, const void *buf,
-			   unsigned int nbytes);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_to_scatterwalk, void,
+	(struct scatter_walk *walk, const void *buf, unsigned int nbytes),
+	(walk, buf, nbytes));
 
-void memcpy_from_sglist(void *buf, struct scatterlist *sg,
-			unsigned int start, unsigned int nbytes);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_from_sglist, void,
+	(void *buf, struct scatterlist *sg, unsigned int start, unsigned int nbytes),
+	(buf, sg, start, nbytes));
 
-void memcpy_to_sglist(struct scatterlist *sg, unsigned int start,
-		      const void *buf, unsigned int nbytes);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_to_sglist, void,
+	(struct scatterlist *sg, unsigned int start, const void *buf, unsigned int nbytes),
+	(sg, start, buf, nbytes));
 
-void memcpy_sglist(struct scatterlist *dst, struct scatterlist *src,
-		   unsigned int nbytes);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_sglist, void,
+	(struct scatterlist *dst, struct scatterlist *src, unsigned int nbytes),
+	(dst, src, nbytes));
 
 /* In new code, please use memcpy_{from,to}_sglist() directly instead. */
 static inline void scatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
@@ -292,12 +300,16 @@ static inline void scatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
 		memcpy_from_sglist(buf, sg, start, nbytes);
 }
 
-struct scatterlist *scatterwalk_ffwd(struct scatterlist dst[2],
-				     struct scatterlist *src,
-				     unsigned int len);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, scatterwalk_ffwd, struct scatterlist *,
+	(struct scatterlist dst[2], struct scatterlist *src, unsigned int len),
+	(dst, src, len));
 
-int skcipher_walk_first(struct skcipher_walk *walk, bool atomic);
-int skcipher_walk_done(struct skcipher_walk *walk, int res);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, skcipher_walk_first, int,
+	(struct skcipher_walk *walk, bool atomic),
+	(walk, atomic));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, skcipher_walk_done, int,
+	(struct skcipher_walk *walk, int res),
+	(walk, res));
 
 static inline void skcipher_walk_abort(struct skcipher_walk *walk)
 {
