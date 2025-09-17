@@ -5,3 +5,14 @@
  * API and used by the standalone FIPS module but which are not built into
  * vmlinux.
  */
+
+/*
+ * crypto/aes_generic.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_AES)
+
+#include <crypto/aes.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_aes_set_key);
+
+#endif
