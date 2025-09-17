@@ -612,3 +612,36 @@ DEFINE_CRYPTO_API_STUB(crypto_dh_encode_key);
 DEFINE_CRYPTO_API_STUB(crypto_dh_decode_key);
 
 #endif
+/*
+ * crypto/ecc.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ECC)
+
+#include <crypto/ecc_curve.h>
+
+DEFINE_CRYPTO_API_STUB(ecc_get_curve);
+DEFINE_CRYPTO_API_STUB(ecc_get_curve25519);
+
+#include <crypto/internal/ecc.h>
+
+DEFINE_CRYPTO_API_STUB(ecc_digits_from_bytes);
+DEFINE_CRYPTO_API_STUB(ecc_is_key_valid);
+DEFINE_CRYPTO_API_STUB(ecc_gen_privkey);
+DEFINE_CRYPTO_API_STUB(ecc_make_pub_key);
+DEFINE_CRYPTO_API_STUB(crypto_ecdh_shared_secret);
+DEFINE_CRYPTO_API_STUB(ecc_is_pubkey_valid_partial);
+DEFINE_CRYPTO_API_STUB(ecc_is_pubkey_valid_full);
+DEFINE_CRYPTO_API_STUB(vli_is_zero);
+DEFINE_CRYPTO_API_STUB(vli_cmp);
+DEFINE_CRYPTO_API_STUB(vli_sub);
+DEFINE_CRYPTO_API_STUB(vli_from_be64);
+DEFINE_CRYPTO_API_STUB(vli_from_le64);
+DEFINE_CRYPTO_API_STUB(vli_mod_inv);
+DEFINE_CRYPTO_API_STUB(vli_mod_mult_slow);
+DEFINE_CRYPTO_API_STUB(vli_num_bits);
+DEFINE_CRYPTO_API_STUB(ecc_alloc_point);
+DEFINE_CRYPTO_API_STUB(ecc_free_point);
+DEFINE_CRYPTO_API_STUB(ecc_point_is_zero);
+DEFINE_CRYPTO_API_STUB(ecc_point_mult_shamir);
+
+#endif
