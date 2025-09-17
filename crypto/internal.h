@@ -109,25 +109,44 @@ static inline unsigned int crypto_compress_ctxsize(struct crypto_alg *alg)
 	return alg->cra_ctxsize;
 }
 
-struct crypto_alg *crypto_mod_get(struct crypto_alg *alg);
-struct crypto_alg *crypto_alg_mod_lookup(const char *name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_mod_get, struct crypto_alg *,
+	(struct crypto_alg *alg),
+	(alg));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_alg_mod_lookup, struct crypto_alg *,
+	(const char *name, u32 type, u32 mask),
+	(name, type, mask));
 
-struct crypto_larval *crypto_larval_alloc(const char *name, u32 type, u32 mask);
-void crypto_schedule_test(struct crypto_larval *larval);
-void crypto_alg_tested(const char *name, int err);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_larval_alloc, struct crypto_larval *,
+	(const char *name, u32 type, u32 mask),
+	(name, type, mask));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_schedule_test, void,
+	(struct crypto_larval *larval),
+	(larval));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_alg_tested, void,
+	(const char *name, int err),
+	(name, err));
 
-void crypto_remove_spawns(struct crypto_alg *alg, struct list_head *list,
-			  struct crypto_alg *nalg);
-void crypto_remove_final(struct list_head *list);
-void crypto_shoot_alg(struct crypto_alg *alg);
-struct crypto_tfm *__crypto_alloc_tfmgfp(struct crypto_alg *alg, u32 type,
-					 u32 mask, gfp_t gfp);
-struct crypto_tfm *__crypto_alloc_tfm(struct crypto_alg *alg, u32 type,
-				      u32 mask);
-void *crypto_create_tfm_node(struct crypto_alg *alg,
-			const struct crypto_type *frontend, int node);
-void *crypto_clone_tfm(const struct crypto_type *frontend,
-		       struct crypto_tfm *otfm);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_remove_spawns, void,
+	(struct crypto_alg *alg, struct list_head *list, struct crypto_alg *nalg),
+	(alg, list, nalg));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_remove_final, void,
+	(struct list_head *list),
+	(list));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_shoot_alg, void,
+	(struct crypto_alg *alg),
+	(alg));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, __crypto_alloc_tfmgfp, struct crypto_tfm *,
+	(struct crypto_alg *alg, u32 type, u32 mask, gfp_t gfp),
+	(alg, type, mask, gfp));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, __crypto_alloc_tfm, struct crypto_tfm *,
+	(struct crypto_alg *alg, u32 type, u32 mask),
+	(alg, type, mask));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_create_tfm_node, void *,
+	(struct crypto_alg *alg, const struct crypto_type *frontend, int node),
+	(alg, frontend, node));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_clone_tfm, void *,
+	(const struct crypto_type *frontend, struct crypto_tfm *otfm),
+	(frontend, otfm));
 
 static inline void *crypto_create_tfm(struct crypto_alg *alg,
 			const struct crypto_type *frontend)
@@ -135,13 +154,13 @@ static inline void *crypto_create_tfm(struct crypto_alg *alg,
 	return crypto_create_tfm_node(alg, frontend, NUMA_NO_NODE);
 }
 
-struct crypto_alg *crypto_find_alg(const char *alg_name,
-				   const struct crypto_type *frontend,
-				   u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_find_alg, struct crypto_alg *,
+	(const char *alg_name, const struct crypto_type *frontend, u32 type, u32 mask),
+	(alg_name, frontend, type, mask));
 
-void *crypto_alloc_tfm_node(const char *alg_name,
-		       const struct crypto_type *frontend, u32 type, u32 mask,
-		       int node);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_alloc_tfm_node, void *,
+	(const char *alg_name, const struct crypto_type *frontend, u32 type, u32 mask, int node),
+	(alg_name, frontend, type, mask, node));
 
 static inline void *crypto_alloc_tfm(const char *alg_name,
 		       const struct crypto_type *frontend, u32 type, u32 mask)
@@ -149,12 +168,17 @@ static inline void *crypto_alloc_tfm(const char *alg_name,
 	return crypto_alloc_tfm_node(alg_name, frontend, type, mask, NUMA_NO_NODE);
 }
 
-int crypto_probing_notify(unsigned long val, void *v);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_probing_notify, int,
+	(unsigned long val, void *v),
+	(val, v));
 
-unsigned int crypto_alg_extsize(struct crypto_alg *alg);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_alg_extsize, unsigned int,
+	(struct crypto_alg *alg),
+	(alg));
 
-int crypto_type_has_alg(const char *name, const struct crypto_type *frontend,
-			u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_type_has_alg, int,
+	(const char *name, const struct crypto_type *frontend, u32 type, u32 mask),
+	(name, frontend, type, mask));
 
 static inline struct crypto_alg *crypto_alg_get(struct crypto_alg *alg)
 {
@@ -162,7 +186,9 @@ static inline struct crypto_alg *crypto_alg_get(struct crypto_alg *alg)
 	return alg;
 }
 
-void crypto_destroy_alg(struct crypto_alg *alg);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_destroy_alg, void,
+	(struct crypto_alg *alg),
+	(alg));
 
 static inline void crypto_alg_put(struct crypto_alg *alg)
 {
