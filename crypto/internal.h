@@ -8,6 +8,7 @@
 #ifndef _CRYPTO_INTERNAL_H
 #define _CRYPTO_INTERNAL_H
 
+#include <crypto/api.h>
 #include <crypto/algapi.h>
 #include <linux/completion.h>
 #include <linux/err.h>
@@ -65,7 +66,7 @@ extern struct list_head crypto_alg_list;
 extern struct rw_semaphore crypto_alg_sem;
 extern struct blocking_notifier_head crypto_chain;
 
-int alg_test(const char *driver, const char *alg, u32 type, u32 mask);
+DECLARE_CRYPTO_API(alg_test, int, (const char *driver, const char *alg, u32 type, u32 mask), (driver, alg, type, mask));
 
 #if !IS_BUILTIN(CONFIG_CRYPTO_ALGAPI) || !IS_ENABLED(CONFIG_CRYPTO_SELFTESTS)
 static inline bool crypto_boot_test_finished(void)
