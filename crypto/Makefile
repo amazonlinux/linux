@@ -19,7 +19,7 @@ crypto-objs-$(CONFIG_CRYPTO_GENIV) += geniv.o
 crypto_skcipher-y += lskcipher.o
 crypto_skcipher-y += skcipher.o
 
-obj-$(CONFIG_CRYPTO_SKCIPHER2) += crypto_skcipher.o
+crypto-objs-$(CONFIG_CRYPTO_SKCIPHER2) += crypto_skcipher.o
 ifeq ($(CONFIG_BPF_SYSCALL),y)
 obj-$(CONFIG_CRYPTO_SKCIPHER2) += bpf_crypto_skcipher.o
 endif
