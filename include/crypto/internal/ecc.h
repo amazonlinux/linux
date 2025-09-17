@@ -26,6 +26,7 @@
 #ifndef _CRYPTO_ECC_H
 #define _CRYPTO_ECC_H
 
+#include <crypto/api.h>
 #include <crypto/ecc_curve.h>
 #include <linux/unaligned.h>
 
@@ -79,8 +80,9 @@ static inline void ecc_swap_digits(const void *in, u64 *out, unsigned int ndigit
  * The first byte in the input byte array is expected to hold the most
  * significant bits of the large integer.
  */
-void ecc_digits_from_bytes(const u8 *in, unsigned int nbytes,
-			   u64 *out, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_digits_from_bytes, void,
+	(const u8 *in, unsigned int nbytes, u64 *out, unsigned int ndigits),
+	(in, nbytes, out, ndigits));
 
 /**
  * ecc_is_key_valid() - Validate a given ECDH private key
@@ -92,8 +94,9 @@ void ecc_digits_from_bytes(const u8 *in, unsigned int nbytes,
  *
  * Returns 0 if the key is acceptable, a negative value otherwise
  */
-int ecc_is_key_valid(unsigned int curve_id, unsigned int ndigits,
-		     const u64 *private_key, unsigned int private_key_len);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_is_key_valid, int,
+	(unsigned int curve_id, unsigned int ndigits, const u64 *private_key, unsigned int private_key_len),
+	(curve_id, ndigits, private_key, private_key_len));
 
 /**
  * ecc_gen_privkey() -  Generates an ECC private key.
@@ -107,8 +110,9 @@ int ecc_is_key_valid(unsigned int curve_id, unsigned int ndigits,
  * Returns 0 if the private key was generated successfully, a negative value
  * if an error occurred.
  */
-int ecc_gen_privkey(unsigned int curve_id, unsigned int ndigits,
-		    u64 *private_key);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_gen_privkey, int,
+	(unsigned int curve_id, unsigned int ndigits, u64 *private_key),
+	(curve_id, ndigits, private_key));
 
 /**
  * ecc_make_pub_key() - Compute an ECC public key
@@ -121,8 +125,9 @@ int ecc_gen_privkey(unsigned int curve_id, unsigned int ndigits,
  * Returns 0 if the public key was generated successfully, a negative value
  * if an error occurred.
  */
-int ecc_make_pub_key(const unsigned int curve_id, unsigned int ndigits,
-		     const u64 *private_key, u64 *public_key);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_make_pub_key, int,
+	(const unsigned int curve_id, unsigned int ndigits, const u64 *private_key, u64 *public_key),
+	(curve_id, ndigits, private_key, public_key));
 
 /**
  * crypto_ecdh_shared_secret() - Compute a shared secret
@@ -139,9 +144,9 @@ int ecc_make_pub_key(const unsigned int curve_id, unsigned int ndigits,
  * Returns 0 if the shared secret was generated successfully, a negative value
  * if an error occurred.
  */
-int crypto_ecdh_shared_secret(unsigned int curve_id, unsigned int ndigits,
-			      const u64 *private_key, const u64 *public_key,
-			      u64 *secret);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, crypto_ecdh_shared_secret, int,
+	(unsigned int curve_id, unsigned int ndigits, const u64 *private_key, const u64 *public_key, u64 *secret),
+	(curve_id, ndigits, private_key, public_key, secret));
 
 /**
  * ecc_is_pubkey_valid_partial() - Partial public key validation
@@ -157,8 +162,9 @@ int crypto_ecdh_shared_secret(unsigned int curve_id, unsigned int ndigits,
  *
  * Return: 0 if validation is successful, -EINVAL if validation is failed.
  */
-int ecc_is_pubkey_valid_partial(const struct ecc_curve *curve,
-				struct ecc_point *pk);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_is_pubkey_valid_partial, int,
+	(const struct ecc_curve *curve, struct ecc_point *pk),
+	(curve, pk));
 
 /**
  * ecc_is_pubkey_valid_full() - Full public key validation
@@ -171,8 +177,9 @@ int ecc_is_pubkey_valid_partial(const struct ecc_curve *curve,
  *
  * Return: 0 if validation is successful, -EINVAL if validation is failed.
  */
-int ecc_is_pubkey_valid_full(const struct ecc_curve *curve,
-			     struct ecc_point *pk);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_is_pubkey_valid_full, int,
+	(const struct ecc_curve *curve, struct ecc_point *pk),
+	(curve, pk));
 
 /**
  * vli_is_zero() - Determine is vli is zero
@@ -180,7 +187,9 @@ int ecc_is_pubkey_valid_full(const struct ecc_curve *curve,
  * @vli:		vli to check.
  * @ndigits:		length of the @vli
  */
-bool vli_is_zero(const u64 *vli, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_is_zero, bool,
+	(const u64 *vli, unsigned int ndigits),
+	(vli, ndigits));
 
 /**
  * vli_cmp() - compare left and right vlis
@@ -192,7 +201,9 @@ bool vli_is_zero(const u64 *vli, unsigned int ndigits);
  * Returns sign of @left - @right, i.e. -1 if @left < @right,
  * 0 if @left == @right, 1 if @left > @right.
  */
-int vli_cmp(const u64 *left, const u64 *right, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_cmp, int,
+	(const u64 *left, const u64 *right, unsigned int ndigits),
+	(left, right, ndigits));
 
 /**
  * vli_sub() - Subtracts right from left
@@ -206,8 +217,9 @@ int vli_cmp(const u64 *left, const u64 *right, unsigned int ndigits);
  *
  * Return: carry bit.
  */
-u64 vli_sub(u64 *result, const u64 *left, const u64 *right,
-	    unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_sub, u64,
+	(u64 *result, const u64 *left, const u64 *right, unsigned int ndigits),
+	(result, left, right, ndigits));
 
 /**
  * vli_from_be64() - Load vli from big-endian u64 array
@@ -216,7 +228,9 @@ u64 vli_sub(u64 *result, const u64 *left, const u64 *right,
  * @src:		source array of u64 BE values
  * @ndigits:		length of both vli and array
  */
-void vli_from_be64(u64 *dest, const void *src, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_from_be64, void,
+	(u64 *dest, const void *src, unsigned int ndigits),
+	(dest, src, ndigits));
 
 /**
  * vli_from_le64() - Load vli from little-endian u64 array
@@ -225,7 +239,9 @@ void vli_from_be64(u64 *dest, const void *src, unsigned int ndigits);
  * @src:		source array of u64 LE values
  * @ndigits:		length of both vli and array
  */
-void vli_from_le64(u64 *dest, const void *src, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_from_le64, void,
+	(u64 *dest, const void *src, unsigned int ndigits),
+	(dest, src, ndigits));
 
 /**
  * vli_mod_inv() - Modular inversion
@@ -235,8 +251,9 @@ void vli_from_le64(u64 *dest, const void *src, unsigned int ndigits);
  * @mod:		modulus
  * @ndigits:		length of all vlis
  */
-void vli_mod_inv(u64 *result, const u64 *input, const u64 *mod,
-		 unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_mod_inv, void,
+	(u64 *result, const u64 *input, const u64 *mod, unsigned int ndigits),
+	(result, input, mod, ndigits));
 
 /**
  * vli_mod_mult_slow() - Modular multiplication
@@ -249,8 +266,9 @@ void vli_mod_inv(u64 *result, const u64 *input, const u64 *mod,
  *
  * Note: Assumes that mod is big enough curve order.
  */
-void vli_mod_mult_slow(u64 *result, const u64 *left, const u64 *right,
-		       const u64 *mod, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_mod_mult_slow, void,
+	(u64 *result, const u64 *left, const u64 *right, const u64 *mod, unsigned int ndigits),
+	(result, left, right, mod, ndigits));
 
 /**
  * vli_num_bits() - Counts the number of bits required for vli.
@@ -260,7 +278,9 @@ void vli_mod_mult_slow(u64 *result, const u64 *left, const u64 *right,
  *
  * Return: The number of bits required to represent @vli.
  */
-unsigned int vli_num_bits(const u64 *vli, unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_num_bits, unsigned int,
+	(const u64 *vli, unsigned int ndigits),
+	(vli, ndigits));
 
 /**
  * ecc_aloc_point() - Allocate ECC point.
@@ -269,14 +289,18 @@ unsigned int vli_num_bits(const u64 *vli, unsigned int ndigits);
  *
  * Return: Pointer to the allocated point or NULL if allocation failed.
  */
-struct ecc_point *ecc_alloc_point(unsigned int ndigits);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_alloc_point, struct ecc_point *,
+	(unsigned int ndigits),
+	(ndigits));
 
 /**
  * ecc_free_point() - Free ECC point.
  *
  * @p:			The point to free.
  */
-void ecc_free_point(struct ecc_point *p);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_free_point, void,
+	(struct ecc_point *p),
+	(p));
 
 /**
  * ecc_point_is_zero() - Check if point is zero.
@@ -285,7 +309,9 @@ void ecc_free_point(struct ecc_point *p);
  *
  * Return: true if point is the point at infinity, false otherwise.
  */
-bool ecc_point_is_zero(const struct ecc_point *point);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_point_is_zero, bool,
+	(const struct ecc_point *point),
+	(point));
 
 /**
  * ecc_point_mult_shamir() - Add two points multiplied by scalars
@@ -300,10 +326,9 @@ bool ecc_point_is_zero(const struct ecc_point *point);
  * Returns result = x * p + x * q over the curve.
  * This works faster than two multiplications and addition.
  */
-void ecc_point_mult_shamir(const struct ecc_point *result,
-			   const u64 *x, const struct ecc_point *p,
-			   const u64 *y, const struct ecc_point *q,
-			   const struct ecc_curve *curve);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_point_mult_shamir, void,
+	(const struct ecc_point *result, const u64 *x, const struct ecc_point *p, const u64 *y, const struct ecc_point *q, const struct ecc_curve *curve),
+	(result, x, p, y, q, curve));
 
 extern struct crypto_template ecdsa_x962_tmpl;
 extern struct crypto_template ecdsa_p1363_tmpl;
