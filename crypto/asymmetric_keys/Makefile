@@ -50,7 +50,7 @@ clean-files	+= pkcs8.asn1.c pkcs8.asn1.h
 #
 # PKCS#7 message handling
 #
-obj-$(CONFIG_PKCS7_MESSAGE_PARSER) += pkcs7_message.o
+crypto-objs-$(CONFIG_PKCS7_MESSAGE_PARSER) += pkcs7_message.o
 pkcs7_message-y := \
 	pkcs7.asn1.o \
 	pkcs7_parser.o \
