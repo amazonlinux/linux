@@ -430,8 +430,8 @@ static void __exit rsa_exit(void)
 	crypto_unregister_akcipher(&rsa);
 }
 
-module_init(rsa_init);
-module_exit(rsa_exit);
+crypto_module_init(rsa_init);
+crypto_module_exit(rsa_exit);
 MODULE_ALIAS_CRYPTO("rsa");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("RSA generic algorithm");
