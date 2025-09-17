@@ -93,8 +93,8 @@ static void __exit lzo_mod_fini(void)
 	crypto_unregister_scomp(&scomp);
 }
 
-module_init(lzo_mod_init);
-module_exit(lzo_mod_fini);
+crypto_module_init(lzo_mod_init);
+crypto_module_exit(lzo_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("LZO Compression Algorithm");
