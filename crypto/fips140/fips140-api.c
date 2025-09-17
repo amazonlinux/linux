@@ -16,3 +16,28 @@
 DEFINE_CRYPTO_API_STUB(crypto_aes_set_key);
 
 #endif
+
+/*
+ * crypto/aead.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_AEAD2)
+
+#include <crypto/aead.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_alloc_aead);
+DEFINE_CRYPTO_API_STUB(crypto_has_aead);
+DEFINE_CRYPTO_API_STUB(crypto_aead_setkey);
+DEFINE_CRYPTO_API_STUB(crypto_aead_setauthsize);
+DEFINE_CRYPTO_API_STUB(crypto_aead_encrypt);
+DEFINE_CRYPTO_API_STUB(crypto_aead_decrypt);
+
+#include <crypto/internal/aead.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_grab_aead);
+DEFINE_CRYPTO_API_STUB(crypto_register_aead);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_aead);
+DEFINE_CRYPTO_API_STUB(crypto_register_aeads);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_aeads);
+DEFINE_CRYPTO_API_STUB(aead_register_instance);
+
+#endif
