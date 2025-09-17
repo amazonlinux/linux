@@ -274,8 +274,8 @@ static void __exit sha3_generic_mod_fini(void)
 	crypto_unregister_shashes(algs, ARRAY_SIZE(algs));
 }
 
-module_init(sha3_generic_mod_init);
-module_exit(sha3_generic_mod_fini);
+crypto_module_init(sha3_generic_mod_init);
+crypto_module_exit(sha3_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SHA-3 Secure Hash Algorithm");
