@@ -9,6 +9,7 @@
 #ifndef _CRYPTO_RNG_H
 #define _CRYPTO_RNG_H
 
+#include <crypto/api.h>
 #include <linux/atomic.h>
 #include <linux/container_of.h>
 #include <linux/crypto.h>
@@ -59,8 +60,12 @@ struct crypto_rng {
 
 extern struct crypto_rng *crypto_default_rng;
 
-int crypto_get_default_rng(void);
-void crypto_put_default_rng(void);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_get_default_rng, int,
+	(void),
+	());
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_put_default_rng, void,
+	(void),
+	());
 
 /**
  * DOC: Random number generator API
@@ -89,7 +94,9 @@ void crypto_put_default_rng(void);
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-struct crypto_rng *crypto_alloc_rng(const char *alg_name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_alloc_rng, struct crypto_rng *,
+	(const char *alg_name, u32 type, u32 mask),
+	(alg_name, type, mask));
 
 static inline struct crypto_tfm *crypto_rng_tfm(struct crypto_rng *tfm)
 {
@@ -178,8 +185,9 @@ static inline int crypto_rng_get_bytes(struct crypto_rng *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-int crypto_rng_reset(struct crypto_rng *tfm, const u8 *seed,
-		     unsigned int slen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_rng_reset, int,
+	(struct crypto_rng *tfm, const u8 *seed, unsigned int slen),
+	(tfm, seed, slen));
 
 /**
  * crypto_rng_seedsize() - obtain seed size of RNG
