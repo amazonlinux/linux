@@ -216,8 +216,8 @@ static void __exit md5_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-module_init(md5_mod_init);
-module_exit(md5_mod_fini);
+crypto_module_init(md5_mod_init);
+crypto_module_exit(md5_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("MD5 Message Digest Algorithm");
