@@ -6,6 +6,8 @@
 #ifndef _CRYPTO_INTERNAL_SIMD_H
 #define _CRYPTO_INTERNAL_SIMD_H
 
+#include <crypto/api.h>
+
 #include <asm/simd.h>
 #include <linux/percpu.h>
 #include <linux/types.h>
@@ -15,28 +17,33 @@
 struct simd_skcipher_alg;
 struct skcipher_alg;
 
-struct simd_skcipher_alg *simd_skcipher_create_compat(struct skcipher_alg *ialg,
-						      const char *algname,
-						      const char *drvname,
-						      const char *basename);
-void simd_skcipher_free(struct simd_skcipher_alg *alg);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_skcipher_create_compat, struct simd_skcipher_alg *,
+	(struct skcipher_alg *ialg, const char *algname, const char *drvname, const char *basename),
+	(ialg, algname, drvname, basename));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_skcipher_free, void,
+	(struct simd_skcipher_alg *alg),
+	(alg));
 
-int simd_register_skciphers_compat(struct skcipher_alg *algs, int count,
-				   struct simd_skcipher_alg **simd_algs);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_register_skciphers_compat, int,
+	(struct skcipher_alg *algs, int count, struct simd_skcipher_alg **simd_algs),
+	(algs, count, simd_algs));
 
-void simd_unregister_skciphers(struct skcipher_alg *algs, int count,
-			       struct simd_skcipher_alg **simd_algs);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_unregister_skciphers, void,
+	(struct skcipher_alg *algs, int count, struct simd_skcipher_alg **simd_algs),
+	(algs, count, simd_algs));
 
 /* AEAD support */
 
 struct simd_aead_alg;
 struct aead_alg;
 
-int simd_register_aeads_compat(struct aead_alg *algs, int count,
-			       struct simd_aead_alg **simd_algs);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_register_aeads_compat, int,
+	(struct aead_alg *algs, int count, struct simd_aead_alg **simd_algs),
+	(algs, count, simd_algs));
 
-void simd_unregister_aeads(struct aead_alg *algs, int count,
-			   struct simd_aead_alg **simd_algs);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_unregister_aeads, void,
+	(struct aead_alg *algs, int count, struct simd_aead_alg **simd_algs),
+	(algs, count, simd_algs));
 
 /*
  * crypto_simd_usable() - is it allowed at this time to use SIMD instructions or
