@@ -279,3 +279,14 @@ DEFINE_CRYPTO_API_STUB(crypto_unregister_scomps);
 DEFINE_CRYPTO_API_STUB(alg_test);
 
 #endif
+
+/*
+ * crypto/md5.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_MD5)
+
+#include <crypto/md5.h>
+
+#undef md5_zero_message_hash
+DEFINE_CRYPTO_VAR_STUB(md5_zero_message_hash);
+#endif
