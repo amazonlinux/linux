@@ -32,7 +32,7 @@ crypto_hash-y += shash.o
 crypto-objs-$(CONFIG_CRYPTO_HASH2) += crypto_hash.o
 
 crypto-objs-$(CONFIG_CRYPTO_AKCIPHER2) += akcipher.o
-obj-$(CONFIG_CRYPTO_SIG2) += sig.o
+crypto-objs-$(CONFIG_CRYPTO_SIG2) += sig.o
 obj-$(CONFIG_CRYPTO_KPP2) += kpp.o
 obj-$(CONFIG_CRYPTO_HKDF) += hkdf.o
 
