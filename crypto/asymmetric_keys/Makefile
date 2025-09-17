@@ -15,7 +15,7 @@ crypto-objs-$(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE) += public_key.o
 #
 # X.509 Certificate handling
 #
-obj-$(CONFIG_X509_CERTIFICATE_PARSER) += x509_key_parser.o
+crypto-objs-$(CONFIG_X509_CERTIFICATE_PARSER) += x509_key_parser.o
 x509_key_parser-y := \
 	x509.asn1.o \
 	x509_akid.asn1.o \
