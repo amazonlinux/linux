@@ -334,8 +334,8 @@ static void __exit ecdsa_exit(void)
 	crypto_unregister_sig(&ecdsa_nist_p521);
 }
 
-module_init(ecdsa_init);
-module_exit(ecdsa_exit);
+crypto_module_init(ecdsa_init);
+crypto_module_exit(ecdsa_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Stefan Berger <stefanb@linux.ibm.com>");
