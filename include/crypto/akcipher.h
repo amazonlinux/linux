@@ -8,6 +8,7 @@
 #ifndef _CRYPTO_AKCIPHER_H
 #define _CRYPTO_AKCIPHER_H
 
+#include <crypto/api.h>
 #include <linux/atomic.h>
 #include <linux/crypto.h>
 
@@ -116,8 +117,7 @@ struct akcipher_alg {
  * Return: allocated handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-struct crypto_akcipher *crypto_alloc_akcipher(const char *alg_name, u32 type,
-					      u32 mask);
+DECLARE_CRYPTO_API(crypto_alloc_akcipher, struct crypto_akcipher *, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
 static inline struct crypto_tfm *crypto_akcipher_tfm(
 	struct crypto_akcipher *tfm)
@@ -310,9 +310,7 @@ static inline int crypto_akcipher_decrypt(struct akcipher_request *req)
  *
  * Return: zero on success; error code in case of error
  */
-int crypto_akcipher_sync_encrypt(struct crypto_akcipher *tfm,
-				 const void *src, unsigned int slen,
-				 void *dst, unsigned int dlen);
+DECLARE_CRYPTO_API(crypto_akcipher_sync_encrypt, int, (struct crypto_akcipher *tfm, const void *src, unsigned int slen, void *dst, unsigned int dlen), (tfm, src, slen, dst, dlen));
 
 /**
  * crypto_akcipher_sync_decrypt() - Invoke public key decrypt operation
@@ -328,9 +326,7 @@ int crypto_akcipher_sync_encrypt(struct crypto_akcipher *tfm,
  *
  * Return: Output length on success; error code in case of error
  */
-int crypto_akcipher_sync_decrypt(struct crypto_akcipher *tfm,
-				 const void *src, unsigned int slen,
-				 void *dst, unsigned int dlen);
+DECLARE_CRYPTO_API(crypto_akcipher_sync_decrypt, int, (struct crypto_akcipher *tfm, const void *src, unsigned int slen, void *dst, unsigned int dlen), (tfm, src, slen, dst, dlen));
 
 /**
  * crypto_akcipher_set_pub_key() - Invoke set public key operation

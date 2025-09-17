@@ -7,6 +7,7 @@
  */
 #ifndef _CRYPTO_AKCIPHER_INT_H
 #define _CRYPTO_AKCIPHER_INT_H
+#include <crypto/api.h>
 #include <crypto/akcipher.h>
 #include <crypto/algapi.h>
 
@@ -100,9 +101,7 @@ static inline void *akcipher_instance_ctx(struct akcipher_instance *inst)
 	return crypto_instance_ctx(akcipher_crypto_instance(inst));
 }
 
-int crypto_grab_akcipher(struct crypto_akcipher_spawn *spawn,
-			 struct crypto_instance *inst,
-			 const char *name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(crypto_grab_akcipher, int, (struct crypto_akcipher_spawn *spawn, struct crypto_instance *inst, const char *name, u32 type, u32 mask), (spawn, inst, name, type, mask));
 
 static inline struct crypto_akcipher *crypto_spawn_akcipher(
 		struct crypto_akcipher_spawn *spawn)
@@ -130,7 +129,7 @@ static inline struct akcipher_alg *crypto_spawn_akcipher_alg(
  *
  * Return: zero on success; error code in case of error
  */
-int crypto_register_akcipher(struct akcipher_alg *alg);
+DECLARE_CRYPTO_API(crypto_register_akcipher, int, (struct akcipher_alg *alg), (alg));
 
 /**
  * crypto_unregister_akcipher() -- Unregister public key algorithm
@@ -139,7 +138,7 @@ int crypto_register_akcipher(struct akcipher_alg *alg);
  *
  * @alg:	algorithm definition
  */
-void crypto_unregister_akcipher(struct akcipher_alg *alg);
+DECLARE_CRYPTO_API(crypto_unregister_akcipher, void, (struct akcipher_alg *alg), (alg));
 
 /**
  * akcipher_register_instance() -- Unregister public key template instance
@@ -150,6 +149,5 @@ void crypto_unregister_akcipher(struct akcipher_alg *alg);
  * @tmpl:	the template from which the algorithm was created
  * @inst:	the template instance
  */
-int akcipher_register_instance(struct crypto_template *tmpl,
-		struct akcipher_instance *inst);
+DECLARE_CRYPTO_API(akcipher_register_instance, int, (struct crypto_template *tmpl, struct akcipher_instance *inst), (tmpl, inst));
 #endif

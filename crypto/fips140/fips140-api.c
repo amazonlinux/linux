@@ -163,3 +163,21 @@ DEFINE_CRYPTO_API_STUB(shash_register_instance);
 DEFINE_CRYPTO_API_STUB(shash_free_singlespawn_instance);
 
 #endif
+
+/*
+ * crypto/akcipher.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_AKCIPHER2)
+
+#include <crypto/akcipher.h>
+#include <crypto/internal/akcipher.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_grab_akcipher);
+DEFINE_CRYPTO_API_STUB(crypto_alloc_akcipher);
+DEFINE_CRYPTO_API_STUB(crypto_register_akcipher);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_akcipher);
+DEFINE_CRYPTO_API_STUB(akcipher_register_instance);
+DEFINE_CRYPTO_API_STUB(crypto_akcipher_sync_encrypt);
+DEFINE_CRYPTO_API_STUB(crypto_akcipher_sync_decrypt);
+
+#endif
