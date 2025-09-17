@@ -12,6 +12,7 @@
 #ifndef _LINUX_CRYPTO_H
 #define _LINUX_CRYPTO_H
 
+#include <crypto/api.h>
 #include <linux/completion.h>
 #include <linux/errno.h>
 #include <linux/refcount_types.h>
@@ -376,7 +377,9 @@ struct crypto_wait {
 /*
  * Async ops completion helper functioons
  */
-void crypto_req_done(void *req, int err);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_req_done, void,
+	(void *req, int err),
+	(req, err));
 
 static inline int crypto_wait_req(int err, struct crypto_wait *wait)
 {
@@ -400,7 +403,9 @@ static inline void crypto_init_wait(struct crypto_wait *wait)
 /*
  * Algorithm query interface.
  */
-int crypto_has_alg(const char *name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_has_alg, int,
+	(const char *name, u32 type, u32 mask),
+	(name, type, mask));
 
 /*
  * Transforms: user-instantiated objects which encapsulate algorithms
@@ -428,8 +433,12 @@ struct crypto_tfm {
  * Transform user interface.
  */
  
-struct crypto_tfm *crypto_alloc_base(const char *alg_name, u32 type, u32 mask);
-void crypto_destroy_tfm(void *mem, struct crypto_tfm *tfm);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_alloc_base, struct crypto_tfm *,
+	(const char *alg_name, u32 type, u32 mask),
+	(alg_name, type, mask));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_destroy_tfm, void,
+	(void *mem, struct crypto_tfm *tfm),
+	(mem, tfm));
 
 static inline void crypto_free_tfm(struct crypto_tfm *tfm)
 {
@@ -514,8 +523,9 @@ static inline void crypto_request_set_tfm(struct crypto_async_request *req,
 	req->flags &= ~CRYPTO_TFM_REQ_ON_STACK;
 }
 
-struct crypto_async_request *crypto_request_clone(
-	struct crypto_async_request *req, size_t total, gfp_t gfp);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_request_clone, struct crypto_async_request *,
+	(struct crypto_async_request *req, size_t total, gfp_t gfp),
+	(req, total, gfp));
 
 static inline void crypto_stack_request_init(struct crypto_async_request *req,
 					     struct crypto_tfm *tfm)
