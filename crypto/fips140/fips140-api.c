@@ -607,3 +607,15 @@ DEFINE_CRYPTO_API_STUB(hkdf_extract);
 DEFINE_CRYPTO_API_STUB(hkdf_expand);
 
 #endif
+/*
+ * crypto/dh_helper.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_DH)
+
+#include <crypto/dh.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_dh_key_len);
+DEFINE_CRYPTO_API_STUB(crypto_dh_encode_key);
+DEFINE_CRYPTO_API_STUB(crypto_dh_decode_key);
+
+#endif
