@@ -214,3 +214,15 @@ DEFINE_CRYPTO_API_STUB(crypto_unregister_kpp);
 DEFINE_CRYPTO_API_STUB(kpp_register_instance);
 
 #endif
+
+/*
+ * crypto/rsa_helper.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_RSA)
+
+#include <crypto/internal/rsa.h>
+
+DEFINE_CRYPTO_API_STUB(rsa_parse_pub_key);
+DEFINE_CRYPTO_API_STUB(rsa_parse_priv_key);
+
+#endif

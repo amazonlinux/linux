@@ -7,6 +7,7 @@
  */
 #ifndef _RSA_HELPER_
 #define _RSA_HELPER_
+#include <crypto/api.h>
 #include <linux/types.h>
 #include <crypto/akcipher.h>
 
@@ -48,11 +49,9 @@ struct rsa_key {
 	size_t qinv_sz;
 };
 
-int rsa_parse_pub_key(struct rsa_key *rsa_key, const void *key,
-		      unsigned int key_len);
+DECLARE_CRYPTO_API(rsa_parse_pub_key, int, (struct rsa_key *rsa_key, const void *key, unsigned int key_len), (rsa_key, key, key_len));
 
-int rsa_parse_priv_key(struct rsa_key *rsa_key, const void *key,
-		       unsigned int key_len);
+DECLARE_CRYPTO_API(rsa_parse_priv_key, int, (struct rsa_key *rsa_key, const void *key, unsigned int key_len), (rsa_key, key, key_len));
 
 #define RSA_PUB (true)
 #define RSA_PRIV (false)
