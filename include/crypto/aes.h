@@ -6,6 +6,7 @@
 #ifndef _CRYPTO_AES_H
 #define _CRYPTO_AES_H
 
+#include <crypto/api.h>
 #include <linux/types.h>
 #include <linux/crypto.h>
 
@@ -48,8 +49,9 @@ static inline int aes_check_keylen(unsigned int keylen)
 	return 0;
 }
 
-int crypto_aes_set_key(struct crypto_tfm *tfm, const u8 *in_key,
-		unsigned int key_len);
+DECLARE_CRYPTO_API(crypto_aes_set_key, int,
+	(struct crypto_tfm *tfm, const u8 *in_key, unsigned int key_len),
+	(tfm, in_key, key_len));
 
 /**
  * aes_expandkey - Expands the AES key as described in FIPS-197
