@@ -920,8 +920,8 @@ static void __exit dh_exit(void)
 	crypto_unregister_kpp(&dh);
 }
 
-module_init(dh_init);
-module_exit(dh_exit);
+crypto_module_init(dh_init);
+crypto_module_exit(dh_exit);
 MODULE_ALIAS_CRYPTO("dh");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DH generic algorithm");
