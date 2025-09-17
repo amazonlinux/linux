@@ -516,3 +516,36 @@ DEFINE_CRYPTO_API_STUB(x509_decode_time);
 DEFINE_CRYPTO_API_STUB(x509_load_certificate_list);
 
 #endif
+/*
+ * crypto/asymmetric_keys/pkcs7_parser.c
+ */
+#if IS_BUILTIN(CONFIG_PKCS7_MESSAGE_PARSER)
+
+#include <crypto/pkcs7.h>
+
+DEFINE_CRYPTO_API_STUB(pkcs7_parse_message);
+DEFINE_CRYPTO_API_STUB(pkcs7_free_message);
+DEFINE_CRYPTO_API_STUB(pkcs7_get_content_data);
+
+#endif
+/*
+ * crypto/asymmetric_keys/pkcs7_trust.c
+ */
+#if IS_BUILTIN(CONFIG_PKCS7_MESSAGE_PARSER)
+
+#include <crypto/pkcs7.h>
+
+DEFINE_CRYPTO_API_STUB(pkcs7_validate_trust);
+
+#endif
+/*
+ * crypto/asymmetric_keys/pkcs7_verify.c
+ */
+#if IS_BUILTIN(CONFIG_PKCS7_MESSAGE_PARSER)
+
+#include <crypto/pkcs7.h>
+
+DEFINE_CRYPTO_API_STUB(pkcs7_verify);
+DEFINE_CRYPTO_API_STUB(pkcs7_supply_detached_data);
+
+#endif
