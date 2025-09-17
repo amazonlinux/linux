@@ -9,6 +9,7 @@
 #ifndef _CRYPTO_ACOMP_INT_H
 #define _CRYPTO_ACOMP_INT_H
 
+#include <crypto/api.h>
 #include <crypto/acompress.h>
 #include <crypto/algapi.h>
 #include <crypto/scatterwalk.h>
@@ -130,7 +131,7 @@ static inline void acomp_request_complete(struct acomp_req *req,
  *
  * Return:	zero on success; error code in case of error
  */
-int crypto_register_acomp(struct acomp_alg *alg);
+DECLARE_CRYPTO_API(crypto_register_acomp, int, (struct acomp_alg *alg), (alg));
 
 /**
  * crypto_unregister_acomp() -- Unregister asynchronous compression algorithm
@@ -140,10 +141,10 @@ int crypto_register_acomp(struct acomp_alg *alg);
  *
  * @alg:	algorithm definition
  */
-void crypto_unregister_acomp(struct acomp_alg *alg);
+DECLARE_CRYPTO_API(crypto_unregister_acomp, void, (struct acomp_alg *alg), (alg));
 
-int crypto_register_acomps(struct acomp_alg *algs, int count);
-void crypto_unregister_acomps(struct acomp_alg *algs, int count);
+DECLARE_CRYPTO_API(crypto_register_acomps, int, (struct acomp_alg *algs, int count), (algs, count));
+DECLARE_CRYPTO_API(crypto_unregister_acomps, void, (struct acomp_alg *algs, int count), (algs, count));
 
 static inline bool acomp_request_issg(struct acomp_req *req)
 {
@@ -188,11 +189,10 @@ static inline bool crypto_acomp_req_virt(struct crypto_acomp *tfm)
 	return crypto_tfm_req_virt(&tfm->base);
 }
 
-void crypto_acomp_free_streams(struct crypto_acomp_streams *s);
-int crypto_acomp_alloc_streams(struct crypto_acomp_streams *s);
+DECLARE_CRYPTO_API(crypto_acomp_free_streams, void, (struct crypto_acomp_streams *s), (s));
+DECLARE_CRYPTO_API(crypto_acomp_alloc_streams, int, (struct crypto_acomp_streams *s), (s));
 
-struct crypto_acomp_stream *crypto_acomp_lock_stream_bh(
-	struct crypto_acomp_streams *s) __acquires(stream);
+DECLARE_CRYPTO_API(crypto_acomp_lock_stream_bh, struct crypto_acomp_stream *, (struct crypto_acomp_streams *s), (s)) __acquires(stream);
 
 static inline void crypto_acomp_unlock_stream_bh(
 	struct crypto_acomp_stream *stream) __releases(stream)
@@ -200,12 +200,11 @@ static inline void crypto_acomp_unlock_stream_bh(
 	spin_unlock_bh(&stream->lock);
 }
 
-void acomp_walk_done_src(struct acomp_walk *walk, int used);
-void acomp_walk_done_dst(struct acomp_walk *walk, int used);
-int acomp_walk_next_src(struct acomp_walk *walk);
-int acomp_walk_next_dst(struct acomp_walk *walk);
-int acomp_walk_virt(struct acomp_walk *__restrict walk,
-		    struct acomp_req *__restrict req, bool atomic);
+DECLARE_CRYPTO_API(acomp_walk_done_src, void, (struct acomp_walk *walk, int used), (walk, used));
+DECLARE_CRYPTO_API(acomp_walk_done_dst, void, (struct acomp_walk *walk, int used), (walk, used));
+DECLARE_CRYPTO_API(acomp_walk_next_src, int, (struct acomp_walk *walk), (walk));
+DECLARE_CRYPTO_API(acomp_walk_next_dst, int, (struct acomp_walk *walk), (walk));
+DECLARE_CRYPTO_API(acomp_walk_virt, int, (struct acomp_walk *walk, struct acomp_req *req, bool atomic), (walk, req, atomic));
 
 static inline bool acomp_walk_more_src(const struct acomp_walk *walk, int cur)
 {
