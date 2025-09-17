@@ -823,3 +823,15 @@ DEFINE_CRYPTO_API_STUB(aria_decrypt);
 DEFINE_CRYPTO_API_STUB(crypto_krb5enc_extractkeys);
 
 #endif
+/*
+ * crypto/ecdh_helper.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
+
+#include <crypto/ecdh.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_ecdh_key_len);
+DEFINE_CRYPTO_API_STUB(crypto_ecdh_encode_key);
+DEFINE_CRYPTO_API_STUB(crypto_ecdh_decode_key);
+
+#endif
