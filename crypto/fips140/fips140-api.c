@@ -268,3 +268,14 @@ DEFINE_CRYPTO_API_STUB(crypto_register_scomps);
 DEFINE_CRYPTO_API_STUB(crypto_unregister_scomps);
 
 #endif
+
+/*
+ * crypto/testmgr.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_MANAGER2)
+
+#include <crypto/internal.h>
+
+DEFINE_CRYPTO_API_STUB(alg_test);
+
+#endif
