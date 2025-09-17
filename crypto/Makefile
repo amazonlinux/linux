@@ -58,7 +58,7 @@ ecdsa_generic-y += ecdsa.o
 ecdsa_generic-y += ecdsa-x962.o
 ecdsa_generic-y += ecdsa-p1363.o
 ecdsa_generic-y += ecdsasignature.asn1.o
-obj-$(CONFIG_CRYPTO_ECDSA) += ecdsa_generic.o
+crypto-objs-$(CONFIG_CRYPTO_ECDSA) += ecdsa_generic.o
 
 crypto_acompress-y := acompress.o
 crypto_acompress-y += scompress.o
@@ -180,7 +180,7 @@ obj-$(CONFIG_CRYPTO_USER_API_SKCIPHER) += algif_skcipher.o
 obj-$(CONFIG_CRYPTO_USER_API_RNG) += algif_rng.o
 obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 obj-$(CONFIG_CRYPTO_ZSTD) += zstd.o
-obj-$(CONFIG_CRYPTO_ECC) += ecc.o
+crypto-objs-$(CONFIG_CRYPTO_ECC) += ecc.o
 obj-$(CONFIG_CRYPTO_ESSIV) += essiv.o
 obj-$(CONFIG_CRYPTO_CURVE25519) += curve25519-generic.o
 
