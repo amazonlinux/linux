@@ -52,13 +52,13 @@ static int __init crypto_aes_mod_init(void)
 {
 	return crypto_register_alg(&alg);
 }
-module_init(crypto_aes_mod_init);
+crypto_module_init(crypto_aes_mod_init);
 
 static void __exit crypto_aes_mod_exit(void)
 {
 	crypto_unregister_alg(&alg);
 }
-module_exit(crypto_aes_mod_exit);
+crypto_module_exit(crypto_aes_mod_exit);
 
 MODULE_DESCRIPTION("Crypto API support for AES block cipher");
 MODULE_LICENSE("GPL");
