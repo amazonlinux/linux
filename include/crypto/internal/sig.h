@@ -7,6 +7,7 @@
 #ifndef _CRYPTO_INTERNAL_SIG_H
 #define _CRYPTO_INTERNAL_SIG_H
 
+#include <crypto/api.h>
 #include <crypto/algapi.h>
 #include <crypto/sig.h>
 
@@ -39,7 +40,7 @@ static inline void *crypto_sig_ctx(struct crypto_sig *tfm)
  *
  * Return: zero on success; error code in case of error
  */
-int crypto_register_sig(struct sig_alg *alg);
+DECLARE_CRYPTO_API(crypto_register_sig, int, (struct sig_alg *alg), (alg));
 
 /**
  * crypto_unregister_sig() -- Unregister public key signature algorithm
@@ -48,10 +49,9 @@ int crypto_register_sig(struct sig_alg *alg);
  *
  * @alg:	algorithm definition
  */
-void crypto_unregister_sig(struct sig_alg *alg);
+DECLARE_CRYPTO_API(crypto_unregister_sig, void, (struct sig_alg *alg), (alg));
 
-int sig_register_instance(struct crypto_template *tmpl,
-			  struct sig_instance *inst);
+DECLARE_CRYPTO_API(sig_register_instance, int, (struct crypto_template *tmpl, struct sig_instance *inst), (tmpl, inst));
 
 static inline struct sig_instance *sig_instance(struct crypto_instance *inst)
 {
@@ -74,9 +74,7 @@ static inline void *sig_instance_ctx(struct sig_instance *inst)
 	return crypto_instance_ctx(sig_crypto_instance(inst));
 }
 
-int crypto_grab_sig(struct crypto_sig_spawn *spawn,
-		    struct crypto_instance *inst,
-		    const char *name, u32 type, u32 mask);
+DECLARE_CRYPTO_API(crypto_grab_sig, int, (struct crypto_sig_spawn *spawn, struct crypto_instance *inst, const char *name, u32 type, u32 mask), (spawn, inst, name, type, mask));
 
 static inline struct crypto_sig *crypto_spawn_sig(struct crypto_sig_spawn
 								   *spawn)
