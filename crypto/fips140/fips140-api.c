@@ -660,3 +660,25 @@ DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_final);
 DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_final_helper);
 
 #endif
+/*
+ * crypto/cryptd.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_CRYPTD)
+
+#include <crypto/cryptd.h>
+
+DEFINE_CRYPTO_API_STUB(cryptd_alloc_skcipher);
+DEFINE_CRYPTO_API_STUB(cryptd_skcipher_child);
+DEFINE_CRYPTO_API_STUB(cryptd_skcipher_queued);
+DEFINE_CRYPTO_API_STUB(cryptd_free_skcipher);
+DEFINE_CRYPTO_API_STUB(cryptd_alloc_ahash);
+DEFINE_CRYPTO_API_STUB(cryptd_ahash_child);
+DEFINE_CRYPTO_API_STUB(cryptd_shash_desc);
+DEFINE_CRYPTO_API_STUB(cryptd_ahash_queued);
+DEFINE_CRYPTO_API_STUB(cryptd_free_ahash);
+DEFINE_CRYPTO_API_STUB(cryptd_alloc_aead);
+DEFINE_CRYPTO_API_STUB(cryptd_aead_child);
+DEFINE_CRYPTO_API_STUB(cryptd_aead_queued);
+DEFINE_CRYPTO_API_STUB(cryptd_free_aead);
+
+#endif
