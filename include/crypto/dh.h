@@ -8,6 +8,8 @@
 #ifndef _CRYPTO_DH_
 #define _CRYPTO_DH_
 
+#include <crypto/api.h>
+
 /**
  * DOC: DH Helper Functions
  *
@@ -48,7 +50,9 @@ struct dh {
  *
  * Return: size of the key in bytes
  */
-unsigned int crypto_dh_key_len(const struct dh *params);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_DH, crypto_dh_key_len, unsigned int,
+	(const struct dh *params),
+	(params));
 
 /**
  * crypto_dh_encode_key() - encode the private key
@@ -63,7 +67,9 @@ unsigned int crypto_dh_key_len(const struct dh *params);
  *
  * Return:	-EINVAL if buffer has insufficient size, 0 on success
  */
-int crypto_dh_encode_key(char *buf, unsigned int len, const struct dh *params);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_DH, crypto_dh_encode_key, int,
+	(char *buf, unsigned int len, const struct dh *params),
+	(buf, len, params));
 
 /**
  * crypto_dh_decode_key() - decode a private key
@@ -77,7 +83,9 @@ int crypto_dh_encode_key(char *buf, unsigned int len, const struct dh *params);
  *
  * Return:	-EINVAL if buffer has insufficient size, 0 on success
  */
-int crypto_dh_decode_key(const char *buf, unsigned int len, struct dh *params);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_DH, crypto_dh_decode_key, int,
+	(const char *buf, unsigned int len, struct dh *params),
+	(buf, len, params));
 
 /**
  * __crypto_dh_decode_key() - decode a private key without parameter checks
