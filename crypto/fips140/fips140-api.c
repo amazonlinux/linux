@@ -289,4 +289,17 @@ DEFINE_CRYPTO_API_STUB(alg_test);
 
 #undef md5_zero_message_hash
 DEFINE_CRYPTO_VAR_STUB(md5_zero_message_hash);
+
+#endif
+
+/*
+ * crypto/sha3_generic.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_SHA3)
+
+#include <crypto/sha3.h>
+
+#undef crypto_sha3_init
+DEFINE_CRYPTO_API_STUB(crypto_sha3_init);
+
 #endif
