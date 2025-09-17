@@ -226,3 +226,45 @@ DEFINE_CRYPTO_API_STUB(rsa_parse_pub_key);
 DEFINE_CRYPTO_API_STUB(rsa_parse_priv_key);
 
 #endif
+
+/*
+ * crypto/acompress.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ACOMP2)
+
+#include <crypto/acompress.h>
+#include <crypto/internal/acompress.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_alloc_acomp);
+DEFINE_CRYPTO_API_STUB(crypto_alloc_acomp_node);
+DEFINE_CRYPTO_API_STUB(crypto_acomp_compress);
+DEFINE_CRYPTO_API_STUB(crypto_acomp_decompress);
+DEFINE_CRYPTO_API_STUB(crypto_register_acomp);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_acomp);
+DEFINE_CRYPTO_API_STUB(crypto_register_acomps);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_acomps);
+DEFINE_CRYPTO_API_STUB(crypto_acomp_free_streams);
+DEFINE_CRYPTO_API_STUB(crypto_acomp_alloc_streams);
+DEFINE_CRYPTO_API_STUB(crypto_acomp_lock_stream_bh);
+DEFINE_CRYPTO_API_STUB(acomp_walk_done_src);
+DEFINE_CRYPTO_API_STUB(acomp_walk_done_dst);
+DEFINE_CRYPTO_API_STUB(acomp_walk_next_src);
+DEFINE_CRYPTO_API_STUB(acomp_walk_next_dst);
+DEFINE_CRYPTO_API_STUB(acomp_walk_virt);
+DEFINE_CRYPTO_API_STUB(acomp_request_clone);
+
+#endif
+
+/*
+ * crypto/scompress.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ACOMP2)
+
+#include <crypto/internal/scompress.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_register_scomp);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_scomp);
+DEFINE_CRYPTO_API_STUB(crypto_register_scomps);
+DEFINE_CRYPTO_API_STUB(crypto_unregister_scomps);
+
+#endif

@@ -9,6 +9,7 @@
 #ifndef _CRYPTO_ACOMP_H
 #define _CRYPTO_ACOMP_H
 
+#include <crypto/api.h>
 #include <linux/atomic.h>
 #include <linux/args.h>
 #include <linux/compiler_types.h>
@@ -143,8 +144,7 @@ struct comp_alg_common COMP_ALG_COMMON;
  * Return:	allocated handle in case of success; IS_ERR() is true in case
  *		of an error, PTR_ERR() returns the error code.
  */
-struct crypto_acomp *crypto_alloc_acomp(const char *alg_name, u32 type,
-					u32 mask);
+DECLARE_CRYPTO_API(crypto_alloc_acomp, struct crypto_acomp *, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 /**
  * crypto_alloc_acomp_node() -- allocate ACOMPRESS tfm handle with desired NUMA node
  * @alg_name:	is the cra_name / name or cra_driver_name / driver name of the
@@ -161,8 +161,7 @@ struct crypto_acomp *crypto_alloc_acomp(const char *alg_name, u32 type,
  * Return:	allocated handle in case of success; IS_ERR() is true in case
  *		of an error, PTR_ERR() returns the error code.
  */
-struct crypto_acomp *crypto_alloc_acomp_node(const char *alg_name, u32 type,
-					u32 mask, int node);
+DECLARE_CRYPTO_API(crypto_alloc_acomp_node, struct crypto_acomp *, (const char *alg_name, u32 type, u32 mask, int node), (alg_name, type, mask, node));
 
 static inline struct crypto_tfm *crypto_acomp_tfm(struct crypto_acomp *tfm)
 {
@@ -529,7 +528,7 @@ static inline void acomp_request_set_dst_folio(struct acomp_req *req,
  *
  * Return:	zero on success; error code in case of error
  */
-int crypto_acomp_compress(struct acomp_req *req);
+DECLARE_CRYPTO_API(crypto_acomp_compress, int, (struct acomp_req *req), (req));
 
 /**
  * crypto_acomp_decompress() -- Invoke asynchronous decompress operation
@@ -540,7 +539,7 @@ int crypto_acomp_compress(struct acomp_req *req);
  *
  * Return:	zero on success; error code in case of error
  */
-int crypto_acomp_decompress(struct acomp_req *req);
+DECLARE_CRYPTO_API(crypto_acomp_decompress, int, (struct acomp_req *req), (req));
 
 static inline struct acomp_req *acomp_request_on_stack_init(
 	char *buf, struct crypto_acomp *tfm)
@@ -551,7 +550,6 @@ static inline struct acomp_req *acomp_request_on_stack_init(
 	return req;
 }
 
-struct acomp_req *acomp_request_clone(struct acomp_req *req,
-				      size_t total, gfp_t gfp);
+DECLARE_CRYPTO_API(acomp_request_clone, struct acomp_req *, (struct acomp_req *req, size_t total, gfp_t gfp), (req, total, gfp));
 
 #endif
