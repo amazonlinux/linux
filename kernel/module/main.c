@@ -2975,6 +2975,23 @@ static void do_crypto_api(struct load_info *info)
 #endif
 }
 
+static void do_crypto_var(struct load_info *info)
+{
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	struct crypto_var_key *crypto_var_keys;
+	unsigned int num_crypto_var_keys;
+	unsigned int i;
+
+	crypto_var_keys = section_objs(info, "__crypto_var_keys",
+		sizeof(*crypto_var_keys), &num_crypto_var_keys);
+
+	for (i = 0; i < num_crypto_var_keys; ++i) {
+		struct crypto_var_key *var_key = &crypto_var_keys[i];
+		*(var_key->ptr) = var_key->var;
+	}
+#endif
+}
+
 /* Call module constructors. */
 static void do_mod_ctors(struct module *mod)
 {
@@ -3056,7 +3073,10 @@ static noinline int do_init_module(struct load_info *info, struct module *mod, i
 	freeinit->init_rodata = mod->mem[MOD_INIT_RODATA].base;
 
 	if (flags & MODULE_INIT_MEM)
-		do_crypto_api(info);
+		{
+			do_crypto_api(info);
+			do_crypto_var(info);
+		}
 
 	do_mod_ctors(mod);
 	/* Start the module */
