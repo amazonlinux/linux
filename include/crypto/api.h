@@ -3,6 +3,8 @@
 
 #include <linux/static_call.h>
 
+#define CRYPTO_VAR_NAME(name) __crypto_##name##_ptr
+
 #if !defined(CONFIG_CRYPTO_FIPS140_EXTMOD)
 
 /*
@@ -13,6 +15,9 @@
 
 #define DECLARE_CRYPTO_API(name, ret_type, args_decl, args_call) \
 	ret_type name args_decl;
+
+#define DECLARE_CRYPTO_VAR(name, var_type, ...) \
+	extern var_type name __VA_ARGS__;
 
 #define crypto_module_init(fn) module_init(fn)
 #define crypto_module_exit(fn) module_exit(fn)
@@ -27,6 +32,11 @@ struct crypto_api_key {
 	struct static_call_key *key;
 	void *tramp;
 	void *func;
+};
+
+struct crypto_var_key {
+	void **ptr;
+	void *var;
 };
 
 #ifndef FIPS_MODULE
@@ -49,9 +59,16 @@ struct crypto_api_key {
 		return static_call(crypto_##name##_key) args_call;	\
 	}
 
+#define DECLARE_CRYPTO_VAR(name, var_type, ...) \
+	extern void* CRYPTO_VAR_NAME(name) ;
+
 #define DEFINE_CRYPTO_API_STUB(name) \
 	DEFINE_STATIC_CALL_NULL(crypto_##name##_key, name); \
 	EXPORT_STATIC_CALL(crypto_##name##_key)
+
+#define DEFINE_CRYPTO_VAR_STUB(name) \
+	void* CRYPTO_VAR_NAME(name) = NULL;\
+	EXPORT_SYMBOL(CRYPTO_VAR_NAME(name));
 
 #define crypto_module_init(fn) module_init(fn)
 #define crypto_module_exit(fn) module_exit(fn)
@@ -68,6 +85,20 @@ struct crypto_api_key {
 #define DECLARE_CRYPTO_API(name, ret_type, args_decl, args_call)	\
 	ret_type name args_decl;					\
 	DECLARE_STATIC_CALL(crypto_##name##_key, name);		
+
+#define DECLARE_CRYPTO_VAR(name, var_type, ...) \
+	extern var_type name __VA_ARGS__; \
+	extern void* CRYPTO_VAR_NAME(name);	
+
+#define DEFINE_CRYPTO_VAR_STUB(name) \
+	static struct crypto_var_key __crypto_##name##_var_key \
+		__used \
+		__section("__crypto_var_keys") \
+		__aligned(__alignof__(struct crypto_var_key)) = \
+	{ \
+		.ptr = &CRYPTO_VAR_NAME(name), \
+		.var = (void*)&name, \
+	};
 
 /*
  * These are the definitions that get used for the main kernel.
