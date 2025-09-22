@@ -9,9 +9,13 @@
 #include <linux/module.h>
 #include <linux/crypto.h>
 #include <crypto/algapi.h>
+#include <crypto/hash.h>
+#include <crypto/sha2.h>
 #include <linux/init.h>
+#include <linux/string.h>
 #include <linux/atomic.h>
 #include <linux/wait.h>
+#include <linux/fips.h>
 
 /* FIPS140 synchronization between kernel and module */
 extern atomic_t fips140_kernel_level_complete;
