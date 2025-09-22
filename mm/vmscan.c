@@ -689,16 +689,8 @@ static pageout_t pageout(struct folio *folio, struct address_space *mapping,
 	 * A freeable shmem or swapcache folio is referenced only by the
 	 * caller that isolated the folio and the page cache.
 	 */
-	if (folio_ref_count(folio) != 1 + folio_nr_pages(folio))
+	if (folio_ref_count(folio) != 1 + folio_nr_pages(folio) || !mapping)
 		return PAGE_KEEP;
-	if (!mapping) {
-		/*
-		 * We should no longer have dirty folios with clean buffers and
-		 * a NULL mapping. However, let's be careful for now.
-		 */
-		VM_WARN_ON_FOLIO(true, folio);
-		return PAGE_KEEP;
-	}
 
 	if (!shmem_mapping(mapping) && !folio_test_anon(folio))
 		return PAGE_ACTIVATE;
