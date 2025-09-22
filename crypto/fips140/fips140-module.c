@@ -16,6 +16,54 @@
 
 #define CRYPTO_INTERNAL "CRYPTO_INTERNAL"
 
+static const u8 fips140_integ_hmac_key[] = CONFIG_CRYPTO_FIPS140_HMAC_KEY;
+
+static int verify_integrity(void)
+{
+	extern const u8 _binary_fips140_ko_start[];
+	extern const u8 _binary_fips140_ko_end[];
+	extern const u8 _binary_fips140_hmac_start[];
+	
+	struct crypto_shash *tfm;
+	SHASH_DESC_ON_STACK(desc, tfm);
+	u8 digest[SHA256_DIGEST_SIZE];
+	int err;
+
+	tfm = crypto_alloc_shash("hmac(sha256)", 0, 0);
+	if (IS_ERR(tfm))
+		panic("FIPS 140: failed to allocate hmac tfm (%ld)\n", PTR_ERR(tfm));
+
+	desc->tfm = tfm;
+
+	err = crypto_shash_setkey(tfm, fips140_integ_hmac_key, sizeof(fips140_integ_hmac_key) - 1);
+	if (err)
+		panic("FIPS 140: crypto_shash_setkey() failed: %d\n", err);
+
+	err = crypto_shash_init(desc);
+	if (err)
+		panic("FIPS 140: crypto_shash_init() failed: %d\n", err);
+
+	err = crypto_shash_update(desc, _binary_fips140_ko_start, _binary_fips140_ko_end - _binary_fips140_ko_start);
+	if (err)
+		panic("FIPS 140: crypto_shash_update() failed: %d\n", err);
+
+	err = crypto_shash_final(desc, digest);
+	if (err)
+		panic("FIPS 140: crypto_shash_final() failed: %d\n", err);
+
+	shash_desc_zero(desc);
+
+	if (memcmp(digest, _binary_fips140_hmac_start, sizeof(digest)))
+		panic("FIPS 140: failed integrity check\n");
+
+	pr_info("FIPS 140: integrity verification passed\n");
+
+	crypto_free_shash(tfm);
+	memzero_explicit(digest, sizeof(digest));
+
+	return 0;
+}
+
 static int __init run_initcalls(void)
 {
 	typedef int (*initcall_t)(void);
@@ -69,6 +117,10 @@ static int __init fips140_init(void)
     pr_info("loading " FIPS140_MODULE_NAME "\n");
 
 	run_initcalls();
+
+	if (fips_enabled){
+		verify_integrity(); /* Panics if integrity check fails */
+	}
 	fips140_mark_module_level_complete(2);
     return 0;
 }
