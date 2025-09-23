@@ -36,7 +36,9 @@ struct public_key {
 #define KEY_EFLAG_KEYCERTSIGN	2	/* set if the keyCertSign usage is set */
 };
 
-extern void public_key_free(struct public_key *key);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE, public_key_free, void,
+	(struct public_key *key),
+	(key));
 
 /*
  * Public key cryptography signature data
@@ -56,7 +58,11 @@ DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, public_key_signature_free, void,
 	(struct public_key_signature *sig),
 	(sig));
 
-extern struct asymmetric_key_subtype public_key_subtype;
+DECLARE_CRYPTO_VAR(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE, public_key_subtype, struct asymmetric_key_subtype, );
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE)
+#define public_key_subtype (*((struct asymmetric_key_subtype*)CRYPTO_VAR_NAME(public_key_subtype)))
+#endif
 
 struct key;
 struct key_type;
@@ -111,8 +117,9 @@ DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, verify_signature, int,
 	(arg1, arg2));
 
 #if IS_REACHABLE(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE)
-int public_key_verify_signature(const struct public_key *pkey,
-				const struct public_key_signature *sig);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE, public_key_verify_signature, int,
+	(const struct public_key *pkey, const struct public_key_signature *sig),
+	(pkey, sig));
 #else
 static inline
 int public_key_verify_signature(const struct public_key *pkey,
