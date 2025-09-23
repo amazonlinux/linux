@@ -10,7 +10,7 @@ asymmetric_keys-y := \
 	restrict.o \
 	signature.o
 
-obj-$(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE) += public_key.o
+crypto-objs-$(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE) += public_key.o
 
 #
 # X.509 Certificate handling
