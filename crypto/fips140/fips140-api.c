@@ -436,3 +436,47 @@ DEFINE_CRYPTO_API_STUB(crypto_unregister_rngs);
 DEFINE_CRYPTO_API_STUB(crypto_del_default_rng);
 
 #endif
+/*
+ * crypto/asymmetric_keys/asymmetric_type.c
+ */
+#if IS_BUILTIN(CONFIG_ASYMMETRIC_KEY_TYPE)
+
+#include <keys/asymmetric-parser.h>
+
+DEFINE_CRYPTO_API_STUB(register_asymmetric_key_parser);
+DEFINE_CRYPTO_API_STUB(unregister_asymmetric_key_parser);
+
+#include <keys/asymmetric-type.h>
+
+DEFINE_CRYPTO_API_STUB(asymmetric_key_id_same);
+DEFINE_CRYPTO_API_STUB(asymmetric_key_id_partial);
+DEFINE_CRYPTO_API_STUB(asymmetric_key_generate_id);
+DEFINE_CRYPTO_API_STUB(find_asymmetric_key);
+
+#undef key_type_asymmetric
+DEFINE_CRYPTO_VAR_STUB(key_type_asymmetric);
+
+#endif
+/*
+ * crypto/asymmetric_keys/signature.c
+ */
+#if IS_BUILTIN(CONFIG_ASYMMETRIC_KEY_TYPE)
+
+#include <crypto/public_key.h>
+
+DEFINE_CRYPTO_API_STUB(public_key_signature_free);
+DEFINE_CRYPTO_API_STUB(query_asymmetric_key);
+DEFINE_CRYPTO_API_STUB(verify_signature);
+
+#endif
+/*
+ * crypto/asymmetric_keys/restrict.c
+ */
+#if IS_BUILTIN(CONFIG_ASYMMETRIC_KEY_TYPE)
+
+#include <crypto/public_key.h>
+
+DEFINE_CRYPTO_API_STUB(restrict_link_by_signature);
+DEFINE_CRYPTO_API_STUB(restrict_link_by_digsig);
+
+#endif
