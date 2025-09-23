@@ -10,6 +10,7 @@
 #ifndef _LINUX_PUBLIC_KEY_H
 #define _LINUX_PUBLIC_KEY_H
 
+#include <crypto/api.h>
 #include <linux/errno.h>
 #include <linux/keyctl.h>
 #include <linux/oid_registry.h>
@@ -51,7 +52,9 @@ struct public_key_signature {
 	const char *encoding;
 };
 
-extern void public_key_signature_free(struct public_key_signature *sig);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, public_key_signature_free, void,
+	(struct public_key_signature *sig),
+	(sig));
 
 extern struct asymmetric_key_subtype public_key_subtype;
 
@@ -59,10 +62,9 @@ struct key;
 struct key_type;
 union key_payload;
 
-extern int restrict_link_by_signature(struct key *dest_keyring,
-				      const struct key_type *type,
-				      const union key_payload *payload,
-				      struct key *trust_keyring);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, restrict_link_by_signature, int,
+	(struct key *dest_keyring, const struct key_type *type, const union key_payload *payload, struct key *trust_keyring),
+	(dest_keyring, type, payload, trust_keyring));
 
 extern int restrict_link_by_key_or_keyring(struct key *dest_keyring,
 					   const struct key_type *type,
@@ -79,10 +81,9 @@ extern int restrict_link_by_ca(struct key *dest_keyring,
 			       const struct key_type *type,
 			       const union key_payload *payload,
 			       struct key *trust_keyring);
-int restrict_link_by_digsig(struct key *dest_keyring,
-			    const struct key_type *type,
-			    const union key_payload *payload,
-			    struct key *trust_keyring);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, restrict_link_by_digsig, int,
+	(struct key *dest_keyring, const struct key_type *type, const union key_payload *payload, struct key *trust_keyring),
+	(dest_keyring, type, payload, trust_keyring));
 #else
 static inline int restrict_link_by_ca(struct key *dest_keyring,
 				      const struct key_type *type,
@@ -101,11 +102,13 @@ static inline int restrict_link_by_digsig(struct key *dest_keyring,
 }
 #endif
 
-extern int query_asymmetric_key(const struct kernel_pkey_params *,
-				struct kernel_pkey_query *);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, query_asymmetric_key, int,
+	(const struct kernel_pkey_params *arg1, struct kernel_pkey_query *arg2),
+	(arg1, arg2));
 
-extern int verify_signature(const struct key *,
-			    const struct public_key_signature *);
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, verify_signature, int,
+	(const struct key *arg1, const struct public_key_signature *arg2),
+	(arg1, arg2));
 
 #if IS_REACHABLE(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE)
 int public_key_verify_signature(const struct public_key *pkey,
