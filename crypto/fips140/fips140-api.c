@@ -480,3 +480,17 @@ DEFINE_CRYPTO_API_STUB(restrict_link_by_signature);
 DEFINE_CRYPTO_API_STUB(restrict_link_by_digsig);
 
 #endif
+/*
+ * crypto/asymmetric_keys/public_key.c
+ */
+#if IS_BUILTIN(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE)
+
+#include <crypto/public_key.h>
+
+DEFINE_CRYPTO_API_STUB(public_key_free);
+DEFINE_CRYPTO_API_STUB(public_key_verify_signature);
+
+#undef public_key_subtype
+DEFINE_CRYPTO_VAR_STUB(public_key_subtype);
+
+#endif
