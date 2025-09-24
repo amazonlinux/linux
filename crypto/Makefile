@@ -8,7 +8,7 @@ CONTEXT_ANALYSIS := y
 crypto-objs-$(CONFIG_CRYPTO) += crypto.o
 crypto-y := api.o cipher.o
 
-obj-$(CONFIG_CRYPTO_ENGINE) += crypto_engine.o
+crypto-objs-$(CONFIG_CRYPTO_ENGINE) += crypto_engine.o
 obj-$(CONFIG_CRYPTO_FIPS) += fips.o
 
 crypto_algapi-$(CONFIG_PROC_FS) += proc.o
