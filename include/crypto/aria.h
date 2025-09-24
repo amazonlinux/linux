@@ -18,6 +18,7 @@
 #ifndef _CRYPTO_ARIA_H
 #define _CRYPTO_ARIA_H
 
+#include <crypto/api.h>
 #include <crypto/algapi.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -450,9 +451,16 @@ static inline void aria_gsrk(u32 *rk, u32 *x, u32 *y, u32 n)
 		((y[(q + 2) % 4]) << (32 - r));
 }
 
-void aria_encrypt(void *ctx, u8 *out, const u8 *in);
-void aria_decrypt(void *ctx, u8 *out, const u8 *in);
-int aria_set_key(struct crypto_tfm *tfm, const u8 *in_key,
-		 unsigned int key_len);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA, aria_encrypt, void,
+	(void *ctx, u8 *out, const u8 *in),
+	(ctx, out, in));
+
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA, aria_decrypt, void,
+	(void *ctx, u8 *out, const u8 *in),
+	(ctx, out, in));
+
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA, aria_set_key, int,
+	(struct crypto_tfm *tfm, const u8 *in_key, unsigned int key_len),
+	(tfm, in_key, key_len));
 
 #endif
