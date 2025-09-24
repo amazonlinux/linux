@@ -167,8 +167,8 @@ static void __exit michael_mic_exit(void)
 }
 
 
-module_init(michael_mic_init);
-module_exit(michael_mic_exit);
+crypto_module_init(michael_mic_init);
+crypto_module_exit(michael_mic_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Michael MIC");
