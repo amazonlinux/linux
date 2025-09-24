@@ -2,6 +2,7 @@
 #ifndef _CRYPTO_CAST6_H
 #define _CRYPTO_CAST6_H
 
+#include <crypto/api.h>
 #include <linux/types.h>
 #include <linux/crypto.h>
 #include <crypto/cast_common.h>
@@ -15,10 +16,20 @@ struct cast6_ctx {
 	u8 Kr[12][4];
 };
 
-int __cast6_setkey(struct cast6_ctx *ctx, const u8 *key, unsigned int keylen);
-int cast6_setkey(struct crypto_tfm *tfm, const u8 *key, unsigned int keylen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, __cast6_setkey, int,
+	(struct cast6_ctx *ctx, const u8 *key, unsigned int keylen),
+	(ctx, key, keylen));
 
-void __cast6_encrypt(const void *ctx, u8 *dst, const u8 *src);
-void __cast6_decrypt(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, cast6_setkey, int,
+	(struct crypto_tfm *tfm, const u8 *key, unsigned int keylen),
+	(tfm, key, keylen));
+
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, __cast6_encrypt, void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, __cast6_decrypt, void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 #endif
