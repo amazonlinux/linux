@@ -41,10 +41,15 @@ DECLARE_CRYPTO_API(camellia_dec_blk_2way, asmlinkage void,
 	(ctx, dst, src));
 
 /* 16-way parallel cipher functions (avx/aes-ni) */
-asmlinkage void camellia_ecb_enc_16way(const void *ctx, u8 *dst, const u8 *src);
-asmlinkage void camellia_ecb_dec_16way(const void *ctx, u8 *dst, const u8 *src);
-
-asmlinkage void camellia_cbc_dec_16way(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(camellia_ecb_enc_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(camellia_ecb_dec_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(camellia_cbc_dec_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 static inline void camellia_enc_blk(const void *ctx, u8 *dst, const u8 *src)
 {
