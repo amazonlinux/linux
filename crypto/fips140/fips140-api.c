@@ -692,3 +692,21 @@ DEFINE_CRYPTO_API_STUB(cryptd_free_aead);
 DEFINE_CRYPTO_API_STUB(blowfish_setkey);
 
 #endif
+/*
+ * crypto/sm4.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_SM4)
+
+#include <crypto/sm4.h>
+
+#undef crypto_sm4_fk
+#undef crypto_sm4_ck
+#undef crypto_sm4_sbox
+DEFINE_CRYPTO_VAR_STUB(crypto_sm4_fk);
+DEFINE_CRYPTO_VAR_STUB(crypto_sm4_ck);
+DEFINE_CRYPTO_VAR_STUB(crypto_sm4_sbox);
+
+DEFINE_CRYPTO_API_STUB(sm4_expandkey);
+DEFINE_CRYPTO_API_STUB(sm4_crypt_block);
+
+#endif
