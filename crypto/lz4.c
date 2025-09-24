@@ -91,8 +91,8 @@ static void __exit lz4_mod_fini(void)
 	crypto_unregister_scomp(&scomp);
 }
 
-module_init(lz4_mod_init);
-module_exit(lz4_mod_fini);
+crypto_module_init(lz4_mod_init);
+crypto_module_exit(lz4_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("LZ4 Compression Algorithm");
