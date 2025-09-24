@@ -871,6 +871,17 @@ DEFINE_CRYPTO_API_STUB(async_xor_val_offs);
 
 #endif
 /*
+ * crypto/async_tx/async_pq.c
+ */
+#if IS_BUILTIN(CONFIG_ASYNC_PQ)
+
+#include <linux/async_tx.h>
+
+DEFINE_CRYPTO_API_STUB(async_gen_syndrome);
+DEFINE_CRYPTO_API_STUB(async_syndrome_val);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
