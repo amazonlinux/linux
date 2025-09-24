@@ -402,8 +402,8 @@ static void __exit crypto_cts_module_exit(void)
 	crypto_unregister_template(&crypto_cts_tmpl);
 }
 
-module_init(crypto_cts_module_init);
-module_exit(crypto_cts_module_exit);
+crypto_module_init(crypto_cts_module_init);
+crypto_module_exit(crypto_cts_module_exit);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("CTS-CBC CipherText Stealing for CBC");
