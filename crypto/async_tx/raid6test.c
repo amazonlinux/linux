@@ -243,8 +243,8 @@ static void __exit raid6_test_exit(void)
 /* when compiled-in wait for drivers to load first (assumes dma drivers
  * are also compiled-in)
  */
-late_initcall(raid6_test);
-module_exit(raid6_test_exit);
+crypto_late_initcall(raid6_test);
+crypto_module_exit(raid6_test_exit);
 MODULE_AUTHOR("Dan Williams <dan.j.williams@intel.com>");
 MODULE_DESCRIPTION("asynchronous RAID-6 recovery self tests");
 MODULE_LICENSE("GPL");
