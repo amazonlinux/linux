@@ -96,8 +96,8 @@ static void __exit xxhash_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-module_init(xxhash_mod_init);
-module_exit(xxhash_mod_fini);
+crypto_module_init(xxhash_mod_init);
+crypto_module_exit(xxhash_mod_fini);
 
 MODULE_AUTHOR("Nikolay Borisov <nborisov@suse.com>");
 MODULE_DESCRIPTION("xxhash calculations wrapper for lib/xxhash.c");
