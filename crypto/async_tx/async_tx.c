@@ -30,8 +30,8 @@ static void __exit async_tx_exit(void)
 	async_dmaengine_put();
 }
 
-module_init(async_tx_init);
-module_exit(async_tx_exit);
+crypto_module_init(async_tx_init);
+crypto_module_exit(async_tx_exit);
 
 /**
  * __async_tx_find_channel - find a channel to carry out the operation or let
