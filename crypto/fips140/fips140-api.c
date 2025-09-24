@@ -824,6 +824,16 @@ DEFINE_CRYPTO_API_STUB(crypto_krb5enc_extractkeys);
 
 #endif
 /*
+ * crypto/xor.c
+ */
+#if IS_BUILTIN(CONFIG_XOR_BLOCKS)
+
+#include <linux/raid/xor.h>
+
+DEFINE_CRYPTO_API_STUB(xor_blocks);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)

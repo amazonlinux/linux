@@ -2,10 +2,13 @@
 #ifndef _XOR_H
 #define _XOR_H
 
+#include <crypto/api.h>
+
 #define MAX_XOR_BLOCKS 4
 
-extern void xor_blocks(unsigned int count, unsigned int bytes,
-	void *dest, void **srcs);
+DECLARE_CRYPTO_API(CONFIG_XOR_BLOCKS, xor_blocks, void,
+	(unsigned int count, unsigned int bytes, void *dest, void **srcs),
+	(count, bytes, dest, srcs));
 
 struct xor_block_template {
         struct xor_block_template *next;
