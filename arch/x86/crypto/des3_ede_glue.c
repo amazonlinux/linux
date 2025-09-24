@@ -381,8 +381,8 @@ static void __exit des3_ede_x86_fini(void)
 				    ARRAY_SIZE(des3_ede_skciphers));
 }
 
-module_init(des3_ede_x86_init);
-module_exit(des3_ede_x86_fini);
+crypto_module_init(des3_ede_x86_init);
+crypto_module_exit(des3_ede_x86_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Triple DES EDE Cipher Algorithm, asm optimized");
