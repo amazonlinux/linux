@@ -4,6 +4,8 @@
  */
 #ifndef _ASYNC_TX_H_
 #define _ASYNC_TX_H_
+
+#include <crypto/api.h>
 #include <linux/dmaengine.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
@@ -99,9 +101,9 @@ static inline void async_tx_issue_pending(struct dma_async_tx_descriptor *tx)
 #else
 #define async_tx_find_channel(dep, type, dst, dst_count, src, src_count, len) \
 	 __async_tx_find_channel(dep, type)
-struct dma_chan *
-__async_tx_find_channel(struct async_submit_ctl *submit,
-			enum dma_transaction_type tx_type);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, __async_tx_find_channel, struct dma_chan *,
+	(struct async_submit_ctl *submit, enum dma_transaction_type tx_type),
+	(submit, tx_type));
 #endif /* CONFIG_ARCH_HAS_ASYNC_TX_FIND_CHANNEL */
 #else
 static inline void async_tx_issue_pending_all(void)
@@ -155,8 +157,9 @@ init_async_submit(struct async_submit_ctl *args, enum async_tx_flags flags,
 	args->scribble = scribble;
 }
 
-void async_tx_submit(struct dma_chan *chan, struct dma_async_tx_descriptor *tx,
-		     struct async_submit_ctl *submit);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_tx_submit, void,
+	(struct dma_chan *chan, struct dma_async_tx_descriptor *tx, struct async_submit_ctl *submit),
+	(chan, tx, submit));
 
 struct dma_async_tx_descriptor *
 async_xor(struct page *dest, struct page **src_list, unsigned int offset,
@@ -178,7 +181,9 @@ async_memcpy(struct page *dest, struct page *src, unsigned int dest_offset,
 	     unsigned int src_offset, size_t len,
 	     struct async_submit_ctl *submit);
 
-struct dma_async_tx_descriptor *async_trigger_callback(struct async_submit_ctl *submit);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_trigger_callback, struct dma_async_tx_descriptor *,
+	(struct async_submit_ctl *submit),
+	(submit));
 
 struct dma_async_tx_descriptor *
 async_gen_syndrome(struct page **blocks, unsigned int *offsets, int src_cnt,
@@ -199,5 +204,7 @@ async_raid6_datap_recov(int src_num, size_t bytes, int faila,
 			struct page **ptrs, unsigned int *offs,
 			struct async_submit_ctl *submit);
 
-void async_tx_quiesce(struct dma_async_tx_descriptor **tx);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_tx_quiesce, void,
+	(struct dma_async_tx_descriptor **tx),
+	(tx));
 #endif /* _ASYNC_TX_H_ */
