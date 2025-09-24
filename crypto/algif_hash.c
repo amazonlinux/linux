@@ -465,7 +465,7 @@ static void __exit algif_hash_exit(void)
 	BUG_ON(err);
 }
 
-module_init(algif_hash_init);
-module_exit(algif_hash_exit);
+crypto_module_init(algif_hash_init);
+crypto_module_exit(algif_hash_exit);
 MODULE_DESCRIPTION("Userspace interface for hash algorithms");
 MODULE_LICENSE("GPL");
