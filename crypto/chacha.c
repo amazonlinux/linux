@@ -243,8 +243,8 @@ static void __exit crypto_chacha_mod_fini(void)
 	crypto_unregister_skciphers(algs, num_algs);
 }
 
-module_init(crypto_chacha_mod_init);
-module_exit(crypto_chacha_mod_fini);
+crypto_module_init(crypto_chacha_mod_init);
+crypto_module_exit(crypto_chacha_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Martin Willi <martin@strongswan.org>");
