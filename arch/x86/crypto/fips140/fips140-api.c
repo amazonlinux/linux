@@ -91,3 +91,21 @@ DEFINE_CRYPTO_API_STUB(sm4_avx_cbc_decrypt);
 DEFINE_CRYPTO_API_STUB(sm4_avx_ctr_crypt);
 
 #endif
+
+/*
+ * arch/x86/crypto/aria_aesni_avx_glue.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64)
+
+#include <arch/x86/crypto/aria-avx.h>
+
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx_encrypt_16way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx_decrypt_16way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx_ctr_crypt_16way);
+#ifdef CONFIG_AS_GFNI
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx_gfni_encrypt_16way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx_gfni_decrypt_16way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx_gfni_ctr_crypt_16way);
+#endif /* CONFIG_AS_GFNI */
+
+#endif
