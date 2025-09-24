@@ -859,6 +859,18 @@ DEFINE_CRYPTO_API_STUB(async_memcpy);
 
 #endif
 /*
+ * crypto/async_tx/async_xor.c
+ */
+#if IS_BUILTIN(CONFIG_ASYNC_XOR)
+
+#include <linux/async_tx.h>
+
+DEFINE_CRYPTO_API_STUB(async_xor);
+DEFINE_CRYPTO_API_STUB(async_xor_offs);
+DEFINE_CRYPTO_API_STUB(async_xor_val_offs);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
