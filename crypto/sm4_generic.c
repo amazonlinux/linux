@@ -83,8 +83,8 @@ static void __exit sm4_fini(void)
 	crypto_unregister_alg(&sm4_alg);
 }
 
-module_init(sm4_init);
-module_exit(sm4_fini);
+crypto_module_init(sm4_init);
+crypto_module_exit(sm4_fini);
 
 MODULE_DESCRIPTION("SM4 Cipher Algorithm");
 MODULE_LICENSE("GPL v2");
