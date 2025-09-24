@@ -942,3 +942,13 @@ DEFINE_CRYPTO_API_STUB(crypto_ecdh_encode_key);
 DEFINE_CRYPTO_API_STUB(crypto_ecdh_decode_key);
 
 #endif
+/*
+ * crypto/asymmetric_keys/verify_pefile.c
+ */
+#if IS_BUILTIN(CONFIG_SIGNED_PE_FILE_VERIFICATION)
+
+#include <linux/verification.h>
+
+DEFINE_CRYPTO_API_STUB(verify_pefile_signature);
+
+#endif
