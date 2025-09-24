@@ -176,8 +176,8 @@ static void __exit blake2b_mod_fini(void)
 	crypto_unregister_shashes(blake2b_algs, ARRAY_SIZE(blake2b_algs));
 }
 
-module_init(blake2b_mod_init);
-module_exit(blake2b_mod_fini);
+crypto_module_init(blake2b_mod_init);
+crypto_module_exit(blake2b_mod_fini);
 
 MODULE_AUTHOR("David Sterba <kdave@kernel.org>");
 MODULE_DESCRIPTION("BLAKE2b generic implementation");
