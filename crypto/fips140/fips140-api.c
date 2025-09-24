@@ -645,3 +645,18 @@ DEFINE_CRYPTO_API_STUB(ecc_point_is_zero);
 DEFINE_CRYPTO_API_STUB(ecc_point_mult_shamir);
 
 #endif
+/*
+ * crypto/nhpoly1305.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_NHPOLY1305)
+
+#include <crypto/nhpoly1305.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_setkey);
+DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_init);
+DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_update);
+DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_update_helper);
+DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_final);
+DEFINE_CRYPTO_API_STUB(crypto_nhpoly1305_final_helper);
+
+#endif
