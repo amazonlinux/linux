@@ -339,8 +339,8 @@ static void __exit sm4_exit(void)
 				    ARRAY_SIZE(sm4_aesni_avx_skciphers));
 }
 
-module_init(sm4_init);
-module_exit(sm4_exit);
+crypto_module_init(sm4_init);
+crypto_module_exit(sm4_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Tianjia Zhang <tianjia.zhang@linux.alibaba.com>");
