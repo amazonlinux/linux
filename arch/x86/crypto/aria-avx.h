@@ -35,20 +35,26 @@ DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_ctr_
 	(ctx, dst, src, keystream, iv));
 #endif /* CONFIG_AS_GFNI */
 
-asmlinkage void aria_aesni_avx2_encrypt_32way(const void *ctx, u8 *dst,
-					      const u8 *src);
-asmlinkage void aria_aesni_avx2_decrypt_32way(const void *ctx, u8 *dst,
-					      const u8 *src);
-asmlinkage void aria_aesni_avx2_ctr_crypt_32way(const void *ctx, u8 *dst,
-						const u8 *src,
-						u8 *keystream, u8 *iv);
-asmlinkage void aria_aesni_avx2_gfni_encrypt_32way(const void *ctx, u8 *dst,
-						   const u8 *src);
-asmlinkage void aria_aesni_avx2_gfni_decrypt_32way(const void *ctx, u8 *dst,
-						   const u8 *src);
-asmlinkage void aria_aesni_avx2_gfni_ctr_crypt_32way(const void *ctx, u8 *dst,
-						     const u8 *src,
-						     u8 *keystream, u8 *iv);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64, aria_aesni_avx2_encrypt_32way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64, aria_aesni_avx2_decrypt_32way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64, aria_aesni_avx2_ctr_crypt_32way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, u8 *keystream, u8 *iv),
+	(ctx, dst, src, keystream, iv));
+#ifdef CONFIG_AS_GFNI
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64, aria_aesni_avx2_gfni_encrypt_32way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64, aria_aesni_avx2_gfni_decrypt_32way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64, aria_aesni_avx2_gfni_ctr_crypt_32way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, u8 *keystream, u8 *iv),
+	(ctx, dst, src, keystream, iv));
+#endif /* CONFIG_AS_GFNI */
 
 struct aria_avx_ops {
 	void (*aria_encrypt_16way)(const void *ctx, u8 *dst, const u8 *src);
