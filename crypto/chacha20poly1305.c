@@ -476,8 +476,8 @@ static void __exit chacha20poly1305_module_exit(void)
 				    ARRAY_SIZE(rfc7539_tmpls));
 }
 
-module_init(chacha20poly1305_module_init);
-module_exit(chacha20poly1305_module_exit);
+crypto_module_init(chacha20poly1305_module_init);
+crypto_module_exit(chacha20poly1305_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Martin Willi <martin@strongswan.org>");
