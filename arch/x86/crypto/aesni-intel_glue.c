@@ -1682,8 +1682,8 @@ static void __exit aesni_exit(void)
 	unregister_avx_algs();
 }
 
-module_init(aesni_init);
-module_exit(aesni_exit);
+crypto_module_init(aesni_init);
+crypto_module_exit(aesni_exit);
 
 MODULE_DESCRIPTION("AES cipher and modes, optimized with AES-NI or VAES instructions");
 MODULE_LICENSE("GPL");
