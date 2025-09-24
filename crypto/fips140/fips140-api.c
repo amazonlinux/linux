@@ -893,6 +893,17 @@ DEFINE_CRYPTO_API_STUB(async_raid6_datap_recov);
 
 #endif
 /*
+ * crypto/kdf_sp800108.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_KDF800108_CTR)
+
+#include <crypto/kdf_sp800108.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_kdf108_ctr_generate);
+DEFINE_CRYPTO_API_STUB(crypto_kdf108_setkey);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
