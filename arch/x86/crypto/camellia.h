@@ -2,6 +2,7 @@
 #ifndef ASM_X86_CAMELLIA_H
 #define ASM_X86_CAMELLIA_H
 
+#include <crypto/api.h>
 #include <crypto/b128ops.h>
 #include <linux/crypto.h>
 #include <linux/kernel.h>
@@ -19,19 +20,25 @@ struct camellia_ctx {
 	u32 key_length;
 };
 
-extern int __camellia_setkey(struct camellia_ctx *cctx,
-			     const unsigned char *key,
-			     unsigned int key_len);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, __camellia_setkey, int,
+	(struct camellia_ctx *cctx, const unsigned char *key, unsigned int key_len),
+	(cctx, key, key_len));
 
 /* regular block cipher functions */
-asmlinkage void __camellia_enc_blk(const void *ctx, u8 *dst, const u8 *src,
-				   bool xor);
-asmlinkage void camellia_dec_blk(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, __camellia_enc_blk, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, bool xor),
+	(ctx, dst, src, xor));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_dec_blk, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 /* 2-way parallel cipher functions */
-asmlinkage void __camellia_enc_blk_2way(const void *ctx, u8 *dst, const u8 *src,
-					bool xor);
-asmlinkage void camellia_dec_blk_2way(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, __camellia_enc_blk_2way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, bool xor),
+	(ctx, dst, src, xor));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_dec_blk_2way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 /* 16-way parallel cipher functions (avx/aes-ni) */
 asmlinkage void camellia_ecb_enc_16way(const void *ctx, u8 *dst, const u8 *src);
@@ -62,6 +69,8 @@ static inline void camellia_enc_blk_xor_2way(const void *ctx, u8 *dst,
 }
 
 /* glue helpers */
-extern void camellia_decrypt_cbc_2way(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_decrypt_cbc_2way, void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 #endif /* ASM_X86_CAMELLIA_H */
