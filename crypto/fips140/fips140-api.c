@@ -813,3 +813,13 @@ DEFINE_CRYPTO_API_STUB(aria_encrypt);
 DEFINE_CRYPTO_API_STUB(aria_decrypt);
 
 #endif
+/*
+ * crypto/krb5enc.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_KRB5ENC)
+
+#include <crypto/authenc.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_krb5enc_extractkeys);
+
+#endif
