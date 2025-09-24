@@ -161,8 +161,8 @@ static void __exit twofish_3way_fini(void)
 	crypto_unregister_skciphers(tf_skciphers, ARRAY_SIZE(tf_skciphers));
 }
 
-module_init(twofish_3way_init);
-module_exit(twofish_3way_fini);
+crypto_module_init(twofish_3way_init);
+crypto_module_exit(twofish_3way_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Twofish Cipher Algorithm, 3-way parallel asm optimized");

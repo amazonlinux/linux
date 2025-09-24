@@ -16,11 +16,16 @@ DECLARE_CRYPTO_API(twofish_dec_blk, asmlinkage void,
 	(ctx, dst, src));
 
 /* 3-way parallel cipher functions */
-asmlinkage void __twofish_enc_blk_3way(const void *ctx, u8 *dst, const u8 *src,
-				       bool xor);
-asmlinkage void twofish_dec_blk_3way(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(__twofish_enc_blk_3way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, bool xor),
+	(ctx, dst, src, xor));
+DECLARE_CRYPTO_API(twofish_dec_blk_3way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 /* helpers from twofish_x86_64-3way module */
-extern void twofish_dec_blk_cbc_3way(const void *ctx, u8 *dst, const u8 *src);
+DECLARE_CRYPTO_API(twofish_dec_blk_cbc_3way, void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
 
 #endif /* ASM_X86_TWOFISH_H */
