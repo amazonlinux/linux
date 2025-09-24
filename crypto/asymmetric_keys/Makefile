@@ -70,7 +70,7 @@ pkcs7_test_key-y := \
 #
 # Signed PE binary-wrapped key handling
 #
-obj-$(CONFIG_SIGNED_PE_FILE_VERIFICATION) += verify_signed_pefile.o
+crypto-objs-$(CONFIG_SIGNED_PE_FILE_VERIFICATION) += verify_signed_pefile.o
 
 verify_signed_pefile-y := \
 	verify_pefile.o \
