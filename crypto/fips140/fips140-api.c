@@ -589,3 +589,25 @@ DEFINE_CRYPTO_API_STUB(crypto_engine_register_skciphers);
 DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_skciphers);
 
 #endif
+/*
+ * crypto/hkdf.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_HKDF)
+
+#include <crypto/hkdf.h>
+
+DEFINE_CRYPTO_API_STUB(hkdf_extract);
+DEFINE_CRYPTO_API_STUB(hkdf_expand);
+
+#endif
+/*
+ * crypto/hkdf.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_HKDF)
+
+#include <crypto/hkdf.h>
+
+DEFINE_CRYPTO_API_STUB(hkdf_extract);
+DEFINE_CRYPTO_API_STUB(hkdf_expand);
+
+#endif

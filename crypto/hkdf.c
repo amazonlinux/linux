@@ -566,8 +566,8 @@ static int __init crypto_hkdf_module_init(void)
 
 static void __exit crypto_hkdf_module_exit(void) {}
 
-late_initcall(crypto_hkdf_module_init);
-module_exit(crypto_hkdf_module_exit);
+crypto_late_initcall(crypto_hkdf_module_init);
+crypto_module_exit(crypto_hkdf_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("HMAC-based Key Derivation Function (HKDF)");
