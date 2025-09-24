@@ -342,8 +342,8 @@ static void __exit rmd160_mod_fini(void)
 	crypto_unregister_shash(&alg);
 }
 
-module_init(rmd160_mod_init);
-module_exit(rmd160_mod_fini);
+crypto_module_init(rmd160_mod_init);
+crypto_module_exit(rmd160_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Adrian-Ken Rueegsegger <ken@codelabs.ch>");
