@@ -170,5 +170,5 @@ MODULE_LICENSE("GPL");
 core_initcall(register_xor_blocks);
 #endif
 
-module_init(calibrate_xor_blocks);
-module_exit(xor_exit);
+crypto_module_init(calibrate_xor_blocks);
+crypto_module_exit(xor_exit);
