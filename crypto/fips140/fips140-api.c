@@ -721,3 +721,16 @@ DEFINE_CRYPTO_API_STUB(__twofish_setkey);
 DEFINE_CRYPTO_API_STUB(twofish_setkey);
 
 #endif
+/*
+ * crypto/serpent_generic.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_SERPENT)
+
+#include <crypto/serpent.h>
+
+DEFINE_CRYPTO_API_STUB(__serpent_setkey);
+DEFINE_CRYPTO_API_STUB(serpent_setkey);
+DEFINE_CRYPTO_API_STUB(__serpent_encrypt);
+DEFINE_CRYPTO_API_STUB(__serpent_decrypt);
+
+#endif
