@@ -849,6 +849,16 @@ DEFINE_CRYPTO_API_STUB(async_tx_quiesce);
 
 #endif
 /*
+ * crypto/async_tx/async_memcpy.c
+ */
+#if IS_BUILTIN(CONFIG_ASYNC_MEMCPY)
+
+#include <linux/async_tx.h>
+
+DEFINE_CRYPTO_API_STUB(async_memcpy);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
