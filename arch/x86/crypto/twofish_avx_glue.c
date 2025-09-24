@@ -118,8 +118,8 @@ static void __exit twofish_exit(void)
 	crypto_unregister_skciphers(twofish_algs, ARRAY_SIZE(twofish_algs));
 }
 
-module_init(twofish_init);
-module_exit(twofish_exit);
+crypto_module_init(twofish_init);
+crypto_module_exit(twofish_exit);
 
 MODULE_DESCRIPTION("Twofish Cipher Algorithm, AVX optimized");
 MODULE_LICENSE("GPL");
