@@ -1408,8 +1408,8 @@ static void __exit camellia_fini(void)
 				    ARRAY_SIZE(camellia_skcipher_algs));
 }
 
-module_init(camellia_init);
-module_exit(camellia_fini);
+crypto_module_init(camellia_init);
+crypto_module_exit(camellia_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Camellia Cipher Algorithm, asm optimized");
