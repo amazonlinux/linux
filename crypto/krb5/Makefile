@@ -15,4 +15,4 @@ krb5-$(CONFIG_CRYPTO_KRB5_SELFTESTS) += \
 	selftest.o \
 	selftest_data.o
 
-obj-$(CONFIG_CRYPTO_KRB5) += krb5.o
+crypto-objs-$(CONFIG_CRYPTO_KRB5) += krb5.o
