@@ -182,8 +182,8 @@ static void __exit crypto_xctr_module_exit(void)
 	crypto_unregister_template(&crypto_xctr_tmpl);
 }
 
-module_init(crypto_xctr_module_init);
-module_exit(crypto_xctr_module_exit);
+crypto_module_init(crypto_xctr_module_init);
+crypto_module_exit(crypto_xctr_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("XCTR block cipher mode of operation");
