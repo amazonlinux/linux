@@ -194,7 +194,7 @@ $(obj)/ecrdsa.o: $(obj)/ecrdsa_params.asn1.h $(obj)/ecrdsa_pub_key.asn1.h
 ecrdsa_generic-y += ecrdsa.o
 ecrdsa_generic-y += ecrdsa_params.asn1.o
 ecrdsa_generic-y += ecrdsa_pub_key.asn1.o
-obj-$(CONFIG_CRYPTO_ECRDSA) += ecrdsa_generic.o
+crypto-objs-$(CONFIG_CRYPTO_ECRDSA) += ecrdsa_generic.o
 
 #
 # generic algorithms and the async_tx api
