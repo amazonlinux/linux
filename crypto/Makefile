@@ -205,7 +205,7 @@ obj-$(CONFIG_CRYPTO_SIMD) += crypto_simd.o
 #
 # Key derivation function
 #
-obj-$(CONFIG_CRYPTO_KDF800108_CTR) += kdf_sp800108.o
+crypto-objs-$(CONFIG_CRYPTO_KDF800108_CTR) += kdf_sp800108.o
 
 obj-$(CONFIG_CRYPTO_DF80090A) += df_sp80090a.o
 
