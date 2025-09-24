@@ -59,7 +59,7 @@ polyval-clmulni-y := polyval-clmulni_asm.o polyval-clmulni_glue.o
 
 crypto-objs-$(CONFIG_CRYPTO_NHPOLY1305_SSE2) += nhpoly1305-sse2.o
 nhpoly1305-sse2-y := nh-sse2-x86_64.o nhpoly1305-sse2-glue.o
-obj-$(CONFIG_CRYPTO_NHPOLY1305_AVX2) += nhpoly1305-avx2.o
+crypto-objs-$(CONFIG_CRYPTO_NHPOLY1305_AVX2) += nhpoly1305-avx2.o
 nhpoly1305-avx2-y := nh-avx2-x86_64.o nhpoly1305-avx2-glue.o
 
 crypto-objs-$(CONFIG_CRYPTO_CURVE25519_X86) += curve25519-x86_64.o
