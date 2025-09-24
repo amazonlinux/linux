@@ -444,9 +444,9 @@ static int __init crypto_krb5_init(void)
 {
 	return krb5_selftest();
 }
-module_init(crypto_krb5_init);
+crypto_module_init(crypto_krb5_init);
 
 static void __exit crypto_krb5_exit(void)
 {
 }
-module_exit(crypto_krb5_exit);
+crypto_module_exit(crypto_krb5_exit);
