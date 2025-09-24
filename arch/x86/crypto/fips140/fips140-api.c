@@ -34,3 +34,16 @@ DEFINE_CRYPTO_API_STUB(twofish_dec_blk_3way);
 DEFINE_CRYPTO_API_STUB(twofish_dec_blk_cbc_3way);
 
 #endif
+
+/*
+ * arch/x86/crypto/serpent_avx_glue.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_SERPENT_AVX_X86_64)
+
+#include <arch/x86/crypto/serpent-avx.h>
+
+DEFINE_CRYPTO_API_STUB(serpent_ecb_enc_8way_avx);
+DEFINE_CRYPTO_API_STUB(serpent_ecb_dec_8way_avx);
+DEFINE_CRYPTO_API_STUB(serpent_cbc_dec_8way_avx);
+
+#endif
