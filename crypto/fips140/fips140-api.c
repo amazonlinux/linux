@@ -801,3 +801,15 @@ DEFINE_CRYPTO_API_STUB(af_alg_alloc_areq);
 DEFINE_CRYPTO_API_STUB(af_alg_get_rsgl);
 
 #endif
+/*
+ * crypto/aria_generic.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ARIA)
+
+#include <crypto/aria.h>
+
+DEFINE_CRYPTO_API_STUB(aria_set_key);
+DEFINE_CRYPTO_API_STUB(aria_encrypt);
+DEFINE_CRYPTO_API_STUB(aria_decrypt);
+
+#endif
