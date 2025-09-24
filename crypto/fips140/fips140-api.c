@@ -734,3 +734,45 @@ DEFINE_CRYPTO_API_STUB(__serpent_encrypt);
 DEFINE_CRYPTO_API_STUB(__serpent_decrypt);
 
 #endif
+/*
+ * crypto/cast_common.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_CAST_COMMON)
+
+#include <crypto/cast_common.h>
+
+#undef cast_s1
+#undef cast_s2
+#undef cast_s3
+#undef cast_s4
+DEFINE_CRYPTO_VAR_STUB(cast_s1);
+DEFINE_CRYPTO_VAR_STUB(cast_s2);
+DEFINE_CRYPTO_VAR_STUB(cast_s3);
+DEFINE_CRYPTO_VAR_STUB(cast_s4);
+
+#endif
+/*
+ * crypto/cast5_generic.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_CAST5)
+
+#include <crypto/cast5.h>
+
+DEFINE_CRYPTO_API_STUB(cast5_setkey);
+DEFINE_CRYPTO_API_STUB(__cast5_encrypt);
+DEFINE_CRYPTO_API_STUB(__cast5_decrypt);
+
+#endif
+/*
+ * crypto/cast6_generic.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_CAST6)
+
+#include <crypto/cast6.h>
+
+DEFINE_CRYPTO_API_STUB(__cast6_setkey);
+DEFINE_CRYPTO_API_STUB(cast6_setkey);
+DEFINE_CRYPTO_API_STUB(__cast6_encrypt);
+DEFINE_CRYPTO_API_STUB(__cast6_decrypt);
+
+#endif
