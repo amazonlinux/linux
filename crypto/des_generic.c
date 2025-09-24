@@ -122,8 +122,8 @@ static void __exit des_generic_mod_fini(void)
 	crypto_unregister_algs(des_algs, ARRAY_SIZE(des_algs));
 }
 
-module_init(des_generic_mod_init);
-module_exit(des_generic_mod_fini);
+crypto_module_init(des_generic_mod_init);
+crypto_module_exit(des_generic_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("DES & Triple DES EDE Cipher Algorithms");
