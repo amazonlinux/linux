@@ -2,6 +2,7 @@
 #ifndef _CRYPTO_TWOFISH_H
 #define _CRYPTO_TWOFISH_H
 
+#include <crypto/api.h>
 #include <linux/types.h>
 
 #define TF_MIN_KEY_SIZE 16
@@ -18,8 +19,12 @@ struct twofish_ctx {
 	u32 s[4][256], w[8], k[32];
 };
 
-int __twofish_setkey(struct twofish_ctx *ctx, const u8 *key,
-		     unsigned int key_len);
-int twofish_setkey(struct crypto_tfm *tfm, const u8 *key, unsigned int key_len);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_TWOFISH_COMMON, __twofish_setkey, int,
+	(struct twofish_ctx *ctx, const u8 *key, unsigned int key_len),
+	(ctx, key, key_len));
+
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_TWOFISH_COMMON, twofish_setkey, int,
+	(struct crypto_tfm *tfm, const u8 *key, unsigned int key_len),
+	(tfm, key, key_len));
 
 #endif
