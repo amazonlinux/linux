@@ -6,6 +6,7 @@
 #ifndef _CRYPTO_BLOWFISH_H
 #define _CRYPTO_BLOWFISH_H
 
+#include <crypto/api.h>
 #include <linux/types.h>
 #include <linux/crypto.h>
 
@@ -18,7 +19,8 @@ struct bf_ctx {
 	u32 s[1024];
 };
 
-int blowfish_setkey(struct crypto_tfm *tfm, const u8 *key,
-		    unsigned int key_len);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_BLOWFISH_COMMON, blowfish_setkey, int,
+	(struct crypto_tfm *tfm, const u8 *key, unsigned int key_len),
+	(tfm, key, key_len));
 
 #endif
