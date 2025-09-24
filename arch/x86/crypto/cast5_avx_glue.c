@@ -109,8 +109,8 @@ static void __exit cast5_exit(void)
 	crypto_unregister_skciphers(cast5_algs, ARRAY_SIZE(cast5_algs));
 }
 
-module_init(cast5_init);
-module_exit(cast5_exit);
+crypto_module_init(cast5_init);
+crypto_module_exit(cast5_exit);
 
 MODULE_DESCRIPTION("Cast5 Cipher Algorithm, AVX optimized");
 MODULE_LICENSE("GPL");
