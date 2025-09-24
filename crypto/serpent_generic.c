@@ -599,8 +599,8 @@ static void __exit serpent_mod_fini(void)
 	crypto_unregister_alg(&srp_alg);
 }
 
-module_init(serpent_mod_init);
-module_exit(serpent_mod_fini);
+crypto_module_init(serpent_mod_init);
+crypto_module_exit(serpent_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Serpent Cipher Algorithm");
