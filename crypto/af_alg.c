@@ -1323,8 +1323,8 @@ static void __exit af_alg_exit(void)
 	proto_unregister(&alg_proto);
 }
 
-module_init(af_alg_init);
-module_exit(af_alg_exit);
+crypto_module_init(af_alg_init);
+crypto_module_exit(af_alg_exit);
 MODULE_DESCRIPTION("Crypto userspace interface");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_NETPROTO(AF_ALG);
