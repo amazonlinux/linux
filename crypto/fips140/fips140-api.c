@@ -904,6 +904,33 @@ DEFINE_CRYPTO_API_STUB(crypto_kdf108_setkey);
 
 #endif
 /*
+ * crypto/krb5/krb5.o
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_KRB5)
+
+#include <crypto/krb5.h>
+
+/*
+ * crypto/krb5/krb5_kdf.c
+ */
+DEFINE_CRYPTO_API_STUB(crypto_krb5_calc_PRFplus);
+
+/*
+ * crypto/krb5/krb5_api.c
+ */
+DEFINE_CRYPTO_API_STUB(crypto_krb5_find_enctype);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_how_much_buffer);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_how_much_data);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_where_is_the_data);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_prepare_encryption);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_prepare_checksum);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_encrypt);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_decrypt);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_get_mic);
+DEFINE_CRYPTO_API_STUB(crypto_krb5_verify_mic);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
