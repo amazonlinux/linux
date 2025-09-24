@@ -8,6 +8,8 @@
 #ifndef _LINUX_VERIFICATION_H
 #define _LINUX_VERIFICATION_H
 
+#include <crypto/api.h>
+
 #include <linux/errno.h>
 #include <linux/types.h>
 
@@ -62,9 +64,9 @@ extern int verify_pkcs7_message_sig(const void *data, size_t len,
 				    void *ctx);
 
 #ifdef CONFIG_SIGNED_PE_FILE_VERIFICATION
-extern int verify_pefile_signature(const void *pebuf, unsigned pelen,
-				   struct key *trusted_keys,
-				   enum key_being_used_for usage);
+DECLARE_CRYPTO_API(CONFIG_SIGNED_PE_FILE_VERIFICATION, verify_pefile_signature, int,
+	(const void *pebuf, unsigned pelen, struct key *trusted_keys, enum key_being_used_for usage),
+	(pebuf, pelen, trusted_keys, usage));
 #endif
 
 #endif /* CONFIG_SYSTEM_DATA_VERIFICATION */
