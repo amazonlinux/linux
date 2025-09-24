@@ -6,6 +6,7 @@
 #ifndef CURVE25519_H
 #define CURVE25519_H
 
+#include <crypto/api.h>
 #include <crypto/algapi.h> // For crypto_memneq.
 #include <linux/types.h>
 #include <linux/random.h>
@@ -21,12 +22,13 @@ void curve25519_generic(u8 out[CURVE25519_KEY_SIZE],
 			const u8 scalar[CURVE25519_KEY_SIZE],
 			const u8 point[CURVE25519_KEY_SIZE]);
 
-void curve25519_arch(u8 out[CURVE25519_KEY_SIZE],
-		     const u8 scalar[CURVE25519_KEY_SIZE],
-		     const u8 point[CURVE25519_KEY_SIZE]);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CURVE25519_X86, curve25519_arch, void,
+	(u8 out[CURVE25519_KEY_SIZE], const u8 scalar[CURVE25519_KEY_SIZE], const u8 point[CURVE25519_KEY_SIZE]),
+	(out, scalar, point));
 
-void curve25519_base_arch(u8 pub[CURVE25519_KEY_SIZE],
-			  const u8 secret[CURVE25519_KEY_SIZE]);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CURVE25519_X86, curve25519_base_arch, void,
+	(u8 pub[CURVE25519_KEY_SIZE], const u8 secret[CURVE25519_KEY_SIZE]),
+	(pub, secret));
 
 bool curve25519_selftest(void);
 
