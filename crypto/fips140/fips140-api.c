@@ -882,6 +882,17 @@ DEFINE_CRYPTO_API_STUB(async_syndrome_val);
 
 #endif
 /*
+ * crypto/async_tx/async_raid6_recov.c
+ */
+#if IS_BUILTIN(CONFIG_ASYNC_RAID6_RECOV)
+
+#include <linux/async_tx.h>
+
+DEFINE_CRYPTO_API_STUB(async_raid6_2data_recov);
+DEFINE_CRYPTO_API_STUB(async_raid6_datap_recov);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
