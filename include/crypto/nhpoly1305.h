@@ -8,6 +8,7 @@
 
 #include <crypto/hash.h>
 #include <crypto/internal/poly1305.h>
+#include <crypto/api.h>
 
 /* NH parameterization: */
 
@@ -58,17 +59,24 @@ struct nhpoly1305_state {
 typedef void (*nh_t)(const u32 *key, const u8 *message, size_t message_len,
 		     __le64 hash[NH_NUM_PASSES]);
 
-int crypto_nhpoly1305_setkey(struct crypto_shash *tfm,
-			     const u8 *key, unsigned int keylen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_NHPOLY1305, crypto_nhpoly1305_setkey, int,
+	(struct crypto_shash *tfm, const u8 *key, unsigned int keylen),
+	(tfm, key, keylen));
 
-int crypto_nhpoly1305_init(struct shash_desc *desc);
-int crypto_nhpoly1305_update(struct shash_desc *desc,
-			     const u8 *src, unsigned int srclen);
-int crypto_nhpoly1305_update_helper(struct shash_desc *desc,
-				    const u8 *src, unsigned int srclen,
-				    nh_t nh_fn);
-int crypto_nhpoly1305_final(struct shash_desc *desc, u8 *dst);
-int crypto_nhpoly1305_final_helper(struct shash_desc *desc, u8 *dst,
-				   nh_t nh_fn);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_NHPOLY1305, crypto_nhpoly1305_init, int,
+	(struct shash_desc *desc),
+	(desc));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_NHPOLY1305, crypto_nhpoly1305_update, int,
+	(struct shash_desc *desc, const u8 *src, unsigned int srclen),
+	(desc, src, srclen));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_NHPOLY1305, crypto_nhpoly1305_update_helper, int,
+	(struct shash_desc *desc, const u8 *src, unsigned int srclen, nh_t nh_fn),
+	(desc, src, srclen, nh_fn));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_NHPOLY1305, crypto_nhpoly1305_final, int,
+	(struct shash_desc *desc, u8 *dst),
+	(desc, dst));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_NHPOLY1305, crypto_nhpoly1305_final_helper, int,
+	(struct shash_desc *desc, u8 *dst, nh_t nh_fn),
+	(desc, dst, nh_fn));
 
 #endif /* _NHPOLY1305_H */
