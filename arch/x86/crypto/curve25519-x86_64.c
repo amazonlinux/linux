@@ -1716,8 +1716,8 @@ static void __exit curve25519_mod_exit(void)
 		crypto_unregister_kpp(&curve25519_alg);
 }
 
-module_init(curve25519_mod_init);
-module_exit(curve25519_mod_exit);
+crypto_module_init(curve25519_mod_init);
+crypto_module_exit(curve25519_mod_exit);
 
 MODULE_ALIAS_CRYPTO("curve25519");
 MODULE_ALIAS_CRYPTO("curve25519-x86");
