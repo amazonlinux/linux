@@ -9,12 +9,13 @@
 #ifndef _CRYPTO_HKDF_H
 #define _CRYPTO_HKDF_H
 
+#include <crypto/api.h>
 #include <crypto/hash.h>
 
-int hkdf_extract(struct crypto_shash *hmac_tfm, const u8 *ikm,
-		 unsigned int ikmlen, const u8 *salt, unsigned int saltlen,
-		 u8 *prk);
-int hkdf_expand(struct crypto_shash *hmac_tfm,
-		const u8 *info, unsigned int infolen,
-		u8 *okm, unsigned int okmlen);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HKDF, hkdf_extract, int,
+	(struct crypto_shash *hmac_tfm, const u8 *ikm, unsigned int ikmlen, const u8 *salt, unsigned int saltlen, u8 *prk),
+	(hmac_tfm, ikm, ikmlen, salt, saltlen, prk));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_HKDF, hkdf_expand, int,
+	(struct crypto_shash *hmac_tfm, const u8 *info, unsigned int infolen, u8 *okm, unsigned int okmlen),
+	(hmac_tfm, info, infolen, okm, okmlen));
 #endif
