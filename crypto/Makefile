@@ -181,7 +181,7 @@ crypto-objs-$(CONFIG_CRYPTO_USER_API_RNG) += algif_rng.o
 crypto-objs-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
 crypto-objs-$(CONFIG_CRYPTO_ZSTD) += zstd.o
 crypto-objs-$(CONFIG_CRYPTO_ECC) += ecc.o
-obj-$(CONFIG_CRYPTO_ESSIV) += essiv.o
+crypto-objs-$(CONFIG_CRYPTO_ESSIV) += essiv.o
 obj-$(CONFIG_CRYPTO_CURVE25519) += curve25519-generic.o
 
 ecdh_generic-y += ecdh.o
