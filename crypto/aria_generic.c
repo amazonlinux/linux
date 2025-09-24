@@ -304,8 +304,8 @@ static void __exit aria_fini(void)
 	crypto_unregister_alg(&aria_alg);
 }
 
-module_init(aria_init);
-module_exit(aria_fini);
+crypto_module_init(aria_init);
+crypto_module_exit(aria_fini);
 
 MODULE_DESCRIPTION("ARIA Cipher Algorithm");
 MODULE_LICENSE("GPL");
