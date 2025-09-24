@@ -63,3 +63,16 @@ DEFINE_CRYPTO_API_STUB(camellia_dec_blk_2way);
 DEFINE_CRYPTO_API_STUB(camellia_decrypt_cbc_2way);
 
 #endif
+
+/*
+ * arch/x86/crypto/camellia_aesni_avx_glue.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_CAMELLIA_AESNI_AVX_X86_64)
+
+#include <arch/x86/crypto/camellia.h>
+
+DEFINE_CRYPTO_API_STUB(camellia_ecb_enc_16way);
+DEFINE_CRYPTO_API_STUB(camellia_ecb_dec_16way);
+DEFINE_CRYPTO_API_STUB(camellia_cbc_dec_16way);
+
+#endif
