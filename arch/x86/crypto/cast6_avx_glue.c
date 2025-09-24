@@ -108,8 +108,8 @@ static void __exit cast6_exit(void)
 	crypto_unregister_skciphers(cast6_algs, ARRAY_SIZE(cast6_algs));
 }
 
-module_init(cast6_init);
-module_exit(cast6_exit);
+crypto_module_init(cast6_init);
+crypto_module_exit(cast6_exit);
 
 MODULE_DESCRIPTION("Cast6 Cipher Algorithm, AVX optimized");
 MODULE_LICENSE("GPL");
