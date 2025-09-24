@@ -2,6 +2,7 @@
 #ifndef ASM_X86_ARIA_AVX_H
 #define ASM_X86_ARIA_AVX_H
 
+#include <crypto/api.h>
 #include <linux/types.h>
 
 #define ARIA_AESNI_PARALLEL_BLOCKS 16
@@ -13,20 +14,26 @@
 #define ARIA_GFNI_AVX512_PARALLEL_BLOCKS 64
 #define ARIA_GFNI_AVX512_PARALLEL_BLOCK_SIZE  (ARIA_BLOCK_SIZE * ARIA_GFNI_AVX512_PARALLEL_BLOCKS)
 
-asmlinkage void aria_aesni_avx_encrypt_16way(const void *ctx, u8 *dst,
-					     const u8 *src);
-asmlinkage void aria_aesni_avx_decrypt_16way(const void *ctx, u8 *dst,
-					     const u8 *src);
-asmlinkage void aria_aesni_avx_ctr_crypt_16way(const void *ctx, u8 *dst,
-					       const u8 *src,
-					       u8 *keystream, u8 *iv);
-asmlinkage void aria_aesni_avx_gfni_encrypt_16way(const void *ctx, u8 *dst,
-						  const u8 *src);
-asmlinkage void aria_aesni_avx_gfni_decrypt_16way(const void *ctx, u8 *dst,
-						  const u8 *src);
-asmlinkage void aria_aesni_avx_gfni_ctr_crypt_16way(const void *ctx, u8 *dst,
-						    const u8 *src,
-						    u8 *keystream, u8 *iv);
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_encrypt_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_decrypt_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_ctr_crypt_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, u8 *keystream, u8 *iv),
+	(ctx, dst, src, keystream, iv));
+#ifdef CONFIG_AS_GFNI
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_encrypt_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_decrypt_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src),
+	(ctx, dst, src));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_ctr_crypt_16way, asmlinkage void,
+	(const void *ctx, u8 *dst, const u8 *src, u8 *keystream, u8 *iv),
+	(ctx, dst, src, keystream, iv));
+#endif /* CONFIG_AS_GFNI */
 
 asmlinkage void aria_aesni_avx2_encrypt_32way(const void *ctx, u8 *dst,
 					      const u8 *src);
