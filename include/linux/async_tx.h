@@ -181,14 +181,13 @@ DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_trigger_callback, struct dma_async_t
 	(struct async_submit_ctl *submit),
 	(submit));
 
-struct dma_async_tx_descriptor *
-async_gen_syndrome(struct page **blocks, unsigned int *offsets, int src_cnt,
-		   size_t len, struct async_submit_ctl *submit);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_PQ, async_gen_syndrome, struct dma_async_tx_descriptor *,
+	(struct page **blocks, unsigned int *offsets, int src_cnt, size_t len, struct async_submit_ctl *submit),
+	(blocks, offsets, src_cnt, len, submit));
 
-struct dma_async_tx_descriptor *
-async_syndrome_val(struct page **blocks, unsigned int *offsets, int src_cnt,
-		   size_t len, enum sum_check_flags *pqres, struct page *spare,
-		   unsigned int s_off, struct async_submit_ctl *submit);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_PQ, async_syndrome_val, struct dma_async_tx_descriptor *,
+	(struct page **blocks, unsigned int *offsets, int src_cnt, size_t len, enum sum_check_flags *pqres, struct page *spare, unsigned int s_off, struct async_submit_ctl *submit),
+	(blocks, offsets, src_cnt, len, pqres, spare, s_off, submit));
 
 struct dma_async_tx_descriptor *
 async_raid6_2data_recov(int src_num, size_t bytes, int faila, int failb,
