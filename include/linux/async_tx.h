@@ -176,10 +176,9 @@ async_xor_val_offs(struct page *dest, unsigned int offset,
 		int src_cnt, size_t len, enum sum_check_flags *result,
 		struct async_submit_ctl *submit);
 
-struct dma_async_tx_descriptor *
-async_memcpy(struct page *dest, struct page *src, unsigned int dest_offset,
-	     unsigned int src_offset, size_t len,
-	     struct async_submit_ctl *submit);
+DECLARE_CRYPTO_API(CONFIG_ASYNC_MEMCPY, async_memcpy, struct dma_async_tx_descriptor *,
+	(struct page *dest, struct page *src, unsigned int dest_offset, unsigned int src_offset, size_t len, struct async_submit_ctl *submit),
+	(dest, src, dest_offset, src_offset, len, submit));
 
 DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_trigger_callback, struct dma_async_tx_descriptor *,
 	(struct async_submit_ctl *submit),
