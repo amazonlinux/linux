@@ -76,3 +76,18 @@ DEFINE_CRYPTO_API_STUB(camellia_ecb_dec_16way);
 DEFINE_CRYPTO_API_STUB(camellia_cbc_dec_16way);
 
 #endif
+
+/*
+ * arch/x86/crypto/sm4_aesni_avx_glue.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_SM4_AESNI_AVX_X86_64)
+
+#include <arch/x86/crypto/sm4-avx.h>
+
+DEFINE_CRYPTO_API_STUB(sm4_avx_ecb_encrypt);
+DEFINE_CRYPTO_API_STUB(sm4_avx_ecb_decrypt);
+DEFINE_CRYPTO_API_STUB(sm4_cbc_encrypt);
+DEFINE_CRYPTO_API_STUB(sm4_avx_cbc_decrypt);
+DEFINE_CRYPTO_API_STUB(sm4_avx_ctr_crypt);
+
+#endif
