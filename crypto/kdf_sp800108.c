@@ -149,8 +149,8 @@ static int __init crypto_kdf108_init(void)
 
 static void __exit crypto_kdf108_exit(void) { }
 
-module_init(crypto_kdf108_init);
-module_exit(crypto_kdf108_exit);
+crypto_module_init(crypto_kdf108_init);
+crypto_module_exit(crypto_kdf108_exit);
 
 MODULE_LICENSE("GPL v2");
 MODULE_AUTHOR("Stephan Mueller <smueller@chronox.de>");
