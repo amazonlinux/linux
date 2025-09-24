@@ -834,6 +834,21 @@ DEFINE_CRYPTO_API_STUB(xor_blocks);
 
 #endif
 /*
+ * crypto/async_tx/async_tx.c
+ */
+#if IS_BUILTIN(CONFIG_ASYNC_CORE)
+
+#include <linux/async_tx.h>
+
+#ifdef CONFIG_DMA_ENGINE
+DEFINE_CRYPTO_API_STUB(__async_tx_find_channel);
+#endif
+DEFINE_CRYPTO_API_STUB(async_tx_submit);
+DEFINE_CRYPTO_API_STUB(async_trigger_callback);
+DEFINE_CRYPTO_API_STUB(async_tx_quiesce);
+
+#endif
+/*
  * crypto/ecdh_helper.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_ECDH)
