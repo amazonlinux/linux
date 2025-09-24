@@ -1061,8 +1061,8 @@ static void __exit streebog_mod_fini(void)
 	crypto_unregister_shashes(algs, ARRAY_SIZE(algs));
 }
 
-module_init(streebog_mod_init);
-module_exit(streebog_mod_fini);
+crypto_module_init(streebog_mod_init);
+crypto_module_exit(streebog_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Vitaly Chikunov <vt@altlinux.org>");
