@@ -549,3 +549,43 @@ DEFINE_CRYPTO_API_STUB(pkcs7_verify);
 DEFINE_CRYPTO_API_STUB(pkcs7_supply_detached_data);
 
 #endif
+/*
+ * crypto/crypto_engine.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ENGINE)
+
+#include <crypto/engine.h>
+
+DEFINE_CRYPTO_API_STUB(crypto_transfer_aead_request_to_engine);
+DEFINE_CRYPTO_API_STUB(crypto_transfer_akcipher_request_to_engine);
+DEFINE_CRYPTO_API_STUB(crypto_transfer_hash_request_to_engine);
+DEFINE_CRYPTO_API_STUB(crypto_transfer_kpp_request_to_engine);
+DEFINE_CRYPTO_API_STUB(crypto_transfer_skcipher_request_to_engine);
+DEFINE_CRYPTO_API_STUB(crypto_finalize_aead_request);
+DEFINE_CRYPTO_API_STUB(crypto_finalize_akcipher_request);
+DEFINE_CRYPTO_API_STUB(crypto_finalize_hash_request);
+DEFINE_CRYPTO_API_STUB(crypto_finalize_kpp_request);
+DEFINE_CRYPTO_API_STUB(crypto_finalize_skcipher_request);
+DEFINE_CRYPTO_API_STUB(crypto_engine_start);
+DEFINE_CRYPTO_API_STUB(crypto_engine_stop);
+DEFINE_CRYPTO_API_STUB(crypto_engine_alloc_init);
+DEFINE_CRYPTO_API_STUB(crypto_engine_alloc_init_and_set);
+DEFINE_CRYPTO_API_STUB(crypto_engine_exit);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_aead);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_aead);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_aeads);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_aeads);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_ahash);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_ahashes);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_ahashes);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_akcipher);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_akcipher);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_kpp);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_kpp);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_skcipher);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_skcipher);
+DEFINE_CRYPTO_API_STUB(crypto_engine_register_skciphers);
+DEFINE_CRYPTO_API_STUB(crypto_engine_unregister_skciphers);
+
+#endif
