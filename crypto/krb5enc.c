@@ -496,8 +496,8 @@ static void __exit crypto_krb5enc_module_exit(void)
 	crypto_unregister_template(&crypto_krb5enc_tmpl);
 }
 
-module_init(crypto_krb5enc_module_init);
-module_exit(crypto_krb5enc_module_exit);
+crypto_module_init(crypto_krb5enc_module_init);
+crypto_module_exit(crypto_krb5enc_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Simple AEAD wrapper for Kerberos 5 RFC3961");
