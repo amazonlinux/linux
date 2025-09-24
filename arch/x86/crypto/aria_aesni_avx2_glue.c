@@ -237,8 +237,8 @@ static void __exit aria_avx2_exit(void)
 	crypto_unregister_skciphers(aria_algs, ARRAY_SIZE(aria_algs));
 }
 
-module_init(aria_avx2_init);
-module_exit(aria_avx2_exit);
+crypto_module_init(aria_avx2_init);
+crypto_module_exit(aria_avx2_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Taehee Yoo <ap420073@gmail.com>");
