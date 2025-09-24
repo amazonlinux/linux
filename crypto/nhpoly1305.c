@@ -245,8 +245,8 @@ static void __exit nhpoly1305_mod_exit(void)
 	crypto_unregister_shash(&nhpoly1305_alg);
 }
 
-module_init(nhpoly1305_mod_init);
-module_exit(nhpoly1305_mod_exit);
+crypto_module_init(nhpoly1305_mod_init);
+crypto_module_exit(nhpoly1305_mod_exit);
 
 MODULE_DESCRIPTION("NHPoly1305 ε-almost-∆-universal hash function");
 MODULE_LICENSE("GPL v2");
