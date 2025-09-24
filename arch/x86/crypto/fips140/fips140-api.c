@@ -109,3 +109,21 @@ DEFINE_CRYPTO_API_STUB(aria_aesni_avx_gfni_ctr_crypt_16way);
 #endif /* CONFIG_AS_GFNI */
 
 #endif
+
+/*
+ * arch/x86/crypto/aria_aesni_avx2_glue.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_ARIA_AESNI_AVX2_X86_64)
+
+#include <arch/x86/crypto/aria-avx.h>
+
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx2_encrypt_32way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx2_decrypt_32way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx2_ctr_crypt_32way);
+#ifdef CONFIG_AS_GFNI
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx2_gfni_encrypt_32way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx2_gfni_decrypt_32way);
+DEFINE_CRYPTO_API_STUB(aria_aesni_avx2_gfni_ctr_crypt_32way);
+#endif /* CONFIG_AS_GFNI */
+
+#endif
