@@ -776,3 +776,28 @@ DEFINE_CRYPTO_API_STUB(__cast6_encrypt);
 DEFINE_CRYPTO_API_STUB(__cast6_decrypt);
 
 #endif
+/*
+ * crypto/af_alg.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_USER_API)
+
+#include <crypto/if_alg.h>
+
+DEFINE_CRYPTO_API_STUB(af_alg_register_type);
+DEFINE_CRYPTO_API_STUB(af_alg_unregister_type);
+DEFINE_CRYPTO_API_STUB(af_alg_release);
+DEFINE_CRYPTO_API_STUB(af_alg_release_parent);
+DEFINE_CRYPTO_API_STUB(af_alg_accept);
+DEFINE_CRYPTO_API_STUB(af_alg_free_sg);
+DEFINE_CRYPTO_API_STUB(af_alg_count_tsgl);
+DEFINE_CRYPTO_API_STUB(af_alg_pull_tsgl);
+DEFINE_CRYPTO_API_STUB(af_alg_wmem_wakeup);
+DEFINE_CRYPTO_API_STUB(af_alg_wait_for_data);
+DEFINE_CRYPTO_API_STUB(af_alg_sendmsg);
+DEFINE_CRYPTO_API_STUB(af_alg_free_resources);
+DEFINE_CRYPTO_API_STUB(af_alg_async_cb);
+DEFINE_CRYPTO_API_STUB(af_alg_poll);
+DEFINE_CRYPTO_API_STUB(af_alg_alloc_areq);
+DEFINE_CRYPTO_API_STUB(af_alg_get_rsgl);
+
+#endif
