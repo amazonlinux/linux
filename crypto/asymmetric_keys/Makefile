@@ -63,7 +63,7 @@ $(obj)/pkcs7.asn1.o: $(obj)/pkcs7.asn1.c $(obj)/pkcs7.asn1.h
 #
 # PKCS#7 parser testing key
 #
-obj-$(CONFIG_PKCS7_TEST_KEY) += pkcs7_test_key.o
+crypto-objs-$(CONFIG_PKCS7_TEST_KEY) += pkcs7_test_key.o
 pkcs7_test_key-y := \
 	pkcs7_key_type.o
 
