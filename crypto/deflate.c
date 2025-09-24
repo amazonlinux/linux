@@ -248,8 +248,8 @@ static void __exit deflate_mod_fini(void)
 	crypto_acomp_free_streams(&deflate_streams);
 }
 
-module_init(deflate_mod_init);
-module_exit(deflate_mod_fini);
+crypto_module_init(deflate_mod_init);
+crypto_module_exit(deflate_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Deflate Compression Algorithm for IPCOMP");
