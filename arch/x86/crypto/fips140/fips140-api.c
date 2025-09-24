@@ -47,3 +47,19 @@ DEFINE_CRYPTO_API_STUB(serpent_ecb_dec_8way_avx);
 DEFINE_CRYPTO_API_STUB(serpent_cbc_dec_8way_avx);
 
 #endif
+
+/*
+ * arch/x86/crypto/camellia_glue.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_CAMELLIA_X86_64)
+
+#include <arch/x86/crypto/camellia.h>
+
+DEFINE_CRYPTO_API_STUB(__camellia_setkey);
+DEFINE_CRYPTO_API_STUB(__camellia_enc_blk);
+DEFINE_CRYPTO_API_STUB(camellia_dec_blk);
+DEFINE_CRYPTO_API_STUB(__camellia_enc_blk_2way);
+DEFINE_CRYPTO_API_STUB(camellia_dec_blk_2way);
+DEFINE_CRYPTO_API_STUB(camellia_decrypt_cbc_2way);
+
+#endif
