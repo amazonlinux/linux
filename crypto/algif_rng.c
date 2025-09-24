@@ -336,5 +336,5 @@ static void __exit rng_exit(void)
 	BUG_ON(err);
 }
 
-module_init(rng_init);
-module_exit(rng_exit);
+crypto_module_init(rng_init);
+crypto_module_exit(rng_exit);
