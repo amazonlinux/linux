@@ -91,8 +91,8 @@ static void __exit twofish_glue_fini(void)
 	crypto_unregister_alg(&alg);
 }
 
-module_init(twofish_glue_init);
-module_exit(twofish_glue_fini);
+crypto_module_init(twofish_glue_init);
+crypto_module_exit(twofish_glue_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION ("Twofish Cipher Algorithm, asm optimized");
