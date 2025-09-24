@@ -411,8 +411,8 @@ static void __exit fcrypt_mod_fini(void)
 	crypto_unregister_alg(&fcrypt_alg);
 }
 
-module_init(fcrypt_mod_init);
-module_exit(fcrypt_mod_fini);
+crypto_module_init(fcrypt_mod_init);
+crypto_module_exit(fcrypt_mod_fini);
 
 MODULE_LICENSE("Dual BSD/GPL");
 MODULE_DESCRIPTION("FCrypt Cipher Algorithm");
