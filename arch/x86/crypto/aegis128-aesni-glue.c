@@ -277,8 +277,8 @@ static void __exit crypto_aegis128_aesni_module_exit(void)
 	crypto_unregister_aead(&crypto_aegis128_aesni_alg);
 }
 
-module_init(crypto_aegis128_aesni_module_init);
-module_exit(crypto_aegis128_aesni_module_exit);
+crypto_module_init(crypto_aegis128_aesni_module_init);
+crypto_module_exit(crypto_aegis128_aesni_module_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ondrej Mosnacek <omosnacek@gmail.com>");
