@@ -682,3 +682,13 @@ DEFINE_CRYPTO_API_STUB(cryptd_aead_queued);
 DEFINE_CRYPTO_API_STUB(cryptd_free_aead);
 
 #endif
+/*
+ * crypto/blowfish_common.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_BLOWFISH_COMMON)
+
+#include <crypto/blowfish.h>
+
+DEFINE_CRYPTO_API_STUB(blowfish_setkey);
+
+#endif
