@@ -114,8 +114,8 @@ static void __exit serpent_avx2_fini(void)
 	crypto_unregister_skciphers(serpent_algs, ARRAY_SIZE(serpent_algs));
 }
 
-module_init(serpent_avx2_init);
-module_exit(serpent_avx2_fini);
+crypto_module_init(serpent_avx2_init);
+crypto_module_exit(serpent_avx2_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Serpent Cipher Algorithm, AVX2 optimized");
