@@ -307,8 +307,8 @@ static void __exit zstd_mod_fini(void)
 	crypto_acomp_free_streams(&zstd_streams);
 }
 
-module_init(zstd_mod_init);
-module_exit(zstd_mod_fini);
+crypto_module_init(zstd_mod_init);
+crypto_module_exit(zstd_mod_fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Zstd Compression Algorithm");
