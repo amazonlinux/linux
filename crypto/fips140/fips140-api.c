@@ -710,3 +710,14 @@ DEFINE_CRYPTO_API_STUB(sm4_expandkey);
 DEFINE_CRYPTO_API_STUB(sm4_crypt_block);
 
 #endif
+/*
+ * crypto/twofish_common.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_TWOFISH_COMMON)
+
+#include <crypto/twofish.h>
+
+DEFINE_CRYPTO_API_STUB(__twofish_setkey);
+DEFINE_CRYPTO_API_STUB(twofish_setkey);
+
+#endif
