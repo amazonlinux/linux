@@ -31,6 +31,7 @@
 #if IS_ENABLED(CONFIG_EEH)
 #include <asm/eeh.h>
 #endif
+#include "../../amazon/net/ena/ena_pci_id_tbl.h"
 
 #include "vfio_pci_priv.h"
 
@@ -1750,6 +1751,7 @@ int vfio_pci_core_mmap(struct vfio_device *core_vdev, struct vm_area_struct *vma
 	unsigned int index;
 	u64 phys_len, req_len, pgoff, req_start;
 	int ret;
+	bool enable_wc;
 
 	index = vma->vm_pgoff >> (VFIO_PCI_OFFSET_SHIFT - PAGE_SHIFT);
 
@@ -1782,6 +1784,9 @@ int vfio_pci_core_mmap(struct vfio_device *core_vdev, struct vm_area_struct *vma
 	if (req_start + req_len > phys_len)
 		return -EINVAL;
 
+	/* Enable WC for Amazon ENA devices. */
+	enable_wc = pci_match_id(ena_pci_tbl, pdev) &&
+		    pci_resource_flags(pdev, index) & IORESOURCE_PREFETCH;
 	/*
 	 * Even though we don't make use of the barmap for the mmap,
 	 * we need to request the region and the barmap tracks that.
@@ -1792,7 +1797,10 @@ int vfio_pci_core_mmap(struct vfio_device *core_vdev, struct vm_area_struct *vma
 		if (ret)
 			return ret;
 
-		vdev->barmap[index] = pci_iomap(pdev, index, 0);
+		if (enable_wc)
+			vdev->barmap[index] = pci_iomap_wc(pdev, index, 0);
+		else
+			vdev->barmap[index] = pci_iomap(pdev, index, 0);
 		if (!vdev->barmap[index]) {
 			pci_release_selected_regions(pdev, 1 << index);
 			return -ENOMEM;
@@ -1800,7 +1808,10 @@ int vfio_pci_core_mmap(struct vfio_device *core_vdev, struct vm_area_struct *vma
 	}
 
 	vma->vm_private_data = vdev;
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	if (enable_wc)
+		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	else
+		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 
 	/*
