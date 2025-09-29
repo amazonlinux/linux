@@ -32,6 +32,7 @@
 #if IS_ENABLED(CONFIG_EEH)
 #include <asm/eeh.h>
 #endif
+#include "../../amazon/net/ena/ena_pci_id_tbl.h"
 
 #include "vfio_pci_priv.h"
 
@@ -482,6 +483,14 @@ static int vfio_pci_core_runtime_resume(struct device *dev)
 }
 #endif /* CONFIG_PM */
 
+/* Check WC for Amazon ENA devices. */
+static bool check_wc_ena(struct pci_dev *pdev, int bar)
+{
+	return pci_match_id(ena_pci_tbl, pdev) &&
+		pci_resource_flags(pdev, bar) & IORESOURCE_PREFETCH;
+
+}
+
 /*
  * Eager-request BAR resources, and iomap them.  Soft failures are
  * allowed, and consumers must check the barmap before use in order to
@@ -506,8 +515,10 @@ static void vfio_pci_core_map_bars(struct vfio_pci_core_device *vdev)
 			vdev->barmap[bar] = IOMEM_ERR_PTR(-EBUSY);
 			continue;
 		}
-
-		vdev->barmap[bar] = pci_iomap(pdev, bar, 0);
+		if (check_wc_ena(pdev, bar))
+			vdev->barmap[bar] = pci_iomap_wc(pdev, bar, 0);
+		else
+			vdev->barmap[bar] = pci_iomap(pdev, bar, 0);
 		if (!vdev->barmap[bar]) {
 			pci_dbg(pdev, "Failed to iomap region %d\n", bar);
 			pci_release_selected_regions(pdev, 1 << bar);
@@ -1804,7 +1815,10 @@ int vfio_pci_core_mmap(struct vfio_device *core_vdev, struct vm_area_struct *vma
 		return ret;
 
 	vma->vm_private_data = vdev;
-	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+	if (check_wc_ena(pdev, index))
+		vma->vm_page_prot = pgprot_writecombine(vma->vm_page_prot);
+	else
+		vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
 	vma->vm_page_prot = pgprot_decrypted(vma->vm_page_prot);
 
 	/*
