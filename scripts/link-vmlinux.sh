@@ -77,6 +77,10 @@ vmlinux_link()
 		objs="${objs} .vmlinux.export.o"
 	fi
 
+	if is_enabled CONFIG_CRYPTO_FIPS140_EXTMOD; then
+		objs="${objs} fips140-embedded.o fips140-digest.o"
+	fi
+
 	objs="${objs} init/version-timestamp.o"
 
 	if [ "${SRCARCH}" = "um" ]; then
