@@ -14,10 +14,17 @@
 
 extern const u8 _binary_fips140_ko_start[];
 extern const u8 _binary_fips140_ko_end[];
+extern const u8 _binary_fips140_hmac_start[];
+extern const u8 _binary_fips140_hmac_end[];
+
 const u8 *_binary_crypto_ko_start;
 EXPORT_SYMBOL_GPL(_binary_crypto_ko_start);
 const u8 *_binary_crypto_ko_end;
 EXPORT_SYMBOL_GPL(_binary_crypto_ko_end);
+const u8 *_binary_crypto_hmac_start;
+EXPORT_SYMBOL_GPL(_binary_crypto_hmac_start);
+const u8 *_binary_crypto_hmac_end;
+EXPORT_SYMBOL_GPL(_binary_crypto_hmac_end);
 
 /* Function to load crypto module from memory */
 extern int load_crypto_module_mem(const char *mem, size_t size);
@@ -26,6 +33,8 @@ static void load_prepare(void)
 {
 	_binary_crypto_ko_start = _binary_fips140_ko_start;
 	_binary_crypto_ko_end = _binary_fips140_ko_end;
+	_binary_crypto_hmac_start = _binary_fips140_hmac_start;
+	_binary_crypto_hmac_end = _binary_fips140_hmac_end;
 }
 
 static int fips_loader_init(void)
