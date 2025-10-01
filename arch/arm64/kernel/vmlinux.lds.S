@@ -200,6 +200,22 @@ SECTIONS
 	/* everything from this point to __init_begin will be marked RO NX */
 	RO_DATA(PAGE_SIZE)
 
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	/* FIPS 140 embedded module data */
+	.fips140_embedded : {
+		. = ALIGN(8);
+		_binary_fips140_ko_start = .;
+		KEEP(*(.fips140_module_data))
+		_binary_fips140_ko_end = .;
+	}
+	.fips140_digest : {
+		. = ALIGN(8);
+		_binary_fips140_hmac_start = .;
+		KEEP(*(.fips140_digest))
+		_binary_fips140_hmac_end = .;
+	}
+#endif
+
 	HYPERVISOR_RODATA_SECTIONS
 
 	.got : { *(.got) }
