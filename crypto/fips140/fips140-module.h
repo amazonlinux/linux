@@ -10,5 +10,11 @@
 #include <linux/crypto.h>
 #include <crypto/algapi.h>
 #include <linux/init.h>
+#include <linux/atomic.h>
+#include <linux/wait.h>
+
+/* FIPS140 synchronization between kernel and module */
+void fips140_mark_module_wait_kernel(int level);
+void fips140_mark_module_wait_kernel_sync(int level);
 
 #endif /* _CRYPTO_FIPS140_MODULE_H */
