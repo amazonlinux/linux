@@ -399,4 +399,14 @@ void __init parse_early_options(char *cmdline);
 #define __exit_p(x) NULL
 #endif
 
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(__ASSEMBLY__)
+/* FIPS140 synchronization between kernel and module */
+void fips140_mark_kernel_level_complete(int level);
+bool fips140_is_kernel_level_complete(int level);
+bool fips140_is_module_level_complete(int level);
+void fips140_mark_module_level_complete(int level);
+void start_fips140_loader(void);
+void wait_until_fips140_level_sync(int level);
+#endif /* CONFIG_CRYPTO_FIPS140_EXTMOD && !__ASSEMBLY__ */
+
 #endif /* _LINUX_INIT_H */
