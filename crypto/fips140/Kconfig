@@ -13,3 +13,32 @@ config CRYPTO_FIPS140_EXTMOD
 	  those provided by this module.
 
 	  If unsure, say N.
+config CRYPTO_FIPS140_HMAC_KEY
+	string "FIPS 140-3 external module HMAC key"
+	depends on CRYPTO_FIPS140_EXTMOD
+	default "The quick brown fox jumps over the lazy dog while the sphinx of black quartz judges my vow"
+	help
+	  This is the HMAC key used to build and verify the integrity of
+	  the FIPS module.
+
+	  Must be at least 80 characters.
+config CRYPTO_FIPS140_EXTMOD_SOURCE
+	bool "Use external FIPS module source"
+	depends on CRYPTO_FIPS140_EXTMOD
+	default n
+	help
+	  Use pre-built FIPS modules from an external build directory instead
+	  of freshly built modules from the current kernel build.
+	  
+	  If N, the kernel uses freshly generated crypto modules from the
+	  current build directory:
+	    - crypto/fips140/fips140.ko
+	    - crypto/aes.ko
+	    - crypto/sha256.ko
+	  
+	  If Y, pre-built modules from fips140_build/ are used:
+	    - fips140_build/crypto/fips140/fips140.ko
+	    - fips140_build/crypto/aes.ko
+	    - fips140_build/crypto/sha256.ko
+	  
+	  If unsure, say N.
