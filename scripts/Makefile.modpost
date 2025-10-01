@@ -124,12 +124,15 @@ output-symdump := $(if $(KBUILD_MODULES), Module.symvers, vmlinux.symvers)
 endif
 
 # Include .fips140.symvers for regular module builds if it exists
+# and append its contents into Module.symvers so out-of-tree modules
+# (e.g., livepatch) can resolve symbols exported by fips140.ko
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 ifeq ($(KBUILD_MODULES),y)
 ifneq ($(crypto-module-gen),1)
 ifneq ($(wildcard crypto/fips140/.fips140.symvers),)
 modpost-args += -i crypto/fips140/.fips140.symvers
 modpost-deps += crypto/fips140/.fips140.symvers
+append-fips140-symvers = cat crypto/fips140/.fips140.symvers >> $(output-symdump)
 endif
 endif
 endif
@@ -165,7 +168,8 @@ quiet_cmd_modpost = MODPOST $@
 		echo >&2 "         You may get many unresolved symbol errors."; \
 		echo >&2 "         You can set KBUILD_MODPOST_WARN=1 to turn errors into warning"; \
 		echo >&2 "         if you want to proceed at your own risk.";) \
-	$(MODPOST) $(modpost-args)
+	$(MODPOST) $(modpost-args) \
+	$(if $(append-fips140-symvers),; $(append-fips140-symvers))
 
 targets += $(output-symdump)
 $(output-symdump): $(modpost-deps) FORCE
