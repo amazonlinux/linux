@@ -1239,7 +1239,26 @@ PHONY += vmlinux
 vmlinux: private _LDFLAGS_vmlinux := $(LDFLAGS_vmlinux)
 vmlinux: export LDFLAGS_vmlinux = $(_LDFLAGS_vmlinux)
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
-vmlinux: fips140-ready
+vmlinux: crypto/fips140/fips140-embedded.o crypto/fips140/fips140-digest.o
+fips140_build = .
+ifeq ($(CONFIG_CRYPTO_FIPS140_EXTMOD_SOURCE),y)
+fips140_build = fips140_build
+endif
+crypto/fips140/fips140-embedded.o: fips140-ready
+	@echo "  LD      $@"
+	@$(LD) -r -b binary -o $@ $(fips140_build)/crypto/fips140/fips140.ko
+	@$(OBJCOPY) --rename-section .data=.fips140_module_data $@
+
+crypto/fips140/.fips140.hmac: crypto/fips140/fips140-embedded.o
+	@echo "  HMAC    $@"
+	@hmac_key=$$(awk -F'"' '/^CONFIG_CRYPTO_FIPS140_HMAC_KEY=/{print $$2}' .config); \
+	openssl dgst -sha256 -hmac "$$hmac_key" -binary -out $@ $(fips140_build)/crypto/fips140/fips140.ko
+
+crypto/fips140/fips140-digest.o: crypto/fips140/.fips140.hmac
+	@echo "  LD      $@"
+	@$(LD) -r -b binary -o $@ crypto/fips140/.fips140.hmac
+	@$(OBJCOPY) --rename-section .data=.fips140_digest $@
+
 # Ensure fips140.ko is built before embedding
 fips140-ready: crypto/fips140/fips140.o crypto/fips140/.fips140.order crypto/fips140/fips140.mod vmlinux.o | modules_prepare
 	$(Q)$(MAKE) KBUILD_MODULES= -f $(srctree)/scripts/Makefile.modpost
@@ -1247,7 +1266,9 @@ fips140-ready: crypto/fips140/fips140.o crypto/fips140/.fips140.order crypto/fip
 ifneq ($(KBUILD_MODPOST_NOFINAL),1)
 	$(Q)$(MAKE) KBUILD_MODULES=y crypto-module-gen=1 -f $(srctree)/scripts/Makefile.modfinal
 endif
-	@:
+ifeq ($(CONFIG_CRYPTO_FIPS140_EXTMOD_SOURCE),y)
+	cp "$(fips140_build)/crypto/fips140/fips140.ko" crypto/fips140/fips140.ko;
+endif
 
 # Generate fips140.o from crypto-module.a files
 crypto/fips140/fips140.o: crypto-module.a FORCE
