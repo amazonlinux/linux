@@ -17,6 +17,11 @@ EXPORT_SYMBOL_GPL(_binary_fips140_ko_start);
 extern const u8 _binary_fips140_ko_end[];
 EXPORT_SYMBOL_GPL(_binary_fips140_ko_end);
 
+extern const u8 _binary_fips140_hmac_start[];
+EXPORT_SYMBOL_GPL(_binary_fips140_hmac_start);
+extern const u8 _binary_fips140_hmac_end[];
+EXPORT_SYMBOL_GPL(_binary_fips140_hmac_end);
+
 /* Function to load module from memory */
 extern int load_module_mem(const char *mem, size_t size);
 

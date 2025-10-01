@@ -173,6 +173,22 @@ SECTIONS
 	RO_DATA(PAGE_SIZE)
 	X86_ALIGN_RODATA_END
 
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	/* FIPS 140 embedded module data */
+	.fips140_embedded : AT(ADDR(.fips140_embedded) - LOAD_OFFSET) {
+		. = ALIGN(8);
+		_binary_fips140_ko_start = .;
+		KEEP(*(.fips140_module_data))
+		_binary_fips140_ko_end = .;
+	}
+	.fips140_digest : AT(ADDR(.fips140_digest) - LOAD_OFFSET) {
+		. = ALIGN(8);
+		_binary_fips140_hmac_start = .;
+		KEEP(*(.fips140_digest))
+		_binary_fips140_hmac_end = .;
+	}
+#endif
+
 	/* Data */
 	.data : AT(ADDR(.data) - LOAD_OFFSET) {
 		/* Start of data section */

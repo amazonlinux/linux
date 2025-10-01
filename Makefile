@@ -1240,6 +1240,27 @@ PHONY += vmlinux
 #  vmlinux: private export LDFLAGS_vmlinux := $(LDFLAGS_vmlinux)
 vmlinux: private _LDFLAGS_vmlinux := $(LDFLAGS_vmlinux)
 vmlinux: export LDFLAGS_vmlinux = $(_LDFLAGS_vmlinux)
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+vmlinux: fips140-embedded.o fips140-digest.o
+fips140-embedded.o: fips140.ko
+	@echo "  LD      $@"
+	@$(LD) -r -b binary -o $@ $(CONFIG_CRYPTO_FIPS140_EXTMOD_SOURCE)
+	@$(OBJCOPY) --rename-section .data=.fips140_module_data $@
+
+.fips140.hmac: fips140-embedded.o
+	@echo "  HMAC    $@"
+	@hmac_key=$$(awk -F'"' '/^CONFIG_CRYPTO_FIPS140_HMAC_KEY=/{print $$2}' .config); \
+	openssl dgst -sha256 -hmac "$$hmac_key" -binary -out $@ fips140.ko
+
+fips140-digest.o: .fips140.hmac
+	@echo "  LD      $@"
+	@$(LD) -r -b binary -o $@ .fips140.hmac
+	@$(OBJCOPY) --rename-section .data=.fips140_digest $@
+
+# Ensure fips140.ko is built before embedding
+fips140.ko: modules
+	@:
+endif
 vmlinux: vmlinux.o $(KBUILD_LDS) modpost
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.vmlinux
 
