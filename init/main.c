@@ -1341,6 +1341,10 @@ static void __init do_initcall_level(int level, char *command_line)
 	do_trace_initcall_level(initcall_level_names[level]);
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(initcall_from_entry(fn));
+
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	wait_until_fips140_level_sync(level);
+#endif
 }
 
 static void __init do_initcalls(void)
