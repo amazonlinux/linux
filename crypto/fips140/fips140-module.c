@@ -16,9 +16,60 @@
 
 #define CRYPTO_INTERNAL "CRYPTO_INTERNAL"
 
+static int __init run_initcalls(void)
+{
+	typedef int (*initcall_t)(void);
+	
+	extern initcall_t __fips140_initcall0_start[], __fips140_initcall0_end[];
+	extern initcall_t __fips140_initcall1_start[], __fips140_initcall1_end[];
+	extern initcall_t __fips140_initcall2_start[], __fips140_initcall2_end[];
+
+	initcall_t *starts[] = {
+		__fips140_initcall0_start,
+		__fips140_initcall1_start,
+		__fips140_initcall2_start,
+	};
+	
+	initcall_t *ends[] = {
+		__fips140_initcall0_end,
+		__fips140_initcall1_end,
+		__fips140_initcall2_end,
+	};
+
+	pr_info("FIPS 140: run_initcalls starting\n");
+
+	for (int level = 0; level < ARRAY_SIZE(starts); level++) {
+		
+		/* Run FIPS initcalls for this level */
+		for (initcall_t *initcall = starts[level]; initcall < ends[level]; ++initcall) {
+			int ret;
+			initcall_t fn = *initcall;
+			
+			pr_info("FIPS 140: run initcall %pS\n", fn);
+			ret = fn();
+			if (!ret || ret == -ENODEV)
+				continue;
+
+			pr_err("FIPS 140: initcall %pS failed: %d\n", fn, ret);
+		}
+	
+		if (level < 2)
+			fips140_mark_module_level_complete(level);
+		/* Wait for kernel to complete this level */
+		wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(level));
+	}
+
+	pr_info("FIPS 140: run_initcalls finished\n");
+	return 0;
+}
+
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
+    pr_info("loading " FIPS140_MODULE_NAME "\n");
+
+	run_initcalls();
+	fips140_mark_module_level_complete(2);
     return 0;
 }
 
