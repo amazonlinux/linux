@@ -392,4 +392,10 @@ void __init parse_early_options(char *cmdline);
 #define __exit_p(x) NULL
 #endif
 
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(__ASSEMBLY__)
+/* FIPS140 synchronization — module-facing API */
+void fips140_mark_module_wait_kernel(int level);
+void fips140_mark_module_wait_kernel_sync(int level);
+#endif /* CONFIG_CRYPTO_FIPS140_EXTMOD && !__ASSEMBLY__ */
+
 #endif /* _LINUX_INIT_H */
