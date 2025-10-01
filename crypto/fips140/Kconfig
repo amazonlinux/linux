@@ -22,3 +22,9 @@ config CRYPTO_FIPS140_HMAC_KEY
 	  the FIPS module.
 
 	  Must be at least 14 characters.
+config CRYPTO_FIPS140_EXTMOD_SOURCE
+	string "Path to external FIPS module source"
+	depends on CRYPTO_FIPS140_EXTMOD
+	default "crypto/fips140/fips140.ko"
+	help
+	  Specify the path to the external FIPS module source file.
