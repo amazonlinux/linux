@@ -33,6 +33,8 @@
 
 #define BR_VERSION	"2.3"
 
+#define BR_MULTICAST_QUERY_INTVL_MIN msecs_to_jiffies(1000)
+
 /* Control of forwarding link local multicast */
 #define BR_GROUPFWD_DEFAULT	0
 /* Don't allow forwarding of control protocols like STP, MAC PAUSE and LACP */
@@ -621,6 +623,7 @@ struct net_bridge_port_group *
 br_multicast_new_port_group(struct net_bridge_port *port, struct br_ip *group,
 			    struct net_bridge_port_group __rcu *next,
 			    unsigned char flags, const unsigned char *src);
+void br_multicast_set_query_intvl(struct net_bridge *br, unsigned long val);
 void br_mdb_init(void);
 void br_mdb_uninit(void);
 void br_mdb_notify(struct net_device *dev, struct net_bridge_port *port,
