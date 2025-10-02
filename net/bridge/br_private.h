@@ -28,6 +28,7 @@
 #define BR_MAX_PORTS	(1<<BR_PORT_BITS)
 
 #define BR_MULTICAST_DEFAULT_HASH_MAX 4096
+#define BR_MULTICAST_QUERY_INTVL_MIN msecs_to_jiffies(1000)
 
 #define BR_VERSION	"2.3"
 
@@ -687,6 +688,7 @@ int br_multicast_set_igmp_version(struct net_bridge *br, unsigned long val);
 #if IS_ENABLED(CONFIG_IPV6)
 int br_multicast_set_mld_version(struct net_bridge *br, unsigned long val);
 #endif
+void br_multicast_set_query_intvl(struct net_bridge *br, unsigned long val);
 struct net_bridge_mdb_entry *
 br_mdb_ip_get(struct net_bridge *br, struct br_ip *dst);
 struct net_bridge_mdb_entry *
