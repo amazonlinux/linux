@@ -34,6 +34,7 @@
 #define BR_VERSION	"2.3"
 
 #define BR_MULTICAST_QUERY_INTVL_MIN msecs_to_jiffies(1000)
+#define BR_MULTICAST_QUERY_INTVL_MAX msecs_to_jiffies(86400000) /* 24 hours */
 
 /* Control of forwarding link local multicast */
 #define BR_GROUPFWD_DEFAULT	0
