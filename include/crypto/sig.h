@@ -92,7 +92,7 @@ struct sig_alg {
  * Return: allocated handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-DECLARE_CRYPTO_API(crypto_alloc_sig, struct crypto_sig *, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIG2, crypto_alloc_sig, struct crypto_sig *, (const char *alg_name, u32 type, u32 mask), (alg_name, type, mask));
 
 static inline struct crypto_tfm *crypto_sig_tfm(struct crypto_sig *tfm)
 {
