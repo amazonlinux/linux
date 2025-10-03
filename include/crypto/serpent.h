@@ -19,19 +19,19 @@ struct serpent_ctx {
 	u32 expkey[SERPENT_EXPKEY_WORDS];
 };
 
-DECLARE_CRYPTO_API(__serpent_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT, __serpent_setkey, int,
 	(struct serpent_ctx *ctx, const u8 *key, unsigned int keylen),
 	(ctx, key, keylen));
 
-DECLARE_CRYPTO_API(serpent_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT, serpent_setkey, int,
 	(struct crypto_tfm *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
-DECLARE_CRYPTO_API(__serpent_encrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT, __serpent_encrypt, void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
-DECLARE_CRYPTO_API(__serpent_decrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT, __serpent_decrypt, void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
