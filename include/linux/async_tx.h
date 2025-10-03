@@ -101,7 +101,7 @@ static inline void async_tx_issue_pending(struct dma_async_tx_descriptor *tx)
 #else
 #define async_tx_find_channel(dep, type, dst, dst_count, src, src_count, len) \
 	 __async_tx_find_channel(dep, type)
-DECLARE_CRYPTO_API(__async_tx_find_channel, struct dma_chan *,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, __async_tx_find_channel, struct dma_chan *,
 	(struct async_submit_ctl *submit, enum dma_transaction_type tx_type),
 	(submit, tx_type));
 #endif /* CONFIG_ARCH_HAS_ASYNC_TX_FIND_CHANNEL */
@@ -157,7 +157,7 @@ init_async_submit(struct async_submit_ctl *args, enum async_tx_flags flags,
 	args->scribble = scribble;
 }
 
-DECLARE_CRYPTO_API(async_tx_submit, void,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_tx_submit, void,
 	(struct dma_chan *chan, struct dma_async_tx_descriptor *tx, struct async_submit_ctl *submit),
 	(chan, tx, submit));
 
@@ -177,7 +177,7 @@ DECLARE_CRYPTO_API(async_memcpy, struct dma_async_tx_descriptor *,
 	(struct page *dest, struct page *src, unsigned int dest_offset, unsigned int src_offset, size_t len, struct async_submit_ctl *submit),
 	(dest, src, dest_offset, src_offset, len, submit));
 
-DECLARE_CRYPTO_API(async_trigger_callback, struct dma_async_tx_descriptor *,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_trigger_callback, struct dma_async_tx_descriptor *,
 	(struct async_submit_ctl *submit),
 	(submit));
 
@@ -197,7 +197,7 @@ DECLARE_CRYPTO_API(async_raid6_datap_recov, struct dma_async_tx_descriptor *,
 	(int src_num, size_t bytes, int faila, struct page **ptrs, unsigned int *offs, struct async_submit_ctl *submit),
 	(src_num, bytes, faila, ptrs, offs, submit));
 
-DECLARE_CRYPTO_API(async_tx_quiesce, void,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_tx_quiesce, void,
 	(struct dma_async_tx_descriptor **tx),
 	(tx));
 #endif /* _ASYNC_TX_H_ */
