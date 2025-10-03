@@ -11,13 +11,13 @@ struct crypto_skcipher;
 
 #define SERPENT_PARALLEL_BLOCKS 8
 
-DECLARE_CRYPTO_API(serpent_ecb_enc_8way_avx, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT_AVX_X86_64, serpent_ecb_enc_8way_avx, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(serpent_ecb_dec_8way_avx, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT_AVX_X86_64, serpent_ecb_dec_8way_avx, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(serpent_cbc_dec_8way_avx, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SERPENT_AVX_X86_64, serpent_cbc_dec_8way_avx, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
