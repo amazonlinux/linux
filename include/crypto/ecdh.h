@@ -51,7 +51,7 @@ struct ecdh {
  *
  * Return: size of the key in bytes
  */
-DECLARE_CRYPTO_API(crypto_ecdh_key_len, unsigned int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECDH, crypto_ecdh_key_len, unsigned int,
 	(const struct ecdh *params),
 	(params));
 
@@ -68,7 +68,7 @@ DECLARE_CRYPTO_API(crypto_ecdh_key_len, unsigned int,
  *
  * Return:	-EINVAL if buffer has insufficient size, 0 on success
  */
-DECLARE_CRYPTO_API(crypto_ecdh_encode_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECDH, crypto_ecdh_encode_key, int,
 	(char *buf, unsigned int len, const struct ecdh *p),
 	(buf, len, p));
 
@@ -84,7 +84,7 @@ DECLARE_CRYPTO_API(crypto_ecdh_encode_key, int,
  *
  * Return:	-EINVAL if buffer has insufficient size, 0 on success
  */
-DECLARE_CRYPTO_API(crypto_ecdh_decode_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECDH, crypto_ecdh_decode_key, int,
 	(const char *buf, unsigned int len, struct ecdh *p),
 	(buf, len, p));
 
