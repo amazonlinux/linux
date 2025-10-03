@@ -451,15 +451,15 @@ static inline void aria_gsrk(u32 *rk, u32 *x, u32 *y, u32 n)
 		((y[(q + 2) % 4]) << (32 - r));
 }
 
-DECLARE_CRYPTO_API(aria_encrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA, aria_encrypt, void,
 	(void *ctx, u8 *out, const u8 *in),
 	(ctx, out, in));
 
-DECLARE_CRYPTO_API(aria_decrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA, aria_decrypt, void,
 	(void *ctx, u8 *out, const u8 *in),
 	(ctx, out, in));
 
-DECLARE_CRYPTO_API(aria_set_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA, aria_set_key, int,
 	(struct crypto_tfm *tfm, const u8 *in_key, unsigned int key_len),
 	(tfm, in_key, key_len));
 
