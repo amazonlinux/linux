@@ -49,9 +49,9 @@ struct rsa_key {
 	size_t qinv_sz;
 };
 
-DECLARE_CRYPTO_API(rsa_parse_pub_key, int, (struct rsa_key *rsa_key, const void *key, unsigned int key_len), (rsa_key, key, key_len));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RSA, rsa_parse_pub_key, int, (struct rsa_key *rsa_key, const void *key, unsigned int key_len), (rsa_key, key, key_len));
 
-DECLARE_CRYPTO_API(rsa_parse_priv_key, int, (struct rsa_key *rsa_key, const void *key, unsigned int key_len), (rsa_key, key, key_len));
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RSA, rsa_parse_priv_key, int, (struct rsa_key *rsa_key, const void *key, unsigned int key_len), (rsa_key, key, key_len));
 
 #define RSA_PUB (true)
 #define RSA_PRIV (false)
