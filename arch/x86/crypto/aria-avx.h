@@ -14,23 +14,23 @@
 #define ARIA_GFNI_AVX512_PARALLEL_BLOCKS 64
 #define ARIA_GFNI_AVX512_PARALLEL_BLOCK_SIZE  (ARIA_BLOCK_SIZE * ARIA_GFNI_AVX512_PARALLEL_BLOCKS)
 
-DECLARE_CRYPTO_API(aria_aesni_avx_encrypt_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_encrypt_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(aria_aesni_avx_decrypt_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_decrypt_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(aria_aesni_avx_ctr_crypt_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_ctr_crypt_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src, u8 *keystream, u8 *iv),
 	(ctx, dst, src, keystream, iv));
 #ifdef CONFIG_AS_GFNI
-DECLARE_CRYPTO_API(aria_aesni_avx_gfni_encrypt_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_encrypt_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(aria_aesni_avx_gfni_decrypt_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_decrypt_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(aria_aesni_avx_gfni_ctr_crypt_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ARIA_AESNI_AVX_X86_64, aria_aesni_avx_gfni_ctr_crypt_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src, u8 *keystream, u8 *iv),
 	(ctx, dst, src, keystream, iv));
 #endif /* CONFIG_AS_GFNI */
