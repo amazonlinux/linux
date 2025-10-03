@@ -19,13 +19,13 @@ struct aead_geniv_ctx {
 	u8 salt[] __attribute__ ((aligned(__alignof__(u32))));
 };
 
-DECLARE_CRYPTO_API(aead_geniv_alloc, struct aead_instance *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_GENIV, aead_geniv_alloc, struct aead_instance *,
 	(struct crypto_template *tmpl, struct rtattr **tb),
 	(tmpl, tb));
-DECLARE_CRYPTO_API(aead_init_geniv, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_GENIV, aead_init_geniv, int,
 	(struct crypto_aead *tfm),
 	(tfm));
-DECLARE_CRYPTO_API(aead_exit_geniv, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_GENIV, aead_exit_geniv, void,
 	(struct crypto_aead *tfm),
 	(tfm));
 
