@@ -265,27 +265,27 @@ static inline void scatterwalk_done_dst(struct scatter_walk *walk,
 	scatterwalk_advance(walk, nbytes);
 }
 
-DECLARE_CRYPTO_API(scatterwalk_skip, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, scatterwalk_skip, void,
 	(struct scatter_walk *walk, unsigned int nbytes),
 	(walk, nbytes));
 
-DECLARE_CRYPTO_API(memcpy_from_scatterwalk, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_from_scatterwalk, void,
 	(void *buf, struct scatter_walk *walk, unsigned int nbytes),
 	(buf, walk, nbytes));
 
-DECLARE_CRYPTO_API(memcpy_to_scatterwalk, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_to_scatterwalk, void,
 	(struct scatter_walk *walk, const void *buf, unsigned int nbytes),
 	(walk, buf, nbytes));
 
-DECLARE_CRYPTO_API(memcpy_from_sglist, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_from_sglist, void,
 	(void *buf, struct scatterlist *sg, unsigned int start, unsigned int nbytes),
 	(buf, sg, start, nbytes));
 
-DECLARE_CRYPTO_API(memcpy_to_sglist, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_to_sglist, void,
 	(struct scatterlist *sg, unsigned int start, const void *buf, unsigned int nbytes),
 	(sg, start, buf, nbytes));
 
-DECLARE_CRYPTO_API(memcpy_sglist, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, memcpy_sglist, void,
 	(struct scatterlist *dst, struct scatterlist *src, unsigned int nbytes),
 	(dst, src, nbytes));
 
@@ -300,14 +300,14 @@ static inline void scatterwalk_map_and_copy(void *buf, struct scatterlist *sg,
 		memcpy_from_sglist(buf, sg, start, nbytes);
 }
 
-DECLARE_CRYPTO_API(scatterwalk_ffwd, struct scatterlist *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, scatterwalk_ffwd, struct scatterlist *,
 	(struct scatterlist dst[2], struct scatterlist *src, unsigned int len),
 	(dst, src, len));
 
-DECLARE_CRYPTO_API(skcipher_walk_first, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, skcipher_walk_first, int,
 	(struct skcipher_walk *walk, bool atomic),
 	(walk, atomic));
-DECLARE_CRYPTO_API(skcipher_walk_done, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, skcipher_walk_done, int,
 	(struct skcipher_walk *walk, int res),
 	(walk, res));
 
