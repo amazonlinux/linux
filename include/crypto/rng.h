@@ -60,10 +60,10 @@ struct crypto_rng {
 
 extern struct crypto_rng *crypto_default_rng;
 
-DECLARE_CRYPTO_API(crypto_get_default_rng, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_get_default_rng, int,
 	(void),
 	());
-DECLARE_CRYPTO_API(crypto_put_default_rng, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_put_default_rng, void,
 	(void),
 	());
 
@@ -94,7 +94,7 @@ DECLARE_CRYPTO_API(crypto_put_default_rng, void,
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-DECLARE_CRYPTO_API(crypto_alloc_rng, struct crypto_rng *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_alloc_rng, struct crypto_rng *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
@@ -185,7 +185,7 @@ static inline int crypto_rng_get_bytes(struct crypto_rng *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_rng_reset, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_rng_reset, int,
 	(struct crypto_rng *tfm, const u8 *seed, unsigned int slen),
 	(tfm, seed, slen));
 

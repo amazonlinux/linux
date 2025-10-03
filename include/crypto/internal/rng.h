@@ -13,21 +13,21 @@
 #include <crypto/algapi.h>
 #include <crypto/rng.h>
 
-DECLARE_CRYPTO_API(crypto_register_rng, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_register_rng, int,
 	(struct rng_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_unregister_rng, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_unregister_rng, void,
 	(struct rng_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_register_rngs, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_register_rngs, int,
 	(struct rng_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(crypto_unregister_rngs, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_unregister_rngs, void,
 	(struct rng_alg *algs, int count),
 	(algs, count));
 
 #if defined(CONFIG_CRYPTO_RNG) || defined(CONFIG_CRYPTO_RNG_MODULE)
-DECLARE_CRYPTO_API(crypto_del_default_rng, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_RNG2, crypto_del_default_rng, int,
 	(void),
 	());
 #else
