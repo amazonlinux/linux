@@ -97,11 +97,11 @@ static inline void skcipher_request_complete(struct skcipher_request *req, int e
 	crypto_request_complete(&req->base, err);
 }
 
-DECLARE_CRYPTO_API(crypto_grab_skcipher, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_grab_skcipher, int,
 	(struct crypto_skcipher_spawn *spawn, struct crypto_instance *inst, const char *name, u32 type, u32 mask),
 	(spawn, inst, name, type, mask));
 
-DECLARE_CRYPTO_API(crypto_grab_lskcipher, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_grab_lskcipher, int,
 	(struct crypto_lskcipher_spawn *spawn, struct crypto_instance *inst, const char *name, u32 type, u32 mask),
 	(spawn, inst, name, type, mask));
 
@@ -158,45 +158,45 @@ static inline void crypto_skcipher_set_reqsize_dma(
 	skcipher->reqsize = reqsize;
 }
 
-DECLARE_CRYPTO_API(crypto_register_skcipher, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_register_skcipher, int,
 	(struct skcipher_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_unregister_skcipher, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_unregister_skcipher, void,
 	(struct skcipher_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_register_skciphers, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_register_skciphers, int,
 	(struct skcipher_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(crypto_unregister_skciphers, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_unregister_skciphers, void,
 	(struct skcipher_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(skcipher_register_instance, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, skcipher_register_instance, int,
 	(struct crypto_template *tmpl, struct skcipher_instance *inst),
 	(tmpl, inst));
 
-DECLARE_CRYPTO_API(crypto_register_lskcipher, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_register_lskcipher, int,
 	(struct lskcipher_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_unregister_lskcipher, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_unregister_lskcipher, void,
 	(struct lskcipher_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_register_lskciphers, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_register_lskciphers, int,
 	(struct lskcipher_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(crypto_unregister_lskciphers, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_unregister_lskciphers, void,
 	(struct lskcipher_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(lskcipher_register_instance, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, lskcipher_register_instance, int,
 	(struct crypto_template *tmpl, struct lskcipher_instance *inst),
 	(tmpl, inst));
 
-DECLARE_CRYPTO_API(skcipher_walk_virt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, skcipher_walk_virt, int,
 	(struct skcipher_walk *__restrict walk, struct skcipher_request *__restrict req, bool atomic),
 	(walk, req, atomic));
-DECLARE_CRYPTO_API(skcipher_walk_aead_encrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, skcipher_walk_aead_encrypt, int,
 	(struct skcipher_walk *__restrict walk, struct aead_request *__restrict req, bool atomic),
 	(walk, req, atomic));
-DECLARE_CRYPTO_API(skcipher_walk_aead_decrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, skcipher_walk_aead_decrypt, int,
 	(struct skcipher_walk *__restrict walk, struct aead_request *__restrict req, bool atomic),
 	(walk, req, atomic));
 
@@ -247,7 +247,7 @@ skcipher_cipher_simple(struct crypto_skcipher *tfm)
 	return ctx->cipher;
 }
 
-DECLARE_CRYPTO_API(skcipher_alloc_instance_simple, struct skcipher_instance *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, skcipher_alloc_instance_simple, struct skcipher_instance *,
 	(struct crypto_template *tmpl, struct rtattr **tb),
 	(tmpl, tb));
 
@@ -267,7 +267,7 @@ static inline struct crypto_lskcipher *lskcipher_cipher_simple(
 	return *ctx;
 }
 
-DECLARE_CRYPTO_API(lskcipher_alloc_instance_simple, struct lskcipher_instance *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, lskcipher_alloc_instance_simple, struct lskcipher_instance *,
 	(struct crypto_template *tmpl, struct rtattr **tb),
 	(tmpl, tb));
 
