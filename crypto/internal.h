@@ -123,14 +123,14 @@ DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_larval_alloc, struct crypto_larval *,
 DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_schedule_test, void,
 	(struct crypto_larval *larval),
 	(larval));
-DECLARE_CRYPTO_API(crypto_alg_tested, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_alg_tested, void,
 	(const char *name, int err),
 	(name, err));
 
-DECLARE_CRYPTO_API(crypto_remove_spawns, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_remove_spawns, void,
 	(struct crypto_alg *alg, struct list_head *list, struct crypto_alg *nalg),
 	(alg, list, nalg));
-DECLARE_CRYPTO_API(crypto_remove_final, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_remove_final, void,
 	(struct list_head *list),
 	(list));
 DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_shoot_alg, void,
@@ -173,11 +173,11 @@ DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_probing_notify, int,
 	(unsigned long val, void *v),
 	(val, v));
 
-DECLARE_CRYPTO_API(crypto_alg_extsize, unsigned int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_alg_extsize, unsigned int,
 	(struct crypto_alg *alg),
 	(alg));
 
-DECLARE_CRYPTO_API(crypto_type_has_alg, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_type_has_alg, int,
 	(const char *name, const struct crypto_type *frontend, u32 type, u32 mask),
 	(name, frontend, type, mask));
 
