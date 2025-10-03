@@ -41,13 +41,13 @@ DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_dec_blk_2way, asmlink
 	(ctx, dst, src));
 
 /* 16-way parallel cipher functions (avx/aes-ni) */
-DECLARE_CRYPTO_API(camellia_ecb_enc_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_AESNI_AVX_X86_64, camellia_ecb_enc_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(camellia_ecb_dec_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_AESNI_AVX_X86_64, camellia_ecb_dec_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(camellia_cbc_dec_16way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_AESNI_AVX_X86_64, camellia_cbc_dec_16way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
