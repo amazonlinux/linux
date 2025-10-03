@@ -45,15 +45,15 @@ struct x509_certificate {
 /*
  * x509_cert_parser.c
  */
-DECLARE_CRYPTO_API(x509_free_certificate, void,
+DECLARE_CRYPTO_API(CONFIG_X509_CERTIFICATE_PARSER, x509_free_certificate, void,
 	(struct x509_certificate *cert),
 	(cert));
 DEFINE_FREE(x509_free_certificate, struct x509_certificate *,
 	    if (!IS_ERR(_T)) x509_free_certificate(_T))
-DECLARE_CRYPTO_API(x509_cert_parse, struct x509_certificate *,
+DECLARE_CRYPTO_API(CONFIG_X509_CERTIFICATE_PARSER, x509_cert_parse, struct x509_certificate *,
 	(const void *data, size_t datalen),
 	(data, datalen));
-DECLARE_CRYPTO_API(x509_decode_time, int,
+DECLARE_CRYPTO_API(CONFIG_X509_CERTIFICATE_PARSER, x509_decode_time, int,
 	(time64_t *_t, size_t hdrlen, unsigned char tag, const unsigned char *value, size_t vlen),
 	(_t, hdrlen, tag, value, vlen));
 
