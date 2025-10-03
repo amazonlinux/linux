@@ -27,7 +27,7 @@ struct crypto_authenc_keys {
 	unsigned int enckeylen;
 };
 
-DECLARE_CRYPTO_API(crypto_authenc_extractkeys, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AUTHENC, crypto_authenc_extractkeys, int,
 	(struct crypto_authenc_keys *keys, const u8 *key, unsigned int keylen),
 	(keys, key, keylen));
 
