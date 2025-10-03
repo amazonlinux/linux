@@ -277,11 +277,11 @@ static inline struct crypto_skcipher *__crypto_skcipher_cast(
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-DECLARE_CRYPTO_API(crypto_alloc_skcipher, struct crypto_skcipher *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_alloc_skcipher, struct crypto_skcipher *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
-DECLARE_CRYPTO_API(crypto_alloc_sync_skcipher, struct crypto_sync_skcipher *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_alloc_sync_skcipher, struct crypto_sync_skcipher *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
@@ -300,7 +300,7 @@ DECLARE_CRYPTO_API(crypto_alloc_sync_skcipher, struct crypto_sync_skcipher *,
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-DECLARE_CRYPTO_API(crypto_alloc_lskcipher, struct crypto_lskcipher *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_alloc_lskcipher, struct crypto_lskcipher *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
@@ -359,7 +359,7 @@ static inline void crypto_free_lskcipher(struct crypto_lskcipher *tfm)
  * Return: true when the skcipher is known to the kernel crypto API; false
  *	   otherwise
  */
-DECLARE_CRYPTO_API(crypto_has_skcipher, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_has_skcipher, int,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
@@ -617,7 +617,7 @@ static inline void crypto_lskcipher_clear_flags(struct crypto_lskcipher *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_skcipher_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_skcipher_setkey, int,
 	(struct crypto_skcipher *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
@@ -643,7 +643,7 @@ static inline int crypto_sync_skcipher_setkey(struct crypto_sync_skcipher *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_lskcipher_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_lskcipher_setkey, int,
 	(struct crypto_lskcipher *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
@@ -705,7 +705,7 @@ static inline struct crypto_sync_skcipher *crypto_sync_skcipher_reqtfm(
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_skcipher_encrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_skcipher_encrypt, int,
 	(struct skcipher_request *req),
 	(req));
 
@@ -720,7 +720,7 @@ DECLARE_CRYPTO_API(crypto_skcipher_encrypt, int,
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_skcipher_decrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_skcipher_decrypt, int,
 	(struct skcipher_request *req),
 	(req));
 
@@ -740,7 +740,7 @@ DECLARE_CRYPTO_API(crypto_skcipher_decrypt, int,
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_skcipher_export, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_skcipher_export, int,
 	(struct skcipher_request *req, void *out),
 	(req, out));
 
@@ -757,7 +757,7 @@ DECLARE_CRYPTO_API(crypto_skcipher_export, int,
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_skcipher_import, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_skcipher_import, int,
 	(struct skcipher_request *req, const void *in),
 	(req, in));
 
@@ -777,7 +777,7 @@ DECLARE_CRYPTO_API(crypto_skcipher_import, int,
  *	   then this many bytes have been left unprocessed;
  *	   < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_lskcipher_encrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_lskcipher_encrypt, int,
 	(struct crypto_lskcipher *tfm, const u8 *src, u8 *dst, unsigned len, u8 *siv),
 	(tfm, src, dst, len, siv));
 
@@ -798,7 +798,7 @@ DECLARE_CRYPTO_API(crypto_lskcipher_encrypt, int,
  *	   then this many bytes have been left unprocessed;
  *	   < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_lskcipher_decrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SKCIPHER2, crypto_lskcipher_decrypt, int,
 	(struct crypto_lskcipher *tfm, const u8 *src, u8 *dst, unsigned len, u8 *siv),
 	(tfm, src, dst, len, siv));
 
