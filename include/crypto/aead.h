@@ -179,7 +179,7 @@ static inline struct crypto_aead *__crypto_aead_cast(struct crypto_tfm *tfm)
  * Return: allocated cipher handle in case of success; IS_ERR() is true in case
  *	   of an error, PTR_ERR() returns the error code.
  */
-DECLARE_CRYPTO_API(crypto_alloc_aead, struct crypto_aead *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_alloc_aead, struct crypto_aead *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
@@ -209,7 +209,7 @@ static inline void crypto_free_aead(struct crypto_aead *tfm)
  * Return: true when the aead is known to the kernel crypto API; false
  *	   otherwise
  */
-DECLARE_CRYPTO_API(crypto_has_aead, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_has_aead, int,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
@@ -321,7 +321,7 @@ static inline void crypto_aead_clear_flags(struct crypto_aead *tfm, u32 flags)
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_aead_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_aead_setkey, int,
 	(struct crypto_aead *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
@@ -335,7 +335,7 @@ DECLARE_CRYPTO_API(crypto_aead_setkey, int,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_aead_setauthsize, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_aead_setauthsize, int,
 	(struct crypto_aead *tfm, unsigned int authsize),
 	(tfm, authsize));
 
@@ -363,7 +363,7 @@ static inline struct crypto_aead *crypto_aead_reqtfm(struct aead_request *req)
  *
  * Return: 0 if the cipher operation was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_aead_encrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_aead_encrypt, int,
 	(struct aead_request *req),
 	(req));
 
@@ -389,7 +389,7 @@ DECLARE_CRYPTO_API(crypto_aead_encrypt, int,
  *	   integrity of the ciphertext or the associated data was violated);
  *	   < 0 if an error occurred.
  */
-DECLARE_CRYPTO_API(crypto_aead_decrypt, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_aead_decrypt, int,
 	(struct aead_request *req),
 	(req));
 

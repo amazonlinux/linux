@@ -97,7 +97,7 @@ static inline struct aead_request *aead_request_cast(
 	return container_of(req, struct aead_request, base);
 }
 
-DECLARE_CRYPTO_API(crypto_grab_aead, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_grab_aead, int,
 	(struct crypto_aead_spawn *spawn, struct crypto_instance *inst, const char *name, u32 type, u32 mask),
 	(spawn, inst, name, type, mask));
 
@@ -158,19 +158,19 @@ static inline unsigned int crypto_aead_chunksize(struct crypto_aead *tfm)
 	return crypto_aead_alg_chunksize(crypto_aead_alg(tfm));
 }
 
-DECLARE_CRYPTO_API(crypto_register_aead, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_register_aead, int,
 	(struct aead_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_unregister_aead, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_unregister_aead, void,
 	(struct aead_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_register_aeads, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_register_aeads, int,
 	(struct aead_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(crypto_unregister_aeads, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, crypto_unregister_aeads, void,
 	(struct aead_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(aead_register_instance, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AEAD2, aead_register_instance, int,
 	(struct crypto_template *tmpl, struct aead_instance *inst),
 	(tmpl, inst));
 
