@@ -64,7 +64,7 @@ extern int verify_pkcs7_message_sig(const void *data, size_t len,
 				    void *ctx);
 
 #ifdef CONFIG_SIGNED_PE_FILE_VERIFICATION
-DECLARE_CRYPTO_API(verify_pefile_signature, int,
+DECLARE_CRYPTO_API(CONFIG_SIGNED_PE_FILE_VERIFICATION, verify_pefile_signature, int,
 	(const void *pebuf, unsigned pelen, struct key *trusted_keys, enum key_being_used_for usage),
 	(pebuf, pelen, trusted_keys, usage));
 #endif
