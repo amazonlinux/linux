@@ -150,7 +150,7 @@ static inline void crypto_cipher_clear_flags(struct crypto_cipher *tfm,
  *
  * Return: 0 if the setting of the key was successful; < 0 if an error occurred
  */
-DECLARE_CRYPTO_API(crypto_cipher_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_cipher_setkey, int,
 	(struct crypto_cipher *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
@@ -163,7 +163,7 @@ DECLARE_CRYPTO_API(crypto_cipher_setkey, int,
  * Invoke the encryption operation of one block. The caller must ensure that
  * the plaintext and ciphertext buffers are at least one block in size.
  */
-DECLARE_CRYPTO_API(crypto_cipher_encrypt_one, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_cipher_encrypt_one, void,
 	(struct crypto_cipher *tfm, u8 *dst, const u8 *src),
 	(tfm, dst, src));
 
@@ -176,11 +176,11 @@ DECLARE_CRYPTO_API(crypto_cipher_encrypt_one, void,
  * Invoke the decryption operation of one block. The caller must ensure that
  * the plaintext and ciphertext buffers are at least one block in size.
  */
-DECLARE_CRYPTO_API(crypto_cipher_decrypt_one, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_cipher_decrypt_one, void,
 	(struct crypto_cipher *tfm, u8 *dst, const u8 *src),
 	(tfm, dst, src));
 
-DECLARE_CRYPTO_API(crypto_clone_cipher, struct crypto_cipher *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_clone_cipher, struct crypto_cipher *,
 	(struct crypto_cipher *cipher),
 	(cipher));
 
