@@ -49,7 +49,7 @@ static inline int aes_check_keylen(unsigned int keylen)
 	return 0;
 }
 
-DECLARE_CRYPTO_API(crypto_aes_set_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_AES, crypto_aes_set_key, int,
 	(struct crypto_tfm *tfm, const u8 *in_key, unsigned int key_len),
 	(tfm, in_key, key_len));
 
