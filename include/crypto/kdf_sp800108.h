@@ -30,7 +30,7 @@
  *
  * @return 0 on success, < 0 on error
  */
-DECLARE_CRYPTO_API(crypto_kdf108_ctr_generate, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_KDF800108_CTR, crypto_kdf108_ctr_generate, int,
 	(struct crypto_shash *kmd, const struct kvec *info, unsigned int info_nvec, u8 *dst, unsigned int dlen),
 	(kmd, info, info_nvec, dst, dlen));
 
@@ -56,7 +56,7 @@ DECLARE_CRYPTO_API(crypto_kdf108_ctr_generate, int,
  *
  * @return 0 on success, < 0 on error
  */
-DECLARE_CRYPTO_API(crypto_kdf108_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_KDF800108_CTR, crypto_kdf108_setkey, int,
 	(struct crypto_shash *kmd, const u8 *key, size_t keylen, const u8 *ikm, size_t ikmlen),
 	(kmd, key, keylen, ikm, ikmlen));
 
