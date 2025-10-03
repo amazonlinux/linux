@@ -25,17 +25,17 @@ struct cryptd_skcipher {
 };
 
 /* alg_name should be algorithm to be cryptd-ed */
-DECLARE_CRYPTO_API(cryptd_alloc_skcipher, struct cryptd_skcipher *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_alloc_skcipher, struct cryptd_skcipher *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
-DECLARE_CRYPTO_API(cryptd_skcipher_child, struct crypto_skcipher *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_skcipher_child, struct crypto_skcipher *,
 	(struct cryptd_skcipher *tfm),
 	(tfm));
 /* Must be called without moving CPUs. */
-DECLARE_CRYPTO_API(cryptd_skcipher_queued, bool,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_skcipher_queued, bool,
 	(struct cryptd_skcipher *tfm),
 	(tfm));
-DECLARE_CRYPTO_API(cryptd_free_skcipher, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_free_skcipher, void,
 	(struct cryptd_skcipher *tfm),
 	(tfm));
 
@@ -50,20 +50,20 @@ static inline struct cryptd_ahash *__cryptd_ahash_cast(
 }
 
 /* alg_name should be algorithm to be cryptd-ed */
-DECLARE_CRYPTO_API(cryptd_alloc_ahash, struct cryptd_ahash *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_alloc_ahash, struct cryptd_ahash *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
-DECLARE_CRYPTO_API(cryptd_ahash_child, struct crypto_shash *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_ahash_child, struct crypto_shash *,
 	(struct cryptd_ahash *tfm),
 	(tfm));
-DECLARE_CRYPTO_API(cryptd_shash_desc, struct shash_desc *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_shash_desc, struct shash_desc *,
 	(struct ahash_request *req),
 	(req));
 /* Must be called without moving CPUs. */
-DECLARE_CRYPTO_API(cryptd_ahash_queued, bool,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_ahash_queued, bool,
 	(struct cryptd_ahash *tfm),
 	(tfm));
-DECLARE_CRYPTO_API(cryptd_free_ahash, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_free_ahash, void,
 	(struct cryptd_ahash *tfm),
 	(tfm));
 
@@ -77,19 +77,19 @@ static inline struct cryptd_aead *__cryptd_aead_cast(
 	return (struct cryptd_aead *)tfm;
 }
 
-DECLARE_CRYPTO_API(cryptd_alloc_aead, struct cryptd_aead *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_alloc_aead, struct cryptd_aead *,
 	(const char *alg_name, u32 type, u32 mask),
 	(alg_name, type, mask));
 
-DECLARE_CRYPTO_API(cryptd_aead_child, struct crypto_aead *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_aead_child, struct crypto_aead *,
 	(struct cryptd_aead *tfm),
 	(tfm));
 /* Must be called without moving CPUs. */
-DECLARE_CRYPTO_API(cryptd_aead_queued, bool,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_aead_queued, bool,
 	(struct cryptd_aead *tfm),
 	(tfm));
 
-DECLARE_CRYPTO_API(cryptd_free_aead, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CRYPTD, cryptd_free_aead, void,
 	(struct cryptd_aead *tfm),
 	(tfm));
 
