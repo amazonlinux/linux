@@ -31,7 +31,7 @@ DECLARE_CRYPTO_API(CONFIG_CRYPTO_AUTHENC, crypto_authenc_extractkeys, int,
 	(struct crypto_authenc_keys *keys, const u8 *key, unsigned int keylen),
 	(keys, key, keylen));
 
-DECLARE_CRYPTO_API(crypto_krb5enc_extractkeys, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_KRB5ENC, crypto_krb5enc_extractkeys, int,
 	(struct crypto_authenc_keys *keys, const u8 *key, unsigned int keylen),
 	(keys, key, keylen));
 
