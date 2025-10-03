@@ -17,15 +17,15 @@ struct cast5_ctx {
 	int rr;	/* rr ? rounds = 12 : rounds = 16; (rfc 2144) */
 };
 
-DECLARE_CRYPTO_API(cast5_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST5, cast5_setkey, int,
 	(struct crypto_tfm *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
-DECLARE_CRYPTO_API(__cast5_encrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST5, __cast5_encrypt, void,
 	(struct cast5_ctx *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
-DECLARE_CRYPTO_API(__cast5_decrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST5, __cast5_decrypt, void,
 	(struct cast5_ctx *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
