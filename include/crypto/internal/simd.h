@@ -17,18 +17,18 @@
 struct simd_skcipher_alg;
 struct skcipher_alg;
 
-DECLARE_CRYPTO_API(simd_skcipher_create_compat, struct simd_skcipher_alg *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_skcipher_create_compat, struct simd_skcipher_alg *,
 	(struct skcipher_alg *ialg, const char *algname, const char *drvname, const char *basename),
 	(ialg, algname, drvname, basename));
-DECLARE_CRYPTO_API(simd_skcipher_free, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_skcipher_free, void,
 	(struct simd_skcipher_alg *alg),
 	(alg));
 
-DECLARE_CRYPTO_API(simd_register_skciphers_compat, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_register_skciphers_compat, int,
 	(struct skcipher_alg *algs, int count, struct simd_skcipher_alg **simd_algs),
 	(algs, count, simd_algs));
 
-DECLARE_CRYPTO_API(simd_unregister_skciphers, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_unregister_skciphers, void,
 	(struct skcipher_alg *algs, int count, struct simd_skcipher_alg **simd_algs),
 	(algs, count, simd_algs));
 
@@ -37,11 +37,11 @@ DECLARE_CRYPTO_API(simd_unregister_skciphers, void,
 struct simd_aead_alg;
 struct aead_alg;
 
-DECLARE_CRYPTO_API(simd_register_aeads_compat, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_register_aeads_compat, int,
 	(struct aead_alg *algs, int count, struct simd_aead_alg **simd_algs),
 	(algs, count, simd_algs));
 
-DECLARE_CRYPTO_API(simd_unregister_aeads, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SIMD, simd_unregister_aeads, void,
 	(struct aead_alg *algs, int count, struct simd_aead_alg **simd_algs),
 	(algs, count, simd_algs));
 
