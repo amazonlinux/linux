@@ -19,7 +19,7 @@ struct bf_ctx {
 	u32 s[1024];
 };
 
-DECLARE_CRYPTO_API(blowfish_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_BLOWFISH_COMMON, blowfish_setkey, int,
 	(struct crypto_tfm *tfm, const u8 *key, unsigned int key_len),
 	(tfm, key, key_len));
 
