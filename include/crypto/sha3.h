@@ -32,7 +32,7 @@ struct sha3_state {
 	u64		st[SHA3_STATE_SIZE / 8];
 };
 
-DECLARE_CRYPTO_API(crypto_sha3_init, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_SHA3, crypto_sha3_init, int,
 	(struct shash_desc *desc),
 	(desc));
 
