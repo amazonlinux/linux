@@ -8,10 +8,10 @@
 #include <crypto/b128ops.h>
 
 /* regular block cipher functions from twofish_x86_64 module */
-DECLARE_CRYPTO_API(twofish_enc_blk, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_TWOFISH_X86_64, twofish_enc_blk, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
-DECLARE_CRYPTO_API(twofish_dec_blk, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_TWOFISH_X86_64, twofish_dec_blk, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
