@@ -120,16 +120,16 @@ struct crypto_attr_type {
 /*
  * Algorithm registration interface.
  */
-DECLARE_CRYPTO_API(crypto_register_alg, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_register_alg, int,
 	(struct crypto_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_unregister_alg, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_unregister_alg, void,
 	(struct crypto_alg *alg),
 	(alg));
-DECLARE_CRYPTO_API(crypto_register_algs, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_register_algs, int,
 	(struct crypto_alg *algs, int count),
 	(algs, count));
-DECLARE_CRYPTO_API(crypto_unregister_algs, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_unregister_algs, void,
 	(struct crypto_alg *algs, int count),
 	(algs, count));
 
@@ -137,52 +137,52 @@ DECLARE_CRYPTO_API(CONFIG_CRYPTO, crypto_mod_put, void,
 	(struct crypto_alg *alg),
 	(alg));
 
-DECLARE_CRYPTO_API(crypto_register_template, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_register_template, int,
 	(struct crypto_template *tmpl),
 	(tmpl));
-DECLARE_CRYPTO_API(crypto_register_templates, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_register_templates, int,
 	(struct crypto_template *tmpls, int count),
 	(tmpls, count));
-DECLARE_CRYPTO_API(crypto_unregister_template, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_unregister_template, void,
 	(struct crypto_template *tmpl),
 	(tmpl));
-DECLARE_CRYPTO_API(crypto_unregister_templates, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_unregister_templates, void,
 	(struct crypto_template *tmpls, int count),
 	(tmpls, count));
-DECLARE_CRYPTO_API(crypto_lookup_template, struct crypto_template *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_lookup_template, struct crypto_template *,
 	(const char *name),
 	(name));
 
-DECLARE_CRYPTO_API(crypto_register_instance, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_register_instance, int,
 	(struct crypto_template *tmpl, struct crypto_instance *inst),
 	(tmpl, inst));
-DECLARE_CRYPTO_API(crypto_unregister_instance, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_unregister_instance, void,
 	(struct crypto_instance *inst),
 	(inst));
 
-DECLARE_CRYPTO_API(crypto_grab_spawn, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_grab_spawn, int,
 	(struct crypto_spawn *spawn, struct crypto_instance *inst, const char *name, u32 type, u32 mask),
 	(spawn, inst, name, type, mask));
-DECLARE_CRYPTO_API(crypto_drop_spawn, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_drop_spawn, void,
 	(struct crypto_spawn *spawn),
 	(spawn));
-DECLARE_CRYPTO_API(crypto_spawn_tfm, struct crypto_tfm *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_spawn_tfm, struct crypto_tfm *,
 	(struct crypto_spawn *spawn, u32 type, u32 mask),
 	(spawn, type, mask));
-DECLARE_CRYPTO_API(crypto_spawn_tfm2, void *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_spawn_tfm2, void *,
 	(struct crypto_spawn *spawn),
 	(spawn));
 
-DECLARE_CRYPTO_API(crypto_get_attr_type, struct crypto_attr_type *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_get_attr_type, struct crypto_attr_type *,
 	(struct rtattr **tb),
 	(tb));
-DECLARE_CRYPTO_API(crypto_check_attr_type, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_check_attr_type, int,
 	(struct rtattr **tb, u32 type, u32 *mask_ret),
 	(tb, type, mask_ret));
-DECLARE_CRYPTO_API(crypto_attr_alg_name, const char *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_attr_alg_name, const char *,
 	(struct rtattr *rta),
 	(rta));
-DECLARE_CRYPTO_API(__crypto_inst_setname, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, __crypto_inst_setname, int,
 	(struct crypto_instance *inst, const char *name, const char *driver, struct crypto_alg *alg),
 	(inst, name, driver, alg));
 
@@ -194,16 +194,16 @@ DECLARE_CRYPTO_API(__crypto_inst_setname, int,
 #define crypto_inst_setname_2(inst, name, driver, alg) \
 	__crypto_inst_setname(inst, name, driver, alg)
 
-DECLARE_CRYPTO_API(crypto_init_queue, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_init_queue, void,
 	(struct crypto_queue *queue, unsigned int max_qlen),
 	(queue, max_qlen));
-DECLARE_CRYPTO_API(crypto_enqueue_request, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_enqueue_request, int,
 	(struct crypto_queue *queue, struct crypto_async_request *request),
 	(queue, request));
-DECLARE_CRYPTO_API(crypto_enqueue_request_head, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_enqueue_request_head, void,
 	(struct crypto_queue *queue, struct crypto_async_request *request),
 	(queue, request));
-DECLARE_CRYPTO_API(crypto_dequeue_request, struct crypto_async_request *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_dequeue_request, struct crypto_async_request *,
 	(struct crypto_queue *queue),
 	(queue));
 static inline unsigned int crypto_queue_len(struct crypto_queue *queue)
@@ -211,7 +211,7 @@ static inline unsigned int crypto_queue_len(struct crypto_queue *queue)
 	return queue->qlen;
 }
 
-DECLARE_CRYPTO_API(crypto_inc, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_inc, void,
 	(u8 *a, unsigned int size),
 	(a, size));
 
@@ -287,10 +287,10 @@ static inline u32 crypto_algt_inherited_mask(struct crypto_attr_type *algt)
 	return crypto_requires_off(algt, CRYPTO_ALG_INHERITED_FLAGS);
 }
 
-DECLARE_CRYPTO_API(crypto_register_notifier, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_register_notifier, int,
 	(struct notifier_block *nb),
 	(nb));
-DECLARE_CRYPTO_API(crypto_unregister_notifier, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ALGAPI2, crypto_unregister_notifier, int,
 	(struct notifier_block *nb),
 	(nb));
 
