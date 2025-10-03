@@ -22,11 +22,11 @@ void curve25519_generic(u8 out[CURVE25519_KEY_SIZE],
 			const u8 scalar[CURVE25519_KEY_SIZE],
 			const u8 point[CURVE25519_KEY_SIZE]);
 
-DECLARE_CRYPTO_API(curve25519_arch, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CURVE25519_X86, curve25519_arch, void,
 	(u8 out[CURVE25519_KEY_SIZE], const u8 scalar[CURVE25519_KEY_SIZE], const u8 point[CURVE25519_KEY_SIZE]),
 	(out, scalar, point));
 
-DECLARE_CRYPTO_API(curve25519_base_arch, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CURVE25519_X86, curve25519_base_arch, void,
 	(u8 pub[CURVE25519_KEY_SIZE], const u8 secret[CURVE25519_KEY_SIZE]),
 	(pub, secret));
 
