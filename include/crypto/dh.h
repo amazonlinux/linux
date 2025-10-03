@@ -50,7 +50,7 @@ struct dh {
  *
  * Return: size of the key in bytes
  */
-DECLARE_CRYPTO_API(crypto_dh_key_len, unsigned int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_DH, crypto_dh_key_len, unsigned int,
 	(const struct dh *params),
 	(params));
 
@@ -67,7 +67,7 @@ DECLARE_CRYPTO_API(crypto_dh_key_len, unsigned int,
  *
  * Return:	-EINVAL if buffer has insufficient size, 0 on success
  */
-DECLARE_CRYPTO_API(crypto_dh_encode_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_DH, crypto_dh_encode_key, int,
 	(char *buf, unsigned int len, const struct dh *params),
 	(buf, len, params));
 
@@ -83,7 +83,7 @@ DECLARE_CRYPTO_API(crypto_dh_encode_key, int,
  *
  * Return:	-EINVAL if buffer has insufficient size, 0 on success
  */
-DECLARE_CRYPTO_API(crypto_dh_decode_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_DH, crypto_dh_decode_key, int,
 	(const char *buf, unsigned int len, struct dh *params),
 	(buf, len, params));
 
