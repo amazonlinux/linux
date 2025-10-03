@@ -164,27 +164,27 @@ struct af_alg_ctx {
 	unsigned int inflight;
 };
 
-DECLARE_CRYPTO_API(af_alg_register_type, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_register_type, int,
 	(const struct af_alg_type *type),
 	(type));
 
-DECLARE_CRYPTO_API(af_alg_unregister_type, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_unregister_type, int,
 	(const struct af_alg_type *type),
 	(type));
 
-DECLARE_CRYPTO_API(af_alg_release, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_release, int,
 	(struct socket *sock),
 	(sock));
 
-DECLARE_CRYPTO_API(af_alg_release_parent, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_release_parent, void,
 	(struct sock *sk),
 	(sk));
 
-DECLARE_CRYPTO_API(af_alg_accept, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_accept, int,
 	(struct sock *sk, struct socket *newsock, struct proto_accept_arg *arg),
 	(sk, newsock, arg));
 
-DECLARE_CRYPTO_API(af_alg_free_sg, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_free_sg, void,
 	(struct af_alg_sgl *sgl),
 	(sgl));
 
@@ -245,43 +245,43 @@ static inline bool af_alg_readable(struct sock *sk)
 	return PAGE_SIZE <= af_alg_rcvbuf(sk);
 }
 
-DECLARE_CRYPTO_API(af_alg_count_tsgl, unsigned int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_count_tsgl, unsigned int,
 	(struct sock *sk, size_t bytes, size_t offset),
 	(sk, bytes, offset));
 
-DECLARE_CRYPTO_API(af_alg_pull_tsgl, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_pull_tsgl, void,
 	(struct sock *sk, size_t used, struct scatterlist *dst, size_t dst_offset),
 	(sk, used, dst, dst_offset));
 
-DECLARE_CRYPTO_API(af_alg_wmem_wakeup, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_wmem_wakeup, void,
 	(struct sock *sk),
 	(sk));
 
-DECLARE_CRYPTO_API(af_alg_wait_for_data, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_wait_for_data, int,
 	(struct sock *sk, unsigned flags, unsigned min),
 	(sk, flags, min));
 
-DECLARE_CRYPTO_API(af_alg_sendmsg, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_sendmsg, int,
 	(struct socket *sock, struct msghdr *msg, size_t size, unsigned int ivsize),
 	(sock, msg, size, ivsize));
 
-DECLARE_CRYPTO_API(af_alg_free_resources, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_free_resources, void,
 	(struct af_alg_async_req *areq),
 	(areq));
 
-DECLARE_CRYPTO_API(af_alg_async_cb, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_async_cb, void,
 	(void *data, int err),
 	(data, err));
 
-DECLARE_CRYPTO_API(af_alg_poll, __poll_t,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_poll, __poll_t,
 	(struct file *file, struct socket *sock, poll_table *wait),
 	(file, sock, wait));
 
-DECLARE_CRYPTO_API(af_alg_alloc_areq, struct af_alg_async_req *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_alloc_areq, struct af_alg_async_req *,
 	(struct sock *sk, unsigned int areqlen),
 	(sk, areqlen));
 
-DECLARE_CRYPTO_API(af_alg_get_rsgl, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_get_rsgl, int,
 	(struct sock *sk, struct msghdr *msg, int flags, struct af_alg_async_req *areq, size_t maxsize, size_t *outlen),
 	(sk, msg, flags, areq, maxsize, outlen));
 
