@@ -161,15 +161,15 @@ DECLARE_CRYPTO_API(CONFIG_ASYNC_CORE, async_tx_submit, void,
 	(struct dma_chan *chan, struct dma_async_tx_descriptor *tx, struct async_submit_ctl *submit),
 	(chan, tx, submit));
 
-DECLARE_CRYPTO_API(async_xor, struct dma_async_tx_descriptor *,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_XOR, async_xor, struct dma_async_tx_descriptor *,
 	(struct page *dest, struct page **src_list, unsigned int offset, int src_cnt, size_t len, struct async_submit_ctl *submit),
 	(dest, src_list, offset, src_cnt, len, submit));
 
-DECLARE_CRYPTO_API(async_xor_offs, struct dma_async_tx_descriptor *,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_XOR, async_xor_offs, struct dma_async_tx_descriptor *,
 	(struct page *dest, unsigned int offset, struct page **src_list, unsigned int *src_offset, int src_cnt, size_t len, struct async_submit_ctl *submit),
 	(dest, offset, src_list, src_offset, src_cnt, len, submit));
 
-DECLARE_CRYPTO_API(async_xor_val_offs, struct dma_async_tx_descriptor *,
+DECLARE_CRYPTO_API(CONFIG_ASYNC_XOR, async_xor_val_offs, struct dma_async_tx_descriptor *,
 	(struct page *dest, unsigned int offset, struct page **src_list, unsigned int *src_offset, int src_cnt, size_t len, enum sum_check_flags *result, struct async_submit_ctl *submit),
 	(dest, offset, src_list, src_offset, src_cnt, len, result, submit));
 
