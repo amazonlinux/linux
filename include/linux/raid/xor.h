@@ -6,7 +6,7 @@
 
 #define MAX_XOR_BLOCKS 4
 
-DECLARE_CRYPTO_API(xor_blocks, void,
+DECLARE_CRYPTO_API(CONFIG_XOR_BLOCKS, xor_blocks, void,
 	(unsigned int count, unsigned int bytes, void *dest, void **srcs),
 	(count, bytes, dest, srcs));
 
