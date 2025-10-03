@@ -20,23 +20,23 @@ struct camellia_ctx {
 	u32 key_length;
 };
 
-DECLARE_CRYPTO_API(__camellia_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, __camellia_setkey, int,
 	(struct camellia_ctx *cctx, const unsigned char *key, unsigned int key_len),
 	(cctx, key, key_len));
 
 /* regular block cipher functions */
-DECLARE_CRYPTO_API(__camellia_enc_blk, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, __camellia_enc_blk, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src, bool xor),
 	(ctx, dst, src, xor));
-DECLARE_CRYPTO_API(camellia_dec_blk, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_dec_blk, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
 /* 2-way parallel cipher functions */
-DECLARE_CRYPTO_API(__camellia_enc_blk_2way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, __camellia_enc_blk_2way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src, bool xor),
 	(ctx, dst, src, xor));
-DECLARE_CRYPTO_API(camellia_dec_blk_2way, asmlinkage void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_dec_blk_2way, asmlinkage void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
@@ -74,7 +74,7 @@ static inline void camellia_enc_blk_xor_2way(const void *ctx, u8 *dst,
 }
 
 /* glue helpers */
-DECLARE_CRYPTO_API(camellia_decrypt_cbc_2way, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAMELLIA_X86_64, camellia_decrypt_cbc_2way, void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
