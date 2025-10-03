@@ -16,19 +16,19 @@ struct cast6_ctx {
 	u8 Kr[12][4];
 };
 
-DECLARE_CRYPTO_API(__cast6_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, __cast6_setkey, int,
 	(struct cast6_ctx *ctx, const u8 *key, unsigned int keylen),
 	(ctx, key, keylen));
 
-DECLARE_CRYPTO_API(cast6_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, cast6_setkey, int,
 	(struct crypto_tfm *tfm, const u8 *key, unsigned int keylen),
 	(tfm, key, keylen));
 
-DECLARE_CRYPTO_API(__cast6_encrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, __cast6_encrypt, void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
-DECLARE_CRYPTO_API(__cast6_decrypt, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_CAST6, __cast6_decrypt, void,
 	(const void *ctx, u8 *dst, const u8 *src),
 	(ctx, dst, src));
 
