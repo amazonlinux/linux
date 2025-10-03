@@ -5,6 +5,19 @@
 
 #define CRYPTO_VAR_NAME(name) __crypto_##name##_ptr
 
+#define __CAT(a,b) a##b
+#define _CAT(a,b)  __CAT(a,b)
+
+#define __IF_1(...) __VA_ARGS__
+#define __IF_0(...)
+#define __IFNOT_1(...)
+#define __IFNOT_0(...) __VA_ARGS__
+
+/* Emit __VA_ARGS__ only if cfg is built into vmlinux (=y) */
+#define IF_BUILTIN(cfg, ...)     _CAT(__IF_,    IS_BUILTIN(cfg))(__VA_ARGS__)
+/* Emit __VA_ARGS__ only if cfg is NOT built in (i.e., =m or unset) */
+#define IF_NOT_BUILTIN(cfg, ...) _CAT(__IFNOT_, IS_BUILTIN(cfg))(__VA_ARGS__)
+
 #if !defined(CONFIG_CRYPTO_FIPS140_EXTMOD)
 
 /*
@@ -13,10 +26,10 @@
  * calls.
  */
 
-#define DECLARE_CRYPTO_API(name, ret_type, args_decl, args_call) \
+#define DECLARE_CRYPTO_API(cfg, name, ret_type, args_decl, args_call)       \
 	ret_type name args_decl;
 
-#define DECLARE_CRYPTO_VAR(name, var_type, ...) \
+#define DECLARE_CRYPTO_VAR(cfg, name, var_type, ...) \
 	extern var_type name __VA_ARGS__;
 
 #define crypto_module_init(fn) module_init(fn)
@@ -50,16 +63,32 @@ struct crypto_var_key {
  */
 
 /* Consolidated version of different DECLARE_CRYPTO_API versions */
-#define DECLARE_CRYPTO_API(name, ret_type, args_decl, args_call)	\
-	ret_type nonfips_##name args_decl;				\
-	DECLARE_STATIC_CALL(crypto_##name##_key, nonfips_##name);	\
-	static inline ret_type name args_decl				\
-	{								\
-		return static_call(crypto_##name##_key) args_call;	\
-	}
 
-#define DECLARE_CRYPTO_VAR(name, var_type, ...) \
-	extern void* CRYPTO_VAR_NAME(name) ;
+/*
+ *  - If cfg is built-in (=y): declare nonfips_<name>, a static_call key,
+ *    and an inline wrapper <name>() that dispatches via static_call.
+ *  - Else (cfg =m or unset): only declare <name>() prototype.
+ */
+#define DECLARE_CRYPTO_API(cfg, name, ret_type, args_decl, args_call)       \
+	IF_BUILTIN(cfg,                                                      \
+		ret_type nonfips_##name args_decl;                           \
+		DECLARE_STATIC_CALL(crypto_##name##_key, nonfips_##name);    \
+		static inline ret_type name args_decl                        \
+		{                                                            \
+			return static_call(crypto_##name##_key) args_call;   \
+		}                                                            \
+	)                                                                   \
+	IF_NOT_BUILTIN(cfg,                                                 \
+		ret_type name args_decl;                                    \
+	)
+
+#define DECLARE_CRYPTO_VAR(cfg, name, var_type, ...) \
+	IF_BUILTIN(cfg, \
+		extern void *CRYPTO_VAR_NAME(name); \
+	) \
+	IF_NOT_BUILTIN(cfg, \
+		extern var_type name __VA_ARGS__; \
+	)
 
 #define DEFINE_CRYPTO_API_STUB(name) \
 	DEFINE_STATIC_CALL_NULL(crypto_##name##_key, name); \
@@ -80,13 +109,23 @@ struct crypto_var_key {
 /* Consolidated version of different DECLARE_CRYPTO_API versions,
    within FIPS module, API remains the same, only declare static 
    call key */
-#define DECLARE_CRYPTO_API(name, ret_type, args_decl, args_call)	\
-	ret_type name args_decl;					\
-	DECLARE_STATIC_CALL(crypto_##name##_key, name);		
+#define DECLARE_CRYPTO_API(cfg, name, ret_type, args_decl, args_call) \
+	IF_BUILTIN(cfg,                                                   \
+		ret_type name args_decl;                                      \
+		DECLARE_STATIC_CALL(crypto_##name##_key, name)                \
+	)                                                                 \
+	IF_NOT_BUILTIN(cfg,                                               \
+		ret_type name args_decl;                                      \
+	)
 
-#define DECLARE_CRYPTO_VAR(name, var_type, ...) \
-	extern var_type name __VA_ARGS__; \
-	extern void* CRYPTO_VAR_NAME(name);	
+#define DECLARE_CRYPTO_VAR(cfg, name, var_type, ...)               \
+	IF_BUILTIN(cfg,                                             \
+		extern var_type name __VA_ARGS__;                   \
+		extern void *CRYPTO_VAR_NAME(name);                  \
+	)                                                            \
+	IF_NOT_BUILTIN(cfg,                                          \
+		extern var_type name __VA_ARGS__;                   \
+	)
 
 #define DEFINE_CRYPTO_VAR_STUB(name) \
 	static struct crypto_var_key __crypto_##name##_var_key \
