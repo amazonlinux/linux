@@ -51,7 +51,7 @@ struct ecc_curve {
  *
  * Returns curve if get curve succssful, NULL otherwise
  */
-DECLARE_CRYPTO_API(ecc_get_curve, const struct ecc_curve *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_get_curve, const struct ecc_curve *,
 	(unsigned int curve_id),
 	(curve_id));
 
@@ -60,7 +60,7 @@ DECLARE_CRYPTO_API(ecc_get_curve, const struct ecc_curve *,
  *
  * Returns curve25519
  */
-DECLARE_CRYPTO_API(ecc_get_curve25519, const struct ecc_curve *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_get_curve25519, const struct ecc_curve *,
 	(void),
 	());
 

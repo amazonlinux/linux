@@ -80,7 +80,7 @@ static inline void ecc_swap_digits(const void *in, u64 *out, unsigned int ndigit
  * The first byte in the input byte array is expected to hold the most
  * significant bits of the large integer.
  */
-DECLARE_CRYPTO_API(ecc_digits_from_bytes, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_digits_from_bytes, void,
 	(const u8 *in, unsigned int nbytes, u64 *out, unsigned int ndigits),
 	(in, nbytes, out, ndigits));
 
@@ -94,7 +94,7 @@ DECLARE_CRYPTO_API(ecc_digits_from_bytes, void,
  *
  * Returns 0 if the key is acceptable, a negative value otherwise
  */
-DECLARE_CRYPTO_API(ecc_is_key_valid, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_is_key_valid, int,
 	(unsigned int curve_id, unsigned int ndigits, const u64 *private_key, unsigned int private_key_len),
 	(curve_id, ndigits, private_key, private_key_len));
 
@@ -110,7 +110,7 @@ DECLARE_CRYPTO_API(ecc_is_key_valid, int,
  * Returns 0 if the private key was generated successfully, a negative value
  * if an error occurred.
  */
-DECLARE_CRYPTO_API(ecc_gen_privkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_gen_privkey, int,
 	(unsigned int curve_id, unsigned int ndigits, u64 *private_key),
 	(curve_id, ndigits, private_key));
 
@@ -125,7 +125,7 @@ DECLARE_CRYPTO_API(ecc_gen_privkey, int,
  * Returns 0 if the public key was generated successfully, a negative value
  * if an error occurred.
  */
-DECLARE_CRYPTO_API(ecc_make_pub_key, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_make_pub_key, int,
 	(const unsigned int curve_id, unsigned int ndigits, const u64 *private_key, u64 *public_key),
 	(curve_id, ndigits, private_key, public_key));
 
@@ -144,7 +144,7 @@ DECLARE_CRYPTO_API(ecc_make_pub_key, int,
  * Returns 0 if the shared secret was generated successfully, a negative value
  * if an error occurred.
  */
-DECLARE_CRYPTO_API(crypto_ecdh_shared_secret, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, crypto_ecdh_shared_secret, int,
 	(unsigned int curve_id, unsigned int ndigits, const u64 *private_key, const u64 *public_key, u64 *secret),
 	(curve_id, ndigits, private_key, public_key, secret));
 
@@ -162,7 +162,7 @@ DECLARE_CRYPTO_API(crypto_ecdh_shared_secret, int,
  *
  * Return: 0 if validation is successful, -EINVAL if validation is failed.
  */
-DECLARE_CRYPTO_API(ecc_is_pubkey_valid_partial, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_is_pubkey_valid_partial, int,
 	(const struct ecc_curve *curve, struct ecc_point *pk),
 	(curve, pk));
 
@@ -177,7 +177,7 @@ DECLARE_CRYPTO_API(ecc_is_pubkey_valid_partial, int,
  *
  * Return: 0 if validation is successful, -EINVAL if validation is failed.
  */
-DECLARE_CRYPTO_API(ecc_is_pubkey_valid_full, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_is_pubkey_valid_full, int,
 	(const struct ecc_curve *curve, struct ecc_point *pk),
 	(curve, pk));
 
@@ -187,7 +187,7 @@ DECLARE_CRYPTO_API(ecc_is_pubkey_valid_full, int,
  * @vli:		vli to check.
  * @ndigits:		length of the @vli
  */
-DECLARE_CRYPTO_API(vli_is_zero, bool,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_is_zero, bool,
 	(const u64 *vli, unsigned int ndigits),
 	(vli, ndigits));
 
@@ -201,7 +201,7 @@ DECLARE_CRYPTO_API(vli_is_zero, bool,
  * Returns sign of @left - @right, i.e. -1 if @left < @right,
  * 0 if @left == @right, 1 if @left > @right.
  */
-DECLARE_CRYPTO_API(vli_cmp, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_cmp, int,
 	(const u64 *left, const u64 *right, unsigned int ndigits),
 	(left, right, ndigits));
 
@@ -217,7 +217,7 @@ DECLARE_CRYPTO_API(vli_cmp, int,
  *
  * Return: carry bit.
  */
-DECLARE_CRYPTO_API(vli_sub, u64,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_sub, u64,
 	(u64 *result, const u64 *left, const u64 *right, unsigned int ndigits),
 	(result, left, right, ndigits));
 
@@ -228,7 +228,7 @@ DECLARE_CRYPTO_API(vli_sub, u64,
  * @src:		source array of u64 BE values
  * @ndigits:		length of both vli and array
  */
-DECLARE_CRYPTO_API(vli_from_be64, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_from_be64, void,
 	(u64 *dest, const void *src, unsigned int ndigits),
 	(dest, src, ndigits));
 
@@ -239,7 +239,7 @@ DECLARE_CRYPTO_API(vli_from_be64, void,
  * @src:		source array of u64 LE values
  * @ndigits:		length of both vli and array
  */
-DECLARE_CRYPTO_API(vli_from_le64, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_from_le64, void,
 	(u64 *dest, const void *src, unsigned int ndigits),
 	(dest, src, ndigits));
 
@@ -251,7 +251,7 @@ DECLARE_CRYPTO_API(vli_from_le64, void,
  * @mod:		modulus
  * @ndigits:		length of all vlis
  */
-DECLARE_CRYPTO_API(vli_mod_inv, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_mod_inv, void,
 	(u64 *result, const u64 *input, const u64 *mod, unsigned int ndigits),
 	(result, input, mod, ndigits));
 
@@ -266,7 +266,7 @@ DECLARE_CRYPTO_API(vli_mod_inv, void,
  *
  * Note: Assumes that mod is big enough curve order.
  */
-DECLARE_CRYPTO_API(vli_mod_mult_slow, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_mod_mult_slow, void,
 	(u64 *result, const u64 *left, const u64 *right, const u64 *mod, unsigned int ndigits),
 	(result, left, right, mod, ndigits));
 
@@ -278,7 +278,7 @@ DECLARE_CRYPTO_API(vli_mod_mult_slow, void,
  *
  * Return: The number of bits required to represent @vli.
  */
-DECLARE_CRYPTO_API(vli_num_bits, unsigned int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, vli_num_bits, unsigned int,
 	(const u64 *vli, unsigned int ndigits),
 	(vli, ndigits));
 
@@ -289,7 +289,7 @@ DECLARE_CRYPTO_API(vli_num_bits, unsigned int,
  *
  * Return: Pointer to the allocated point or NULL if allocation failed.
  */
-DECLARE_CRYPTO_API(ecc_alloc_point, struct ecc_point *,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_alloc_point, struct ecc_point *,
 	(unsigned int ndigits),
 	(ndigits));
 
@@ -298,7 +298,7 @@ DECLARE_CRYPTO_API(ecc_alloc_point, struct ecc_point *,
  *
  * @p:			The point to free.
  */
-DECLARE_CRYPTO_API(ecc_free_point, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_free_point, void,
 	(struct ecc_point *p),
 	(p));
 
@@ -309,7 +309,7 @@ DECLARE_CRYPTO_API(ecc_free_point, void,
  *
  * Return: true if point is the point at infinity, false otherwise.
  */
-DECLARE_CRYPTO_API(ecc_point_is_zero, bool,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_point_is_zero, bool,
 	(const struct ecc_point *point),
 	(point));
 
@@ -326,7 +326,7 @@ DECLARE_CRYPTO_API(ecc_point_is_zero, bool,
  * Returns result = x * p + x * q over the curve.
  * This works faster than two multiplications and addition.
  */
-DECLARE_CRYPTO_API(ecc_point_mult_shamir, void,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_ECC, ecc_point_mult_shamir, void,
 	(const struct ecc_point *result, const u64 *x, const struct ecc_point *p, const u64 *y, const struct ecc_point *q, const struct ecc_curve *curve),
 	(result, x, p, y, q, curve));
 
