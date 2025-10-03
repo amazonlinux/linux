@@ -19,11 +19,11 @@ struct twofish_ctx {
 	u32 s[4][256], w[8], k[32];
 };
 
-DECLARE_CRYPTO_API(__twofish_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_TWOFISH_COMMON, __twofish_setkey, int,
 	(struct twofish_ctx *ctx, const u8 *key, unsigned int key_len),
 	(ctx, key, key_len));
 
-DECLARE_CRYPTO_API(twofish_setkey, int,
+DECLARE_CRYPTO_API(CONFIG_CRYPTO_TWOFISH_COMMON, twofish_setkey, int,
 	(struct crypto_tfm *tfm, const u8 *key, unsigned int key_len),
 	(tfm, key, key_len));
 
