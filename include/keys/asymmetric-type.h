@@ -14,9 +14,9 @@
 #include <linux/key-type.h>
 #include <linux/verification.h>
 
-DECLARE_CRYPTO_VAR(key_type_asymmetric, struct key_type, );
+DECLARE_CRYPTO_VAR(CONFIG_ASYMMETRIC_KEY_TYPE, key_type_asymmetric, struct key_type, );
 
-#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE)
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_ASYMMETRIC_KEY_TYPE)
 #define key_type_asymmetric (*((struct key_type*)CRYPTO_VAR_NAME(key_type_asymmetric)))
 #endif
 
@@ -61,15 +61,15 @@ struct asymmetric_key_ids {
 	void		*id[3];
 };
 
-DECLARE_CRYPTO_API(asymmetric_key_id_same, bool,
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, asymmetric_key_id_same, bool,
 	(const struct asymmetric_key_id *kid1, const struct asymmetric_key_id *kid2),
 	(kid1, kid2));
 
-DECLARE_CRYPTO_API(asymmetric_key_id_partial, bool,
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, asymmetric_key_id_partial, bool,
 	(const struct asymmetric_key_id *kid1, const struct asymmetric_key_id *kid2),
 	(kid1, kid2));
 
-DECLARE_CRYPTO_API(asymmetric_key_generate_id, struct asymmetric_key_id *,
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, asymmetric_key_generate_id, struct asymmetric_key_id *,
 	(const void *val_1, size_t len_1, const void *val_2, size_t len_2),
 	(val_1, len_1, val_2, len_2));
 static inline
@@ -84,7 +84,7 @@ const struct public_key *asymmetric_key_public_key(const struct key *key)
 	return key->payload.data[asym_crypto];
 }
 
-DECLARE_CRYPTO_API(find_asymmetric_key, struct key *,
+DECLARE_CRYPTO_API(CONFIG_ASYMMETRIC_KEY_TYPE, find_asymmetric_key, struct key *,
 	(struct key *keyring, const struct asymmetric_key_id *id_0, const struct asymmetric_key_id *id_1, const struct asymmetric_key_id *id_2, bool partial),
 	(keyring, id_0, id_1, id_2, partial));
 
