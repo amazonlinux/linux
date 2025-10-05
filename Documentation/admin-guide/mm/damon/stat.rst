@@ -10,6 +10,8 @@ on the system's entire physical memory using DAMON, and provides simplified
 access monitoring results statistics, namely idle time percentiles and
 estimated memory bandwidth.
 
+.. _damon_stat_monitoring_accuracy_overhead
+
 Monitoring Accuracy and Overhead
 ================================
 
@@ -40,6 +42,14 @@ Enable or disable DAMON_STAT.
 You can enable DAMON_STAT by setting the value of this parameter as ``Y``.
 Setting it as ``N`` disables DAMON_STAT.  The default value is set by
 ``CONFIG_DAMON_STAT_ENABLED_DEFAULT`` build config option.
+
+aggr_interval_us
+----------------
+
+Auto-tuned time interval for the last snapshot in microseconds.
+
+The current aggregation interval of DAMON that :ref:`auto-tuned
+<damon_stat_monitoring_accuracy_overhead>`.
 
 estimated_memory_bandwidth
 --------------------------
