@@ -10,7 +10,7 @@ on the system's entire physical memory using DAMON, and provides simplified
 access monitoring results statistics, namely idle time percentiles and
 estimated memory bandwidth.
 
-.. _damon_stat_monitoring_accuracy_overhead
+.. _damon_stat_monitoring_accuracy_overhead:
 
 Monitoring Accuracy and Overhead
 ================================
