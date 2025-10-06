@@ -269,13 +269,6 @@ static ssize_t crypto_devrandom_read(void __user *buf, size_t buflen,
 		 */
 		mutex_lock(&crypto_reseed_rng_lock);
 
-		/* If crypto_default_rng is not set, it will be seeded
-		 * at creation in __crypto_get_default_rng and thus no
-		 * reseeding is needed.
-		 */
-		if (crypto_reseed_rng)
-			flags |= CRYPTO_TFM_REQ_NEED_RESEED;
-
 		ret = crypto_get_rng(&crypto_reseed_rng);
 		if (ret) {
 			mutex_unlock(&crypto_reseed_rng_lock);
