@@ -2150,9 +2150,9 @@ static unsigned long damos_get_node_memcg_used_bp(
 
 	si_meminfo_node(&i, goal->nid);
 	if (goal->metric == DAMOS_QUOTA_NODE_MEMCG_USED_BP)
-		numerator = used_pages * PAGE_SIZE;
+		numerator = used_pages;
 	else	/* DAMOS_QUOTA_NODE_MEMCG_FREE_BP */
-		numerator = i.totalram - used_pages * PAGE_SIZE;
+		numerator = i.totalram - used_pages;
 	return numerator * 10000 / i.totalram;
 }
 #else
