@@ -255,4 +255,6 @@ source "drivers/cdx/Kconfig"
 
 source "drivers/resctrl/Kconfig"
 
+source "drivers/amazon/Kconfig"
+
 endmenu
