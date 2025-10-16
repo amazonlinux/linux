@@ -62,7 +62,7 @@
 /*
  * Both ptrauth_switch_to_guest and ptrauth_switch_to_hyp macros will
  * check for the presence ARM64_HAS_ADDRESS_AUTH, which is defined as
- * (ARM64_HAS_ADDRESS_AUTH_ARCH || ARM64_HAS_ADDRESS_AUTH_IMP_DEF) and
+ * (ARM64_HAS_ADDRESS_AUTH_ARCH_QARMA5 || ARM64_HAS_ADDRESS_AUTH_IMP_DEF) and
  * then proceed ahead with the save/restore of Pointer Authentication
  * key registers if enabled for the guest.
  */
