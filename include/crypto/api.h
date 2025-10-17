@@ -38,6 +38,9 @@
 #define crypto_subsys_initcall(fn)	subsys_initcall(fn)
 #define crypto_late_initcall(fn)	late_initcall(fn)
 
+#define crypto_module_cpu_feature_match(x, __initfunc) \
+	module_cpu_feature_match(x, __initfunc)
+
 #else
 
 struct crypto_api_key {
@@ -104,6 +107,9 @@ struct crypto_var_key {
 #define crypto_subsys_initcall(fn)	subsys_initcall(fn)
 #define crypto_late_initcall(fn)	late_initcall(fn)
 
+#define crypto_module_cpu_feature_match(x, __initfunc) \
+	module_cpu_feature_match(x, __initfunc)
+	
 #else /* defined(FIPS_MODULE) */
 
 /* Consolidated version of different DECLARE_CRYPTO_API versions,
@@ -172,6 +178,18 @@ struct crypto_var_key {
 #define crypto_late_exitcall(fn) \
 		static unsigned long __used __section(".fips_exitcall") \
 		__fips_##fn = (unsigned long) &fn;
+
+#define crypto_module_cpu_feature_match(x, __initfunc) \
+static struct cpu_feature const __maybe_unused cpu_feature_match_ ## x[] = \
+	{ { .feature = cpu_feature(x) }, { } }; \
+MODULE_DEVICE_TABLE(cpu, cpu_feature_match_ ## x); \
+static int __init cpu_feature_match_ ## x ## _init(void) \
+{ \
+	if (!cpu_have_feature(cpu_feature(x))) \
+		return -ENODEV; \
+	return __initfunc(); \
+} \
+crypto_module_init(cpu_feature_match_ ## x ## _init)
 
 #endif /* defined(FIPS_MODULE) */
 #endif /* defined(CONFIG_CRYPTO_FIPS140_EXTMOD) */
