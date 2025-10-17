@@ -65,5 +65,5 @@ static void __exit sm3_ce_mod_fini(void)
 	crypto_unregister_shash(&sm3_alg);
 }
 
-module_cpu_feature_match(SM3, sm3_ce_mod_init);
-module_exit(sm3_ce_mod_fini);
+crypto_module_cpu_feature_match(SM3, sm3_ce_mod_init);
+crypto_module_exit(sm3_ce_mod_fini);
