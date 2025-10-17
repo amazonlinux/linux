@@ -293,8 +293,8 @@ static void __exit sm4_ce_ccm_exit(void)
 	crypto_unregister_aead(&sm4_ccm_alg);
 }
 
-module_cpu_feature_match(SM4, sm4_ce_ccm_init);
-module_exit(sm4_ce_ccm_exit);
+crypto_module_cpu_feature_match(SM4, sm4_ce_ccm_init);
+crypto_module_exit(sm4_ce_ccm_exit);
 
 MODULE_DESCRIPTION("Synchronous SM4 in CCM mode using ARMv8 Crypto Extensions");
 MODULE_ALIAS_CRYPTO("ccm(sm4)");
