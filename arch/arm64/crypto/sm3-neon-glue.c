@@ -62,8 +62,8 @@ static void __exit sm3_neon_fini(void)
 	crypto_unregister_shash(&sm3_alg);
 }
 
-module_init(sm3_neon_init);
-module_exit(sm3_neon_fini);
+crypto_module_init(sm3_neon_init);
+crypto_module_exit(sm3_neon_fini);
 
 MODULE_DESCRIPTION("SM3 secure hash using NEON instructions");
 MODULE_AUTHOR("Jussi Kivilinna <jussi.kivilinna@iki.fi>");
