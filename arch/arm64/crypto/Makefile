@@ -11,7 +11,7 @@ sha3-ce-y := sha3-ce-glue.o sha3-ce-core.o
 crypto-objs-$(CONFIG_CRYPTO_SM3_NEON) += sm3-neon.o
 sm3-neon-y := sm3-neon-glue.o sm3-neon-core.o
 
-obj-$(CONFIG_CRYPTO_SM3_ARM64_CE) += sm3-ce.o
+crypto-objs-$(CONFIG_CRYPTO_SM3_ARM64_CE) += sm3-ce.o
 sm3-ce-y := sm3-ce-glue.o sm3-ce-core.o
 
 obj-$(CONFIG_CRYPTO_SM4_ARM64_CE) += sm4-ce-cipher.o
