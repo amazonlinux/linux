@@ -542,5 +542,5 @@ static const struct cpu_feature __maybe_unused ghash_cpu_feature[] = {
 };
 MODULE_DEVICE_TABLE(cpu, ghash_cpu_feature);
 
-module_init(ghash_ce_mod_init);
-module_exit(ghash_ce_mod_exit);
+crypto_module_init(ghash_ce_mod_init);
+crypto_module_exit(ghash_ce_mod_exit);
