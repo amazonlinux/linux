@@ -271,8 +271,8 @@ static const struct cpu_feature __maybe_unused sm4_ce_gcm_cpu_feature[] = {
 };
 MODULE_DEVICE_TABLE(cpu, sm4_ce_gcm_cpu_feature);
 
-module_cpu_feature_match(SM4, sm4_ce_gcm_init);
-module_exit(sm4_ce_gcm_exit);
+crypto_module_cpu_feature_match(SM4, sm4_ce_gcm_init);
+crypto_module_exit(sm4_ce_gcm_exit);
 
 MODULE_DESCRIPTION("Synchronous SM4 in GCM mode using ARMv8 Crypto Extensions");
 MODULE_ALIAS_CRYPTO("gcm(sm4)");
