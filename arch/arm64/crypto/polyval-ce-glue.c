@@ -149,8 +149,8 @@ static void __exit polyval_ce_mod_exit(void)
 	crypto_unregister_shash(&polyval_alg);
 }
 
-module_cpu_feature_match(PMULL, polyval_ce_mod_init)
-module_exit(polyval_ce_mod_exit);
+crypto_module_cpu_feature_match(PMULL, polyval_ce_mod_init);
+crypto_module_exit(polyval_ce_mod_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("POLYVAL hash function accelerated by ARMv8 Crypto Extensions");
