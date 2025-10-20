@@ -166,8 +166,8 @@ static inline int agl_list_empty(struct ll_statahead_info *sai)
  */
 static inline int sa_low_hit(struct ll_statahead_info *sai)
 {
-	return ((sai->sai_hit > 7 && sai->sai_hit < 4 * sai->sai_miss) ||
-		(sai->sai_consecutive_miss > 8));
+	return ((sai->sai_hit > 32 && sai->sai_hit < 4 * sai->sai_miss) ||
+		(sai->sai_consecutive_miss > 32));
 }
 
 /*
@@ -555,10 +555,25 @@ static void ll_sai_put(struct ll_statahead_info *sai)
 	}
 }
 
+static inline struct ll_inode_info *ll_work2info(struct work_struct *work)
+{
+	return container_of(work, struct ll_inode_info, lli_work);
+}
+
+static void ll_work_handler(struct work_struct *work)
+{
+	struct ll_inode_info *lli = ll_work2info(work);
+	struct inode *inode = &lli->lli_vfs_inode;
+
+	ll_xattr_cache_refill(inode, true);
+	up_write(&lli->lli_xattrs_list_rwsem);
+}
+
 /* Do NOT forget to drop inode refcount when into sai_agls. */
 static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 {
 	struct ll_inode_info *lli = ll_i2info(inode);
+	struct ll_sb_info *sbi = ll_i2sbi(inode);
 	u64 index = lli->lli_agl_index;
 	ktime_t expire;
 	int rc;
@@ -626,6 +641,11 @@ static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 	lli->lli_agl_index = 0;
 	lli->lli_glimpse_time = ktime_get();
 	up_write(&lli->lli_glimpse_sem);
+
+	if (sbi->ll_statahead_xattr) {
+		INIT_WORK(&lli->lli_work, ll_work_handler);
+		schedule_work(&lli->lli_work);
+	}
 
 	CDEBUG(D_READA,
 	       "Handled (init) async glimpse: inode= " DFID", idx = %llu, rc = %d\n",
@@ -1254,6 +1274,9 @@ out:
 	sai->sai_task = NULL;
 	spin_unlock(&lli->lli_sa_lock);
 	wake_up(&sai->sai_waitq);
+
+	atomic_add(sai->sai_hit, &sbi->ll_sa_hit_total);
+	atomic_add(sai->sai_miss, &sbi->ll_sa_miss_total);
 
 	ll_sai_put(sai);
 
