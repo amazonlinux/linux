@@ -2691,8 +2691,8 @@ static int ll_lov_setstripe(struct inode *inode, struct file *file,
 		    ll_i2info(inode)->lli_clob) {
 			struct iattr attr = { 0 };
 
-			rc = cl_setattr_ost(ll_i2info(inode)->lli_clob, &attr,
-					    OP_XVALID_FLAGS, LUSTRE_ENCRYPT_FL);
+			rc = cl_setattr_ost(inode, &attr, OP_XVALID_FLAGS,
+					    LUSTRE_ENCRYPT_FL);
 		}
 	}
 	cl_lov_delay_create_clear(&file->f_flags);
@@ -3690,7 +3690,6 @@ static int ll_set_project(struct inode *inode, __u32 xflags, __u32 projid)
 {
 	struct ptlrpc_request *req = NULL;
 	struct md_op_data *op_data;
-	struct cl_object *obj;
 	unsigned int inode_flags;
 	int rc = 0;
 
@@ -3722,11 +3721,10 @@ static int ll_set_project(struct inode *inode, __u32 xflags, __u32 projid)
 	if (xflags == 0 || xflags == FS_XFLAG_PROJINHERIT)
 		GOTO(out_fsxattr, rc);
 
-	obj = ll_i2info(inode)->lli_clob;
-	if (obj) {
+	if (ll_i2info(inode)->lli_clob) {
 		struct iattr attr = { 0 };
 
-		rc = cl_setattr_ost(obj, &attr, OP_XVALID_FLAGS, xflags);
+		rc = cl_setattr_ost(inode, &attr, OP_XVALID_FLAGS, xflags);
 	}
 
 out_fsxattr:
@@ -5567,109 +5565,10 @@ int ll_getattr(struct vfsmount *mnt, struct dentry *de, struct kstat *stat)
 }
 #endif
 
-static int cl_falloc(struct file *file, struct inode *inode, int mode,
-		     loff_t offset, loff_t len)
-{
-	loff_t size = i_size_read(inode);
-	struct lu_env *env;
-	struct cl_io *io;
-	__u16 refcheck;
-	int rc;
-
-	ENTRY;
-
-	env = cl_env_get(&refcheck);
-	if (IS_ERR(env))
-		RETURN(PTR_ERR(env));
-
-	io = vvp_env_thread_io(env);
-	io->ci_obj = ll_i2info(inode)->lli_clob;
-	ll_io_set_mirror(io, file);
-
-	io->ci_verify_layout = 1;
-	io->u.ci_setattr.sa_parent_fid = lu_object_fid(&io->ci_obj->co_lu);
-	io->u.ci_setattr.sa_falloc_mode = mode;
-	io->u.ci_setattr.sa_falloc_offset = offset;
-	io->u.ci_setattr.sa_falloc_end = offset + len;
-	io->u.ci_setattr.sa_subtype = CL_SETATTR_FALLOCATE;
-
-	CDEBUG(D_INODE, "UID %u GID %u PRJID %u\n",
-	       from_kuid(&init_user_ns, inode->i_uid),
-	       from_kgid(&init_user_ns, inode->i_gid),
-	       ll_i2info(inode)->lli_projid);
-
-	io->u.ci_setattr.sa_falloc_uid = from_kuid(&init_user_ns, inode->i_uid);
-	io->u.ci_setattr.sa_falloc_gid = from_kgid(&init_user_ns, inode->i_gid);
-	io->u.ci_setattr.sa_falloc_projid = ll_i2info(inode)->lli_projid;
-
-	if (io->u.ci_setattr.sa_falloc_end > size) {
-		loff_t newsize = io->u.ci_setattr.sa_falloc_end;
-
-		/* Check new size against VFS/VM file size limit and rlimit */
-		rc = inode_newsize_ok(inode, newsize);
-		if (rc)
-			goto out;
-		if (newsize > ll_file_maxbytes(inode)) {
-			CDEBUG(D_INODE, "file size too large %llu > %llu\n",
-			       (unsigned long long)newsize,
-			       ll_file_maxbytes(inode));
-			rc = -EFBIG;
-			goto out;
-		}
-	}
-
-	do {
-		rc = cl_io_init(env, io, CIT_SETATTR, io->ci_obj);
-		if (!rc)
-			rc = cl_io_loop(env, io);
-		else
-			rc = io->ci_result;
-		cl_io_fini(env, io);
-	} while (unlikely(io->ci_need_restart));
-
-out:
-	cl_env_put(env, &refcheck);
-	RETURN(rc);
-}
-
 static long ll_fallocate(struct file *filp, int mode, loff_t offset, loff_t len)
 {
-	struct inode *inode = file_inode(filp);
-	int rc;
-
-	if (offset < 0 || len <= 0)
-		RETURN(-EINVAL);
-	/*
-	 * Encrypted inodes can't handle collapse range or zero range or insert
-	 * range since we would need to re-encrypt blocks with a different IV or
-	 * XTS tweak (which are based on the logical block number).
-	 * Similar to what ext4 does.
-	 */
-	if (IS_ENCRYPTED(inode) &&
-	    (mode & (FALLOC_FL_COLLAPSE_RANGE | FALLOC_FL_INSERT_RANGE |
-		     FALLOC_FL_ZERO_RANGE)))
-		RETURN(-EOPNOTSUPP);
-
-	/*
-	 * mode == 0 (which is standard prealloc) and PUNCH is supported
-	 * Rest of mode options are not supported yet.
-	 */
-	if (mode & ~(FALLOC_FL_KEEP_SIZE | FALLOC_FL_PUNCH_HOLE))
-		RETURN(-EOPNOTSUPP);
-
-	ll_stats_ops_tally(ll_i2sbi(inode), LPROC_LL_FALLOCATE, 1);
-
-	rc = cl_falloc(filp, inode, mode, offset, len);
-	/*
-	 * ENOTSUPP (524) is an NFSv3 specific error code erroneously
-	 * used by Lustre in several places. Retuning it here would
-	 * confuse applications that explicity test for EOPNOTSUPP
-	 * (95) and fall back to ftruncate().
-	 */
-	if (rc == -ENOTSUPP)
-		rc = -EOPNOTSUPP;
-
-	RETURN(rc);
+	/* Lustre OSD-ZFS does not support fallocate */
+	RETURN(-EOPNOTSUPP);
 }
 
 static int ll_fiemap(struct inode *inode, struct fiemap_extent_info *fieinfo,
