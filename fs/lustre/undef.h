@@ -44,6 +44,9 @@
 /* Enable POSIX acl */
 #undef CONFIG_LUSTRE_FS_POSIX_ACL
 
+/* MODULE_IMPORT_NS() needs string literal */
+#undef CRYPTO_INTERNAL
+
 /* 'ClearPageError()' replacement */
 #undef ClearPageError
 
@@ -307,6 +310,9 @@
 
 /* 'd_is_positive' is available */
 #undef HAVE_D_IS_POSITIVE
+
+/* dentry operations d_revalidate() takes inode, name */
+#undef HAVE_D_REVALIDATE_WITH_INODE_NAME
 
 /* Define to 1 if you have the <endian.h> header file. */
 #undef HAVE_ENDIAN_H
@@ -777,7 +783,7 @@
 /* Enable lru resize support */
 #undef HAVE_LRU_RESIZE_SUPPORT
 
-/* lsmcontext has id */
+/* lsm_context has id */
 #undef HAVE_LSMCONTEXT_HAS_ID
 
 /* lsmcontext_init is available */
@@ -810,6 +816,9 @@
 
 /* 'inode_operations' members have mnt_idmap argument */
 #undef HAVE_MNT_IDMAP_ARG
+
+/* MODULE_IMPORT_NS() needs string literal */
+#undef HAVE_MODULE_IMPORT_USES_EXPORT_SYMBOLS
 
 /* kernel module loading is possible */
 #undef HAVE_MODULE_LOADING_SUPPORT
@@ -886,6 +895,9 @@
 /* 'page_mapcount_is_type()' is available */
 #undef HAVE_PAGE_MAPCOUNT_IS_TYPE
 
+/* PagePrivate2() is available */
+#undef HAVE_PAGE_PRIVATE_2
+
 /* linux/panic_notifier.h is present */
 #undef HAVE_PANIC_NOTIFIER_H
 
@@ -909,6 +921,9 @@
 
 /* posix_acl_valid takes struct user_namespace */
 #undef HAVE_POSIX_ACL_VALID_USER_NS
+
+/* prandom.h is present */
+#undef HAVE_PRANDOM_H
 
 /* 'prepare_to_wait_event' is available */
 #undef HAVE_PREPARE_TO_WAIT_EVENT
@@ -982,7 +997,7 @@
 /* linux/sched header directory exist */
 #undef HAVE_SCHED_HEADERS
 
-/* security_dentry_init_security needs lsmcontext */
+/* security_dentry_init_security needs lsm_context */
 #undef HAVE_SECURITY_DENTRY_INIT_SECURTY_WITH_CTX
 
 /* security_dentry_init_security() returns xattr name */
@@ -1054,6 +1069,9 @@
 
 /* struct file_lock_core exists */
 #undef HAVE_STRUCT_FILE_LOCK_CORE
+
+/* struct lsm_context is available */
+#undef HAVE_STRUCT_LSM_CONTEXT
 
 /* struct posix_acl_xattr_{header,entry} defined */
 #undef HAVE_STRUCT_POSIX_ACL_XATTR
@@ -1401,6 +1419,9 @@
 
 /* 'class_create' expects module arg */
 #undef ll_class_create
+
+/* struct lsm_context also known as struct lsmcontext in ubuntu kernels */
+#undef lsm_context
 
 /* need 'page_mapcount_is_type()' replacement */
 #undef page_mapcount_is_type
