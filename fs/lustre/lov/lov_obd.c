@@ -971,7 +971,7 @@ static int lov_iocontrol(unsigned int cmd, struct obd_export *exp, int len,
 
 		if (!lov->lov_tgts[index]->ltd_exp && !lov->lov_tgts[index]->ltd_active) {
 			RETURN(-ENODATA);
-		}
+		}	
 
 		osc_obd = class_exp2obd(lov->lov_tgts[index]->ltd_exp);
 		if (!osc_obd)
