@@ -677,7 +677,7 @@ ll_shrinker_create(struct ll_shrinker_ops *ops, unsigned int flags,
 #ifdef HAVE_SEC_RELEASE_SECCTX_1ARG
 #ifndef HAVE_LSMCONTEXT_INIT
 /* Ubuntu 5.19 */
-static inline void lsmcontext_init(struct lsmcontext *cp, char *context,
+static inline void lsmcontext_init(struct lsm_context *cp, char *context,
 				   u32 size, int slot)
 {
 #ifdef HAVE_LSMCONTEXT_HAS_ID
@@ -695,7 +695,7 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen,
 					      int slot)
 {
 #ifdef HAVE_SEC_RELEASE_SECCTX_1ARG
-	struct lsmcontext context = { };
+	struct lsm_context context = { };
 
 	lsmcontext_init(&context, secdata, seclen, slot);
 	return security_release_secctx(&context);
@@ -890,6 +890,12 @@ static inline struct page *wbe_folio_page(struct folio *folio)
 #define wbe_folio			page
 #define wbe_page_folio(page)		(page)
 #define wbe_folio_page(page)		(page)
+#endif
+
+#ifndef HAVE_PAGE_PRIVATE_2
+#define PagePrivate2(page)	test_bit(PG_private_2, &((page)->flags))
+#define SetPagePrivate2(page)	set_bit(PG_private_2, &((page)->flags))
+#define ClearPagePrivate2(page)	clear_bit(PG_private_2, &((page)->flags))
 #endif
 
 #ifdef HAVE_FOLIO_MAPCOUNT
