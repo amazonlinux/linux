@@ -46,6 +46,9 @@
 /* Enable POSIX acl */
 #define CONFIG_LUSTRE_FS_POSIX_ACL 1
 
+/* MODULE_IMPORT_NS() needs string literal */
+/* #undef CRYPTO_INTERNAL */
+
 /* 'ClearPageError()' replacement */
 #define ClearPageError(pg) /**/
 
@@ -309,6 +312,9 @@
 
 /* 'd_is_positive' is available */
 #define HAVE_D_IS_POSITIVE 1
+
+/* dentry operations d_revalidate() takes inode, name */
+/* #undef HAVE_D_REVALIDATE_WITH_INODE_NAME */
 
 /* Define to 1 if you have the <endian.h> header file. */
 #define HAVE_ENDIAN_H 1
@@ -779,7 +785,7 @@
 /* Enable lru resize support */
 #define HAVE_LRU_RESIZE_SUPPORT 1
 
-/* lsmcontext has id */
+/* lsm_context has id */
 /* #undef HAVE_LSMCONTEXT_HAS_ID */
 
 /* lsmcontext_init is available */
@@ -812,6 +818,9 @@
 
 /* 'inode_operations' members have mnt_idmap argument */
 #define HAVE_MNT_IDMAP_ARG 1
+
+/* MODULE_IMPORT_NS() needs string literal */
+#define HAVE_MODULE_IMPORT_USES_EXPORT_SYMBOLS 1
 
 /* kernel module loading is possible */
 #define HAVE_MODULE_LOADING_SUPPORT 1
@@ -888,6 +897,9 @@
 /* 'page_mapcount_is_type()' is available */
 #define HAVE_PAGE_MAPCOUNT_IS_TYPE 1
 
+/* PagePrivate2() is available */
+#define HAVE_PAGE_PRIVATE_2 1
+
 /* linux/panic_notifier.h is present */
 #define HAVE_PANIC_NOTIFIER_H 1
 
@@ -911,6 +923,9 @@
 
 /* posix_acl_valid takes struct user_namespace */
 #define HAVE_POSIX_ACL_VALID_USER_NS 1
+
+/* prandom.h is present */
+#define HAVE_PRANDOM_H 1
 
 /* 'prepare_to_wait_event' is available */
 #define HAVE_PREPARE_TO_WAIT_EVENT 1
@@ -984,7 +999,7 @@
 /* linux/sched header directory exist */
 #define HAVE_SCHED_HEADERS 1
 
-/* security_dentry_init_security needs lsmcontext */
+/* security_dentry_init_security needs lsm_context */
 /* #undef HAVE_SECURITY_DENTRY_INIT_SECURTY_WITH_CTX */
 
 /* security_dentry_init_security() returns xattr name */
@@ -1056,6 +1071,9 @@
 
 /* struct file_lock_core exists */
 #define HAVE_STRUCT_FILE_LOCK_CORE 1
+
+/* struct lsm_context is available */
+/* #undef HAVE_STRUCT_LSM_CONTEXT */
 
 /* struct posix_acl_xattr_{header,entry} defined */
 #define HAVE_STRUCT_POSIX_ACL_XATTR 1
@@ -1283,7 +1301,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_668_gcc235da"
+#define LUSTRE_VERSION_STRING "2.15.6"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1313,7 +1331,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_668_gcc235da"
+#define PACKAGE_STRING "Lustre 2.15.6"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1322,7 +1340,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_668_gcc235da"
+#define PACKAGE_VERSION "2.15.6"
 
 /* name of parallel fsck program */
 #define PFSCK "fsck"
@@ -1366,7 +1384,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_668_gcc235da"
+#define VERSION "2.15.6"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) ((void *)(value))
@@ -1403,6 +1421,9 @@
 
 /* 'class_create' expects module arg */
 #define ll_class_create(name) class_create((name))
+
+/* struct lsm_context also known as struct lsmcontext in ubuntu kernels */
+#define lsm_context lsmcontext
 
 /* need 'page_mapcount_is_type()' replacement */
 /* #undef page_mapcount_is_type */
