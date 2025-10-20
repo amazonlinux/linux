@@ -139,6 +139,8 @@ struct ll_inode_info {
 	/* master inode fid for stripe directory */
 	struct lu_fid			lli_pfid;
 
+	struct work_struct lli_work;
+
 	/* We need all three because every inode may be opened in different
 	 * modes */
 	struct obd_client_handle       *lli_mds_read_och;
@@ -473,6 +475,8 @@ int ll_xattr_cache_insert(struct inode *inode,
 			  char *buffer,
 			  size_t size);
 
+int ll_xattr_cache_refill(struct inode *inode, bool single_use);
+
 static inline bool obd_connect_has_secctx(struct obd_connect_data *data)
 {
 #ifdef CONFIG_SECURITY
@@ -802,6 +806,7 @@ struct ll_sb_info {
 	unsigned int		  ll_sa_running_max;/* max concurrent
 						     * statahead instances */
 	unsigned int		  ll_sa_max;     /* max statahead RPCs */
+	unsigned int		  ll_statahead_xattr;
 	atomic_t		  ll_sa_total;   /* statahead thread started
 						  * count */
 	atomic_t		  ll_sa_wrong;   /* statahead thread stopped for
@@ -809,6 +814,8 @@ struct ll_sb_info {
 	atomic_t		  ll_sa_running; /* running statahead thread
 						  * count */
 	atomic_t		  ll_agl_total;  /* AGL thread started count */
+	atomic_t		  ll_sa_hit_total;  /* total hit count */
+	atomic_t		  ll_sa_miss_total; /* total miss count */
 
 	dev_t			  ll_sdev_orig; /* save s_dev before assign for
 						 * clustred nfs */
@@ -1830,7 +1837,7 @@ int ll_page_sync_io(const struct lu_env *env, struct cl_io *io,
 int ll_getparent(struct file *file, struct getparent __user *arg);
 
 /* lcommon_cl.c */
-int cl_setattr_ost(struct cl_object *obj, const struct iattr *attr,
+int cl_setattr_ost(struct inode *inode, const struct iattr *attr,
 		   enum op_xvalid xvalid, unsigned int attr_flags);
 
 extern struct lu_env *cl_inode_fini_env;
