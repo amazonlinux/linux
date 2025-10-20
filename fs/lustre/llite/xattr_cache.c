@@ -49,6 +49,8 @@ struct ll_xattr_entry {
 	char			*xe_value;  /* xattr value */
 	unsigned		xe_namelen; /* strlen(xe_name) + 1 */
 	unsigned		xe_vallen;  /* xattr value length */
+
+	bool			xe_single_use; /* flush from cache after 1 use */
 };
 
 static struct kmem_cache *xattr_kmem;
@@ -132,7 +134,8 @@ static int ll_xattr_cache_find(struct list_head *cache,
 static int ll_xattr_cache_add(struct list_head *cache,
 			      const char *xattr_name,
 			      const char *xattr_val,
-			      unsigned xattr_val_len)
+			      unsigned xattr_val_len,
+			      bool single_use)
 {
 	struct ll_xattr_entry *xattr;
 
@@ -174,6 +177,7 @@ static int ll_xattr_cache_add(struct list_head *cache,
 	memcpy(xattr->xe_name, xattr_name, xattr->xe_namelen);
 	memcpy(xattr->xe_value, xattr_val, xattr_val_len);
 	xattr->xe_vallen = xattr_val_len;
+	xattr->xe_single_use = single_use;
 	list_add(&xattr->xe_list, cache);
 
 	CDEBUG(D_CACHE, "set: [%s]=%.*s\n", xattr_name,
@@ -430,7 +434,7 @@ out:
  * \retval -EPROTO network protocol error
  * \retval -ENOMEM not enough memory for the cache
  */
-static int ll_xattr_cache_refill(struct inode *inode)
+int ll_xattr_cache_refill(struct inode *inode, bool single_use)
 {
 	struct lookup_intent oit = { .it_op = IT_GETXATTR };
 	struct ll_sb_info *sbi = ll_i2sbi(inode);
@@ -502,20 +506,32 @@ static int ll_xattr_cache_refill(struct inode *inode)
 			rc = -ENOMEM;
 		} else if (!strcmp(xdata, XATTR_NAME_ACL_ACCESS)) {
 			/* Filter out ACL ACCESS since it's cached separately */
-			CDEBUG(D_CACHE, "not caching %s\n",
-			       XATTR_NAME_ACL_ACCESS);
-			rc = 0;
+			if (single_use) {
+				rc = ll_xattr_cache_add(&lli->lli_xattrs,
+							xdata, xval,
+							*xsizes, true);
+			} else {
+				CDEBUG(D_CACHE, "not caching %s\n",
+				       XATTR_NAME_ACL_ACCESS);
+				rc = 0;
+			}
 		} else if (ll_xattr_is_seclabel(xdata)) {
 			/* Filter out security label, it is cached in slab */
-			CDEBUG(D_CACHE, "not caching %s\n", xdata);
-			rc = 0;
+			if (single_use) {
+				rc = ll_xattr_cache_add(&lli->lli_xattrs,
+							xdata, xval,
+							*xsizes, true);
+			} else {
+				CDEBUG(D_CACHE, "not caching %s\n", xdata);
+				rc = 0;
+			}
 		} else if (!strcmp(xdata, XATTR_NAME_SOM)) {
 			/* Filter out trusted.som, it is not cached on client */
 			CDEBUG(D_CACHE, "not caching trusted.som\n");
 			rc = 0;
 		} else {
 			rc = ll_xattr_cache_add(&lli->lli_xattrs, xdata, xval,
-						*xsizes);
+						*xsizes, false);
 		}
 		if (rc < 0) {
 			ll_xattr_cache_destroy_locked(lli);
@@ -586,7 +602,7 @@ int ll_xattr_cache_get(struct inode *inode,
 	     strcmp(name, xattr_for_enc(inode)) != 0) &&
 	    !ll_xattr_cache_filled(lli)) {
 		up_read(&lli->lli_xattrs_list_rwsem);
-		rc = ll_xattr_cache_refill(inode);
+		rc = ll_xattr_cache_refill(inode, false);
 		if (rc)
 			RETURN(rc);
 		/* Turn the write lock obtained in ll_xattr_cache_refill()
@@ -613,6 +629,13 @@ int ll_xattr_cache_get(struct inode *inode,
 						xattr->xe_vallen);
 				else
 					rc = -ERANGE;
+			}
+
+			if (xattr->xe_single_use) {
+				list_del(&xattr->xe_list);
+				OBD_FREE(xattr->xe_name, xattr->xe_namelen);
+				OBD_FREE(xattr->xe_value, xattr->xe_vallen);
+				OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
 			}
 		/* Return the project id when the virtual project id xattr
 		 * is explicitly asked.
@@ -665,7 +688,7 @@ int ll_xattr_cache_insert(struct inode *inode,
 	down_write(&lli->lli_xattrs_list_rwsem);
 	if (!ll_xattr_cache_valid(lli))
 		ll_xattr_cache_init(lli);
-	rc = ll_xattr_cache_add(&lli->lli_xattrs, name, buffer, size);
+	rc = ll_xattr_cache_add(&lli->lli_xattrs, name, buffer, size, false);
 	up_write(&lli->lli_xattrs_list_rwsem);
 	RETURN(rc);
 }
