@@ -758,6 +758,37 @@ static ssize_t statahead_running_max_store(struct kobject *kobj,
 }
 LUSTRE_RW_ATTR(statahead_running_max);
 
+static ssize_t statahead_xattr_show(struct kobject *kobj,
+				   struct attribute *attr,
+				   char *buf)
+{
+	struct ll_sb_info *sbi = container_of(kobj, struct ll_sb_info,
+					      ll_kset.kobj);
+
+	return sprintf(buf, "%u\n", sbi->ll_statahead_xattr);
+}
+
+static ssize_t statahead_xattr_store(struct kobject *kobj,
+				   struct attribute *attr,
+				   const char *buffer,
+				   size_t count)
+{
+	struct ll_sb_info *sbi = container_of(kobj, struct ll_sb_info,
+					      ll_kset.kobj);
+	unsigned long val;
+	int rc;
+
+	rc = kstrtoul(buffer, 0, &val);
+	if (rc)
+		return rc;
+
+	if (val <= 1)
+		sbi->ll_statahead_xattr = val;
+
+	return count;
+}
+LUSTRE_RW_ATTR(statahead_xattr);
+
 static ssize_t statahead_max_show(struct kobject *kobj,
 				  struct attribute *attr,
 				  char *buf)
@@ -833,14 +864,34 @@ static int ll_statahead_stats_seq_show(struct seq_file *m, void *v)
 
 	seq_printf(m, "statahead total: %u\n"
 		      "statahead wrong: %u\n"
-		      "agl total: %u\n",
+		      "agl total: %u\n"
+		      "hit_total: %u\n"
+		      "miss_total: %u\n",
 		   atomic_read(&sbi->ll_sa_total),
 		   atomic_read(&sbi->ll_sa_wrong),
-		   atomic_read(&sbi->ll_agl_total));
+		   atomic_read(&sbi->ll_agl_total),
+		   atomic_read(&sbi->ll_sa_hit_total),
+		   atomic_read(&sbi->ll_sa_miss_total));
 	return 0;
 }
 
-LDEBUGFS_SEQ_FOPS_RO(ll_statahead_stats);
+static ssize_t ll_statahead_stats_seq_write(struct file *file,
+					    const char __user *buffer,
+					    size_t count, loff_t *off)
+{
+	struct seq_file *m = file->private_data;
+	struct super_block *sb = m->private;
+	struct ll_sb_info *sbi = ll_s2sbi(sb);
+
+	atomic_set(&sbi->ll_sa_total, 0);
+	atomic_set(&sbi->ll_sa_wrong, 0);
+	atomic_set(&sbi->ll_agl_total, 0);
+	atomic_set(&sbi->ll_sa_hit_total, 0);
+	atomic_set(&sbi->ll_sa_miss_total, 0);
+
+	return count;
+}
+LDEBUGFS_SEQ_FOPS(ll_statahead_stats);
 
 static ssize_t lazystatfs_show(struct kobject *kobj,
 			       struct attribute *attr,
@@ -1883,6 +1934,7 @@ static struct attribute *llite_attrs[] = {
 	&lustre_attr_stats_track_ppid.attr,
 	&lustre_attr_stats_track_gid.attr,
 	&lustre_attr_statahead_running_max.attr,
+	&lustre_attr_statahead_xattr.attr,
 	&lustre_attr_statahead_max.attr,
 	&lustre_attr_statahead_agl.attr,
 	&lustre_attr_lazystatfs.attr,
