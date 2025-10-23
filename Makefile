@@ -1982,6 +1982,13 @@ endif # CONFIG_MODULES
 PHONY += modpost
 modpost: $(if $(single-build),, $(if $(KBUILD_BUILTIN), vmlinux.o)) \
 	 $(if $(KBUILD_MODULES), modules_check)
+	@echo "=== DEBUG: Module.symvers before modpost ==="
+	-@ls -la Module.symvers 2>/dev/null || echo "Module.symvers does not exist"
+	@echo "=== DEBUG: fips140/crypto symbols in Module.symvers ==="
+	-@grep -E "(fips140|crypto_)" Module.symvers 2>/dev/null || echo "No fips140/crypto symbols found"
+	@echo "=== DEBUG: modules.order contents ==="
+	-@cat modules.order 2>/dev/null || echo "modules.order does not exist"
+	@echo "=== DEBUG: End debug info ==="
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modpost
 
 # Single targets

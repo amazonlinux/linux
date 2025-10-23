@@ -179,7 +179,11 @@ endif
 
 
 $(output-symdump): $(modpost-deps) FORCE
+	@echo "=== DEBUG: modules.order before modpost ==="
+	@cat modules.order
 	$(call if_changed,modpost)
+	@echo "=== DEBUG: Module.symvers after modpost ==="
+	@grep -E "(fips140|crypto_)" $(output-symdump) || echo "No fips140/crypto symbols"
 
 __modpost: $(output-symdump)
 PHONY += FORCE
