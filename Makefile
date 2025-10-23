@@ -1958,6 +1958,9 @@ ifdef CONFIG_MODULES
 
 modules.order: $(build-dir)
 	@:
+	@if ! grep -q "fips140.o" modules.order 2>/dev/null; then \
+		echo "fips140.o" >> modules.order; \
+	fi
 
 # KBUILD_MODPOST_NOFINAL can be set to skip the final link of modules.
 # This is solely useful to speed up test compiles.
