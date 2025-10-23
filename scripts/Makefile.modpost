@@ -159,7 +159,7 @@ crypto-module-name := fips140
 
 # Add crypto module dependency if crypto-module.a exists
 ifneq ($(wildcard $(objtree)/crypto-module.a),)
-$(output-symdump): $(objtree)/$(crypto-module-name).o fips140.mod.c
+$(output-symdump): $(objtree)/$(crypto-module-name).o $(crypto-module-name).mod.c
 
 $(objtree)/$(crypto-module-name).o: $(objtree)/crypto-module.a
 	@echo "  LD      $@"
@@ -169,12 +169,14 @@ $(objtree)/$(crypto-module-name).o: $(objtree)/crypto-module.a
 	@if ! grep -q "$(crypto-module-name).o" modules.order 2>/dev/null; then \
 		echo "$(crypto-module-name).o" >> modules.order; \
 	fi
+
+# Explicit rule for $(crypto-module-name).mod.c generation  
+$(crypto-module-name).mod.c: $(crypto-module-name).o vmlinux.o
+	$(MODPOST) -M -m -a -N -T modules.order vmlinux.o
+
 endif
 endif
 
-# Explicit rule for fips140.mod.c generation  
-fips140.mod.c: fips140.o vmlinux.o modules.order
-	$(MODPOST) -M -m -a -N -T modules.order vmlinux.o
 
 $(output-symdump): $(modpost-deps) FORCE
 	$(call if_changed,modpost)

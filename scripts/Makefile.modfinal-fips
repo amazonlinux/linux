@@ -80,6 +80,7 @@ $(info DEBUG: fips140.mod.c exists: $(wildcard fips140.mod.c))
 $(info DEBUG: module-common.c exists: $(wildcard $(srctree)/scripts/module-common.c))
 $(info DEBUG: module.lds exists: $(wildcard $(objtree)/scripts/module.lds))
 $(info DEBUG: .module-common.o exists: $(wildcard .module-common.o))
+$(info DEBUG: modules.order exists: $(wildcard modules.order))
 
 targets += $(modules:%.o=%.ko) $(modules:%.o=%.mod.o) .module-common.o
 
