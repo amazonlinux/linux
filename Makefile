@@ -1242,7 +1242,7 @@ vmlinux: private _LDFLAGS_vmlinux := $(LDFLAGS_vmlinux)
 vmlinux: export LDFLAGS_vmlinux = $(_LDFLAGS_vmlinux)
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 vmlinux: fips140-embedded.o fips140-digest.o
-fips140-embedded.o: fips140-module-ready
+fips140-embedded.o: fips140-ready
 	@echo "  LD      $@"
 	@$(LD) -r -b binary -o $@ $(CONFIG_CRYPTO_FIPS140_EXTMOD_SOURCE)
 	@$(OBJCOPY) --rename-section .data=.fips140_module_data $@
@@ -1258,8 +1258,10 @@ fips140-digest.o: .fips140.hmac
 	@$(OBJCOPY) --rename-section .data=.fips140_digest $@
 
 # Ensure fips140.ko is built before embedding
-fips140-module-ready: modules
-	@:
+fips140-ready: modules_prepare modpost
+ifneq ($(KBUILD_MODPOST_NOFINAL),1)
+	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modfinal-fips
+endif
 endif
 vmlinux: vmlinux.o $(KBUILD_LDS) modpost
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.vmlinux

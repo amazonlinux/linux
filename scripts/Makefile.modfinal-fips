@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: GPL-2.0-only
+# ===========================================================================
+# Module final link
+# ===========================================================================
+
+PHONY := __modfinal
+__modfinal:
+
+include $(objtree)/include/config/auto.conf
+include $(srctree)/scripts/Kbuild.include
+include $(srctree)/scripts/Makefile.lib
+
+# find all modules listed in modules.order
+modules := fips140.o 
+
+$(info DEBUG: modules = $(modules))
+$(info DEBUG: ko targets = $(modules:%.o=%.ko))
+$(info DEBUG: About to define __modfinal rule)
+$(info DEBUG: srctree = $(srctree))
+$(info DEBUG: objtree = $(objtree))
+
+__modfinal: $(modules:%.o=%.ko)
+	@echo "DEBUG: __modfinal completed"
+
+# modname and part-of-module are set to make c_flags define proper module flags
+modname = $(notdir $(@:.mod.o=))
+part-of-module = y
+GCOV_PROFILE := n
+ccflags-remove-y := $(CC_FLAGS_CFI)
+
+%.mod.o: %.mod.c FORCE
+	@echo "DEBUG: Building $@ from $<"
+	$(call if_changed_rule,cc_o_c)
+
+.module-common.o: $(srctree)/scripts/module-common.c FORCE
+	$(call if_changed_rule,cc_o_c)
+
+quiet_cmd_ld_ko_o = LD [M]  $@
+      cmd_ld_ko_o =							\
+	$(LD) -r $(KBUILD_LDFLAGS)					\
+		$(KBUILD_LDFLAGS_MODULE) $(LDFLAGS_MODULE)		\
+		-T $(objtree)/scripts/module.lds -o $@ $(filter %.o, $^)
+
+quiet_cmd_btf_ko = BTF [M] $@
+      cmd_btf_ko = 							\
+	if [ ! -f $(objtree)/vmlinux ]; then				\
+		printf "Skipping BTF generation for %s due to unavailability of vmlinux\n" $@ 1>&2; \
+	else								\
+		LLVM_OBJCOPY="$(OBJCOPY)" $(PAHOLE) -J $(PAHOLE_FLAGS) $(MODULE_PAHOLE_FLAGS) --btf_base $(objtree)/vmlinux $@; \
+		$(RESOLVE_BTFIDS) -b $(objtree)/vmlinux $@;		\
+	fi;
+
+# Same as newer-prereqs, but allows to exclude specified extra dependencies
+newer_prereqs_except = $(filter-out $(PHONY) $(1),$?)
+
+# Same as if_changed, but allows to exclude specified extra dependencies
+if_changed_except = $(if $(call newer_prereqs_except,$(2))$(cmd-check),      \
+	$(cmd);                                                              \
+	printf '%s\n' 'savedcmd_$@ := $(make-cmd)' > $(dot-target).cmd, @:)
+
+# Explicit rule for fips140.ko without vmlinux dependency
+fips140.ko: fips140.o fips140.mod.o .module-common.o $(objtree)/scripts/module.lds FORCE
+	@echo "DEBUG: Building $@ from prerequisites: $^"
+	+$(call if_changed_except,ld_ko_o,$(objtree)/vmlinux)
+
+# Re-generate module BTFs if either module's .ko or vmlinux changed
+%.ko: %.o %.mod.o .module-common.o $(objtree)/scripts/module.lds $(and $(CONFIG_DEBUG_INFO_BTF_MODULES),$(KBUILD_BUILTIN),$(objtree)/vmlinux) FORCE
+	@echo "DEBUG: Building $@ from prerequisites: $^"
+	+$(call if_changed_except,ld_ko_o,$(objtree)/vmlinux)
+ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+	+$(if $(newer-prereqs),$(call cmd,btf_ko))
+endif
+
+$(info DEBUG: %.ko rule defined)
+$(info DEBUG: Checking prerequisites...)
+$(info DEBUG: PWD = $(shell pwd))
+$(info DEBUG: CURDIR = $(CURDIR))
+$(info DEBUG: fips140.o exists: $(wildcard fips140.o))
+$(info DEBUG: fips140.mod.c exists: $(wildcard fips140.mod.c))  
+$(info DEBUG: module-common.c exists: $(wildcard $(srctree)/scripts/module-common.c))
+$(info DEBUG: module.lds exists: $(wildcard $(objtree)/scripts/module.lds))
+$(info DEBUG: .module-common.o exists: $(wildcard .module-common.o))
+
+targets += $(modules:%.o=%.ko) $(modules:%.o=%.mod.o) .module-common.o
+
+# Add FORCE to the prerequisites of a target to force it to be always rebuilt.
+# ---------------------------------------------------------------------------
+
+PHONY += FORCE
+FORCE:
+
+# Read all saved command lines and dependencies for the $(targets) we
+# may be building above, using $(if_changed{,_dep}). As an
+# optimization, we don't need to read them if the target does not
+# exist, we will rebuild anyway in that case.
+
+existing-targets := $(wildcard $(sort $(targets)))
+
+-include $(foreach f,$(existing-targets),$(dir $(f)).$(notdir $(f)).cmd)
+
+.PHONY: $(PHONY)
