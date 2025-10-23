@@ -1259,6 +1259,7 @@ fips140-digest.o: .fips140.hmac
 
 # Ensure fips140.ko is built before embedding
 fips140-ready: modules_prepare modpost
+	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modpost
 ifneq ($(KBUILD_MODPOST_NOFINAL),1)
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modfinal-fips
 endif
