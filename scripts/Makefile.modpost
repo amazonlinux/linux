@@ -65,6 +65,15 @@ endif
 ifdef KBUILD_MODULES
 modpost-args += -T modules.order
 modpost-deps += modules.order
+
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+# Add crypto-mod.o to modules.order if crypto-module.a exists and not already added
+ifneq ($(wildcard $(objtree)/crypto-module.a),)
+ifeq ($(shell grep -c "crypto-mod.o" modules.order 2>/dev/null || echo 0),0)
+$(shell echo "crypto-mod.o" >> modules.order)
+endif
+endif
+endif
 endif
 
 ifeq ($(KBUILD_EXTMOD),)
