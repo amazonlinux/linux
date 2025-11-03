@@ -483,6 +483,8 @@ static unsigned int verify_patch_size(u8 family, u32 patch_size,
 #define F16H_MPB_MAX_SIZE 3458
 #define F17H_MPB_MAX_SIZE 3200
 #define F19H_MPB_MAX_SIZE 5568
+#define F1AH_MPB_MAX_SIZE 14368
+
 
 	switch (family) {
 	case 0x14:
@@ -499,6 +501,9 @@ static unsigned int verify_patch_size(u8 family, u32 patch_size,
 		break;
 	case 0x19:
 		max_size = F19H_MPB_MAX_SIZE;
+		break;
+	case 0x1a:
+		max_size = F1AH_MPB_MAX_SIZE;
 		break;
 	default:
 		max_size = F1XH_MPB_MAX_SIZE;
