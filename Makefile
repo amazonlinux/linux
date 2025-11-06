@@ -1217,11 +1217,38 @@ endif
 quiet_cmd_ar_vmlinux.a = AR      $@
       cmd_ar_vmlinux.a = \
 	rm -f $@; \
-	$(AR) cDPrST $@ $(KBUILD_VMLINUX_OBJS); \
+	$(AR) cDPrST $@ $(KBUILD_VMLINUX_OBJS) $(fips140-fn-redirect-obj); \
 	$(AR) mPiT $$($(AR) t $@ | sed -n 1p) $@ $$($(AR) t $@ | grep -F -f $(srctree)/scripts/head-object-list.txt)
 
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+
+# Generate exported symbol list from fips140.o (no vmlinux.o dependency)
+quiet_cmd_gen_fips140_exported = 
+      cmd_gen_fips140_exported = $(NM) $< 2>/dev/null | \
+		sed -n 's/.*__export_symbol_//p' | sort | \
+		awk '{print "0x00000000\t" $$1 "\tcrypto/fips140/fips140\tEXPORT_SYMBOL_GPL\t"}' > $@
+
+crypto/fips140/.fips140.exported: crypto/fips140/fips140.o FORCE
+	$(call if_changed,gen_fips140_exported)
+
+# Generate fn-redirect header from exported symbol list
+quiet_cmd_gen_fips140_fn_redirect =  
+      cmd_gen_fips140_fn_redirect = $(CONFIG_SHELL) $(srctree)/crypto/fips140/gen-fips140-fn-redirect.sh \
+		crypto/fips140/.fips140.exported $@
+
+crypto/fips140/.fips140-fn-redirect.h: crypto/fips140/.fips140.exported
+	$(call cmd,gen_fips140_fn_redirect)
+
+crypto/fips140/fips140-fn-redirect.o: crypto/fips140/.fips140-fn-redirect.h $(srctree)/crypto/fips140/fips140-fn-redirect.c
+	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.build obj=crypto/fips140 $@
+
+fips140-fn-redirect-obj := crypto/fips140/fips140-fn-redirect.o
+
+targets += crypto/fips140/.fips140.exported crypto/fips140/.fips140-fn-redirect.h
+endif
+
 targets += vmlinux.a
-vmlinux.a: $(KBUILD_VMLINUX_OBJS) scripts/head-object-list.txt FORCE
+vmlinux.a: $(KBUILD_VMLINUX_OBJS) $(fips140-fn-redirect-obj) scripts/head-object-list.txt FORCE
 	$(call if_changed,ar_vmlinux.a)
 
 PHONY += vmlinux_o
