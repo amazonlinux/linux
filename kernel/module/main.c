@@ -7,6 +7,7 @@
 
 #define INCLUDE_VERMAGIC
 
+#include <crypto/fips140-redirect.h>
 #include <linux/export.h>
 #include <linux/extable.h>
 #include <linux/moduleloader.h>
@@ -2963,6 +2964,38 @@ static int post_relocation(struct module *mod, const struct load_info *info)
 	return module_finalize(info->hdr, info->sechdrs, mod);
 }
 
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+static void do_crypto_var(struct load_info *info)
+{
+	struct crypto_var_key *crypto_var_keys;
+	unsigned int num_crypto_var_keys;
+	unsigned int i;
+
+	crypto_var_keys = section_objs(info, "__crypto_var_keys",
+		sizeof(*crypto_var_keys), &num_crypto_var_keys);
+
+	for (i = 0; i < num_crypto_var_keys; ++i) {
+		struct crypto_var_key *var_key = &crypto_var_keys[i];
+		*(var_key->ptr) = var_key->var;
+	}
+}
+
+static void do_crypto_fn(struct load_info *info)
+{
+	struct crypto_fn_key *fn_keys;
+	unsigned int num_fn_keys;
+	unsigned int i;
+
+	fn_keys = section_objs(info, "__crypto_fn_keys",
+		sizeof(*fn_keys), &num_fn_keys);
+
+	for (i = 0; i < num_fn_keys; ++i) {
+		struct crypto_fn_key *fk = &fn_keys[i];
+		WRITE_ONCE(*(fk->ptr), fk->func);
+	}
+}
+#endif
+
 /* Call module constructors. */
 static void do_mod_ctors(struct module *mod)
 {
@@ -3017,7 +3050,7 @@ module_param(async_probe, bool, 0644);
  * Keep it uninlined to provide a reliable breakpoint target, e.g. for the gdb
  * helper command 'lx-symbols'.
  */
-static noinline int do_init_module(struct module *mod, int flags)
+static noinline int do_init_module(struct load_info *info, struct module *mod, int flags)
 {
 	int ret = 0;
 	struct mod_initfree *freeinit;
@@ -3042,6 +3075,14 @@ static noinline int do_init_module(struct module *mod, int flags)
 	freeinit->init_text = mod->mem[MOD_INIT_TEXT].base;
 	freeinit->init_data = mod->mem[MOD_INIT_DATA].base;
 	freeinit->init_rodata = mod->mem[MOD_INIT_RODATA].base;
+
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	if (flags & MODULE_INIT_CRYPTO_FROM_MEM)
+		{
+			do_crypto_var(info);
+			do_crypto_fn(info);
+		}
+#endif
 
 	do_mod_ctors(mod);
 	/* Start the module */
@@ -3506,7 +3547,7 @@ static int _load_module(struct load_info *info, const char __user *uargs,
 	/* Done! */
 	trace_module_load(mod);
 
-	return do_init_module(mod, flags);
+	return do_init_module(info, mod, flags);
 
  sysfs_cleanup:
 	mod_sysfs_teardown(mod);
