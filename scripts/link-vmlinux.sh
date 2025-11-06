@@ -90,6 +90,18 @@ vmlinux_link()
 
 	ldflags="${ldflags} ${wl}--script=${objtree}/${KBUILD_LDS}"
 
+	if is_enabled CONFIG_CRYPTO_FIPS140_EXTMOD; then
+		local fips_ko=crypto/fips140/fips140.ko
+		local fips_exported=crypto/fips140/.fips140.exported
+		if [ -f "${fips_ko}" ] && [ -f "${fips_exported}" ]; then
+			for sym in $(awk '{print $2}' "${fips_exported}" | while read s; do
+				${NM} "${fips_ko}" 2>/dev/null | awk -v s="$s" '$3 == s && $2 == "T" {print s; exit}'
+			done); do
+				ldflags="${ldflags} ${wl}--wrap=${sym}"
+			done
+		fi
+	fi
+
 	# The kallsyms linking does not need debug symbols included.
 	if [ -n "${strip_debug}" ] ; then
 		ldflags="${ldflags} ${wl}--strip-debug"
