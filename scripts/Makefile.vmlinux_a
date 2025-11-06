@@ -7,17 +7,22 @@ include include/config/auto.conf
 include $(srctree)/scripts/Kbuild.include
 include $(srctree)/scripts/Makefile.lib
 
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+# Built by the top-level Makefile, which owns the generation rules.
+fips140-fn-redirect-obj := crypto/fips140/fips140-fn-redirect.o
+endif
+
 # Link of built-in-fixup.a
 # ---------------------------------------------------------------------------
 
 quiet_cmd_ar_builtin_fixup = AR      $@
       cmd_ar_builtin_fixup = \
 	rm -f $@; \
-	$(AR) cDPrST $@ $(KBUILD_VMLINUX_OBJS); \
+	$(AR) cDPrST $@ $(KBUILD_VMLINUX_OBJS) $(fips140-fn-redirect-obj); \
 	$(AR) mPi $$($(AR) t $@ | sed -n 1p) $@ $$($(AR) t $@ | grep -F -f $(srctree)/scripts/head-object-list.txt)
 
 targets += built-in-fixup.a
-built-in-fixup.a: $(KBUILD_VMLINUX_OBJS) scripts/head-object-list.txt FORCE
+built-in-fixup.a: $(KBUILD_VMLINUX_OBJS) $(fips140-fn-redirect-obj) scripts/head-object-list.txt FORCE
 	$(call if_changed,ar_builtin_fixup)
 
 ifdef CONFIG_LTO_CLANG_THIN_DIST
