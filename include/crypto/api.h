@@ -1,0 +1,197 @@
+#ifndef _CRYPTO_API_H
+#define _CRYPTO_API_H
+
+#include <linux/static_call.h>
+
+#define CRYPTO_VAR_NAME(name) __crypto_##name##_ptr
+
+#define __CAT(a,b) a##b
+#define _CAT(a,b)  __CAT(a,b)
+
+#define __IF_1(...) __VA_ARGS__
+#define __IF_0(...)
+#define __IFNOT_1(...)
+#define __IFNOT_0(...) __VA_ARGS__
+
+/* Emit __VA_ARGS__ only if cfg is built into vmlinux (=y) */
+#define IF_BUILTIN(cfg, ...)     _CAT(__IF_,    IS_BUILTIN(cfg))(__VA_ARGS__)
+/* Emit __VA_ARGS__ only if cfg is NOT built in (i.e., =m or unset) */
+#define IF_NOT_BUILTIN(cfg, ...) _CAT(__IFNOT_, IS_BUILTIN(cfg))(__VA_ARGS__)
+
+#if !defined(CONFIG_CRYPTO_FIPS140_EXTMOD)
+
+/*
+ * These are the definitions that get used when no standalone FIPS module
+ * is used: we simply forward everything to normal functions and function
+ * calls.
+ */
+
+#define DECLARE_CRYPTO_API(cfg, name, ret_type, args_decl, args_call)       \
+	ret_type name args_decl;
+
+#define DECLARE_CRYPTO_VAR(cfg, name, var_type, ...) \
+	extern var_type name __VA_ARGS__;
+
+#define crypto_module_init(fn) module_init(fn)
+#define crypto_module_exit(fn) module_exit(fn)
+
+#define crypto_subsys_initcall(fn)	subsys_initcall(fn)
+#define crypto_late_initcall(fn)	late_initcall(fn)
+
+#define crypto_module_cpu_feature_match(x, __initfunc) \
+	module_cpu_feature_match(x, __initfunc)
+
+#else
+
+struct crypto_api_key {
+	struct static_call_key *key;
+	void *tramp;
+	void *func;
+};
+
+struct crypto_var_key {
+	void **ptr;
+	void *var;
+};
+
+#ifndef FIPS_MODULE
+
+/*
+ * These are the definitions that get used for vmlinux and in-tree
+ * kernel modules.
+ *
+ * In this case, all references to the kernel crypto API functions will
+ * be replaced by wrappers that perform a call using the kernel's static_call
+ * functionality.
+ */
+
+/* Consolidated version of different DECLARE_CRYPTO_API versions */
+
+/*
+ *  - If cfg is built-in (=y): declare nonfips_<name>, a static_call key,
+ *    and an inline wrapper <name>() that dispatches via static_call.
+ *  - Else (cfg =m or unset): only declare <name>() prototype.
+ */
+#define DECLARE_CRYPTO_API(cfg, name, ret_type, args_decl, args_call)       \
+	IF_BUILTIN(cfg,                                                      \
+		ret_type nonfips_##name args_decl;                           \
+		DECLARE_STATIC_CALL(crypto_##name##_key, nonfips_##name);    \
+		static inline ret_type name args_decl                        \
+		{                                                            \
+			return static_call(crypto_##name##_key) args_call;   \
+		}                                                            \
+	)                                                                   \
+	IF_NOT_BUILTIN(cfg,                                                 \
+		ret_type name args_decl;                                    \
+	)
+
+#define DECLARE_CRYPTO_VAR(cfg, name, var_type, ...) \
+	IF_BUILTIN(cfg, \
+		extern void *CRYPTO_VAR_NAME(name); \
+	) \
+	IF_NOT_BUILTIN(cfg, \
+		extern var_type name __VA_ARGS__; \
+	)
+
+#define DEFINE_CRYPTO_API_STUB(name) \
+	DEFINE_STATIC_CALL_NULL(crypto_##name##_key, name); \
+	EXPORT_STATIC_CALL(crypto_##name##_key)
+
+#define DEFINE_CRYPTO_VAR_STUB(name) \
+	void* CRYPTO_VAR_NAME(name) = NULL;\
+	EXPORT_SYMBOL(CRYPTO_VAR_NAME(name));
+
+#define crypto_module_init(fn) module_init(fn)
+#define crypto_module_exit(fn) module_exit(fn)
+
+#define crypto_subsys_initcall(fn)	subsys_initcall(fn)
+#define crypto_late_initcall(fn)	late_initcall(fn)
+
+#define crypto_module_cpu_feature_match(x, __initfunc) \
+	module_cpu_feature_match(x, __initfunc)
+	
+#else /* defined(FIPS_MODULE) */
+
+/* Consolidated version of different DECLARE_CRYPTO_API versions,
+   within FIPS module, API remains the same, only declare static 
+   call key */
+#define DECLARE_CRYPTO_API(cfg, name, ret_type, args_decl, args_call) \
+	IF_BUILTIN(cfg,                                                   \
+		ret_type name args_decl;                                      \
+		DECLARE_STATIC_CALL(crypto_##name##_key, name)                \
+	)                                                                 \
+	IF_NOT_BUILTIN(cfg,                                               \
+		ret_type name args_decl;                                      \
+	)
+
+#define DECLARE_CRYPTO_VAR(cfg, name, var_type, ...)               \
+	IF_BUILTIN(cfg,                                             \
+		extern var_type name __VA_ARGS__;                   \
+		extern void *CRYPTO_VAR_NAME(name);                  \
+	)                                                            \
+	IF_NOT_BUILTIN(cfg,                                          \
+		extern var_type name __VA_ARGS__;                   \
+	)
+
+#define DEFINE_CRYPTO_VAR_STUB(name) \
+	static struct crypto_var_key __crypto_##name##_var_key \
+		__used \
+		__section("__crypto_var_keys") \
+		__aligned(__alignof__(struct crypto_var_key)) = \
+	{ \
+		.ptr = &CRYPTO_VAR_NAME(name), \
+		.var = (void*)&name, \
+	};
+
+/*
+ * These are the definitions that get used for the main kernel.
+ *
+ * In this case, initialize crypto static call key with original name
+ */
+
+#define DEFINE_CRYPTO_API_STUB(name) \
+	static struct crypto_api_key __##name##_key \
+		__used \
+		__section("__crypto_api_keys") \
+		__aligned(__alignof__(struct crypto_api_key)) = \
+	{ \
+		.key = &STATIC_CALL_KEY(crypto_##name##_key), \
+		.tramp = STATIC_CALL_TRAMP_ADDR(crypto_##name##_key), \
+		.func = &name, \
+	};
+
+#define crypto_module_init(fn) \
+	static initcall_t __used __section(".fips_initcall1") \
+		__fips_##fn = fn;
+#define crypto_module_exit(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
+#define crypto_subsys_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall0") \
+		__fips_##fn = fn;
+#define crypto_subsys_exitcall(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
+#define crypto_late_initcall(fn) \
+	static initcall_t __used __section(".fips_initcall2") \
+		__fips_##fn = fn;
+#define crypto_late_exitcall(fn) \
+		static unsigned long __used __section(".fips_exitcall") \
+		__fips_##fn = (unsigned long) &fn;
+
+#define crypto_module_cpu_feature_match(x, __initfunc) \
+static struct cpu_feature const __maybe_unused cpu_feature_match_ ## x[] = \
+	{ { .feature = cpu_feature(x) }, { } }; \
+MODULE_DEVICE_TABLE(cpu, cpu_feature_match_ ## x); \
+static int __init cpu_feature_match_ ## x ## _init(void) \
+{ \
+	if (!cpu_have_feature(cpu_feature(x))) \
+		return -ENODEV; \
+	return __initfunc(); \
+} \
+crypto_module_init(cpu_feature_match_ ## x ## _init)
+
+#endif /* defined(FIPS_MODULE) */
+#endif /* defined(CONFIG_CRYPTO_FIPS140_EXTMOD) */
+
+#endif /* !_CRYPTO_API_H */
