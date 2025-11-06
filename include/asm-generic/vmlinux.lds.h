@@ -724,6 +724,8 @@
 	KERNEL_CTORS()							\
 	MCOUNT_REC()							\
 	*(.init.rodata .init.rodata.*)					\
+	BOUNDED_SECTION(__crypto_var_keys)				\
+	BOUNDED_SECTION(__crypto_fn_keys)				\
 	FTRACE_EVENTS()							\
 	TRACE_SYSCALLS()						\
 	KPROBE_BLACKLIST()						\
