@@ -72,11 +72,33 @@
 #define __GENDWARFKSYMS_EXPORT(sym)
 #endif
 
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && defined(FIPS_MODULE) && !defined(FIPS140_CORE)
+struct _crypto_fn_key {
+	void **ptr;
+	void *func;
+};
+#define __CRYPTO_FN_KEY(sym)					\
+	extern void *__fips140_fn_ptr_##sym;			\
+	static struct _crypto_fn_key __##sym##_fn_key		\
+		__used						\
+		__section("__crypto_fn_keys")			\
+		__aligned(__alignof__(struct _crypto_fn_key)) = {	\
+		.ptr = (void **)&__fips140_fn_ptr_##sym,		\
+		.func = (void *)&sym,				\
+	};
+#define __EXPORT_SYMBOL(sym, license, ns)			\
+	extern typeof(sym) sym;					\
+	__ADDRESSABLE(sym)					\
+	__GENDWARFKSYMS_EXPORT(sym)				\
+	asm(__stringify(___EXPORT_SYMBOL(sym, license, ns)));	\
+	__CRYPTO_FN_KEY(sym)
+#else
 #define __EXPORT_SYMBOL(sym, license, ns)			\
 	extern typeof(sym) sym;					\
 	__ADDRESSABLE(sym)					\
 	__GENDWARFKSYMS_EXPORT(sym)				\
 	asm(__stringify(___EXPORT_SYMBOL(sym, license, ns)))
+#endif
 
 #endif
 
