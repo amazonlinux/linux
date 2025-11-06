@@ -2,4 +2,7 @@
 crypto-objs-y += \
 	fips140-module.o 
 
-clean-files:= .fips140.order .fips140.symvers
+CFLAGS_fips140-fn-redirect.o += -I$(obj)
+CFLAGS_fips140-module.o += -DFIPS140_CORE
+
+clean-files:= .fips140.order .fips140.symvers .fips140-fn-redirect.h .fips140.exported
