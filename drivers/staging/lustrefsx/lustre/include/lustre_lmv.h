@@ -54,36 +54,73 @@ struct lmv_stripe_md {
 	struct lmv_oinfo lsm_md_oinfo[];
 };
 
-static inline bool lmv_dir_striped(const struct lmv_stripe_md *lsm)
+struct lmv_stripe_object {
+	atomic_t			lso_refs;
+	union {
+		struct lmv_stripe_md	lso_lsm;
+		struct lmv_foreign_md	lso_lfm;
+	};
+};
+
+static inline bool lmv_dir_striped(const struct lmv_stripe_object *lso)
 {
-	return lsm && lsm->lsm_md_magic == LMV_MAGIC;
+	return lso && lso->lso_lsm.lsm_md_magic == LMV_MAGIC;
 }
 
-static inline bool lmv_dir_foreign(const struct lmv_stripe_md *lsm)
+static inline bool lmv_dir_foreign(const struct lmv_stripe_object *lso)
 {
-	return lsm && lsm->lsm_md_magic == LMV_MAGIC_FOREIGN;
+	return lso && lso->lso_lsm.lsm_md_magic == LMV_MAGIC_FOREIGN;
 }
 
-static inline bool lmv_dir_layout_changing(const struct lmv_stripe_md *lsm)
+static inline bool lmv_dir_layout_changing(const struct lmv_stripe_object *lso)
 {
-	return lmv_dir_striped(lsm) &&
-	       lmv_hash_is_layout_changing(lsm->lsm_md_hash_type);
+	return lmv_dir_striped(lso) &&
+	       lmv_hash_is_layout_changing(lso->lso_lsm.lsm_md_hash_type);
 }
 
-static inline bool lmv_dir_bad_hash(const struct lmv_stripe_md *lsm)
+static inline bool lmv_dir_bad_hash(const struct lmv_stripe_object *lso)
 {
-	if (!lmv_dir_striped(lsm))
+	if (!lmv_dir_striped(lso))
 		return false;
 
-	if (lsm->lsm_md_hash_type & LMV_HASH_FLAG_BAD_TYPE)
+	if (lso->lso_lsm.lsm_md_hash_type & LMV_HASH_FLAG_BAD_TYPE)
 		return true;
 
-	return !lmv_is_known_hash_type(lsm->lsm_md_hash_type);
+	return !lmv_is_known_hash_type(lso->lso_lsm.lsm_md_hash_type);
 }
 
-static inline bool
-lsm_md_eq(const struct lmv_stripe_md *lsm1, const struct lmv_stripe_md *lsm2)
+static inline __u8 lmv_inherit_next(__u8 inherit)
 {
+	if (inherit == LMV_INHERIT_END || inherit == LMV_INHERIT_NONE)
+		return LMV_INHERIT_NONE;
+
+	if (inherit == LMV_INHERIT_UNLIMITED || inherit > LMV_INHERIT_MAX)
+		return inherit;
+
+	return inherit - 1;
+}
+
+static inline __u8 lmv_inherit_rr_next(__u8 inherit_rr)
+{
+	if (inherit_rr == LMV_INHERIT_RR_NONE ||
+	    inherit_rr == LMV_INHERIT_RR_UNLIMITED ||
+	    inherit_rr > LMV_INHERIT_RR_MAX)
+		return inherit_rr;
+
+	return inherit_rr - 1;
+}
+
+static inline bool lmv_is_inheritable(__u8 inherit)
+{
+	return inherit == LMV_INHERIT_UNLIMITED ||
+	       (inherit > LMV_INHERIT_END && inherit <= LMV_INHERIT_MAX);
+}
+
+static inline bool lsm_md_eq(const struct lmv_stripe_object *lso1,
+			     const struct lmv_stripe_object *lso2)
+{
+	const struct lmv_stripe_md *lsm1 = &lso1->lso_lsm;
+	const struct lmv_stripe_md *lsm2 = &lso2->lso_lsm;
 	__u32 idx;
 
 	if (lsm1->lsm_md_magic != lsm2->lsm_md_magic ||
@@ -103,7 +140,7 @@ lsm_md_eq(const struct lmv_stripe_md *lsm1, const struct lmv_stripe_md *lsm2)
 		    sizeof(lsm1->lsm_md_pool_name)) != 0)
 		return false;
 
-	if (lmv_dir_striped(lsm1)) {
+	if (lmv_dir_striped(lso1)) {
 		for (idx = 0; idx < lsm1->lsm_md_stripe_count; idx++) {
 			if (!lu_fid_eq(&lsm1->lsm_md_oinfo[idx].lmo_fid,
 				       &lsm2->lsm_md_oinfo[idx].lmo_fid))
@@ -120,26 +157,27 @@ lsm_md_eq(const struct lmv_stripe_md *lsm1, const struct lmv_stripe_md *lsm2)
 	return true;
 }
 
-static inline void lsm_md_dump(int mask, const struct lmv_stripe_md *lsm)
+static inline void
+lmv_stripe_object_dump(int mask, const struct lmv_stripe_object *lsmo)
 {
-	bool valid_hash = lmv_dir_bad_hash(lsm);
+	const struct lmv_stripe_md *lsm = &lsmo->lso_lsm;
 	int i;
 
-	/* If lsm_md_magic == LMV_MAGIC_FOREIGN pool_name may not be a null
-	 * terminated string so only print LOV_MAXPOOLNAME bytes.
-	 */
-	CDEBUG(mask,
-	       "magic %#x stripe count %d master mdt %d hash type %s:%#x max-inherit %hhu max-inherit-rr %hhu version %d migrate offset %d migrate hash %#x pool %.*s\n",
-	       lsm->lsm_md_magic, lsm->lsm_md_stripe_count,
-	       lsm->lsm_md_master_mdt_index,
-	       valid_hash ? "invalid hash" :
-			    mdt_hash_name[lsm->lsm_md_hash_type & (LMV_HASH_TYPE_MAX - 1)],
-	       lsm->lsm_md_hash_type, lsm->lsm_md_max_inherit,
-	       lsm->lsm_md_max_inherit_rr, lsm->lsm_md_layout_version,
-	       lsm->lsm_md_migrate_offset, lsm->lsm_md_migrate_hash,
-	       LOV_MAXPOOLNAME, lsm->lsm_md_pool_name);
+	CDEBUG_LIMIT(mask,
+	        "dump LMV: refs %u magic=%#x count=%u index=%u hash=%s:%#x max_inherit=%hhu max_inherit_rr=%hhu version=%u migrate_offset=%u migrate_hash=%s:%x pool=%.*s\n",
+			lsm->lsm_md_magic, atomic_read(&lsmo->lso_refs),
+			lsm->lsm_md_stripe_count, lsm->lsm_md_master_mdt_index,
+			lmv_is_known_hash_type(lsm->lsm_md_hash_type) ?
+			mdt_hash_name[lsm->lsm_md_hash_type & LMV_HASH_TYPE_MASK] :
+			"invalid", lsm->lsm_md_hash_type,
+			lsm->lsm_md_max_inherit, lsm->lsm_md_max_inherit_rr,
+			lsm->lsm_md_layout_version, lsm->lsm_md_migrate_offset,
+			lmv_is_known_hash_type(lsm->lsm_md_migrate_hash) ?
+			mdt_hash_name[lsm->lsm_md_migrate_hash & LMV_HASH_TYPE_MASK] :
+			"invalid", lsm->lsm_md_migrate_hash,
+			LOV_MAXPOOLNAME, lsm->lsm_md_pool_name);
 
-	if (!lmv_dir_striped(lsm))
+	if (!lmv_dir_striped(lsmo))
 		return;
 
 	for (i = 0; i < lsm->lsm_md_stripe_count; i++)
@@ -149,7 +187,14 @@ static inline void lsm_md_dump(int mask, const struct lmv_stripe_md *lsm)
 
 union lmv_mds_md;
 
-void lmv_free_memmd(struct lmv_stripe_md *lsm);
+struct lmv_stripe_object *lmv_stripe_object_alloc(__u32 magic,
+						  const union lmv_mds_md *lmm,
+						  size_t lmm_size);
+
+void lmv_stripe_object_put(struct lmv_stripe_object **lsm_obj);
+
+struct lmv_stripe_object *
+	lmv_stripe_object_get(struct lmv_stripe_object *lsm_obj);
 
 static inline void lmv1_le_to_cpu(struct lmv_mds_md_v1 *lmv_dst,
 				  const struct lmv_mds_md_v1 *lmv_src)
@@ -513,27 +558,6 @@ static inline bool lmv_is_layout_changing(const struct lmv_mds_md_v1 *lmv)
 static inline bool lmv_is_fixed(const struct lmv_mds_md_v1 *lmv)
 {
 	return cpu_to_le32(lmv->lmv_hash_type) & LMV_HASH_FLAG_FIXED;
-}
-
-static inline __u8 lmv_inherit_next(__u8 inherit)
-{
-	if (inherit == LMV_INHERIT_END || inherit == LMV_INHERIT_NONE)
-		return LMV_INHERIT_NONE;
-
-	if (inherit == LMV_INHERIT_UNLIMITED || inherit > LMV_INHERIT_MAX)
-		return inherit;
-
-	return inherit - 1;
-}
-
-static inline __u8 lmv_inherit_rr_next(__u8 inherit_rr)
-{
-	if (inherit_rr == LMV_INHERIT_RR_NONE ||
-	    inherit_rr == LMV_INHERIT_RR_UNLIMITED ||
-	    inherit_rr > LMV_INHERIT_RR_MAX)
-		return inherit_rr;
-
-	return inherit_rr - 1;
 }
 
 #endif
