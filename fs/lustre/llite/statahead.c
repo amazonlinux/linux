@@ -564,9 +564,17 @@ static void ll_work_handler(struct work_struct *work)
 {
 	struct ll_inode_info *lli = ll_work2info(work);
 	struct inode *inode = &lli->lli_vfs_inode;
+	int rc = 0;
 
-	ll_xattr_cache_refill(inode, true);
-	up_write(&lli->lli_xattrs_list_rwsem);
+	rc = ll_xattr_cache_refill(inode, true);
+
+	/*
+	 * The lock is acquired in ll_xattr_cache_refill, which only retains
+	 * the lock in successful cases.
+	 */
+	if (rc == 0)
+		up_write(&lli->lli_xattrs_list_rwsem);
+	iput(inode);
 }
 
 /* Do NOT forget to drop inode refcount when into sai_agls. */
@@ -643,6 +651,7 @@ static void ll_agl_trigger(struct inode *inode, struct ll_statahead_info *sai)
 	up_write(&lli->lli_glimpse_sem);
 
 	if (sbi->ll_statahead_xattr) {
+		igrab(inode);
 		INIT_WORK(&lli->lli_work, ll_work_handler);
 		schedule_work(&lli->lli_work);
 	}
