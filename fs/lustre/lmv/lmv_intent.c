@@ -49,43 +49,22 @@
 #include <lprocfs_status.h>
 #include "lmv_internal.h"
 
-/* TODO @timday: Is this the only op that needs op_data_tmp? */
-static struct md_op_data *lmv_remote_prep_md_op(struct md_op_data *op_data)
-{
-	struct md_op_data *op_data_tmp;
-	OBD_ALLOC_PTR(op_data_tmp);
-	if (!op_data_tmp)
-		return NULL;
-
-	op_data_tmp->op_suppgids[0] = op_data->op_suppgids[0];
-	op_data_tmp->op_suppgids[1] = op_data->op_suppgids[1];
-
-	return op_data_tmp;
-}
-
-static void lmv_remote_finish_md_op(struct md_op_data *op_data_tmp)
-{
-	OBD_FREE_PTR(op_data_tmp);
-}
-
-static int lmv_intent_remote(struct obd_export *exp, struct md_op_data *op_data,
-			     struct lookup_intent *it,
+static int lmv_intent_remote(struct obd_export *exp, struct lookup_intent *it,
 			     const struct lu_fid *parent_fid,
 			     struct ptlrpc_request **reqp,
 			     ldlm_blocking_callback cb_blocking,
-			     __u64 extra_lock_flags,
+			     __u64 extra_lock_flags, __u32 *suppgids,
 			     const char *secctx_name, __u32 secctx_name_size)
 {
-	struct obd_device *obd = exp->exp_obd;
-	struct lmv_obd *lmv = &obd->u.lmv;
-	struct ptlrpc_request *req = NULL;
-	struct md_op_data *op_data_tmp;
-	struct lustre_handle plock;
-	struct lmv_tgt_desc *tgt;
-	struct mdt_body *body;
-	int rc = 0;
-	int pmode;
-
+	struct obd_device	*obd = exp->exp_obd;
+	struct lmv_obd		*lmv = &obd->u.lmv;
+	struct ptlrpc_request	*req = NULL;
+	struct lustre_handle	plock;
+	struct md_op_data	*op_data;
+	struct lmv_tgt_desc	*tgt;
+	struct mdt_body		*body;
+	int			pmode;
+	int			rc = 0;
 	ENTRY;
 
 	body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
@@ -110,36 +89,44 @@ static int lmv_intent_remote(struct obd_export *exp, struct md_op_data *op_data,
 	if (IS_ERR(tgt))
 		GOTO(out, rc = PTR_ERR(tgt));
 
-	op_data_tmp = lmv_remote_prep_md_op(op_data);
-	if (!op_data_tmp)
+	OBD_ALLOC_PTR(op_data);
+	if (op_data == NULL)
 		GOTO(out, rc = -ENOMEM);
 
-	op_data_tmp->op_fid1 = body->mbo_fid1;
+	op_data->op_fid1 = body->mbo_fid1;
 	/* Sent the parent FID to the remote MDT */
 	if (parent_fid != NULL) {
 		/* The parent fid is only for remote open to
 		 * check whether the open is from OBF,
 		 * see mdt_cross_open */
 		LASSERT(it->it_op & IT_OPEN);
-		op_data_tmp->op_fid2 = *parent_fid;
+		op_data->op_fid2 = *parent_fid;
 	}
 
-	op_data_tmp->op_bias = MDS_CROSS_REF;
-	op_data_tmp->op_cli_flags = CLI_NO_SLOT;
+	op_data->op_bias = MDS_CROSS_REF;
+	op_data->op_cli_flags = CLI_NO_SLOT;
 	CDEBUG(D_INODE, "REMOTE_INTENT with fid="DFID" -> mds #%u\n",
 	       PFID(&body->mbo_fid1), tgt->ltd_index);
 
 	/* ask for security context upon intent */
 	if (it->it_op & (IT_LOOKUP | IT_GETATTR | IT_OPEN) &&
 	    secctx_name_size != 0 && secctx_name != NULL) {
-		op_data_tmp->op_file_secctx_name = secctx_name;
-		op_data_tmp->op_file_secctx_name_size = secctx_name_size;
+		op_data->op_file_secctx_name = secctx_name;
+		op_data->op_file_secctx_name_size = secctx_name_size;
 		CDEBUG(D_SEC, "'%.*s' is security xattr to fetch for "
 		       DFID"\n",
 		       secctx_name_size, secctx_name, PFID(&body->mbo_fid1));
 	}
+	/* add suppgids from client */
+	if (it->it_op & (IT_LOOKUP | IT_GETATTR | IT_OPEN) && suppgids) {
+		op_data->op_suppgids[0] = suppgids[0];
+		op_data->op_suppgids[1] = suppgids[1];
+	} else {
+		op_data->op_suppgids[0] = -1;
+		op_data->op_suppgids[1] = -1;
+	}
 
-	rc = md_intent_lock(tgt->ltd_exp, op_data_tmp, it, &req, cb_blocking,
+	rc = md_intent_lock(tgt->ltd_exp, op_data, it, &req, cb_blocking,
 			    extra_lock_flags);
         if (rc)
                 GOTO(out_free_op_data, rc);
@@ -160,21 +147,22 @@ static int lmv_intent_remote(struct obd_export *exp, struct md_op_data *op_data,
 		it->it_lock_mode = pmode;
 	}
 
+	EXIT;
 out_free_op_data:
-	lmv_remote_finish_md_op(op_data_tmp);
+	OBD_FREE_PTR(op_data);
 out:
 	if (rc && pmode)
 		ldlm_lock_decref(&plock, pmode);
 
 	ptlrpc_req_finished(*reqp);
 	*reqp = req;
-	RETURN(rc);
+	return rc;
 }
 
 int lmv_revalidate_slaves(struct obd_export *exp,
 			  const struct lmv_stripe_md *lsm,
 			  ldlm_blocking_callback cb_blocking,
-			  int extra_lock_flags)
+			  int extra_lock_flags, __u32 *suppgids)
 {
 	struct obd_device *obd = exp->exp_obd;
 	struct lmv_obd *lmv = &obd->u.lmv;
@@ -227,6 +215,13 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 		 */
 		op_data->op_bias = MDS_CROSS_REF;
 		op_data->op_cli_flags = CLI_NO_SLOT;
+		if (suppgids) {
+			op_data->op_suppgids[0] = suppgids[0];
+			op_data->op_suppgids[1] = suppgids[1];
+		} else {
+			op_data->op_suppgids[0] = -1;
+			op_data->op_suppgids[1] = -1;
+		}
 
 		tgt = lmv_tgt(lmv, lsm->lsm_md_oinfo[i].lmo_mds);
 		if (!tgt)
@@ -321,15 +316,15 @@ static int lmv_intent_open(struct obd_export *exp, struct md_op_data *op_data,
 	ENTRY;
 
 	/* do not allow file creation in foreign dir */
-	if ((it->it_op & IT_CREAT) && lmv_dir_foreign(op_data->op_mea1))
+	if ((it->it_op & IT_CREAT) && lmv_dir_foreign(op_data->op_lso1))
 		RETURN(-ENODATA);
 
 	if ((it->it_op & IT_CREAT) && !(flags & MDS_OPEN_BY_FID)) {
 		/* don't allow create under dir with bad hash */
-		if (lmv_dir_bad_hash(op_data->op_mea1))
+		if (lmv_dir_bad_hash(op_data->op_lso1))
 			RETURN(-EBADF);
 
-		if (lmv_dir_layout_changing(op_data->op_mea1)) {
+		if (lmv_dir_layout_changing(op_data->op_lso1)) {
 			if (flags & O_EXCL) {
 				/*
 				 * open(O_CREAT | O_EXCL) needs to check
@@ -360,7 +355,7 @@ retry:
 		/* for striped directory, we can't know parent stripe fid
 		 * without name, but we can set it to child fid, and MDT
 		 * will obtain it from linkea in open in such case. */
-		if (lmv_dir_striped(op_data->op_mea1))
+		if (lmv_dir_striped(op_data->op_lso1))
 			op_data->op_fid1 = op_data->op_fid2;
 
 		tgt = lmv_fid2tgt(lmv, &op_data->op_fid2);
@@ -426,8 +421,9 @@ retry:
 
 	/* Not cross-ref case, just get out of here. */
 	if (unlikely((body->mbo_valid & OBD_MD_MDS))) {
-		rc = lmv_intent_remote(exp, op_data, it, &op_data->op_fid1, reqp,
+		rc = lmv_intent_remote(exp, it, &op_data->op_fid1, reqp,
 				       cb_blocking, extra_lock_flags,
+				       op_data->op_suppgids,
 				       op_data->op_file_secctx_name,
 				       op_data->op_file_secctx_name_size);
 		if (rc != 0)
@@ -458,7 +454,7 @@ lmv_intent_lookup(struct obd_export *exp, struct md_op_data *op_data,
 	ENTRY;
 
 	/* foreign dir is not striped */
-	if (lmv_dir_foreign(op_data->op_mea1)) {
+	if (lmv_dir_foreign(op_data->op_lso1)) {
 		/* only allow getattr/lookup for itself */
 		if (op_data->op_name != NULL)
 			RETURN(-ENODATA);
@@ -519,10 +515,12 @@ retry:
 	if (*reqp == NULL) {
 		/* If RPC happens, lsm information will be revalidated
 		 * during update_inode process (see ll_update_lsm_md) */
-		if (lmv_dir_striped(op_data->op_mea2)) {
-			rc = lmv_revalidate_slaves(exp, op_data->op_mea2,
+		if (lmv_dir_striped(op_data->op_lso2)) {
+			rc = lmv_revalidate_slaves(exp,
+						   &op_data->op_lso2->lso_lsm,
 						   cb_blocking,
-						   extra_lock_flags);
+						   extra_lock_flags,
+						   op_data->op_suppgids);
 			if (rc != 0)
 				RETURN(rc);
 		}
@@ -550,13 +548,12 @@ retry:
 
 	/* Not cross-ref case, just get out of here. */
 	if (unlikely((body->mbo_valid & OBD_MD_MDS))) {
-		rc = lmv_intent_remote(exp, op_data, it, NULL, reqp, cb_blocking,
-				       extra_lock_flags,
+		rc = lmv_intent_remote(exp, it, NULL, reqp, cb_blocking,
+				       extra_lock_flags, op_data->op_suppgids,
 				       op_data->op_file_secctx_name,
 				       op_data->op_file_secctx_name_size);
-		if (rc)
+		if (rc != 0)
 			RETURN(rc);
-
 		body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
 		if (body == NULL)
 			RETURN(-EPROTO);
