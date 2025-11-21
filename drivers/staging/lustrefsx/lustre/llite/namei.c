@@ -774,10 +774,12 @@ static int ll_lookup_it_finish(struct ptlrpc_request *request,
 
 		/* If it is striped directory, get the real stripe parent */
 		if (unlikely(ll_dir_striped(parent))) {
+			down_read(&ll_i2info(parent)->lli_lsm_sem);
 			rc = md_get_fid_from_lsm(ll_i2mdexp(parent),
-						 ll_i2info(parent)->lli_lsm_md,
+						 ll_i2info(parent)->lli_lsm_obj,
 						 (*de)->d_name.name,
 						 (*de)->d_name.len, &fid);
+			up_read(&ll_i2info(parent)->lli_lsm_sem);
 			if (rc != 0)
 				GOTO(out, rc);
 		}
@@ -875,62 +877,18 @@ static __u32 get_uc_group_from_acl(const struct posix_acl *acl, int want)
 	return (__u32)__kgid_val(INVALID_GID);
 }
 
-struct ll_grp_it {
-	struct group_info *gi;
-	int pos;
-};
-
-static struct ll_grp_it *ll_group_iter_start(void)
+static bool failed_it_can_retry(int retval, struct lookup_intent *it)
 {
-	struct ll_grp_it *git;
+	int rc = 0;
 
-	OBD_ALLOC_PTR(git);
-	if (!git)
-		return NULL;
+	if (!retval && (it->it_op & IT_OPEN_CREAT) == IT_OPEN_CREAT &&
+	    it_disposition(it, DISP_OPEN_CREATE)) {
+		rc = it_open_error(DISP_OPEN_CREATE, it);
+	} else {
+		rc = retval;
+	}
 
-	git->gi = get_current_groups();
-	git->pos = 0;
-
-	return git;
-}
-
-static u32 ll_group_iter_next(struct ll_grp_it *git)
-{
-	int idx;
-
-	LASSERT(git);
-	idx = git->pos;
-	git->pos++;
-
-	/* -1 is treated as invalid */
-	if (idx >= git->gi->ngroups || idx >= NGROUPS_MAX)
-		return -1;
-
-	/* TODO @timday: This iterator doesn't work on
-	 * CentOS, so give up...
-	 */
-#ifdef HAVE_GROUP_INFO_GID
-	return git->gi->gid[idx].val;
-#else /* !HAVE_GROUP_INFO_GID */
-	return -1;
-#endif /* HAVE_GROUP_INFO_GID */
-}
-
-static bool ll_group_iter_is_done(struct ll_grp_it *git)
-{
-	LASSERT(git);
-
-	if (git->pos >= git->gi->ngroups || git->pos >= NGROUPS_MAX)
-		return true;
-
-	return false;
-}
-
-static void ll_group_iter_stop(struct ll_grp_it *git)
-{
-	LASSERT(git);
-	put_group_info(git->gi);
-	OBD_FREE_PTR(git);
+	return (rc == -EACCES);
 }
 
 /* This function implements a retry mechanism on top of md_intent_lock().
@@ -939,99 +897,65 @@ static void ll_group_iter_stop(struct ll_grp_it *git)
  * which ones are useful for credentials calculation on server side. For
  * instance in case of lookup, the client does not have the child inode yet
  * when it sends the intent lock request.
- *
  * Hopefully, the server can hint at the useful groups, by putting in the
  * request reply the target inode's GID, and also its ACL.
  * So in case the server replies -EACCES, we check the user's credentials
  * against those, and try again the intent lock request if we find a matching
  * supplementary group.
- *
- * If that still doesn't work, we can cycle through the available
- * supplementary groups rather than giving up early.
  */
 int ll_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
 		   struct lookup_intent *it, struct ptlrpc_request **reqp,
 		   ldlm_blocking_callback cb_blocking, __u64 extra_lock_flags,
 		   bool tryagain)
 {
-	struct ll_grp_it *git = ll_group_iter_start();
-	struct ptlrpc_request *req = *reqp;
-	bool more_viable_gids = false;
-	int rc = 0;
+	int rc;
 
 	ENTRY;
 
-again:
-	if (op_data->op_suppgids[0] == -1)
-		op_data->op_suppgids[0] = ll_group_iter_next(git);
-
-	if (op_data->op_suppgids[1] == -1)
-		op_data->op_suppgids[1] = ll_group_iter_next(git);
-
+intent:
 	rc = md_intent_lock(exp, op_data, it, reqp, cb_blocking,
 			    extra_lock_flags);
-
 	CDEBUG(D_VFSTRACE,
-	       "intent lock %d on i1 "DFID" suppgids[%d][%d] rc[%d] tryagain[%i] iter[%i]\n",
+	       "intent lock %d on i1 "DFID" suppgids %d %d: rc %d\n",
 	       it->it_op, PFID(&op_data->op_fid1),
-	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc,
-	       tryagain, ll_group_iter_is_done(git));
-
-	/* We can't (or won't) try again! */
-	if (rc != -EACCES || !tryagain)
-		GOTO(out, rc);
-
-	/* These GIDs don't work */
-	op_data->op_suppgids[0] = -1;
-	op_data->op_suppgids[1] = -1;
-
-	/* If the MDS allows the client to chgrp (CFS_SETGRP_PERM), but the
-	 * client does not know which suppgid should be sent to the MDS, or
-	 * some other(s) changed the target file's GID after this RPC sent
-	 * to the MDS with the suppgid as the original GID, then we should
-	 * try again with right suppgid.
-	 */
-	if (req && it->it_op & IT_OPEN &&
-	    it_disposition(it, DISP_OPEN_DENY)) {
-		int accmode = accmode_from_openflags(it->it_flags);
-		struct posix_acl *acl;
+	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc);
+	if (tryagain && *reqp && failed_it_can_retry(rc, it)) {
 		struct mdt_body *body;
+		__u32 new_suppgid;
 
-		LASSERT(req);
+		body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
+		new_suppgid = body->mbo_gid;
+		CDEBUG(D_SEC, "new suppgid from body: %d\n", new_suppgid);
+		if (op_data->op_suppgids[0] == body->mbo_gid ||
+		    op_data->op_suppgids[1] == body->mbo_gid ||
+		    !in_group_p(make_kgid(&init_user_ns, body->mbo_gid))) {
+			int accmode = accmode_from_openflags(it->it_flags);
+			struct posix_acl *acl;
 
-		rc = get_acl_from_req(*reqp, &acl);
-		if (rc || !acl) {
-			op_data->op_suppgids[0] = -1;
-		} else {
-			op_data->op_suppgids[0] = get_uc_group_from_acl(acl, accmode);
+			rc = get_acl_from_req(*reqp, &acl);
+			if (rc || !acl)
+				GOTO(out, rc = -EACCES);
+
+			new_suppgid = get_uc_group_from_acl(acl, accmode);
 			posix_acl_release(acl);
+			CDEBUG(D_SEC, "new suppgid from acl: %d\n",
+			       new_suppgid);
+
+			if (new_suppgid == (__u32)__kgid_val(INVALID_GID))
+				GOTO(out, rc = -EACCES);
 		}
 
-		body = req_capsule_server_get(&req->rq_pill, &RMF_MDT_BODY);
-
-		if (in_group_p(make_kgid(&init_user_ns, body->mbo_gid)))
-			op_data->op_suppgids[1] = body->mbo_gid;
-	}
-
-	more_viable_gids = !ll_group_iter_is_done(git) ||
-	  op_data->op_suppgids[0] != -1 ||
-	  op_data->op_suppgids[1] != -1;
-
-	/* Keep trying! */
-	if (more_viable_gids) {
 		if (!(it->it_flags & MDS_OPEN_BY_FID))
 			fid_zero(&op_data->op_fid2);
-
-		if (req)
-			ptlrpc_req_finished(req);
-
-		req = NULL;
+		op_data->op_suppgids[1] = new_suppgid;
+		ptlrpc_req_finished(*reqp);
+		*reqp = NULL;
 		ll_intent_release(it);
-		GOTO(again, rc = 0);
+		tryagain = false;
+		goto intent;
 	}
 
 out:
-	ll_group_iter_stop(git);
 	RETURN(rc);
 }
 
@@ -1244,7 +1168,12 @@ inherit:
 		it->it_flags |= MDS_OPEN_PCC;
 	}
 
-	/* Try an intent lock with more GIDs */
+	/* If the MDS allows the client to chgrp (CFS_SETGRP_PERM), but the
+	 * client does not know which suppgid should be sent to the MDS, or
+	 * some other(s) changed the target file's GID after this RPC sent
+	 * to the MDS with the suppgid as the original GID, then we should
+	 * try again with right suppgid.
+	 */
 	rc = ll_intent_lock(ll_i2mdexp(parent), op_data, it, &req,
 			    &ll_md_blocking_ast, 0, true);
 	if (rc < 0)
@@ -1701,11 +1630,11 @@ static void ll_qos_mkdir_prep(struct md_op_data *op_data, struct inode *dir)
 	depth = lli->lli_dir_depth;
 
 	/* parent directory is striped */
-	if (unlikely(lli->lli_lsm_md))
+	if (unlikely(ll_dir_striped(dir)))
 		return;
 
 	/* default LMV set on parent directory */
-	if (unlikely(lli->lli_default_lsm_md))
+	if (unlikely(lli->lli_def_lsm_obj))
 		return;
 
 	/* parent is ROOT */
@@ -1713,13 +1642,13 @@ static void ll_qos_mkdir_prep(struct md_op_data *op_data, struct inode *dir)
 		return;
 
 	/* default LMV not set on ROOT */
-	if (!rlli->lli_default_lsm_md)
+	if (!rlli->lli_def_lsm_obj)
 		return;
 
 	down_read(&rlli->lli_lsm_sem);
-	lsm = rlli->lli_default_lsm_md;
-	if (!lsm)
+	if (!rlli->lli_def_lsm_obj)
 		goto unlock;
+	lsm = &rlli->lli_def_lsm_obj->lso_lsm;
 
 	/* not space balanced */
 	if (lsm->lsm_md_master_mdt_index != LMV_OFFSET_DEFAULT)
@@ -1866,35 +1795,35 @@ again:
 			if (!md.body)
 				GOTO(err_exit, err = -EPROTO);
 
-			OBD_ALLOC_PTR(md.default_lmv);
-			if (!md.default_lmv)
+			OBD_ALLOC_PTR(md.def_lsm_obj);
+			if (!md.def_lsm_obj)
 				GOTO(err_exit, err = -ENOMEM);
 
-			md.default_lmv->lsm_md_magic = lum->lum_magic;
-			md.default_lmv->lsm_md_stripe_count =
+			md.def_lsm_obj->lso_lsm.lsm_md_magic = lum->lum_magic;
+			md.def_lsm_obj->lso_lsm.lsm_md_stripe_count =
 				lum->lum_stripe_count;
-			md.default_lmv->lsm_md_master_mdt_index =
+			md.def_lsm_obj->lso_lsm.lsm_md_master_mdt_index =
 				lum->lum_stripe_offset;
-			md.default_lmv->lsm_md_hash_type = lum->lum_hash_type;
-			md.default_lmv->lsm_md_max_inherit =
+			md.def_lsm_obj->lso_lsm.lsm_md_hash_type =
+				lum->lum_hash_type;
+			md.def_lsm_obj->lso_lsm.lsm_md_max_inherit =
 				lum->lum_max_inherit;
-			md.default_lmv->lsm_md_max_inherit_rr =
+			md.def_lsm_obj->lso_lsm.lsm_md_max_inherit_rr =
 				lum->lum_max_inherit_rr;
+			atomic_set(&md.def_lsm_obj->lso_refs, 1);
 
 			err = ll_update_inode(dir, &md);
-			md_free_lustre_md(sbi->ll_md_exp, &md);
+			md_put_lustre_md(sbi->ll_md_exp, &md);
 			if (err)
 				GOTO(err_exit, err);
-		} else if (err2 == -ENODATA && lli->lli_default_lsm_md) {
+		} else if (err2 == -ENODATA && lli->lli_def_lsm_obj) {
 			/*
 			 * If there are no default stripe EA on the MDT, but the
 			 * client has default stripe, then it probably means
 			 * default stripe EA has just been deleted.
 			 */
 			down_write(&lli->lli_lsm_sem);
-			if (lli->lli_default_lsm_md)
-				OBD_FREE_PTR(lli->lli_default_lsm_md);
-			lli->lli_default_lsm_md = NULL;
+			lmv_stripe_object_put(&lli->lli_def_lsm_obj);
 			up_write(&lli->lli_lsm_sem);
 		} else {
 			GOTO(err_exit, err);
