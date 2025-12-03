@@ -25,7 +25,7 @@ EXPORT_SYMBOL_GPL(_binary_fips140_hmac_end);
 /* Function to load module from memory */
 extern int load_module_mem(const char *mem, size_t size);
 
-static int fips_loader_init(void)
+static int __init fips_loader_init(void)
 {
 	const void *ko_mem = _binary_fips140_ko_start;
 	size_t ko_size = _binary_fips140_ko_end - _binary_fips140_ko_start;
@@ -82,7 +82,7 @@ void fips140_mark_module_level_complete(int level)
 	wake_up(&fips140_module_wq);
 }
 
-static int fips140_sync_thread(void *data)
+static int __init fips140_sync_thread(void *data)
 {
 	pr_info("FIPS 140: starting sync thread\n");
 	
@@ -93,7 +93,7 @@ static int fips140_sync_thread(void *data)
 	return 0;
 }
 
-void start_fips140_loader(void)
+void __init start_fips140_loader(void)
 {
 	struct task_struct *task;
 	
@@ -103,7 +103,7 @@ void start_fips140_loader(void)
 	}
 }
 
-void wait_until_fips140_level_sync(int level)
+void __init wait_until_fips140_level_sync(int level)
 {
 	/* Map kernel initcall levels to FIPS module levels */
 	int fips_level = -1;
