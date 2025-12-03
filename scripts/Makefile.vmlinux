@@ -71,6 +71,29 @@ ARCH_POSTLINK := $(wildcard $(srctree)/arch/$(SRCARCH)/Makefile.postlink)
 cmd_link_vmlinux =							\
 	$< "$(LD)" "$(KBUILD_LDFLAGS)" "$(LDFLAGS_vmlinux)" "$@";	\
 	$(if $(ARCH_POSTLINK), $(MAKE) -f $(ARCH_POSTLINK) $@, true)
+ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+      cmd_link_vmlinux += ; \
+	cp $(CONFIG_CRYPTO_FIPS140_EXTMOD_SOURCE) crypto/fips140/fips140.ko.tmp; \
+	LLVM_OBJCOPY="$(OBJCOPY)" $(PAHOLE) -J $(PAHOLE_FLAGS) $(MODULE_PAHOLE_FLAGS) --btf_base $@ crypto/fips140/fips140.ko.tmp; \
+	$(RESOLVE_BTFIDS) -b $@ crypto/fips140/fips140.ko.tmp; \
+	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.fips140.ko.btf crypto/fips140/fips140.ko.tmp; \
+	cp crypto/fips140/.fips140.ko.btf crypto/fips140/.fips140.ko.btf.first; \
+	rm -f crypto/fips140/fips140.ko.tmp; \
+	$(LD) -r -b binary -o crypto/fips140/fips140_btf.o crypto/fips140/.fips140.ko.btf; \
+	$(OBJCOPY) --rename-section .data=.fips140_btf crypto/fips140/fips140_btf.o; \
+	rm -f $@; \
+	FIPS140_BTF_RELINK=1 $< "$(LD)" "$(KBUILD_LDFLAGS)" "$(LDFLAGS_vmlinux)" "$@"; \
+	cp $(CONFIG_CRYPTO_FIPS140_EXTMOD_SOURCE) crypto/fips140/fips140.ko.tmp2; \
+	LLVM_OBJCOPY="$(OBJCOPY)" $(PAHOLE) -J $(PAHOLE_FLAGS) $(MODULE_PAHOLE_FLAGS) --btf_base $@ crypto/fips140/fips140.ko.tmp2; \
+	$(RESOLVE_BTFIDS) -b $@ crypto/fips140/fips140.ko.tmp2; \
+	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.fips140.ko.btf.second crypto/fips140/fips140.ko.tmp2; \
+	rm -f crypto/fips140/fips140.ko.tmp2; \
+	diff crypto/fips140/.fips140.ko.btf.first crypto/fips140/.fips140.ko.btf.second >/dev/null || echo "Module BTF differs"; \
+	rm -f crypto/fips140/.fips140.ko.btf.first crypto/fips140/.fips140.ko.btf.second; \
+	$(if $(ARCH_POSTLINK), $(MAKE) -f $(ARCH_POSTLINK) $@, true)
+endif
+endif
 
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 fips140-deps := crypto/fips140/fips140-embedded.o crypto/fips140/fips140-digest.o
