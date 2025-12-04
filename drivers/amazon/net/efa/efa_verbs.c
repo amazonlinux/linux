@@ -584,7 +584,6 @@ int efa_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata)
 				qp->rq_size, DMA_TO_DEVICE);
 	}
 
-	kfree(qp);
 	return 0;
 }
 
