@@ -438,7 +438,7 @@ static const struct ib_device_ops efa_dev_ops = {
 	.alloc_ucontext = efa_alloc_ucontext,
 	.create_ah = efa_create_ah,
 	.create_cq = efa_create_cq,
-	.create_qp = efa_kzalloc_qp,
+	.create_qp = efa_create_qp,
 	.dealloc_pd = efa_dealloc_pd,
 	.dealloc_ucontext = efa_dealloc_ucontext,
 	.dereg_mr = efa_dereg_mr,
@@ -468,6 +468,7 @@ static const struct ib_device_ops efa_dev_ops = {
 	INIT_RDMA_OBJ_SIZE(ib_ah, efa_ah, ibah),
 	INIT_RDMA_OBJ_SIZE(ib_cq, efa_cq, ibcq),
 	INIT_RDMA_OBJ_SIZE(ib_pd, efa_pd, ibpd),
+	INIT_RDMA_OBJ_SIZE(ib_qp, efa_qp, ibqp),
 	INIT_RDMA_OBJ_SIZE(ib_ucontext, efa_ucontext, ibucontext),
 };
 
