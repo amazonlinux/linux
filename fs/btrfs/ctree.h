@@ -16,6 +16,9 @@
 #include <linux/atomic.h>
 #include <linux/xarray.h>
 #include <linux/refcount.h>
+#include <linux/xxhash.h>
+#include <crypto/sha2.h>
+#include <crypto/blake2b.h>
 #include <uapi/linux/btrfs_tree.h>
 #include "locking.h"
 #include "fs.h"
@@ -759,8 +762,20 @@ static inline bool btrfs_is_data_reloc_root(const struct btrfs_root *root)
 u16 btrfs_csum_type_size(u16 type);
 int btrfs_super_csum_size(const struct btrfs_super_block *s);
 const char *btrfs_super_csum_name(u16 csum_type);
-const char *btrfs_super_csum_driver(u16 csum_type);
 size_t __attribute_const__ btrfs_get_num_csums(void);
+struct btrfs_csum_ctx {
+	u16 csum_type;
+	union {
+		u32 crc32;
+		struct xxh64_state xxh64;
+		struct sha256_state sha256;
+		struct blake2b_state blake2b;
+	};
+};
+void btrfs_csum(u16 csum_type, const u8 *data, size_t len, u8 *out);
+void btrfs_csum_init(struct btrfs_csum_ctx *ctx, u16 csum_type);
+void btrfs_csum_update(struct btrfs_csum_ctx *ctx, const u8 *data, size_t len);
+void btrfs_csum_final(struct btrfs_csum_ctx *ctx, u8 *out);
 
 /*
  * We use page status Private2 to indicate there is an ordered extent with
