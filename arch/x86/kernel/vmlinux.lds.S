@@ -182,6 +182,14 @@ SECTIONS
 		KEEP(*(.fips140_digest))
 		_binary_fips140_hmac_end = .;
 	}
+#ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+	.fips140_btf : AT(ADDR(.fips140_btf) - LOAD_OFFSET) {
+		. = ALIGN(8);
+		__start_fips140_btf = .;
+		KEEP(*(.fips140_btf))
+		__stop_fips140_btf = .;
+	}
+#endif
 #endif
 
 	/* Data */
