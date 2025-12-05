@@ -8,6 +8,11 @@
 #include <linux/rbtree.h>
 #include <linux/mm.h>
 #include <linux/error-injection.h>
+#include <linux/crc32c.h>
+#include <linux/xxhash.h>
+#include <crypto/sha2.h>
+#include <crypto/internal/blake2b.h>
+#include <linux/unaligned.h>
 #include "messages.h"
 #include "ctree.h"
 #include "disk-io.h"
@@ -41,13 +46,11 @@ static int balance_node_right(struct btrfs_trans_handle *trans,
 static const struct btrfs_csums {
 	u16		size;
 	const char	name[10];
-	const char	driver[12];
 } btrfs_csums[] = {
 	[BTRFS_CSUM_TYPE_CRC32] = { .size = 4, .name = "crc32c" },
 	[BTRFS_CSUM_TYPE_XXHASH] = { .size = 8, .name = "xxhash64" },
 	[BTRFS_CSUM_TYPE_SHA256] = { .size = 32, .name = "sha256" },
-	[BTRFS_CSUM_TYPE_BLAKE2] = { .size = 32, .name = "blake2b",
-				     .driver = "blake2b-256" },
+	[BTRFS_CSUM_TYPE_BLAKE2] = { .size = 32, .name = "blake2b" },
 };
 
 /*
@@ -169,21 +172,101 @@ const char *btrfs_super_csum_name(u16 csum_type)
 	return btrfs_csums[csum_type].name;
 }
 
-/*
- * Return driver name if defined, otherwise the name that's also a valid driver
- * name
- */
-const char *btrfs_super_csum_driver(u16 csum_type)
-{
-	/* csum type is validated at mount time */
-	return btrfs_csums[csum_type].driver[0] ?
-		btrfs_csums[csum_type].driver :
-		btrfs_csums[csum_type].name;
-}
-
 size_t __attribute_const__ btrfs_get_num_csums(void)
 {
 	return ARRAY_SIZE(btrfs_csums);
+}
+
+void btrfs_csum(u16 csum_type, const u8 *data, size_t len, u8 *out)
+{
+	switch (csum_type) {
+	case BTRFS_CSUM_TYPE_CRC32:
+		put_unaligned_le32(~crc32c(~0, data, len), out);
+		break;
+	case BTRFS_CSUM_TYPE_XXHASH:
+		put_unaligned_le64(xxh64(data, len, 0), out);
+		break;
+	case BTRFS_CSUM_TYPE_SHA256:
+		sha256(data, len, out);
+		break;
+	case BTRFS_CSUM_TYPE_BLAKE2: {
+		struct blake2b_state state;
+
+		__blake2b_init(&state, 32, NULL, 0);
+		__blake2b_update(&state, data, len, blake2b_compress_generic);
+		__blake2b_final(&state, out, blake2b_compress_generic);
+		break;
+	}
+	default:
+		/* Checksum type is validated at mount time. */
+		BUG();
+	}
+}
+
+void btrfs_csum_init(struct btrfs_csum_ctx *ctx, u16 csum_type)
+{
+	ctx->csum_type = csum_type;
+	switch (ctx->csum_type) {
+	case BTRFS_CSUM_TYPE_CRC32:
+		ctx->crc32 = ~0;
+		break;
+	case BTRFS_CSUM_TYPE_XXHASH:
+		xxh64_reset(&ctx->xxh64, 0);
+		break;
+	case BTRFS_CSUM_TYPE_SHA256:
+		sha256_init(&ctx->sha256);
+		break;
+	case BTRFS_CSUM_TYPE_BLAKE2:
+		__blake2b_init(&ctx->blake2b, 32, NULL, 0);
+		break;
+	default:
+		/* Checksum type is validated at mount time. */
+		BUG();
+	}
+}
+
+void btrfs_csum_update(struct btrfs_csum_ctx *ctx, const u8 *data, size_t len)
+{
+	switch (ctx->csum_type) {
+	case BTRFS_CSUM_TYPE_CRC32:
+		ctx->crc32 = crc32c(ctx->crc32, data, len);
+		break;
+	case BTRFS_CSUM_TYPE_XXHASH:
+		xxh64_update(&ctx->xxh64, data, len);
+		break;
+	case BTRFS_CSUM_TYPE_SHA256:
+		sha256_update(&ctx->sha256, data, len);
+		break;
+	case BTRFS_CSUM_TYPE_BLAKE2:
+		__blake2b_update(&ctx->blake2b, data, len,
+				 blake2b_compress_generic);
+		break;
+	default:
+		/* Checksum type is validated at mount time. */
+		BUG();
+	}
+}
+
+void btrfs_csum_final(struct btrfs_csum_ctx *ctx, u8 *out)
+{
+	switch (ctx->csum_type) {
+	case BTRFS_CSUM_TYPE_CRC32:
+		put_unaligned_le32(~ctx->crc32, out);
+		break;
+	case BTRFS_CSUM_TYPE_XXHASH:
+		put_unaligned_le64(xxh64_digest(&ctx->xxh64), out);
+		break;
+	case BTRFS_CSUM_TYPE_SHA256:
+		sha256_final(&ctx->sha256, out);
+		break;
+	case BTRFS_CSUM_TYPE_BLAKE2:
+		__blake2b_final(&ctx->blake2b, out,
+				blake2b_compress_generic);
+		break;
+	default:
+		/* Checksum type is validated at mount time. */
+		BUG();
+	}
 }
 
 struct btrfs_path *btrfs_alloc_path(void)
