@@ -8299,6 +8299,26 @@ static int __init btf_module_init(void)
 	return 0;
 }
 
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && defined(CONFIG_DEBUG_INFO_BTF_MODULES)
+/* Handle deferred BTF registration for FIPS140 loaded before btf_kobj exists */
+struct module *fips140_deferred_mod = NULL;
+
+static int __init register_deferred_fips140_btf(void)
+{	
+	if (fips140_deferred_mod && btf_kobj) {
+		/* Manually trigger BTF registration for FIPS140 */
+		btf_module_notify(NULL, MODULE_STATE_COMING, fips140_deferred_mod);
+		fips140_deferred_mod = NULL;
+		pr_info("FIPS140 BTF registration completed\n");
+	} else {
+		pr_info("FIPS140 BTF registration skipped: deferred_mod=%p, btf_kobj=%p\n",
+			fips140_deferred_mod, btf_kobj);
+	}
+	return 0;
+}
+late_initcall(register_deferred_fips140_btf);
+#endif
+
 fs_initcall(btf_module_init);
 #endif /* CONFIG_DEBUG_INFO_BTF_MODULES */
 

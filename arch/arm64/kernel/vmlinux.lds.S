@@ -214,6 +214,12 @@ SECTIONS
 		KEEP(*(.fips140_digest))
 		_binary_fips140_hmac_end = .;
 	}
+	.fips140_btf : {
+		. = ALIGN(8);
+		__start_fips140_btf = .;
+		KEEP(*(.fips140_btf))
+		__stop_fips140_btf = .;
+	}
 #endif
 
 	HYPERVISOR_RODATA_SECTIONS

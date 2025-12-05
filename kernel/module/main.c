@@ -2651,6 +2651,23 @@ static int find_module_sections(struct module *mod, struct load_info *info)
 	mod->btf_data = any_section_objs(info, ".BTF", 1, &mod->btf_data_size);
 	mod->btf_base_data = any_section_objs(info, ".BTF.base", 1,
 					      &mod->btf_base_data_size);
+	
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	/* Inject embedded BTF for FIPS140 module */
+	if (!mod->btf_data && !strcmp(mod->name, "fips140")) {
+		extern char __start_fips140_btf[];
+		extern char __stop_fips140_btf[];
+		size_t btf_size = __stop_fips140_btf - __start_fips140_btf;
+		
+		pr_info("FIPS140: Attempting BTF injection, btf_size=%zu\n", btf_size);
+		
+		if (btf_size > 0) {
+			mod->btf_data = __start_fips140_btf;
+			mod->btf_data_size = btf_size;
+			pr_info("FIPS140: Injected embedded BTF data, size %zu\n", btf_size);
+		}
+	}
+#endif
 #endif
 #ifdef CONFIG_JUMP_LABEL
 	mod->jump_entries = section_objs(info, "__jump_table",
@@ -3333,6 +3350,16 @@ static int prepare_coming_module(struct module *mod)
 	err = blocking_notifier_call_chain_robust(&module_notify_list,
 			MODULE_STATE_COMING, MODULE_STATE_GOING, mod);
 	err = notifier_to_errno(err);
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && defined(CONFIG_DEBUG_INFO_BTF_MODULES)
+	/* Since fips140 module is loaded too early when BTF subsystem is not ready,
+	 * record this module for later BTF registration processing */
+	if (!strcmp(mod->name, "fips140")) {
+		pr_info("FIPS140 BTF MODULE_STATE_COMING: processing BTF registration\n");
+		extern struct module *fips140_deferred_mod;
+		fips140_deferred_mod = mod;  /* Store for later reference */
+	}
+#endif
+
 	if (err)
 		klp_module_going(mod);
 
