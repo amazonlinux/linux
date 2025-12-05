@@ -3,7 +3,6 @@
  * Copyright (C) 2007 Oracle.  All rights reserved.
  */
 
-#include <crypto/hash.h>
 #include <linux/kernel.h>
 #include <linux/bio.h>
 #include <linux/blk-cgroup.h>
@@ -3353,29 +3352,28 @@ void btrfs_calculate_block_csum(struct btrfs_fs_info *fs_info, phys_addr_t paddr
 {
 	struct folio *folio = page_folio(phys_to_page(paddr));
 	const u32 blocksize = fs_info->sectorsize;
-	SHASH_DESC_ON_STACK(shash, fs_info->csum_shash);
+	struct btrfs_csum_ctx csum;
 
-	shash->tfm = fs_info->csum_shash;
 	/* The full block must be inside the folio. */
 	ASSERT(offset_in_folio(folio, paddr) + blocksize <= folio_size(folio));
 
 	if (folio_test_partial_kmap(folio)) {
 		size_t cur = paddr;
 
-		crypto_shash_init(shash);
+		btrfs_csum_init(&csum, fs_info->csum_type);
 		while (cur < paddr + blocksize) {
 			void *kaddr;
 			size_t len = min(paddr + blocksize - cur,
 					 PAGE_SIZE - offset_in_page(cur));
 
 			kaddr = kmap_local_folio(folio, offset_in_folio(folio, cur));
-			crypto_shash_update(shash, kaddr, len);
+			btrfs_csum_update(&csum, kaddr, len);
 			kunmap_local(kaddr);
 			cur += len;
 		}
-		crypto_shash_final(shash, dest);
+		btrfs_csum_final(&csum, dest);
 	} else {
-		crypto_shash_digest(shash, phys_to_virt(paddr), blocksize, dest);
+		btrfs_csum(fs_info->csum_type, phys_to_virt(paddr), blocksize, dest);
 	}
 }
 /*
