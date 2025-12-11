@@ -77,8 +77,14 @@ vmlinux_link()
 
 	if is_enabled CONFIG_CRYPTO_FIPS140_EXTMOD; then
 		objs="${objs} crypto/fips140/fips140-embedded.o crypto/fips140/fips140-digest.o"
+		if is_enabled CONFIG_CRYPTO_FIPS140_DUAL_VERSION; then
+			objs="${objs} crypto/fips140/nonfips140-embedded.o"
+		fi
 		if is_enabled CONFIG_DEBUG_INFO_BTF_MODULES && [ -n "${FIPS140_BTF_RELINK}" ] && [ -f crypto/fips140/fips140_btf.o ]; then
 			objs="${objs} crypto/fips140/fips140_btf.o"
+			if is_enabled CONFIG_CRYPTO_FIPS140_DUAL_VERSION && [ -f crypto/fips140/nonfips140_btf.o ]; then
+				objs="${objs} crypto/fips140/nonfips140_btf.o"
+			fi
 		fi
 	fi
 
