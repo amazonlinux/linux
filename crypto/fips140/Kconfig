@@ -42,3 +42,27 @@ config CRYPTO_FIPS140_EXTMOD_SOURCE
 	    - fips140_build/crypto/sha256.ko
 	  
 	  If unsure, say N.
+config CRYPTO_FIPS140_DUAL_VERSION
+	bool "Enable dual crypto versions for FIPS and regular modes"
+	depends on CRYPTO_FIPS140_EXTMOD && CRYPTO_FIPS140_EXTMOD_SOURCE
+	default n
+	help
+	  Enable keeping two crypto module versions in the same kernel build
+	  for boot-time switching based on FIPS mode status. This allows:
+	  - Non-FIPS users: Get latest crypto algorithms built from current
+	    kernel sources for optimal performance and security features
+	  - FIPS users: Get pre-compiled certified crypto modules that have
+	    undergone formal validation and certification processes
+
+	  When enabled:
+
+	  For core fips140.ko:
+	  - FIPS mode: Uses certified module from CRYPTO_FIPS140_EXTMOD_SOURCE
+	  - Regular mode: Uses freshly built kernel crypto implementation
+
+	  For modular algorithms (e.g., aes.ko), they are not duplicated
+	  automatically. Either make them built-in to be included into
+	  fips140.ko for automatic duplication, or require OS utilities such
+	  as `modprobe` to correctly isolate modular cryptos in filesystems.
+
+	  If unsure, say N.
