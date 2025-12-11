@@ -222,6 +222,22 @@ SECTIONS
 		__stop_fips140_btf = .;
 	}
 #endif
+#ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+	.nonfips140_embedded : {
+		. = ALIGN(8);
+		_binary_nonfips140_ko_start = .;
+		KEEP(*(.nonfips140_module_data))
+		_binary_nonfips140_ko_end = .;
+	}
+#ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+	.nonfips140_btf : {
+		. = ALIGN(8);
+		__start_nonfips140_btf = .;
+		KEEP(*(.nonfips140_btf))
+		__stop_nonfips140_btf = .;
+	}
+#endif
+#endif
 #endif
 
 	HYPERVISOR_RODATA_SECTIONS
