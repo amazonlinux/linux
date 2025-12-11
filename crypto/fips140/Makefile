@@ -16,3 +16,6 @@ CFLAGS_fips140-api-main.o += -I$(srctree)
 CFLAGS_fips140-api-fips.o += -I$(srctree)
 
 clean-files:= .fips140.order .fips140.symvers .fips140.hmac .fips140.ko.btf
+ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+clean-files += .nonfips140.ko.btf
+endif
