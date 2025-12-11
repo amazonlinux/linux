@@ -81,7 +81,18 @@ ifdef CONFIG_DEBUG_INFO_BTF_MODULES
 	cp crypto/fips140/.fips140.ko.btf crypto/fips140/.fips140.ko.btf.first; \
 	rm -f crypto/fips140/fips140.ko.tmp; \
 	$(LD) -r -b binary -o crypto/fips140/fips140_btf.o crypto/fips140/.fips140.ko.btf; \
-	$(OBJCOPY) --rename-section .data=.fips140_btf crypto/fips140/fips140_btf.o; \
+	$(OBJCOPY) --rename-section .data=.fips140_btf crypto/fips140/fips140_btf.o
+ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+      cmd_link_vmlinux += ; \
+	cp crypto/fips140/fips140.ko crypto/fips140/nonfips140.ko.tmp; \
+	LLVM_OBJCOPY="$(OBJCOPY)" $(PAHOLE) -J $(PAHOLE_FLAGS) $(MODULE_PAHOLE_FLAGS) --btf_base $@ crypto/fips140/nonfips140.ko.tmp; \
+	$(RESOLVE_BTFIDS) -b $@ crypto/fips140/nonfips140.ko.tmp; \
+	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.nonfips140.ko.btf crypto/fips140/nonfips140.ko.tmp; \
+	rm -f crypto/fips140/nonfips140.ko.tmp; \
+	$(LD) -r -b binary -o crypto/fips140/nonfips140_btf.o crypto/fips140/.nonfips140.ko.btf; \
+	$(OBJCOPY) --rename-section .data=.nonfips140_btf --prefix-symbols nonfips140_ crypto/fips140/nonfips140_btf.o
+endif
+	  cmd_link_vmlinux += ; \
 	rm -f $@; \
 	FIPS140_BTF_RELINK=1 $< "$(LD)" "$(KBUILD_LDFLAGS)" "$(LDFLAGS_vmlinux)" "$@"; \
 	cp $(fips140_build)/crypto/fips140/fips140.ko crypto/fips140/fips140.ko.tmp2; \
@@ -90,13 +101,27 @@ ifdef CONFIG_DEBUG_INFO_BTF_MODULES
 	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.fips140.ko.btf.second crypto/fips140/fips140.ko.tmp2; \
 	rm -f crypto/fips140/fips140.ko.tmp2; \
 	diff crypto/fips140/.fips140.ko.btf.first crypto/fips140/.fips140.ko.btf.second >/dev/null || echo "Module BTF differs"; \
-	rm -f crypto/fips140/.fips140.ko.btf.first crypto/fips140/.fips140.ko.btf.second; \
+	rm -f crypto/fips140/.fips140.ko.btf.first crypto/fips140/.fips140.ko.btf.second
+ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+      cmd_link_vmlinux += ; \
+	cp crypto/fips140/fips140.ko crypto/fips140/nonfips140.ko.tmp2; \
+	LLVM_OBJCOPY="$(OBJCOPY)" $(PAHOLE) -J $(PAHOLE_FLAGS) $(MODULE_PAHOLE_FLAGS) --btf_base $@ crypto/fips140/nonfips140.ko.tmp2; \
+	$(RESOLVE_BTFIDS) -b $@ crypto/fips140/nonfips140.ko.tmp2; \
+	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.nonfips140.ko.btf.second crypto/fips140/nonfips140.ko.tmp2; \
+	rm -f crypto/fips140/nonfips140.ko.tmp2; \
+	diff crypto/fips140/.nonfips140.ko.btf crypto/fips140/.nonfips140.ko.btf.second >/dev/null || echo "Nonfips140 Module BTF differs"; \
+	rm -f crypto/fips140/.nonfips140.ko.btf.second
+endif
+	  cmd_link_vmlinux += ; \
 	$(if $(ARCH_POSTLINK), $(MAKE) -f $(ARCH_POSTLINK) $@, true)
 endif
 endif
 
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 fips140-deps := crypto/fips140/fips140-embedded.o crypto/fips140/fips140-digest.o
+ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+fips140-deps += crypto/fips140/nonfips140-embedded.o
+endif
 endif
 
 targets += vmlinux.unstripped .vmlinux.export.o
