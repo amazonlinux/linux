@@ -11,11 +11,19 @@
 #include <linux/elf.h>
 #include <linux/kthread.h>
 #include <linux/wait.h>
+#include <linux/fips.h>
 
 extern const u8 _binary_fips140_ko_start[];
 extern const u8 _binary_fips140_ko_end[];
 extern const u8 _binary_fips140_hmac_start[];
 extern const u8 _binary_fips140_hmac_end[];
+
+#ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+/* For non-FIPS mode: no module signature/HMAC is required,
+ * so only include binary start/end address without module sig address */
+extern const u8 _binary_nonfips140_ko_start[];
+extern const u8 _binary_nonfips140_ko_end[];
+#endif
 
 const u8 *_binary_crypto_ko_start;
 EXPORT_SYMBOL_GPL(_binary_crypto_ko_start);
@@ -29,6 +37,10 @@ EXPORT_SYMBOL_GPL(_binary_crypto_hmac_end);
 #ifdef CONFIG_DEBUG_INFO_BTF_MODULES
 extern const u8 __start_fips140_btf[];
 extern const u8 __stop_fips140_btf[];
+#ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+extern const u8 __start_nonfips140_btf[];
+extern const u8 __stop_nonfips140_btf[];
+#endif
 const u8 *__start_crypto_btf;
 const u8 *__stop_crypto_btf;
 #endif
@@ -42,10 +54,24 @@ static void load_prepare(void)
 	_binary_crypto_ko_end = _binary_fips140_ko_end;
 	_binary_crypto_hmac_start = _binary_fips140_hmac_start;
 	_binary_crypto_hmac_end = _binary_fips140_hmac_end;
-	
+
 #ifdef CONFIG_DEBUG_INFO_BTF_MODULES
 	__start_crypto_btf = __start_fips140_btf;
 	__stop_crypto_btf = __stop_fips140_btf;
+#endif
+
+#ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+	if (!fips_enabled) {
+		_binary_crypto_ko_start = _binary_nonfips140_ko_start;
+		_binary_crypto_ko_end = _binary_nonfips140_ko_end;
+		_binary_crypto_hmac_start = NULL;
+		_binary_crypto_hmac_end = NULL;
+
+#ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+		__start_crypto_btf = __start_nonfips140_btf;
+		__stop_crypto_btf = __stop_nonfips140_btf;
+#endif
+		}
 #endif
 }
 
