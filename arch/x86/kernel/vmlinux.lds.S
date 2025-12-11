@@ -190,6 +190,22 @@ SECTIONS
 		__stop_fips140_btf = .;
 	}
 #endif
+#ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
+	.nonfips140_embedded : AT(ADDR(.nonfips140_embedded) - LOAD_OFFSET) {
+		. = ALIGN(8);
+		_binary_nonfips140_ko_start = .;
+		KEEP(*(.nonfips140_module_data))
+		_binary_nonfips140_ko_end = .;
+	}
+#ifdef CONFIG_DEBUG_INFO_BTF_MODULES
+	.nonfips140_btf : AT(ADDR(.nonfips140_btf) - LOAD_OFFSET) {
+		. = ALIGN(8);
+		__start_nonfips140_btf = .;
+		KEEP(*(.nonfips140_btf))
+		__stop_nonfips140_btf = .;
+	}
+#endif
+#endif
 #endif
 
 	/* Data */
