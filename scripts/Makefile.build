@@ -68,6 +68,7 @@ obj-m += $(crypto-objs-m)
 ifndef CONFIG_CRYPTO_FIPS140_EXTMOD
 obj-y += $(crypto-objs-y)
 crypto-objs-y :=
+crypto-objs-m := $(filter-out $(crypto-objs-y),$(crypto-objs-m))
 endif
 
 # When an object is listed to be built compiled-in and modular,
@@ -130,6 +131,7 @@ multi-obj-m := $(call multi-search, $(obj-m), .o, -objs -y -m)
 multi-obj-ym := $(multi-obj-y) $(multi-obj-m)
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 multi-crypto-objs-y := $(call multi-search, $(crypto-objs-y), .o, -objs -y)
+multi-crypto-objs-m := $(call multi-search, $(crypto-objs-m), .o, -objs -y -m)
 endif
 
 # Replace multi-part objects by their individual parts,
@@ -138,6 +140,7 @@ real-obj-y := $(call real-search, $(obj-y), .o, -objs -y)
 real-obj-m := $(call real-search, $(obj-m), .o, -objs -y -m)
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 real-crypto-objs-y := $(strip $(call real-search, $(crypto-objs-y), .o, -objs -y))
+real-crypto-objs-m := $(strip $(call real-search, $(crypto-objs-m), .o, -objs -y -m))
 endif
 
 always-y += $(always-m)
@@ -165,11 +168,13 @@ real-obj-y	:= $(addprefix $(obj)/, $(real-obj-y))
 real-obj-m	:= $(addprefix $(obj)/, $(real-obj-m))
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 real-crypto-objs-y := $(addprefix $(obj)/, $(real-crypto-objs-y))
+real-crypto-objs-m := $(addprefix $(obj)/, $(real-crypto-objs-m))
 endif
 multi-obj-m	:= $(addprefix $(obj)/, $(multi-obj-m))
 subdir-ym	:= $(addprefix $(obj)/, $(subdir-ym))
 ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 multi-crypto-objs-y := $(addprefix $(obj)/, $(multi-crypto-objs-y))
+multi-crypto-objs-m := $(addprefix $(obj)/, $(multi-crypto-objs-m))
 endif
 endif
 
@@ -573,6 +578,16 @@ $(multi-crypto-objs-y): %.o: %.mod FORCE
 $(call multi_depend, $(multi-crypto-objs-y), .o, -objs -y -m)
 endif
 endif
+
+# Individual object compilation with version-specific flags
+$(real-crypto-objs-m): private KBUILD_CFLAGS += -DFIPS140_CRYPTO_OBJS_M=1 -include $(srctree)/crypto/fips140/fips140-crypto-module-marker.h
+
+# Also set flags for individual objects that make up composite crypto objects
+$(foreach obj,$(multi-crypto-objs-m),$($(obj:.o=-y))): private KBUILD_CFLAGS += -DFIPS140_CRYPTO_OBJS_M=1
+$(foreach obj,$(multi-crypto-objs-m),$($(obj:.o=-objs))): private KBUILD_CFLAGS += -DFIPS140_CRYPTO_OBJS_M=1
+
+# Multi-part crypto objects
+$(multi-crypto-objs-m): private KBUILD_CFLAGS += -DFIPS140_CRYPTO_OBJS_M=1 -include $(srctree)/crypto/fips140/fips140-crypto-module-marker.h
 endif
 # This is a list of build artifacts from the current Makefile and its
 # sub-directories. The timestamp should be updated when any of the member files.
