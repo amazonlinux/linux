@@ -13,7 +13,9 @@
 
 struct ena_stats {
 	char name[ETH_GSTRING_LEN];
-	int stat_offset;
+	u16 stat_offset;
+	bool is_atomic;
+	u8 reserved;
 };
 
 struct ena_hw_metrics {
@@ -68,6 +70,15 @@ enum ena_stat_type {
 #define ENA_METRIC_ENI_ENTRY(stat) { \
 	.name = #stat \
 }
+
+#define ENA_STAT_ENTRY_ATOMIC(stat, stat_type) { \
+	.name = #stat, \
+	.stat_offset = offsetof(struct ena_stats_##stat_type, stat) / sizeof(u64), \
+	.is_atomic = true \
+}
+
+#define ENA_STAT_TX_ENTRY_ATOMIC(stat) \
+	ENA_STAT_ENTRY_ATOMIC(stat, tx)
 
 static const struct ena_stats ena_stats_global_strings[] = {
 	ENA_STAT_GLOBAL_ENTRY(total_resets),
@@ -137,6 +148,7 @@ static const struct ena_stats ena_accum_stats_tx_strings[] = {
 	ENA_STAT_TX_ENTRY(bad_req_id),
 	ENA_STAT_TX_ENTRY(llq_buffer_copy),
 	ENA_STAT_TX_ENTRY(missed_tx),
+	ENA_STAT_TX_ENTRY_ATOMIC(pending_timedout_pkts),
 #ifdef ENA_AF_XDP_SUPPORT
 	ENA_STAT_TX_ENTRY(xsk_cnt),
 	ENA_STAT_TX_ENTRY(xsk_bytes),
@@ -154,6 +166,7 @@ static const struct ena_stats ena_per_q_stats_tx_strings[] = {
 	ENA_STAT_TX_ENTRY(tx_poll),
 	ENA_STAT_TX_ENTRY(doorbells),
 	ENA_STAT_TX_ENTRY(unmask_interrupt),
+	ENA_STAT_TX_ENTRY(lost_interrupt),
 };
 
 static const struct ena_stats ena_stats_rx_strings[] = {
@@ -183,9 +196,26 @@ static const struct ena_stats ena_stats_rx_strings[] = {
 	ENA_STAT_RX_ENTRY(xdp_invalid),
 	ENA_STAT_RX_ENTRY(xdp_redirect),
 #endif
+#ifdef ENA_LPC_SUPPORT
 	ENA_STAT_RX_ENTRY(lpc_warm_up),
 	ENA_STAT_RX_ENTRY(lpc_full),
 	ENA_STAT_RX_ENTRY(lpc_wrong_numa),
+#endif /* ENA_LPC_SUPPORT */
+#ifdef ENA_PAGE_POOL_SUPPORT
+#ifdef CONFIG_PAGE_POOL_STATS
+	ENA_STAT_RX_ENTRY(pp_alloc_fast),
+	ENA_STAT_RX_ENTRY(pp_alloc_slow),
+	ENA_STAT_RX_ENTRY(pp_alloc_slow_hi_ord),
+	ENA_STAT_RX_ENTRY(pp_alloc_empty),
+	ENA_STAT_RX_ENTRY(pp_alloc_refill),
+	ENA_STAT_RX_ENTRY(pp_alloc_waive),
+	ENA_STAT_RX_ENTRY(pp_cached),
+	ENA_STAT_RX_ENTRY(pp_cache_full),
+	ENA_STAT_RX_ENTRY(pp_ring),
+	ENA_STAT_RX_ENTRY(pp_ring_full),
+	ENA_STAT_RX_ENTRY(pp_released_ref),
+#endif /* CONFIG_PAGE_POOL_STATS */
+#endif /* ENA_PAGE_POOL_SUPPORT */
 #ifdef ENA_AF_XDP_SUPPORT
 	ENA_STAT_RX_ENTRY(xsk_need_wakeup_set),
 	ENA_STAT_RX_ENTRY(zc_queue_pkt_copy),
@@ -219,6 +249,10 @@ static const struct ena_stats ena_stats_ena_com_phc_strings[] = {
 #define ENA_STATS_ARRAY_ENA_SRD		ARRAY_SIZE(ena_srd_info_strings)
 #define ENA_METRICS_ARRAY_ENI		ARRAY_SIZE(ena_hw_stats_strings)
 
+/* Used to report number of active and XDP TX queues */
+#define ENA_QUEUE_SIZE_STATS_NUM	2
+
+#ifdef ENA_LPC_SUPPORT /* LPC is the only supported priv-flag */
 static const char ena_priv_flags_strings[][ETH_GSTRING_LEN] = {
 #define ENA_PRIV_FLAGS_LPC	BIT(0)
 	"local_page_cache",
@@ -226,6 +260,7 @@ static const char ena_priv_flags_strings[][ETH_GSTRING_LEN] = {
 
 #define ENA_PRIV_FLAGS_NR ARRAY_SIZE(ena_priv_flags_strings)
 
+#endif /* ENA_LPC_SUPPORT */
 static void ena_safe_update_stat(u64 *src, u64 *dst,
 				 struct u64_stats_sync *syncp)
 {
@@ -270,7 +305,7 @@ static void ena_metrics_stats(struct ena_adapter *adapter, u64 **data)
 		(*data) += supported_metrics_count;
 
 	} else if (ena_com_get_cap(dev, ENA_ADMIN_ENI_STATS)) {
-		struct ena_admin_eni_stats eni_stats;
+		struct ena_admin_eni_stats eni_stats = {};
 
 		ena_com_get_eni_stats(dev, &eni_stats);
 		/* Updating regardless of rc - once we told ethtool how many stats we have
@@ -285,7 +320,7 @@ static void ena_metrics_stats(struct ena_adapter *adapter, u64 **data)
 	}
 
 	if (ena_com_get_cap(dev, ENA_ADMIN_ENA_SRD_INFO)) {
-		struct ena_admin_ena_srd_info ena_srd_info;
+		struct ena_admin_ena_srd_info ena_srd_info = {};
 
 		ena_com_get_ena_srd_info(dev, &ena_srd_info);
 		/* Get ENA SRD mode */
@@ -305,6 +340,45 @@ static void ena_metrics_stats(struct ena_adapter *adapter, u64 **data)
 	}
 }
 
+#ifdef ENA_PAGE_POOL_SUPPORT
+static void ena_fetch_page_pool_stats(struct ena_adapter *adapter)
+{
+#ifdef CONFIG_PAGE_POOL_STATS
+	struct page_pool_stats stats;
+	struct ena_ring *rx_ring;
+	struct page_pool *pool;
+	int i;
+
+	for (i = 0; i < adapter->max_num_io_queues; i++) {
+		rx_ring = &adapter->rx_ring[i];
+		memset(&stats, 0, sizeof(stats));
+		pool = rx_ring->page_pool;
+
+		if (!pool || !page_pool_get_stats(pool, &stats))
+			continue;
+
+		u64_stats_update_begin(&rx_ring->syncp);
+		rx_ring->rx_stats.pp_alloc_fast = stats.alloc_stats.fast;
+		rx_ring->rx_stats.pp_alloc_slow = stats.alloc_stats.slow;
+		rx_ring->rx_stats.pp_alloc_slow_hi_ord =
+			stats.alloc_stats.slow_high_order;
+		rx_ring->rx_stats.pp_alloc_empty = stats.alloc_stats.empty;
+		rx_ring->rx_stats.pp_alloc_refill = stats.alloc_stats.refill;
+		rx_ring->rx_stats.pp_alloc_waive = stats.alloc_stats.waive;
+
+		rx_ring->rx_stats.pp_cached = stats.recycle_stats.cached;
+		rx_ring->rx_stats.pp_cache_full =
+			stats.recycle_stats.cache_full;
+		rx_ring->rx_stats.pp_ring = stats.recycle_stats.ring;
+		rx_ring->rx_stats.pp_ring_full = stats.recycle_stats.ring_full;
+		rx_ring->rx_stats.pp_released_ref =
+			stats.recycle_stats.released_refcnt;
+		u64_stats_update_end(&rx_ring->syncp);
+	}
+#endif /* CONFIG_PAGE_POOL_STATS */
+}
+
+#endif /* ENA_PAGE_POOL_SUPPORT */
 static void ena_dump_stats_for_queue(struct ena_ring *ring, int stats_count,
 				     u64 **data, enum ena_stat_type stat_type,
 				     const struct ena_stats *stats_strings)
@@ -321,20 +395,25 @@ static void ena_dump_stats_for_queue(struct ena_ring *ring, int stats_count,
 		else
 			ptr = (u64 *)&ring->rx_stats + ena_stats->stat_offset;
 
-		ena_safe_update_stat(ptr, (*data)++, &ring->syncp);
+		if (ena_stats->is_atomic) {
+			**data = atomic64_read((atomic64_t *)ptr);
+			(*data)++;
+		} else {
+			ena_safe_update_stat(ptr, (*data)++, &ring->syncp);
+		}
 	}
 }
 
 static void ena_accumulate_queues_for_stat(struct ena_adapter *adapter,
 					   const struct ena_stats *ena_stats,
-					   u32 queues_nr, u64 **data,
+					   u64 **data,
 					   enum ena_stat_type stat_type)
 {
 	u64 *ptr, accumulated_sum = 0;
 	struct ena_ring *ring;
 	int i;
 
-	for (i = 0; i < queues_nr; i++) {
+	for (i = 0; i < adapter->max_num_io_queues; i++) {
 		if (stat_type == ENA_TX_STAT) {
 			ring = &adapter->tx_ring[i];
 			ptr = (u64 *)&ring->tx_stats + ena_stats->stat_offset;
@@ -343,8 +422,11 @@ static void ena_accumulate_queues_for_stat(struct ena_adapter *adapter,
 			ptr = (u64 *)&ring->rx_stats + ena_stats->stat_offset;
 		}
 
-		ena_safe_accumulate_stat(ptr, &accumulated_sum,
-					 &ring->syncp);
+		if (ena_stats->is_atomic)
+			accumulated_sum += atomic64_read((atomic64_t *)ptr);
+		else
+			ena_safe_accumulate_stat(ptr, &accumulated_sum,
+						 &ring->syncp);
 	}
 
 	ena_safe_update_stat(&accumulated_sum, (*data)++,
@@ -354,30 +436,35 @@ static void ena_accumulate_queues_for_stat(struct ena_adapter *adapter,
 static void ena_get_queue_stats(struct ena_adapter *adapter, u64 *data,
 				bool print_accumulated_queue_stats)
 {
-	u32 queues_nr = adapter->num_io_queues + adapter->xdp_num_queues;
 	const struct ena_stats *ena_stats;
 	struct ena_ring *ring;
 	int i;
 
+	/* Report number of active and XDP TX queues */
+	*data++ = adapter->num_io_queues;
+	*data++ = adapter->xdp_num_queues;
+
+#ifdef ENA_PAGE_POOL_SUPPORT
+	ena_fetch_page_pool_stats(adapter);
+
+#endif /* ENA_PAGE_POOL_SUPPORT */
 	if (print_accumulated_queue_stats) {
 		for (i = 0; i < ENA_ACCUM_STATS_ARRAY_TX; i++) {
 			ena_stats = &ena_accum_stats_tx_strings[i];
 
 			ena_accumulate_queues_for_stat(adapter, ena_stats,
-						       queues_nr, &data,
-						       ENA_TX_STAT);
+						       &data, ENA_TX_STAT);
 		}
 
 		for (i = 0; i < ENA_STATS_ARRAY_RX; i++) {
 			ena_stats = &ena_stats_rx_strings[i];
 
 			ena_accumulate_queues_for_stat(adapter, ena_stats,
-						       adapter->num_io_queues,
 						       &data, ENA_RX_STAT);
 		}
 	}
 
-	for (i = 0; i < queues_nr; i++) {
+	for (i = 0; i < adapter->max_num_io_queues; i++) {
 		/* Tx stats */
 		ring = &adapter->tx_ring[i];
 
@@ -390,10 +477,6 @@ static void ena_get_queue_stats(struct ena_adapter *adapter, u64 *data,
 					 ENA_ACCUM_STATS_ARRAY_TX,
 					 &data, ENA_TX_STAT,
 					 ena_accum_stats_tx_strings);
-
-		/* XDP TX queues don't have a RX queue counterpart */
-		if (ENA_IS_XDP_INDEX(adapter, i))
-			continue;
 
 		/* Rx stats */
 		ring = &adapter->rx_ring[i];
@@ -471,7 +554,6 @@ static void ena_get_ethtool_stats(struct net_device *netdev,
 	ena_get_queue_stats(adapter, data, false);
 }
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 #ifdef ENA_HAVE_KERNEL_ETHTOOL_TS_INFO
 static int ena_get_ts_info(struct net_device *netdev,
 			   struct kernel_ethtool_ts_info *info)
@@ -514,28 +596,29 @@ static int ena_get_ts_info(struct net_device *netdev,
 	return 0;
 }
 
-#endif
 static int ena_get_queue_sw_stats_count(struct ena_adapter *adapter,
 					bool count_accumulated_stats)
 {
-	int count = (adapter->num_io_queues + adapter->xdp_num_queues) *
-		    (ENA_ACCUM_STATS_ARRAY_TX + ENA_PER_Q_STATS_ARRAY_TX) +
-		     adapter->num_io_queues * ENA_STATS_ARRAY_RX;
+	int count = adapter->max_num_io_queues * (ENA_ACCUM_STATS_ARRAY_TX +
+		    ENA_PER_Q_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX);
 
 	if (count_accumulated_stats)
 		count += ENA_STATS_ARRAY_RX + ENA_ACCUM_STATS_ARRAY_TX;
+
+	/* Add entries to report number of active queues + XDP TX queues */
+	count += ENA_QUEUE_SIZE_STATS_NUM;
 
 	return count;
 }
 
 static int ena_get_base_sw_stats_count(struct ena_adapter *adapter)
 {
-	int count = ENA_STATS_ARRAY_GLOBAL + ENA_STATS_ARRAY_ENA_COM_ADMIN;
-
 	if (ena_phc_is_active(adapter))
-		count += ENA_STATS_ARRAY_ENA_COM_PHC;
+		return ENA_STATS_ARRAY_GLOBAL +
+		       ENA_STATS_ARRAY_ENA_COM_ADMIN +
+		       ENA_STATS_ARRAY_ENA_COM_PHC;
 
-	return count;
+	return ENA_STATS_ARRAY_GLOBAL + ENA_STATS_ARRAY_ENA_COM_ADMIN;
 }
 
 static int ena_get_hw_stats_count(struct ena_adapter *adapter)
@@ -562,8 +645,10 @@ int ena_get_sset_count(struct net_device *netdev, int sset)
 		return ena_get_base_sw_stats_count(adapter) +
 		       ena_get_queue_sw_stats_count(adapter, false) +
 		       ena_get_hw_stats_count(adapter);
+#ifdef ENA_LPC_SUPPORT /* LPC is the only supported priv-flag */
 	case ETH_SS_PRIV_FLAGS:
 		return ENA_PRIV_FLAGS_NR;
+#endif /* ENA_LPC_SUPPORT */
 	}
 
 	return -EOPNOTSUPP;
@@ -601,10 +686,12 @@ static void ena_metrics_stats_strings(struct ena_adapter *adapter, u8 **data)
 static void ena_get_queue_strings(struct ena_adapter *adapter, u8 *data,
 				  bool print_accumulated_queue_stats)
 {
-	u32 queues_nr = adapter->num_io_queues + adapter->xdp_num_queues;
 	const struct ena_stats *ena_stats;
 	bool is_xdp;
 	int i, j;
+
+	ethtool_puts(&data, "num_of_active_io_queues");
+	ethtool_puts(&data, "num_of_xdp_tx_queues");
 
 	if (print_accumulated_queue_stats) {
 		for (i = 0; i < ENA_ACCUM_STATS_ARRAY_TX; i++) {
@@ -620,7 +707,7 @@ static void ena_get_queue_strings(struct ena_adapter *adapter, u8 *data,
 		}
 	}
 
-	for (i = 0; i < queues_nr; i++) {
+	for (i = 0; i < adapter->max_num_io_queues; i++) {
 		is_xdp = ENA_IS_XDP_INDEX(adapter, i);
 		/* Tx stats */
 		for (j = 0; j < ENA_PER_Q_STATS_ARRAY_TX; j++) {
@@ -638,10 +725,6 @@ static void ena_get_queue_strings(struct ena_adapter *adapter, u8 *data,
 					is_xdp ? "xdp_tx" : "tx",
 					ena_stats->name);
 		}
-
-		/* XDP TX queues don't have a RX queue counterpart */
-		if (is_xdp)
-			continue;
 
 		/* Rx stats */
 		for (j = 0; j < ENA_STATS_ARRAY_RX; j++) {
@@ -711,9 +794,11 @@ static void ena_get_ethtool_strings(struct net_device *netdev,
 		data = ena_get_base_strings(adapter, data, true);
 		ena_get_queue_strings(adapter, data, false);
 		break;
+#ifdef ENA_LPC_SUPPORT /* LPC is the only supported priv-flag */
 	case ETH_SS_PRIV_FLAGS:
 		memcpy(data, ena_priv_flags_strings, sizeof(ena_priv_flags_strings));
 		break;
+#endif /* ENA_LPC_SUPPORT */
 	}
 }
 
@@ -915,8 +1000,10 @@ static void ena_get_drvinfo(struct net_device *dev,
 	if (ret < 0)
 		netif_dbg(adapter, drv, dev,
 			  "bus info will be truncated, status = %zd\n", ret);
+#ifdef ENA_LPC_SUPPORT /* LPC is the only supported priv-flag */
 
 	info->n_priv_flags = ENA_PRIV_FLAGS_NR;
+#endif /* ENA_LPC_SUPPORT */
 }
 
 static void ena_get_ringparam(struct net_device *netdev,
@@ -1071,9 +1158,17 @@ static u16 ena_flow_data_to_flow_hash(u32 hash_fields)
 	return data;
 }
 
+#ifdef ENA_HAVE_ETHTOOL_RXFH_FIELDS
+static int ena_get_rxfh_fields(struct net_device *netdev,
+			       struct ethtool_rxfh_fields *cmd)
+{
+	struct ena_adapter *adapter = netdev_priv(netdev);
+	struct ena_com_dev *ena_dev = adapter->ena_dev;
+#else
 static int ena_get_rss_hash(struct ena_com_dev *ena_dev,
 			    struct ethtool_rxnfc *cmd)
 {
+#endif /* ENA_HAVE_ETHTOOL_RXFH_FIELDS */
 	enum ena_admin_flow_hash_proto proto;
 	u16 hash_fields;
 	int rc;
@@ -1122,9 +1217,18 @@ static int ena_get_rss_hash(struct ena_com_dev *ena_dev,
 	return 0;
 }
 
+#ifdef ENA_HAVE_ETHTOOL_RXFH_FIELDS
+static int ena_set_rxfh_fields(struct net_device *netdev,
+			       const struct ethtool_rxfh_fields *cmd,
+			       struct netlink_ext_ack *extack)
+{
+	struct ena_adapter *adapter = netdev_priv(netdev);
+	struct ena_com_dev *ena_dev = adapter->ena_dev;
+#else
 static int ena_set_rss_hash(struct ena_com_dev *ena_dev,
 			    struct ethtool_rxnfc *cmd)
 {
+#endif /* ENA_HAVE_ETHTOOL_RXFH_FIELDS */
 	enum ena_admin_flow_hash_proto proto;
 	u16 hash_fields;
 
@@ -1291,9 +1395,11 @@ static int ena_set_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info)
 	int rc = 0;
 
 	switch (info->cmd) {
+#ifndef ENA_HAVE_ETHTOOL_RXFH_FIELDS
 	case ETHTOOL_SRXFH:
 		rc = ena_set_rss_hash(adapter->ena_dev, info);
 		break;
+#endif /* ENA_HAVE_ETHTOOL_RXFH_FIELDS */
 	case ETHTOOL_SRXCLSRLINS:
 		rc = ena_set_steering_rule(adapter->ena_dev, info);
 		break;
@@ -1452,13 +1558,8 @@ static int ena_get_all_steering_rules(struct ena_com_dev *ena_dev, struct ethtoo
 	return 0;
 }
 
-#if LINUX_VERSION_CODE <= KERNEL_VERSION(3, 2, 0)
-static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
-			 void *rules)
-#else
 static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 			 u32 *rules)
-#endif
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 	int rc = 0;
@@ -1468,9 +1569,11 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 		info->data = adapter->num_io_queues;
 		rc = 0;
 		break;
+#ifndef ENA_HAVE_ETHTOOL_RXFH_FIELDS
 	case ETHTOOL_GRXFH:
 		rc = ena_get_rss_hash(adapter->ena_dev, info);
 		break;
+#endif /* ENA_HAVE_ETHTOOL_RXFH_FIELDS */
 	case ETHTOOL_GRXCLSRLCNT:
 		rc = ena_get_steering_rules_cnt(adapter->ena_dev, info);
 		break;
@@ -1490,7 +1593,6 @@ static int ena_get_rxnfc(struct net_device *netdev, struct ethtool_rxnfc *info,
 }
 #endif /* ETHTOOL_GRXRINGS */
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
 static u32 ena_get_rxfh_indir_size(struct net_device *netdev)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
@@ -1649,14 +1751,14 @@ static int ena_get_rxfh(struct net_device *netdev, u32 *indir, u8 *key)
 
 	return rc;
 }
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)/* >= 3.16.0 */
+#else /* >= 3.16.0 */
 static int ena_get_rxfh(struct net_device *netdev, u32 *indir)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
 
 	return ena_indirection_table_get(adapter, indir);
 }
-#endif /* >= 3.8.0 */
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0) */
 
 #ifdef ENA_HAVE_ETHTOOL_RXFH_PARAM
 static int ena_set_rxfh(struct net_device *netdev,
@@ -1719,7 +1821,7 @@ static int ena_set_rxfh(struct net_device *netdev, const u32 *indir,
 
 	return 0;
 }
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0) /* Kernel > 3.16 */
+#else /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0) */
 static int ena_set_rxfh(struct net_device *netdev, const u32 *indir)
 {
 	struct ena_adapter *adapter = netdev_priv(netdev);
@@ -1730,9 +1832,7 @@ static int ena_set_rxfh(struct net_device *netdev, const u32 *indir)
 
 	return rc;
 }
-#endif /* Kernel >= 3.8 */
-#endif /* ETHTOOL_GRXFH */
-#ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0) */
 
 #ifdef ETHTOOL_SCHANNELS
 static void ena_get_channels(struct net_device *netdev,
@@ -1777,7 +1877,6 @@ static int ena_set_channels(struct net_device *netdev,
 }
 #endif /* ETHTOOL_SCHANNELS */
 
-#endif /* HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0)
 static int ena_get_tunable(struct net_device *netdev,
 			   const struct ethtool_tunable *tuna, void *data)
@@ -1818,6 +1917,7 @@ static int ena_set_tunable(struct net_device *netdev,
 	return ret;
 }
 #endif /* 3.18.0 */
+#ifdef ENA_LPC_SUPPORT /* LPC is the only supported priv-flag */
 
 static u32 ena_get_priv_flags(struct net_device *netdev)
 {
@@ -1837,6 +1937,7 @@ static int ena_set_priv_flags(struct net_device *netdev, u32 priv_flags)
 	/* LPC is the only supported private flag for now */
 	return ena_set_lpc_state(adapter, !!(priv_flags & ENA_PRIV_FLAGS_LPC));
 }
+#endif /* ENA_LPC_SUPPORT */
 
 static const struct ethtool_ops ena_ethtool_ops = {
 #ifdef ENA_HAVE_ETHTOOL_OPS_SUPPORTED_COALESCE_PARAMS
@@ -1867,32 +1968,32 @@ static const struct ethtool_ops ena_ethtool_ops = {
 	.get_rxnfc		= ena_get_rxnfc,
 	.set_rxnfc		= ena_set_rxnfc,
 #endif /* ETHTOOL_GRXRINGS */
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
 	.get_rxfh_indir_size    = ena_get_rxfh_indir_size,
-#endif /* >= 3.8.0 */
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0)
 	.get_rxfh_key_size	= ena_get_rxfh_key_size,
 	.get_rxfh		= ena_get_rxfh,
 	.set_rxfh		= ena_set_rxfh,
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 8, 0)
+#ifdef ENA_HAVE_ETHTOOL_RXFH_FIELDS
+	.get_rxfh_fields	= ena_get_rxfh_fields,
+	.set_rxfh_fields	= ena_set_rxfh_fields,
+#endif /* ENA_HAVE_ETHTOOL_RXFH_FIELDS */
+#else
 	.get_rxfh_indir		= ena_get_rxfh,
 	.set_rxfh_indir		= ena_set_rxfh,
-#endif /* >= 3.8.0 */
-#ifndef HAVE_RHEL6_ETHTOOL_OPS_EXT_STRUCT
+#endif /* LINUX_VERSION_CODE >= KERNEL_VERSION(3, 16, 0) */
 #ifdef ETHTOOL_SCHANNELS
 	.get_channels		= ena_get_channels,
 	.set_channels		= ena_set_channels,
 #endif /* ETHTOOL_SCHANNELS */
-#endif
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 18, 0)
 	.get_tunable		= ena_get_tunable,
 	.set_tunable		= ena_set_tunable,
 #endif
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 5, 0)
 	.get_ts_info		= ena_get_ts_info,
-#endif
+#ifdef ENA_LPC_SUPPORT /* LPC is the only supported priv-flag */
 	.get_priv_flags		= ena_get_priv_flags,
 	.set_priv_flags		= ena_set_priv_flags,
+#endif /* ENA_LPC_SUPPORT */
 };
 
 void ena_set_ethtool_ops(struct net_device *netdev)
@@ -1902,7 +2003,6 @@ void ena_set_ethtool_ops(struct net_device *netdev)
 
 static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 {
-	u32 queues_nr = adapter->num_io_queues + adapter->xdp_num_queues;
 	u8 *base_strings_buf = NULL, *queue_strings_buf = NULL;
 	int base_strings_num, queue_strings_num, i, j, k, rc;
 	u64 *base_data_buf = NULL, *queue_data_buf = NULL;
@@ -1973,14 +2073,17 @@ static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 				  base_strings_buf + i * ETH_GSTRING_LEN,
 				  base_data_buf[i]);
 
-		/* Print accumulated queue stats */
-		for (i = 0; i < ENA_ACCUM_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX; i++)
+		/* Print number of active and XDP TX queues and accumulated
+		 * queue stats
+		 */
+		for (i = 0; i < ENA_ACCUM_STATS_ARRAY_TX + ENA_STATS_ARRAY_RX +
+				ENA_QUEUE_SIZE_STATS_NUM; i++)
 			netif_err(adapter, drv, netdev, "%s: %llu\n",
 				  queue_strings_buf + i * ETH_GSTRING_LEN,
 				  queue_data_buf[i]);
 
 		/* Print per queue stats */
-		for (j = 0; j < queues_nr; j++) {
+		for (j = 0; j < adapter->max_num_io_queues; j++) {
 			for (k = 0; k < ENA_PER_Q_STATS_ARRAY_TX; k++, i++)
 				netif_err(adapter, drv, netdev, "%s: %llu\n",
 					  queue_strings_buf + i * ETH_GSTRING_LEN,
@@ -1990,10 +2093,6 @@ static void ena_dump_stats_ex(struct ena_adapter *adapter, u8 *buf)
 				netif_dbg(adapter, drv, netdev, "%s: %llu\n",
 					  queue_strings_buf + i * ETH_GSTRING_LEN,
 					  queue_data_buf[i]);
-
-			/* XDP TX queues don't have a RX queue counterpart */
-			if (ENA_IS_XDP_INDEX(adapter, j))
-				continue;
 
 			for (k = 0; k < ENA_STATS_ARRAY_RX; k++, i++)
 				netif_dbg(adapter, drv, netdev, "%s: %llu\n",
