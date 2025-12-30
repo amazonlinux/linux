@@ -234,6 +234,11 @@ static void ena_init_all_xdp_queues(struct ena_adapter *adapter)
  */
 int ena_xdp_register_rxq_info(struct ena_ring *rx_ring)
 {
+#ifdef ENA_PAGE_POOL_SUPPORT
+	void *allocator = rx_ring->page_pool;
+#else
+	void *allocator = NULL;
+#endif /* ENA_PAGE_POOL_SUPPORT */
 	int rc;
 
 	rc = ena_xdp_rxq_info_reg(&rx_ring->xdp_rxq, rx_ring->netdev, rx_ring->qid,
@@ -254,10 +259,10 @@ int ena_xdp_register_rxq_info(struct ena_ring *rx_ring)
 		rc = xdp_rxq_info_reg_mem_model(&rx_ring->xdp_rxq, MEM_TYPE_XSK_BUFF_POOL, NULL);
 		xsk_pool_set_rxq_info(rx_ring->xsk_pool, &rx_ring->xdp_rxq);
 	} else {
-		rc = xdp_rxq_info_reg_mem_model(&rx_ring->xdp_rxq, MEM_TYPE_PAGE_SHARED, NULL);
+		rc = xdp_rxq_info_reg_mem_model(&rx_ring->xdp_rxq, ENA_XDP_MEM_TYPE, allocator);
 	}
 #else
-	rc = xdp_rxq_info_reg_mem_model(&rx_ring->xdp_rxq, MEM_TYPE_PAGE_SHARED, NULL);
+	rc = xdp_rxq_info_reg_mem_model(&rx_ring->xdp_rxq, ENA_XDP_MEM_TYPE, allocator);
 #endif /* ENA_AF_XDP_SUPPORT */
 
 	if (rc) {
@@ -310,7 +315,6 @@ void ena_xdp_unregister_rxq_info(struct ena_ring *rx_ring)
 	netif_dbg(rx_ring->adapter, ifdown, rx_ring->netdev,
 		  "Unregistering RX info for queue %d",
 		  rx_ring->qid);
-	xdp_rxq_info_unreg_mem_model(&rx_ring->xdp_rxq);
 	xdp_rxq_info_unreg(&rx_ring->xdp_rxq);
 }
 
@@ -646,8 +650,8 @@ int ena_xdp_xsk_wakeup(struct net_device *netdev, u32 qid, u32 flags)
 #endif /* ENA_AF_XDP_SUPPORT */
 static int ena_clean_xdp_irq(struct ena_ring *tx_ring, u32 budget)
 {
+	int rc, tx_pkts = 0, missed_tx = 0;
 	u16 next_to_clean, req_id;
-	int rc, tx_pkts = 0;
 	u32 total_done = 0;
 	u64 hw_timestamp;
 
@@ -672,6 +676,14 @@ static int ena_clean_xdp_irq(struct ena_ring *tx_ring, u32 budget)
 
 		tx_info = &tx_ring->tx_buffer_info[req_id];
 
+		/* The pending_timedout_pkts counter is incremented for each
+		 * timed out packet. Therefore in tx cleanup routine we need to
+		 * count those timed out pkts, to maintain accurate statistics
+		 * of currently pending timed out packets.
+		 */
+		if (unlikely(tx_info->timed_out))
+			missed_tx++;
+
 		tx_info->tx_sent_jiffies = 0;
 
 		xdpf = tx_info->xdpf;
@@ -690,6 +702,7 @@ static int ena_clean_xdp_irq(struct ena_ring *tx_ring, u32 budget)
 			  "tx_poll: q %d pkt #%d req_id %d\n", tx_ring->qid, tx_pkts, req_id);
 	}
 
+	atomic64_sub(missed_tx, &tx_ring->tx_stats.pending_timedout_pkts);
 	tx_ring->next_to_clean = next_to_clean;
 	ena_com_comp_ack(tx_ring->ena_com_io_sq, total_done);
 
@@ -706,8 +719,8 @@ static int ena_clean_xdp_irq(struct ena_ring *tx_ring, u32 budget)
  */
 static bool ena_xdp_clean_tx_zc(struct ena_ring *tx_ring, u32 budget)
 {
+	int rc, cleaned_pkts, zc_pkts, acked_pkts, missed_tx = 0;
 	struct xsk_buff_pool *xsk_pool = tx_ring->xsk_pool;
-	int rc, cleaned_pkts, zc_pkts, acked_pkts;
 	struct ena_tx_buffer *tx_info;
 	u64 hw_timestamp;
 	u32 total_done;
@@ -731,6 +744,14 @@ static bool ena_xdp_clean_tx_zc(struct ena_ring *tx_ring, u32 budget)
 
 		tx_info = &tx_ring->tx_buffer_info[req_id];
 
+		/* The pending_timedout_pkts counter is incremented for each
+		 * timed out packet. Therefore in tx cleanup routine we need to
+		 * count those timed out pkts, to maintain accurate statistics
+		 * of currently pending timed out packets.
+		 */
+		if (unlikely(tx_info->timed_out))
+			missed_tx++;
+
 		tx_info->tx_sent_jiffies = 0;
 
 		tx_info->acked = 1;
@@ -738,6 +759,7 @@ static bool ena_xdp_clean_tx_zc(struct ena_ring *tx_ring, u32 budget)
 		acked_pkts++;
 	}
 
+	atomic64_sub(missed_tx, &tx_ring->tx_stats.pending_timedout_pkts);
 	/* AF XDP expects the completions to be ordered but HW doesn't guarantee
 	 * this. Force ordering.
 	 */
@@ -973,7 +995,7 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 
 		/* XDP multi-buffer packets not supported */
 		if (unlikely(ena_rx_ctx.descs > 1)) {
-			netdev_err_once(rx_ring->adapter->netdev,
+			netdev_err_once(rx_ring->netdev,
 					"xdp: dropped unsupported multi-buffer packets\n");
 			ena_increase_stat(&rx_ring->rx_stats.xdp_drop, 1, &rx_ring->syncp);
 			xdp_verdict = ENA_XDP_RECYCLE;
@@ -1054,7 +1076,7 @@ static bool ena_xdp_clean_rx_irq_zc(struct ena_ring *rx_ring,
 	}
 
 	if (unlikely(rc)) {
-		struct ena_adapter *adapter = netdev_priv(rx_ring->netdev);
+		struct ena_adapter *adapter = rx_ring->adapter;
 
 		if (rc == -ENOSPC) {
 			ena_increase_stat(&rx_ring->rx_stats.bad_desc_num, 1, &rx_ring->syncp);
@@ -1146,7 +1168,7 @@ int ena_xdp_io_poll(struct napi_struct *napi, int budget)
 		    READ_ONCE(ena_napi->interrupts_masked)) {
 			smp_rmb(); /* make sure interrupts_masked is read */
 			WRITE_ONCE(ena_napi->interrupts_masked, false);
-			ena_unmask_interrupt(tx_ring, NULL);
+			ena_unmask_interrupt(tx_ring, NULL, false);
 			/* Checking the tx_ring since for XDP channels
 			 * napi->rx_ring is NULL and for AF_XDP both are
 			 * xsk rings
@@ -1156,7 +1178,7 @@ int ena_xdp_io_poll(struct napi_struct *napi, int budget)
 		}
 #else
 		if (napi_complete_done(napi, work_done))
-			ena_unmask_interrupt(tx_ring, NULL);
+			ena_unmask_interrupt(tx_ring, NULL, false);
 #endif /* ENA_AF_XDP_SUPPORT */
 
 		ret = work_done;
@@ -1222,6 +1244,10 @@ struct sk_buff *ena_rx_skb_after_xdp_pass(struct ena_ring *rx_ring,
 	if (meta_len)
 		skb_metadata_set(skb, meta_len);
 
+#ifdef ENA_PAGE_POOL_SUPPORT
+	skb_mark_for_recycle(skb);
+
+#endif /* ENA_PAGE_POOL_SUPPORT */
 	return skb;
 }
 
@@ -1248,7 +1274,7 @@ int ena_rx_xdp(struct ena_ring *rx_ring, struct xdp_buff *xdp, u16 descs,
 
 	/* Drop unsupported multibuffer packets */
 	if (!ena_xdp_prog_is_frags_supported(rx_ring) && descs > 1) {
-		netdev_err_once(rx_ring->adapter->netdev,
+		netdev_err_once(rx_ring->netdev,
 				"xdp: dropped unsupported multi-buffer packets\n");
 
 		for (i = 0; i < descs; i++)
