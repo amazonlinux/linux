@@ -1844,6 +1844,14 @@ static int kvm_s2_fault_get_vma_info(const struct kvm_s2_fault_desc *s2fd,
 	s2vi->mte_allowed = kvm_vma_mte_allowed(vma);
 
 	s2vi->vm_flags = vma->vm_flags;
+	/*
+	 * NVIDIA Olympus MT_NORMAL_NC->Device-nGnRE workaround: when active,
+	 * do not honor VM_ALLOW_ANY_UNCACHED so the fault path falls back to
+	 * Device-nGnRE rather than Normal-NC (adapted onto s2vi->vm_flags,
+	 * which v7.1 consults in kvm_s2_resolve_output_prot()).
+	 */
+	if (cpus_have_cap(ARM64_WORKAROUND_NC_TO_NGNRE))
+		s2vi->vm_flags &= ~VM_ALLOW_ANY_UNCACHED;
 
 	s2vi->is_vma_cacheable = kvm_vma_is_cacheable(vma);
 
