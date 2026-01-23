@@ -2388,7 +2388,9 @@ skip_mac_set:
 			bpf_prog_inc(bond->xdp_prog);
 	}
 
-	if (bond_mode_can_use_xmit_hash(bond))
+	/* broadcast mode uses the all_slaves to loop through slaves. */
+	if (bond_mode_can_use_xmit_hash(bond) ||
+	    BOND_MODE(bond) == BOND_MODE_BROADCAST)
 		bond_update_slave_arr(bond, NULL);
 
 	bond_xdp_set_features(bond_dev);
