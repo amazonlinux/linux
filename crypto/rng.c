@@ -341,6 +341,41 @@ static const struct random_extrng crypto_devrandom_rng = {
 	.owner = THIS_MODULE,
 };
 
+void crypto_rng_reseed(void)
+{
+	u8 tmp[32];
+	int err;
+
+	/* Reseed crypto_default_rng */
+	mutex_lock(&crypto_default_rng_lock);
+	if (crypto_default_rng) {
+		crypto_tfm_set_flags(crypto_rng_tfm(crypto_default_rng),
+				     CRYPTO_TFM_REQ_NEED_RESEED);
+		err = crypto_rng_get_bytes(crypto_default_rng, tmp, sizeof(tmp));
+		if (err)
+			pr_warn("crypto_default_rng reseed failed: %d\n", err);
+		crypto_tfm_clear_flags(crypto_rng_tfm(crypto_default_rng),
+				       CRYPTO_TFM_REQ_NEED_RESEED);
+	}
+	mutex_unlock(&crypto_default_rng_lock);
+
+	/* Reseed crypto_reseed_rng */
+	mutex_lock(&crypto_reseed_rng_lock);
+	if (crypto_reseed_rng) {
+		crypto_tfm_set_flags(crypto_rng_tfm(crypto_reseed_rng),
+				     CRYPTO_TFM_REQ_NEED_RESEED);
+		err = crypto_rng_get_bytes(crypto_reseed_rng, tmp, sizeof(tmp));
+		if (err)
+			pr_warn("crypto_reseed_rng reseed failed: %d\n", err);
+		crypto_tfm_clear_flags(crypto_rng_tfm(crypto_reseed_rng),
+				       CRYPTO_TFM_REQ_NEED_RESEED);
+	}
+	mutex_unlock(&crypto_reseed_rng_lock);
+
+	memzero_explicit(tmp, sizeof(tmp));
+}
+EXPORT_SYMBOL_GPL(crypto_rng_reseed);
+
 static int __init crypto_rng_init(void)
 {
 	if (fips_enabled)
