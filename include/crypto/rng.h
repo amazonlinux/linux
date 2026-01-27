@@ -184,6 +184,16 @@ int crypto_rng_reset(struct crypto_rng *tfm, const u8 *seed,
 		     unsigned int slen);
 
 /**
+ * crypto_rng_reseed() - reseed FIPS mode RNGs
+ *
+ * This function reseeds both crypto_default_rng and crypto_reseed_rng
+ * used in FIPS mode. It should be called when the system detects an event
+ * that requires RNG reseeding, such as VM fork detection. Both RNGs are
+ * explicitly reseeded to ensure fresh randomness after fork events.
+ */
+void crypto_rng_reseed(void);
+
+/**
  * crypto_rng_seedsize() - obtain seed size of RNG
  * @tfm: cipher handle
  *
