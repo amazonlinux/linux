@@ -54,8 +54,10 @@
 #include <linux/suspend.h>
 #include <linux/siphash.h>
 #include <linux/rcupdate.h>
+#include <linux/fips.h>
 #include <crypto/chacha.h>
 #include <crypto/blake2s.h>
+#include <crypto/rng.h>
 #include <asm/processor.h>
 #include <asm/irq.h>
 #include <asm/irq_regs.h>
@@ -972,6 +974,10 @@ void __cold add_vmfork_randomness(const void *unique_vm_id, size_t len)
 	if (crng_ready()) {
 		crng_reseed();
 		pr_notice("crng reseeded due to virtual machine fork\n");
+		if (fips_enabled) {
+			crypto_rng_reseed();
+			pr_notice("FIPS RNGs reseeded due to virtual machine fork\n");
+		}
 	}
 	blocking_notifier_call_chain(&vmfork_chain, 0, NULL);
 }
