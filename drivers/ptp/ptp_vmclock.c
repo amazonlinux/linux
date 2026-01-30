@@ -409,6 +409,7 @@ static const struct file_operations vmclock_miscdev_fops = {
 
 /* module operations */
 
+#if IS_ENABLED(CONFIG_ACPI)
 static acpi_status vmclock_acpi_resources(struct acpi_resource *ares, void *data)
 {
 	struct vmclock_state *st = data;
@@ -492,6 +493,7 @@ static int vmclock_probe_acpi(struct device *dev, struct vmclock_state *st)
 
 	return 0;
 }
+#endif /* CONFIG_ACPI */
 
 static irqreturn_t vmclock_of_irq_handler(int __always_unused irq, void *_st)
 {
@@ -535,11 +537,11 @@ static int vmclock_setup_notification(struct device *dev,
 	if (!(le64_to_cpu(st->clk->flags) & VMCLOCK_FLAG_NOTIFICATION_PRESENT))
 		return 0;
 
-	if (has_acpi_companion(dev)) {
+#if IS_ENABLED(CONFIG_ACPI)
+	if (has_acpi_companion(dev))
 		return vmclock_setup_acpi_notification(dev);
-	} else {
-		return vmclock_setup_of_notification(dev);
-	}
+#endif
+	return vmclock_setup_of_notification(dev);
 }
 
 static void vmclock_remove(void *data)
@@ -552,10 +554,12 @@ static void vmclock_remove(void *data)
 		return;
 	}
 
+#if IS_ENABLED(CONFIG_ACPI)
 	if (has_acpi_companion(dev))
 		acpi_remove_notify_handler(ACPI_COMPANION(dev)->handle,
 					   ACPI_DEVICE_NOTIFY,
 					   vmclock_acpi_notification_handler);
+#endif
 
 	if (st->ptp_clock)
 		ptp_clock_unregister(st->ptp_clock);
@@ -583,9 +587,11 @@ static int vmclock_probe(struct platform_device *pdev)
 	if (!st)
 		return -ENOMEM;
 
+#if IS_ENABLED(CONFIG_ACPI)
 	if (has_acpi_companion(dev))
 		ret = vmclock_probe_acpi(dev, st);
 	else
+#endif
 		ret = vmclock_probe_dt(dev, st);
 
 	if (ret) {
