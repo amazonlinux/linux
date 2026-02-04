@@ -1298,6 +1298,14 @@
 } while (0)
 
 /*
+ * Optimization to only perform the write when the register value would change
+ */
+#define write_sysreg_if_changed(v,r) do {	\
+	if ((v) != read_sysreg(r))	\
+		write_sysreg(v, r);	\
+} while (0)
+
+/*
  * For registers without architectural names, or simply unsupported by
  * GAS.
  */
