@@ -92,6 +92,16 @@ static inline void __sysreg_restore_user_state(struct kvm_cpu_context *ctxt)
 	write_sysreg(ctxt_sys_reg(ctxt, TPIDRRO_EL0),	tpidrro_el0);
 }
 
+static inline void __sysreg_write_tcr_el1(uint64_t val)
+{
+       if (val == read_sysreg_el1(SYS_TCR)) {
+               /* No need to write to TCR if it's already the same value */
+               return;
+       }
+
+       write_sysreg_el1(val, SYS_TCR);
+}
+
 static inline void __sysreg_restore_el1_state(struct kvm_cpu_context *ctxt)
 {
 	write_sysreg(ctxt_sys_reg(ctxt, MPIDR_EL1),	vmpidr_el2);
@@ -100,7 +110,7 @@ static inline void __sysreg_restore_el1_state(struct kvm_cpu_context *ctxt)
 	if (has_vhe() ||
 	    !cpus_have_final_cap(ARM64_WORKAROUND_SPECULATIVE_AT)) {
 		write_sysreg_el1(ctxt_sys_reg(ctxt, SCTLR_EL1),	SYS_SCTLR);
-		write_sysreg_el1(ctxt_sys_reg(ctxt, TCR_EL1),	SYS_TCR);
+		__sysreg_write_tcr_el1(ctxt_sys_reg(ctxt, TCR_EL1));
 	} else	if (!ctxt->__hyp_running_vcpu) {
 		/*
 		 * Must only be done for guest registers, hence the context
