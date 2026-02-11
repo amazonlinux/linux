@@ -325,8 +325,9 @@ int drm_pagemap_migrate_to_devmem(struct drm_pagemap_devmem *devmem_allocation,
 	struct migrate_vma migrate = {
 		.start		= start,
 		.end		= end,
-		.pgmap_owner	= pgmap_owner,
-		.flags		= MIGRATE_VMA_SELECT_SYSTEM,
+		.pgmap_owner	= pagemap->owner,
+		.flags		= MIGRATE_VMA_SELECT_SYSTEM | MIGRATE_VMA_SELECT_DEVICE_COHERENT |
+		MIGRATE_VMA_SELECT_DEVICE_PRIVATE,
 	};
 	unsigned long i, npages = npages_in_range(start, end);
 	struct vm_area_struct *vas;
