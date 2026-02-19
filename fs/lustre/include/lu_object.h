@@ -43,6 +43,10 @@
 #include <linux/percpu_counter.h>
 #include <linux/rhashtable.h>
 #include <linux/ctype.h>
+#include <lustre_compat.h>
+
+#include <obd_support.h>
+#include <uapi/linux/lustre/lustre_idl.h>
 
 struct seq_file;
 struct proc_dir_entry;
@@ -926,16 +930,19 @@ static inline void lu_object_ref_del_at(struct lu_object *o,
 
 /** input params, should be filled out by mdt */
 struct lu_rdpg {
-        /** hash */
-        __u64                   rp_hash;
-        /** count in bytes */
-        unsigned int            rp_count;
-        /** number of pages */
-        unsigned int            rp_npages;
-        /** requested attr */
-        __u32                   rp_attrs;
-        /** pointers to pages */
-        struct page           **rp_pages;
+	/** hash */
+	__u64                   rp_hash;
+	/** count in bytes */
+	unsigned int            rp_count;
+	/** number of pages */
+	unsigned int            rp_npages;
+	/** requested attr */
+	__u32                   rp_attrs;
+	/** pointers to pages */
+	union {
+		struct folio   **rp_folios;
+		void		*rp_data;
+	};
 };
 
 enum lu_xattr_flags {
