@@ -191,7 +191,7 @@ static bool should_preserve_foreign_dir(struct lmv_foreign_md *lfm,
 bool ll_foreign_is_removable(struct dentry *dentry, bool unset)
 {
 	struct inode *inode = dentry->d_inode;
-	struct qstr *name = &dentry->d_name;
+	const struct qstr *name = &dentry->d_name;
 	bool preserve_foreign = false;
 	int rc = 0;
 
