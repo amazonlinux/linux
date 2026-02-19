@@ -364,12 +364,12 @@ static int
 ll_direct_rw_pages(const struct lu_env *env, struct cl_io *io, size_t size,
 		   int rw, struct inode *inode, struct cl_sub_dio *sdio)
 {
-	struct ll_dio_pages *pv = &sdio->csd_dio_pages;
+	struct cl_dio_pages *cdp = &sdio->csd_dio_pages;
 	struct cl_page    *page;
 	struct cl_2queue  *queue = &io->ci_queue;
 	struct cl_object  *obj = io->ci_obj;
 	struct cl_sync_io *anchor = &sdio->csd_sync;
-	loff_t offset   = pv->ldp_file_offset;
+	loff_t offset   = cdp->cdp_file_offset;
 	int io_pages    = 0;
 	int i;
 	ssize_t rc = 0;
@@ -377,10 +377,10 @@ ll_direct_rw_pages(const struct lu_env *env, struct cl_io *io, size_t size,
 	ENTRY;
 
 	cl_2queue_init(queue);
-	for (i = 0; i < pv->ldp_count; i++) {
+	for (i = 0; i < cdp->cdp_count; i++) {
 		LASSERT(!(offset & (PAGE_SIZE - 1)));
 		page = cl_page_find(env, obj, cl_index(obj, offset),
-				    pv->ldp_pages[i], CPT_TRANSIENT);
+				    cdp->cdp_pages[i], CPT_TRANSIENT);
 		if (IS_ERR(page)) {
 			rc = PTR_ERR(page);
 			break;
@@ -528,7 +528,7 @@ ll_direct_IO_impl(struct kiocb *iocb, struct iov_iter *iter, int rw)
 		sync_submit = true;
 
 	while (iov_iter_count(iter)) {
-		struct ll_dio_pages *pvec;
+		struct cl_dio_pages *cdp;
 		struct page **pages;
 
 		count = min_t(size_t, iov_iter_count(iter), MAX_DIO_SIZE);
@@ -548,10 +548,10 @@ ll_direct_IO_impl(struct kiocb *iocb, struct iov_iter *iter, int rw)
 		if (!ldp_aio)
 			GOTO(out, result = -ENOMEM);
 
-		pvec = &ldp_aio->csd_dio_pages;
+		cdp = &ldp_aio->csd_dio_pages;
 
 		result = ll_get_user_pages(rw, iter, &pages,
-					   &pvec->ldp_count, count);
+					   &cdp->cdp_count, count);
 		if (unlikely(result <= 0)) {
 			cl_sync_io_note(env, &ldp_aio->csd_sync, result);
 			if (sync_submit) {
@@ -562,8 +562,8 @@ ll_direct_IO_impl(struct kiocb *iocb, struct iov_iter *iter, int rw)
 		}
 
 		count = result;
-		pvec->ldp_file_offset = file_offset;
-		pvec->ldp_pages = pages;
+		cdp->cdp_file_offset = file_offset;
+		cdp->cdp_pages = pages;
 
 		result = ll_direct_rw_pages(env, io, count,
 					    rw, inode, ldp_aio);
@@ -718,7 +718,13 @@ static int ll_tiny_write_begin(struct page *vmpage, struct address_space *mappin
  * to hold data for buffered i/o on the 'write' path.
  * Called by generic_perform_write() to allocate one page [or one folio]
  */
-static int ll_write_begin(struct file *file, struct address_space *mapping,
+static int ll_write_begin(
+#ifdef HAVE_WRITE_BEGIN_KIOCB
+			  const struct kiocb *kiocb,
+#else
+			  struct file *file,
+#endif
+			  struct address_space *mapping,
 			  loff_t pos, unsigned int len,
 #ifdef HAVE_GRAB_CACHE_PAGE_WRITE_BEGIN_WITH_FLAGS
 			  unsigned int flags,
@@ -729,6 +735,9 @@ static int ll_write_begin(struct file *file, struct address_space *mapping,
 	const struct lu_env  *env = NULL;
 	struct cl_io   *io = NULL;
 	struct cl_page *page = NULL;
+	#ifdef HAVE_WRITE_BEGIN_KIOCB
+	struct file *file = kiocb->ki_filp;
+	#endif
 	struct inode *inode = file_inode(file);
 	struct cl_object *clob = ll_i2info(mapping->host)->lli_clob;
 	pgoff_t index = pos >> PAGE_SHIFT;
@@ -741,11 +750,12 @@ static int ll_write_begin(struct file *file, struct address_space *mapping,
 	CDEBUG(D_VFSTRACE, "Writing %lu of %d to %d bytes\n", index, from, len);
 
 	lcc = ll_cl_find(inode);
-	if (lcc == NULL) {
-		vmpage = grab_cache_page_nowait(mapping, index);
-		result = ll_tiny_write_begin(vmpage, mapping);
-		GOTO(out, result);
-	}
+ 	if (lcc == NULL) {
+		/* do not allocate a page, only find & lock */
+		vmpage = find_lock_page(mapping, index);
+ 		result = ll_tiny_write_begin(vmpage, mapping);
+ 		GOTO(out, result);
+ 	}
 
 	env = lcc->lcc_env;
 	io  = lcc->lcc_io;
@@ -814,7 +824,7 @@ again:
 		goto again;
 	}
 
-	page = cl_page_find(env, clob, vmpage->index, vmpage, CPT_CACHEABLE);
+	page = cl_page_find(env, clob, folio_index_page(vmpage), vmpage, CPT_CACHEABLE);
 	if (IS_ERR(page))
 		GOTO(out, result = PTR_ERR(page));
 
@@ -908,16 +918,25 @@ out:
 	RETURN(rc);
 }
 
-static int ll_write_end(struct file *file, struct address_space *mapping,
+static int ll_write_end(
+#ifdef HAVE_WRITE_BEGIN_KIOCB
+			const struct kiocb *kiocb,
+#else
+			struct file *file,
+#endif
+			struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned copied,
-			struct wbe_folio *vmfolio, void *fsdata)
+			struct wbe_folio *folio, void *fsdata)
 {
 	struct ll_cl_context *lcc = fsdata;
 	const struct lu_env *env;
+#ifdef HAVE_WRITE_BEGIN_KIOCB
+	struct file *file = kiocb->ki_filp;
+#endif
 	struct cl_io *io;
 	struct vvp_io *vio;
-	struct cl_page *page;
-	struct page *vmpage = wbe_folio_page(vmfolio);
+	struct cl_page *cl_page;
+	struct page *vmpage = wbe_folio_page(folio);
 	unsigned from = pos & (PAGE_SIZE - 1);
 	bool unplug = false;
 	int result = 0;
@@ -935,26 +954,27 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 
 	LASSERT(lcc != NULL);
 	env  = lcc->lcc_env;
-	page = lcc->lcc_page;
+	cl_page = lcc->lcc_page;
 	io   = lcc->lcc_io;
 	vio  = vvp_env_io(env);
 
-	LASSERT(cl_page_is_owned(page, io));
+	LASSERT(cl_page_is_owned(cl_page, io));
 	if (copied > 0) {
 		struct cl_page_list *plist = &vio->u.readwrite.vui_queue;
 
-		lcc->lcc_page = NULL; /* page will be queued */
+		lcc->lcc_page = NULL; /* cl_page will be queued */
 
 		/* Add it into write queue */
-		cl_page_list_add(plist, page, true);
-		if (plist->pl_nr == 1) /* first page */
+		cl_page_list_add(plist, cl_page, true);
+		if (plist->pl_nr == 1) /* first cl_page */
 			vio->u.readwrite.vui_from = from;
 		else
 			LASSERT(from == 0);
 		vio->u.readwrite.vui_to = from + copied;
 
 		/* To address the deadlock in balance_dirty_pages() where
-		 * this dirty page may be written back in the same thread. */
+		 * this dirty cl_page may be written back in the same thread.
+		 */
 		if (PageDirty(vmpage))
 			unplug = true;
 
@@ -962,16 +982,16 @@ static int ll_write_end(struct file *file, struct address_space *mapping,
 		if (plist->pl_nr >= PTLRPC_MAX_BRW_PAGES)
 			unplug = true;
 
-		CL_PAGE_DEBUG(D_VFSTRACE, env, page,
-			      "queued page: %d.\n", plist->pl_nr);
+		CL_PAGE_DEBUG(D_VFSTRACE, env, cl_page,
+			      "queued cl_page: %d.\n", plist->pl_nr);
 	} else {
-		cl_page_disown(env, io, page);
+		cl_page_disown(env, io, cl_page);
 
 		lcc->lcc_page = NULL;
-		lu_ref_del(&page->cp_reference, "cl_io", io);
-		cl_page_put(env, page);
+		lu_ref_del(&cl_page->cp_reference, "cl_io", io);
+		cl_page_put(env, cl_page);
 
-		/* page list is not contiguous now, commit it now */
+		/* cl_page list is not contiguous now, commit it now */
 		unplug = true;
 	}
 	if (unplug || io->u.ci_wr.wr_sync)
@@ -1017,7 +1037,9 @@ const struct address_space_operations ll_aops = {
 	.releasepage		= (void *)ll_releasepage,
 #endif
 	.direct_IO		= ll_direct_IO,
+#ifndef HAVE___FILEMAP_GET_FOLIO
 	.writepage		= ll_writepage,
+#endif
 	.writepages		= ll_writepages,
 	.write_begin		= ll_write_begin,
 	.write_end		= ll_write_end,
