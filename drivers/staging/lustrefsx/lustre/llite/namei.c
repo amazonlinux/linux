@@ -48,7 +48,6 @@
 
 #ifndef HAVE_USER_NAMESPACE_ARG
 #define ll_create_nd(ns, dir, de, mode, ex)	ll_create_nd(dir, de, mode, ex)
-#define ll_mkdir(ns, dir, dch, mode)		ll_mkdir(dir, dch, mode)
 #define ll_mknod(ns, dir, dch, mode, rd)	ll_mknod(dir, dch, mode, rd)
 #ifdef HAVE_IOPS_RENAME_WITH_FLAGS
 #define ll_rename(ns, src, sdc, tgt, tdc, fl)	ll_rename(src, sdc, tgt, tdc, fl)
@@ -1676,7 +1675,7 @@ unlock:
 static int ll_new_node(struct inode *dir, struct dentry *dchild,
 		       const char *tgt, umode_t mode, __u64 rdev, __u32 opc)
 {
-	struct qstr *name = &dchild->d_name;
+	const struct qstr *name = &dchild->d_name;
 	struct ptlrpc_request *request = NULL;
 	struct md_op_data *op_data = NULL;
 	struct inode *inode = NULL;
@@ -1999,7 +1998,7 @@ static int ll_link(struct dentry *old_dentry, struct inode *dir,
 		   struct dentry *new_dentry)
 {
 	struct inode *src = old_dentry->d_inode;
-	struct qstr *name = &new_dentry->d_name;
+	const struct qstr *name = &new_dentry->d_name;
 	struct ll_sb_info *sbi = ll_i2sbi(dir);
 	struct ptlrpc_request *request = NULL;
 	struct md_op_data *op_data;
@@ -2035,8 +2034,8 @@ out:
 	RETURN(err);
 }
 
-static int ll_mkdir(struct mnt_idmap *map, struct inode *dir,
-		    struct dentry *dchild, umode_t mode)
+static inline int do_mkdir(struct inode *dir, struct dentry *dchild,
+			   umode_t mode)
 {
 	ktime_t kstart = ktime_get();
 	int err;
@@ -2058,9 +2057,32 @@ static int ll_mkdir(struct mnt_idmap *map, struct inode *dir,
 	RETURN(err);
 }
 
+#ifdef HAVE_IOPS_MKDIR_RETURNS_DENTRY
+static struct dentry *ll_mkdir(struct mnt_idmap *map, struct inode *dir,
+			       struct dentry *dchild, umode_t mode)
+{
+	int rc = do_mkdir(dir, dchild, mode);
+
+	if (rc)
+		return ERR_PTR(rc);
+	return NULL;
+}
+#elif defined HAVE_USER_NAMESPACE_ARG
+static int ll_mkdir(struct mnt_idmap *map, struct inode *dir,
+		    struct dentry *dchild, umode_t mode)
+{
+	return do_mkdir(dir, dchild, mode);
+}
+#else
+static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
+{
+	return do_mkdir(dir, dchild, mode);
+}
+#endif
+
 static int ll_rmdir(struct inode *dir, struct dentry *dchild)
 {
-	struct qstr *name = &dchild->d_name;
+	const struct qstr *name = &dchild->d_name;
 	struct ptlrpc_request *request = NULL;
 	struct md_op_data *op_data;
 	ktime_t kstart = ktime_get();
@@ -2148,7 +2170,7 @@ int ll_rmdir_entry(struct inode *dir, char *name, int namelen)
 
 static int ll_unlink(struct inode *dir, struct dentry *dchild)
 {
-	struct qstr *name = &dchild->d_name;
+	const struct qstr *name = &dchild->d_name;
 	struct ptlrpc_request *request = NULL;
 	struct md_op_data *op_data;
 	struct mdt_body *body;
