@@ -110,7 +110,7 @@ static struct ptlrpc_enc_page_pool {
 	/*
 	 * pointers to pools, may be vmalloc'd
 	 */
-	struct page ***epp_pools;
+	void ***epp_pools;
 } page_pools;
 
 /*
@@ -305,7 +305,7 @@ int npages_to_npools(unsigned long npages)
 /*
  * return how many pages cleaned up.
  */
-static unsigned long enc_pools_cleanup(struct page ***pools, int npools)
+static unsigned long enc_pools_cleanup(void ***pools, int npools)
 {
 	unsigned long cleaned = 0;
 	int i, j;
@@ -333,7 +333,7 @@ static unsigned long enc_pools_cleanup(struct page ***pools, int npools)
  * we have options to avoid most memory copy with some tricks. but we choose
  * the simplest way to avoid complexity. It's not frequently called.
  */
-static void enc_pools_insert(struct page ***pools, int npools, int npages)
+static void enc_pools_insert(void ***pools, int npools, int npages)
 {
 	int freeslot;
 	int op_idx, np_idx, og_idx, ng_idx;
@@ -419,7 +419,7 @@ static void enc_pools_insert(struct page ***pools, int npools, int npages)
 static int enc_pools_add_pages(int npages)
 {
 	static DEFINE_MUTEX(add_pages_mutex);
-	struct page ***pools;
+	void ***pools;
 	int npools, alloced = 0;
 	int i, j, rc = -ENOMEM;
 
@@ -528,25 +528,32 @@ int pool_is_at_full_capacity(void)
 }
 EXPORT_SYMBOL(pool_is_at_full_capacity);
 
-static inline struct page **page_from_bulkdesc(void *array, int index)
+static inline void **page_from_bulkdesc(void *array, int index)
 {
 	struct ptlrpc_bulk_desc *desc = (struct ptlrpc_bulk_desc *)array;
 
-	return &desc->bd_enc_vec[index].bv_page;
+	return (void **)&desc->bd_enc_vec[index].bv_page;
 }
 
-static inline struct page **page_from_pagearray(void *array, int index)
+static inline void **page_from_pagearray(void *array, int index)
 {
 	struct page **pa = (struct page **)array;
 
-	return &pa[index];
+	return (void **)&pa[index];
+}
+
+static inline void **folio_from_folioarray(void *array, int index)
+{
+	struct folio **pa = (struct folio **)array;
+
+	return (void **)&pa[index];
 }
 
 /*
- * we allocate the requested pages atomically.
+ * we allocate the requested objects atomically.
  */
-static inline int __sptlrpc_enc_pool_get_pages(void *array, unsigned int count,
-					struct page **(*page_from)(void *, int))
+static inline int __sptlrpc_enc_pool_get_objects(void *array, unsigned int count,
+					void **(*object_from)(void *, int))
 {
 	wait_queue_entry_t waitlink;
 	unsigned long this_idle = -1;
@@ -634,11 +641,11 @@ again:
 	g_idx = page_pools.epp_free_pages % PAGES_PER_POOL;
 
 	for (i = 0; i < count; i++) {
-		struct page **pagep = page_from(array, i);
+		void **objp = object_from(array, i);
 
 		if (page_pools.epp_pools[p_idx][g_idx] == NULL)
 			GOTO(out_unlock, rc = -EPROTO);
-		*pagep = page_pools.epp_pools[p_idx][g_idx];
+		*objp = page_pools.epp_pools[p_idx][g_idx];
 		page_pools.epp_pools[p_idx][g_idx] = NULL;
 
 		if (++g_idx == PAGES_PER_POOL) {
@@ -684,7 +691,7 @@ int sptlrpc_enc_pool_get_pages(struct ptlrpc_bulk_desc *desc)
 	if (desc->bd_enc_vec == NULL)
 		return -ENOMEM;
 
-	rc = __sptlrpc_enc_pool_get_pages((void *)desc, desc->bd_iov_count,
+	rc = __sptlrpc_enc_pool_get_objects((void *)desc, desc->bd_iov_count,
 					  page_from_bulkdesc);
 	if (rc) {
 		OBD_FREE_LARGE(desc->bd_enc_vec,
@@ -698,13 +705,20 @@ EXPORT_SYMBOL(sptlrpc_enc_pool_get_pages);
 
 int sptlrpc_enc_pool_get_pages_array(struct page **pa, unsigned int count)
 {
-	return __sptlrpc_enc_pool_get_pages((void *)pa, count,
+	return __sptlrpc_enc_pool_get_objects((void *)pa, count,
 					    page_from_pagearray);
 }
 EXPORT_SYMBOL(sptlrpc_enc_pool_get_pages_array);
 
-static int __sptlrpc_enc_pool_put_pages(void *array, unsigned int count,
-					struct page **(*page_from)(void *, int))
+int sptlrpc_enc_pool_get_folios_array(struct folio **pa, unsigned int count)
+{
+	return __sptlrpc_enc_pool_get_objects((void *)pa, count,
+					    folio_from_folioarray);
+}
+EXPORT_SYMBOL(sptlrpc_enc_pool_get_folios_array);
+
+static int __sptlrpc_enc_pool_put_objects(void *array, unsigned int count,
+					void **(*object_from)(void *, int))
 {
 	int p_idx, g_idx;
 	int i, rc = 0;
@@ -723,13 +737,13 @@ static int __sptlrpc_enc_pool_put_pages(void *array, unsigned int count,
 		GOTO(out_unlock, rc = -EPROTO);
 
 	for (i = 0; i < count; i++) {
-		struct page **pagep = page_from(array, i);
+		void **objp = object_from(array, i);
 
-		if (!*pagep ||
+		if (!*objp ||
 		    page_pools.epp_pools[p_idx][g_idx] != NULL)
 			GOTO(out_unlock, rc = -EPROTO);
 
-		page_pools.epp_pools[p_idx][g_idx] = *pagep;
+		page_pools.epp_pools[p_idx][g_idx] = *objp;
 		if (++g_idx == PAGES_PER_POOL) {
 			p_idx++;
 			g_idx = 0;
@@ -751,7 +765,7 @@ void sptlrpc_enc_pool_put_pages(struct ptlrpc_bulk_desc *desc)
 	if (desc->bd_enc_vec == NULL)
 		return;
 
-	rc = __sptlrpc_enc_pool_put_pages((void *)desc, desc->bd_iov_count,
+	rc = __sptlrpc_enc_pool_put_objects((void *)desc, desc->bd_iov_count,
 					  page_from_bulkdesc);
 	if (rc)
 		CDEBUG(D_SEC, "error putting pages in enc pool: %d\n", rc);
@@ -765,13 +779,25 @@ void sptlrpc_enc_pool_put_pages_array(struct page **pa, unsigned int count)
 {
 	int rc;
 
-	rc = __sptlrpc_enc_pool_put_pages((void *)pa, count,
+	rc = __sptlrpc_enc_pool_put_objects((void *)pa, count,
 					  page_from_pagearray);
 
 	if (rc)
 		CDEBUG(D_SEC, "error putting pages in enc pool: %d\n", rc);
 }
 EXPORT_SYMBOL(sptlrpc_enc_pool_put_pages_array);
+
+void sptlrpc_enc_pool_put_folios_array(struct folio **pa, unsigned int count)
+{
+	int rc;
+
+	rc = __sptlrpc_enc_pool_put_objects((void *)pa, count,
+					  folio_from_folioarray);
+
+	if (rc)
+		CDEBUG(D_SEC, "error putting folios in enc pool: %d\n", rc);
+}
+EXPORT_SYMBOL(sptlrpc_enc_pool_put_folios_array);
 
 /*
  * we don't do much stuff for add_user/del_user anymore, except adding some
