@@ -508,7 +508,8 @@ static inline bool ll_xattr_suffix_is_seclabel(const char *suffix)
 		!strcmp(suffix, XATTR_SMACK_SUFFIX);
 }
 
-int ll_dentry_init_security(struct dentry *dentry, int mode, struct qstr *name,
+int ll_dentry_init_security(struct dentry *dentry, int mode,
+			    const struct qstr *name,
 			    const char **secctx_name, __u32 *secctx_name_size,
 			    void **secctx, __u32 *secctx_size,
 			    int *secctx_slot);
@@ -1159,9 +1160,9 @@ int ll_dir_read(struct inode *inode, __u64 *pos, struct md_op_data *op_data,
 #endif
 int ll_get_mdt_idx(struct inode *inode);
 int ll_get_mdt_idx_by_fid(struct ll_sb_info *sbi, const struct lu_fid *fid);
-struct page *ll_get_dir_page(struct inode *dir, struct md_op_data *op_data,
+struct folio *ll_get_dir_page(struct inode *dir, struct md_op_data *op_data,
 			      __u64 offset, int *partial_readdir_rc);
-void ll_release_page(struct inode *inode, struct page *page, bool remove);
+void ll_release_page(struct inode *inode, struct folio *folio, bool remove);
 int quotactl_ioctl(struct super_block *sb, struct if_quotactl *qctl);
 
 /* llite/namei.c */
@@ -1181,12 +1182,14 @@ int ll_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
 		   bool tryagain);
 
 /* llite/rw.c */
+#ifndef HAVE___FILEMAP_GET_FOLIO
 int ll_writepage(struct page *page, struct writeback_control *wbc);
-int ll_writepages(struct address_space *, struct writeback_control *wbc);
-int ll_readpage(struct file *file, struct page *page);
+#endif
+int ll_writepages(struct address_space *a, struct writeback_control *wbc);
 #ifdef HAVE_AOPS_READ_FOLIO
 int ll_read_folio(struct file *file, struct folio *folio);
 #endif
+int ll_readpage(struct file *file, struct page *page);
 int ll_io_read_page(const struct lu_env *env, struct cl_io *io,
 			   struct cl_page *page, struct file *file);
 void ll_readahead_init(struct inode *inode, struct ll_readahead_state *ras);
@@ -1349,7 +1352,6 @@ int ll_iocontrol(struct inode *inode, struct file *file,
                  unsigned int cmd, unsigned long arg);
 int ll_flush_ctx(struct inode *inode);
 void ll_umount_begin(struct super_block *sb);
-int ll_remount_fs(struct super_block *sb, int *flags, char *data);
 int ll_show_options(struct seq_file *seq, struct dentry *dentry);
 void ll_dirty_page_discard_warn(struct inode *inode, int ioret);
 int ll_prep_inode(struct inode **inode, struct req_capsule *pill,
