@@ -90,9 +90,8 @@ struct osc_async_page {
 	spinlock_t		 oap_lock;
 };
 
-#define oap_page	oap_brw_page.pg
-#define oap_count	oap_brw_page.count
-#define oap_brw_flags	oap_brw_page.flag
+#define oap_count	oap_brw_page.bp_count
+#define oap_brw_flags	oap_brw_page.bp_flag
 
 static inline struct osc_async_page *brw_page2oap(struct brw_page *pga)
 {
@@ -952,7 +951,7 @@ struct osc_extent {
 	unsigned int		oe_grants;
 	/** # of dirty pages in this extent */
 	unsigned int		oe_nr_pages;
-	/** list of pending oap pages. Pages in this list are NOT sorted. */
+	/** list of pending oap folios. Pages in this list are NOT sorted. */
 	struct list_head	oe_pages;
 	/** start and end index of this extent, include start and end
 	 * themselves. Page offset here is the page index of osc_pages.
