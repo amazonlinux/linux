@@ -174,7 +174,7 @@ static int ll_page_mkwrite0(struct vm_area_struct *vma, struct page *vmpage,
 	if (IS_ERR(env))
 		RETURN(PTR_ERR(env));
 
-	io = ll_fault_io_init(env, vma, vmpage->index, true);
+	io = ll_fault_io_init(env, vma, folio_index_page(vmpage), true);
 	if (IS_ERR(io))
 		GOTO(out, result = PTR_ERR(io));
 
@@ -217,7 +217,7 @@ static int ll_page_mkwrite0(struct vm_area_struct *vma, struct page *vmpage,
 
                         CDEBUG(D_MMAP, "Race on page_mkwrite %p/%lu, page has "
                                "been written out, retry.\n",
-                               vmpage, vmpage->index);
+                               vmpage, folio_index_page(vmpage));
 
                         *retry = true;
                         result = -EAGAIN;
@@ -456,7 +456,7 @@ out:
 	if (vmf->page && result == VM_FAULT_LOCKED) {
 		ll_rw_stats_tally(ll_i2sbi(file_inode(vma->vm_file)),
 				  current->pid, vma->vm_file->private_data,
-				  cl_offset(NULL, vmf->page->index), PAGE_SIZE,
+				  cl_offset(NULL, vmf->pgoff), PAGE_SIZE,
 				  READ);
 		ll_stats_ops_tally(ll_i2sbi(file_inode(vma->vm_file)),
 				   LPROC_LL_FAULT,
@@ -486,7 +486,7 @@ static vm_fault_t ll_page_mkwrite(struct vm_area_struct *vma,
 	       DFID": vma=%p start=%#lx end=%#lx vm_flags=%#lx idx=%lu\n",
 	       PFID(&ll_i2info(file_inode(vma->vm_file))->lli_fid),
 	       vma, vma->vm_start, vma->vm_end, vma->vm_flags,
-	       vmf->page->index);
+	       vmf->pgoff);
 
 	result = pcc_page_mkwrite(vma, vmf, &cached);
 	if (cached)
@@ -531,7 +531,7 @@ out:
 	if (result == VM_FAULT_LOCKED) {
 		ll_rw_stats_tally(ll_i2sbi(file_inode(vma->vm_file)),
 				  current->pid, vma->vm_file->private_data,
-				  cl_offset(NULL, vmf->page->index), PAGE_SIZE,
+				  cl_offset(NULL, vmf->pgoff), PAGE_SIZE,
 				  WRITE);
 		ll_stats_ops_tally(ll_i2sbi(file_inode(vma->vm_file)),
 				   LPROC_LL_MKWRITE,
