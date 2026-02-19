@@ -493,6 +493,11 @@ int client_obd_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 
 	if (!strcmp(name, LUSTRE_MDC_NAME)) {
 		cli->cl_max_rpcs_in_flight = OBD_MAX_RIF_DEFAULT;
+
+		/* FSxL: https://sim.amazon.com/issues/Simba-71343 */
+		if (num_online_cpus() >= 64)
+			cli->cl_max_rpcs_in_flight = 64;
+
 	} else if (cfs_totalram_pages() >> (20 - PAGE_SHIFT) <= 128 /* MB */) {
 		cli->cl_max_rpcs_in_flight = 2;
 	} else if (cfs_totalram_pages() >> (20 - PAGE_SHIFT) <= 256 /* MB */) {
@@ -502,6 +507,11 @@ int client_obd_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 	} else {
 		if (osc_on_mdt(obd->obd_name))
 			cli->cl_max_rpcs_in_flight = OBD_MAX_RIF_MAX;
+		/* FSxL: https://sim.amazon.com/issues/Simba-71343 */
+		else if (num_online_cpus() > 128)
+			cli->cl_max_rpcs_in_flight = 64;
+		else if (num_online_cpus() >= 64)
+			cli->cl_max_rpcs_in_flight = 32;
 		else
 			cli->cl_max_rpcs_in_flight = OBD_MAX_RIF_DEFAULT;
 	}
@@ -518,6 +528,10 @@ int client_obd_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 
 	if (connect_op == MDS_CONNECT) {
 		cli->cl_max_mod_rpcs_in_flight = cli->cl_max_rpcs_in_flight - 1;
+		/* FSxL: https://sim.amazon.com/issues/Simba-71343 */
+		if (num_online_cpus() >= 64)
+			cli->cl_max_mod_rpcs_in_flight = 50;
+
 		OBD_ALLOC(cli->cl_mod_tag_bitmap,
 			  BITS_TO_LONGS(OBD_MAX_RIF_MAX) * sizeof(long));
 		if (cli->cl_mod_tag_bitmap == NULL)
@@ -2934,10 +2948,8 @@ void target_recovery_init(struct lu_target *lut, svc_handler_t handler)
 	obd->obd_next_recovery_transno = obd->obd_last_committed + 1;
 	obd->obd_recovery_start = 0;
 	obd->obd_recovery_end = 0;
-
-	hrtimer_init(&obd->obd_recovery_timer, CLOCK_MONOTONIC,
-		     HRTIMER_MODE_ABS);
-	obd->obd_recovery_timer.function = &target_recovery_expired;
+	hrtimer_setup(&obd->obd_recovery_timer, target_recovery_expired,
+		      CLOCK_MONOTONIC, HRTIMER_MODE_ABS);
 	target_start_recovery_thread(lut, handler);
 }
 EXPORT_SYMBOL(target_recovery_init);
