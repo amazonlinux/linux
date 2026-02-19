@@ -179,7 +179,7 @@ static bool pos_in_window(loff_t pos, loff_t point,
 
 enum ll_ra_page_hint {
 	MAYNEED = 0, /* this page possibly accessed soon */
-	WILLNEED /* this page is gurateed to be needed */
+	WILLNEED /* this page is guaranteed to be needed */
 };
 
 /**
@@ -231,7 +231,7 @@ static int ll_read_ahead_page(const struct lu_env *env, struct cl_io *io,
 		GOTO(out, rc = -EBUSY);
 	}
 
-	cp = cl_page_find(env, clob, vmpage->index, vmpage, CPT_CACHEABLE);
+	cp = cl_page_find(env, clob, folio_index_page(vmpage), vmpage, CPT_CACHEABLE);
 	if (IS_ERR(cp)) {
 		which = RA_STAT_FAILED_GRAB_PAGE;
 		msg   = "cl_page_find failed";
@@ -1429,6 +1429,7 @@ out_unlock:
 	spin_unlock(&ras->ras_lock);
 }
 
+#ifndef HAVE___FILEMAP_GET_FOLIO
 int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
 {
 	struct inode	       *inode = vmpage->mapping->host;
@@ -1460,7 +1461,7 @@ int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
 	io->ci_ignore_layout = 1;
         result = cl_io_init(env, io, CIT_MISC, clob);
         if (result == 0) {
-                page = cl_page_find(env, clob, vmpage->index,
+                page = cl_page_find(env, clob, folio_index_page(vmpage),
                                     vmpage, CPT_CACHEABLE);
 		if (!IS_ERR(page)) {
 			lu_ref_add(&page->cp_reference, "writepage",
@@ -1491,7 +1492,7 @@ int ll_writepage(struct page *vmpage, struct writeback_control *wbc)
         cl_io_fini(env, io);
 
 	if (redirtied && wbc->sync_mode == WB_SYNC_ALL) {
-		loff_t offset = cl_offset(clob, vmpage->index);
+		loff_t offset = cl_offset(clob, folio_index_page(vmpage));
 
 		/* Flush page failed because the extent is being written out.
 		 * Wait for the write of extent to be finished to avoid
@@ -1522,6 +1523,7 @@ out:
 	}
 	return result;
 }
+#endif
 
 int ll_writepages(struct address_space *mapping, struct writeback_control *wbc)
 {
@@ -1898,7 +1900,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
 		struct lu_env  *local_env = NULL;
 		struct vvp_page *vpg;
 
-		CDEBUG(D_VFSTRACE, "fast read pgno: %ld\n", vmpage->index);
+		CDEBUG(D_VFSTRACE, "fast read pgno: %ld\n", folio_index_page(vmpage));
 
 		result = -ENODATA;
 
@@ -1911,7 +1913,8 @@ int ll_readpage(struct file *file, struct page *vmpage)
 			RETURN(result);
 		}
 
-		vpg = cl2vvp_page(cl_object_page_slice(page->cp_obj, page));
+		vpg = cl_object_page_slice(clob, page);
+
 		if (page->cp_defer_uptodate) {
 			enum ras_update_flags flags = LL_RAS_HIT;
 
@@ -1955,7 +1958,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
 
 	if (lcc && lcc->lcc_type != LCC_MMAP) {
 		CDEBUG(D_VFSTRACE, "pgno:%ld, beyond read end_index:%ld\n",
-		       vmpage->index, lcc->lcc_end_index);
+		       folio_index_page(vmpage), lcc->lcc_end_index);
 
 		/*
 		 * This handles a kernel bug introduced in kernel 5.12:
@@ -1981,9 +1984,9 @@ int ll_readpage(struct file *file, struct page *vmpage)
 		 * This should never occur except in kernels with the bug
 		 * mentioned above.
 		 */
-		if (vmpage->index >= lcc->lcc_end_index) {
-			result = cl_io_read_ahead(env, io, vmpage->index, &ra);
-			if (result < 0 || vmpage->index > ra.cra_end_idx) {
+		if (folio_index_page(vmpage) >= lcc->lcc_end_index) {
+			result = cl_io_read_ahead(env, io, folio_index_page(vmpage), &ra);
+			if (result < 0 || folio_index_page(vmpage) > ra.cra_end_idx) {
 				cl_read_ahead_release(env, &ra);
 				unlock_page(vmpage);
 				RETURN(AOP_TRUNCATED_PAGE);
@@ -2006,7 +2009,7 @@ int ll_readpage(struct file *file, struct page *vmpage)
 	}
 
 	LASSERT(io->ci_state == CIS_IO_GOING);
-	page = cl_page_find(env, clob, vmpage->index, vmpage, CPT_CACHEABLE);
+	page = cl_page_find(env, clob, folio_index_page(vmpage), vmpage, CPT_CACHEABLE);
 	if (!IS_ERR(page)) {
 		LASSERT(page->cp_type == CPT_CACHEABLE);
 		if (likely(!PageUptodate(vmpage))) {
