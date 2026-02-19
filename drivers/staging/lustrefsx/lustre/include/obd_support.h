@@ -612,6 +612,7 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_LLITE_PAGE_INVALIDATE_PAUSE	    0x1421
 #define OBD_FAIL_LLITE_READPAGE_PAUSE		    0x1422
 #define OBD_FAIL_LLITE_READPAGE_PAUSE2		    0x1424
+#define OBD_FAIL_LLITE_DELAY_TRUNCATE		    0x1430
 #define OBD_FAIL_LLITE_READ_PAUSE		    0x1431
 #define OBD_FAIL_LLITE_FAULT_PAUSE		    0x1432
 
@@ -941,11 +942,16 @@ do {									      \
         0;                                                                    \
 })
 
+static inline void *__kmem_cache_zalloc(struct kmem_cache *cachep, gfp_t flags)
+{
+	return kmem_cache_zalloc(cachep, flags);
+}
+
 #define __OBD_SLAB_ALLOC_VERBOSE(ptr, slab, cptab, cpt, size, type)	      \
 do {									      \
 	LASSERT(ergo((type) != GFP_ATOMIC, !in_interrupt()));		      \
 	(ptr) = (cptab) == NULL ?					      \
-		kmem_cache_zalloc(slab, (type)) :			      \
+		__kmem_cache_zalloc(slab, (type)) :			      \
 		cfs_mem_cache_cpt_alloc(slab, cptab, cpt, (type) | __GFP_ZERO); \
 	if (likely((ptr)))                                                    \
 		OBD_ALLOC_POST(ptr, size, "slab-alloced");                    \
