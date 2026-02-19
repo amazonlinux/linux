@@ -299,6 +299,8 @@ struct cl_layout {
 	bool		cl_is_released;
 };
 
+struct cl_dio_pages;
+
 /**
  * Operations implemented for each cl object layer.
  *
@@ -556,7 +558,7 @@ struct cl_object_header {
  *
  *            - by starting from VM-locked struct page and following some
  *              hosting environment method (e.g., following ->private pointer in
- *              the case of Linux kernel), see cl_vmpage_page();
+ *              the case of Linux kernel), see cl_page_from_folio();
  *
  *        - when the page enters cl_page_state::CPS_FREEING state, all these
  *          ways are severed with the proper synchronization
@@ -965,6 +967,33 @@ static inline struct page *cl_page_vmpage(const struct cl_page *page)
 {
 	LASSERT(page->cp_vmpage != NULL);
 	return page->cp_vmpage;
+}
+
+static inline int cl_folio_pgno(const struct cl_page *cl_page)
+{
+#ifdef HAVE___FILEMAP_GET_FOLIO
+	struct folio *folio = page_folio(cl_page->cp_vmpage);
+	int pgno = folio_page_idx(folio, cl_page->cp_vmpage);
+
+	return pgno;
+#else
+	return 0;
+#endif
+}
+
+static inline void *cl_kmap_local(struct cl_page *pg)
+{
+	return kmap_local_page(pg->cp_vmpage);
+}
+
+static inline struct page *cl_folio_page(const struct cl_page *cl_page)
+{
+	return cl_page->cp_vmpage;
+}
+
+static inline pgoff_t cl_page_index(const struct cl_page *cp)
+{
+	return folio_index_page(cl_page_vmpage(cp));
 }
 
 /**
@@ -2185,6 +2214,11 @@ struct cl_page *cl_page_top         (struct cl_page *page);
 
 const struct cl_page_slice *cl_page_at(const struct cl_page *page,
                                        const struct lu_device_type *dtype);
+static inline struct cl_page *cl_page_from_folio(struct page *vmpage,
+						 pgoff_t index, bool get)
+{
+	return cl_vmpage_page(vmpage, NULL);
+}
 
 /**
  * \name ownership
@@ -2520,16 +2554,16 @@ struct cl_sync_io {
 };
 
 /** direct IO pages */
-struct ll_dio_pages {
+struct cl_dio_pages {
 	/*
 	 * page array to be written. we don't support
 	 * partial pages except the last one.
 	 */
-	struct page             **ldp_pages;
+	struct page		**cdp_pages;
 	/** # of pages in the array. */
-	size_t                  ldp_count;
+	size_t			cdp_count;
 	/* the file offset of the first page. */
-	loff_t                  ldp_file_offset;
+	loff_t                  cdp_file_offset;
 };
 
 /* Top level struct used for AIO and DIO */
@@ -2550,7 +2584,7 @@ struct cl_sub_dio {
 	struct cl_page_list	csd_pages;
 	ssize_t			csd_bytes;
 	struct cl_dio_aio	*csd_ll_aio;
-	struct ll_dio_pages	csd_dio_pages;
+	struct cl_dio_pages	csd_dio_pages;
 	unsigned		csd_creator_free:1;
 };
 #if defined(HAVE_DIRECTIO_ITER) || defined(HAVE_IOV_ITER_RW) || \
