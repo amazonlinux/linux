@@ -1573,7 +1573,7 @@ static inline int md_file_resync(struct obd_export *exp,
 static inline int md_read_page(struct obd_export *exp,
 			       struct md_op_data *op_data,
 			       struct md_readdir_info *mrinfo,
-			       __u64  hash_offset, struct page **ppage)
+			       __u64  hash_offset, struct folio **pfolio)
 {
 	int rc;
 
@@ -1584,8 +1584,10 @@ static inline int md_read_page(struct obd_export *exp,
 	lprocfs_counter_incr(exp->exp_obd->obd_md_stats,
 			     LPROC_MD_READ_PAGE);
 
-	return MDP(exp->exp_obd, read_page)(exp, op_data, mrinfo, hash_offset,
-					    ppage);
+	return exp->exp_obd->obd_type->typ_md_ops->m_read_page(exp, op_data,
+							       mrinfo,
+							       hash_offset,
+							       pfolio);
 }
 
 static inline int md_unlink(struct obd_export *exp, struct md_op_data *op_data,
