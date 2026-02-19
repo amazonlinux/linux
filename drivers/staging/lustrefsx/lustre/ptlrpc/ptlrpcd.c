@@ -100,7 +100,7 @@ MODULE_PARM_DESC(ptlrpcd_bind_policy,
  * ptlrpcd_per_cpt_max: The maximum number of ptlrpcd threads to run
  * in a CPT.
  */
-static int ptlrpcd_per_cpt_max;
+static int ptlrpcd_per_cpt_max = -1;
 module_param(ptlrpcd_per_cpt_max, int, 0644);
 MODULE_PARM_DESC(ptlrpcd_per_cpt_max,
 		 "Max ptlrpcd thread count to be started per CPT.");
@@ -815,6 +815,17 @@ static int ptlrpcd_init(void)
 	OBD_ALLOC(ptlrpcds, size);
 	if (ptlrpcds == NULL)
 		GOTO(out, rc = -ENOMEM);
+
+	/*
+	 * FSxL: https://sim.amazon.com/issues/Simba-71343
+	 * Set ptlrpcd_per_cpt_max to 32 if num_cpus >= 64.
+	 * Only update it if it is not set before (i.e. == -1)
+	 */
+	if (ptlrpcd_per_cpt_max == -1) {
+		ptlrpcd_per_cpt_max = 0;
+		if (num_online_cpus() >= 64)
+			ptlrpcd_per_cpt_max = 32;
+	}
 
 	/*
 	 * The max_ptlrpcds parameter is obsolete, but do something
