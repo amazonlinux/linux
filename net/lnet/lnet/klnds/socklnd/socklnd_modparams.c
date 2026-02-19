@@ -36,7 +36,7 @@ static int sock_timeout;
 module_param(sock_timeout, int, 0644);
 MODULE_PARM_DESC(sock_timeout, "dead socket timeout (seconds)");
 
-static int credits = DEFAULT_CREDITS;
+static int credits = -1;
 module_param(credits, int, 0444);
 MODULE_PARM_DESC(credits, "# concurrent sends");
 
@@ -202,7 +202,7 @@ static int ksocklnd_ni_get_eth_intf_speed(struct lnet_ni *ni)
 
 	rtnl_lock();
 	for_each_netdev(ni->ni_net_ns, dev) {
-		int flags = dev_get_flags(dev);
+		int flags = netif_get_flags(dev);
 		struct in_device *in_dev;
 
 		if (flags & IFF_LOOPBACK) /* skip the loopback IF */
@@ -270,6 +270,19 @@ static int ksocklnd_lookup_conns_per_peer(struct lnet_ni *ni)
 
 int ksocknal_tunables_init(void)
 {
+	/*
+	 * FSxL: https://sim.amazon.com/issues/Simba-71343
+	 * Set credits based on num_online_cpus if not explicitly set by user.
+	 */
+	if (credits == -1) {
+		if (num_online_cpus() >= 64)
+			credits = 2560;
+		else if (num_online_cpus() >= 32)
+			credits = 1280;
+		else
+			credits = DEFAULT_CREDITS;
+	}
+
 	default_tunables.lnd_version = CURRENT_LND_VERSION;
 	default_tunables.lnd_conns_per_peer = conns_per_peer;
 
