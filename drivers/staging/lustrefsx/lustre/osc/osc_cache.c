@@ -1368,11 +1368,11 @@ static void osc_consume_write_grant(struct client_obd *cli,
 				    struct brw_page *pga)
 {
 	assert_spin_locked(&cli->cl_loi_list_lock);
-	LASSERT(!(pga->flag & OBD_BRW_FROM_GRANT));
+	LASSERT(!(pga->bp_flag & OBD_BRW_FROM_GRANT));
 	cli->cl_dirty_pages++;
-	pga->flag |= OBD_BRW_FROM_GRANT;
+	pga->bp_flag |= OBD_BRW_FROM_GRANT;
 	CDEBUG(D_CACHE, "using %lu grant credits for brw %p page %p\n",
-	       PAGE_SIZE, pga, pga->pg);
+	       PAGE_SIZE, pga, pga->bp_folio);
 }
 
 /* the companion to osc_consume_write_grant, called when a brw has completed.
@@ -1383,12 +1383,12 @@ static void osc_release_write_grant(struct client_obd *cli,
 	ENTRY;
 
 	assert_spin_locked(&cli->cl_loi_list_lock);
-	if (!(pga->flag & OBD_BRW_FROM_GRANT)) {
+	if (!(pga->bp_flag & OBD_BRW_FROM_GRANT)) {
 		EXIT;
 		return;
 	}
 
-	pga->flag &= ~OBD_BRW_FROM_GRANT;
+	pga->bp_flag &= ~OBD_BRW_FROM_GRANT;
 	atomic_long_dec(&obd_dirty_pages);
 	cli->cl_dirty_pages--;
 	EXIT;
@@ -2245,7 +2245,6 @@ int osc_prep_async_page(struct osc_object *osc, struct osc_page *ops,
 {
 	struct obd_export     *exp = osc_export(osc);
 	struct osc_async_page *oap = &ops->ops_oap;
-	struct page	      *vmpage = page->cp_vmpage;
 	ENTRY;
 
 	if (!page)
@@ -2254,8 +2253,8 @@ int osc_prep_async_page(struct osc_object *osc, struct osc_page *ops,
 	oap->oap_magic = OAP_MAGIC;
 	oap->oap_cli = &exp->exp_obd->u.cli;
 	oap->oap_obj = osc;
-
-	oap->oap_page = vmpage;
+	oap->oap_brw_page.bp_folio = page_folio(page->cp_vmpage);
+	oap->oap_brw_page.bp_pgno = cl_folio_pgno(page);
 	oap->oap_obj_off = offset;
 	LASSERT(!(offset & ~PAGE_MASK));
 
@@ -2272,7 +2271,7 @@ int osc_prep_async_page(struct osc_object *osc, struct osc_page *ops,
 
 	spin_lock_init(&oap->oap_lock);
 	CDEBUG(D_INFO, "oap %p vmpage %p obj off %llu\n",
-	       oap, vmpage, oap->oap_obj_off);
+	       oap, oap->oap_brw_page.bp_folio, oap->oap_obj_off);
 	RETURN(0);
 }
 EXPORT_SYMBOL(osc_prep_async_page);
@@ -2351,9 +2350,11 @@ int osc_queue_async_io(const struct lu_env *env, struct cl_io *io,
 	 * since this page is not in any list yet. */
 	oap->oap_async_flags = 0;
 	oap->oap_brw_flags = brw_flags;
+	oap->oap_brw_page.bp_pgno = cl_folio_pgno(ops->ops_cl.cpl_page);
 
 	OSC_IO_DEBUG(osc, "oap %p page %p added for cmd %d\n",
-		     oap, oap->oap_page, oap->oap_cmd & OBD_BRW_RWMASK);
+		     oap, oap->oap_brw_page.bp_folio,
+		     oap->oap_cmd & OBD_BRW_RWMASK);
 
 	index = osc_index(oap2osc(oap));
 
