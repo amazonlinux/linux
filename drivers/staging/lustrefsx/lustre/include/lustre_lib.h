@@ -91,7 +91,7 @@ void target_send_reply(struct ptlrpc_request *req, int rc, int fail_id);
 
 #define LL_CDEBUG_PAGE(mask, page, fmt, arg...)				\
 	CDEBUG(mask, "page %p map %p index %lu flags %lx count %u priv %0lx: " \
-	       fmt, page, page->mapping, page->index, (long)page->flags, \
+	       fmt, page, page->mapping, folio_index_page(page), (long)PAGE_FLAGS(page), \
 	       page_count(page), page_private(page), ## arg)
 
 /** @} lib */

@@ -572,20 +572,51 @@ SERVER_ONLY_EXPORT_SYMBOL(lustre_stop_mgc);
 
 /***************** lustre superblock **************/
 
-struct lustre_sb_info *lustre_init_lsi(struct super_block *sb)
+static void lustre_put_lsm_free(struct kref *kref)
 {
+	struct lustre_mount_data *lmd = container_of(kref,
+						     struct lustre_mount_data,
+						     lmd_ref);
+	
+	if (lmd->lmd_dev != NULL)
+		OBD_FREE(lmd->lmd_dev, strlen(lmd->lmd_dev) + 1);
+	if (lmd->lmd_profile != NULL)
+		OBD_FREE(lmd->lmd_profile, strlen(lmd->lmd_profile) + 1);
+	if (lmd->lmd_fileset != NULL)
+		OBD_FREE(lmd->lmd_fileset, strlen(lmd->lmd_fileset) + 1);
+	if (lmd->lmd_mgssec != NULL)
+		OBD_FREE(lmd->lmd_mgssec, strlen(lmd->lmd_mgssec) + 1);
+	if (lmd->lmd_opts != NULL)
+		OBD_FREE(lmd->lmd_opts, strlen(lmd->lmd_opts) + 1);
+	if (lmd->lmd_exclude_count)
+		OBD_FREE_PTR_ARRAY(lmd->lmd_exclude,
+				   lmd->lmd_exclude_count);
+	if (lmd->lmd_mgs != NULL)
+		OBD_FREE(lmd->lmd_mgs, strlen(lmd->lmd_mgs) + 1);
+	if (lmd->lmd_osd_type != NULL)
+		OBD_FREE(lmd->lmd_osd_type, strlen(lmd->lmd_osd_type) + 1);
+	if (lmd->lmd_params != NULL)
+		OBD_FREE(lmd->lmd_params, 4096);
+	if (lmd->lmd_nidnet != NULL)
+		OBD_FREE(lmd->lmd_nidnet, strlen(lmd->lmd_nidnet) + 1);
+	OBD_FREE_PTR(lmd);
+}
+
+struct lustre_sb_info *lustre_init_lsi(struct fs_context *fc, struct super_block *sb)
+{
+	struct lustre_mount_data *lmd = fc->fs_private;
 	struct lustre_sb_info *lsi;
 
 	ENTRY;
+	if (!lmd)
+		RETURN(NULL);
 
 	OBD_ALLOC_PTR(lsi);
 	if (!lsi)
 		RETURN(NULL);
-	OBD_ALLOC_PTR(lsi->lsi_lmd);
-	if (!lsi->lsi_lmd) {
-		OBD_FREE_PTR(lsi);
-		RETURN(NULL);
-	}
+
+	kref_get(&lmd->lmd_ref);
+	lsi->lsi_lmd = lmd;
 
 	s2lsi_nocast(sb) = lsi;
 	/* we take 1 extra ref for our setup */
@@ -613,42 +644,9 @@ static int lustre_free_lsi(struct super_block *sb)
 	LASSERT(atomic_read(&lsi->lsi_mounts) == 0);
 
 	llcrypt_sb_free(sb);
-	if (lsi->lsi_lmd != NULL) {
-		if (lsi->lsi_lmd->lmd_dev != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_dev,
-				strlen(lsi->lsi_lmd->lmd_dev) + 1);
-		if (lsi->lsi_lmd->lmd_profile != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_profile,
-				strlen(lsi->lsi_lmd->lmd_profile) + 1);
-		if (lsi->lsi_lmd->lmd_fileset != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_fileset,
-				strlen(lsi->lsi_lmd->lmd_fileset) + 1);
-		if (lsi->lsi_lmd->lmd_mgssec != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_mgssec,
-				strlen(lsi->lsi_lmd->lmd_mgssec) + 1);
-		if (lsi->lsi_lmd->lmd_opts != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_opts,
-				strlen(lsi->lsi_lmd->lmd_opts) + 1);
-		if (lsi->lsi_lmd->lmd_exclude_count)
-			OBD_FREE(lsi->lsi_lmd->lmd_exclude,
-				sizeof(lsi->lsi_lmd->lmd_exclude[0]) *
-				lsi->lsi_lmd->lmd_exclude_count);
-		if (lsi->lsi_lmd->lmd_mgs != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_mgs,
-				 strlen(lsi->lsi_lmd->lmd_mgs) + 1);
-		if (lsi->lsi_lmd->lmd_osd_type != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_osd_type,
-				 strlen(lsi->lsi_lmd->lmd_osd_type) + 1);
-		if (lsi->lsi_lmd->lmd_params != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_params, 4096);
-		if (lsi->lsi_lmd->lmd_nidnet != NULL)
-			OBD_FREE(lsi->lsi_lmd->lmd_nidnet,
-				strlen(lsi->lsi_lmd->lmd_nidnet) + 1);
-
-		OBD_FREE_PTR(lsi->lsi_lmd);
-	}
-
-	LASSERT(lsi->lsi_llsbi == NULL);
+	if (lsi->lsi_lmd)
+		kref_put(&lsi->lsi_lmd->lmd_ref, lustre_put_lsm_free);
+	LASSERT(!lsi->lsi_llsbi);
 	OBD_FREE_PTR(lsi);
 	s2lsi_nocast(sb) = NULL;
 
@@ -1290,10 +1288,10 @@ static int lmd_parse_nidlist(char *buf, char **endh)
  * e.g. mount -v -t lustre -o abort_recov uml1:uml2:/lustre-client /mnt/lustre
  * dev is passed as device=uml1:/lustre by mount.lustre_tgt
  */
-int lmd_parse(char *options, struct lustre_mount_data *lmd)
+int lustre_parse_monolithic(struct fs_context *fc, void *lmd2_data)
 {
-	char *s1, *s2, *devname = NULL;
-	struct lustre_mount_data *raw = (struct lustre_mount_data *)options;
+	char *options = lmd2_data, *s1, *s2, *devname = NULL;
+	struct lustre_mount_data *lmd = fc->fs_private, *raw = lmd2_data;
 	int rc = 0;
 
 	ENTRY;
@@ -1582,115 +1580,13 @@ invalid:
 	CERROR("Bad mount options %s\n", options);
 	RETURN(-EINVAL);
 }
-EXPORT_SYMBOL(lmd_parse);
+EXPORT_SYMBOL(lustre_parse_monolithic);
 
-#ifdef HAVE_SERVER_SUPPORT
-/**
- * This is the entry point for the mount call into Lustre.
- * This is called when a server target is mounted,
- * and this is where we start setting things up.
- * @param data Mount options (e.g. -o flock,abort_recov)
- */
-static int lustre_tgt_fill_super(struct super_block *sb, void *lmd2_data,
-				 int silent)
+void lustre_fc_free(struct fs_context *fc)
 {
-	struct lustre_mount_data *lmd;
-	struct lustre_sb_info *lsi;
-	int rc;
+	struct lustre_mount_data *lmd = fc->fs_private;
 
-	ENTRY;
-
-	CDEBUG(D_MOUNT|D_VFSTRACE, "VFS Op: sb %p\n", sb);
-
-	lsi = lustre_init_lsi(sb);
-	if (!lsi)
-		RETURN(-ENOMEM);
-	lmd = lsi->lsi_lmd;
-
-	/*
-	 * Disable lockdep during mount, because mount locking patterns are
-	 * 'special'.
-	 */
-	lockdep_off();
-
-	/*
-	 * LU-639: the OBD cleanup of last mount may not finish yet, wait here.
-	 */
-	obd_zombie_barrier();
-
-	/* Figure out the lmd from the mount options */
-	if (lmd_parse(lmd2_data, lmd)) {
-		lustre_put_lsi(sb);
-		GOTO(out, rc = -EINVAL);
-	}
-
-	if (lmd_is_client(lmd)) {
-		rc = -ENODEV;
-		CERROR("%s: attempting to mount a client with -t lustre_tgt' which is only for server-side mounts: rc = %d\n",
-		       lmd->lmd_dev, rc);
-		lustre_put_lsi(sb);
-		GOTO(out, rc);
-	}
-
-	CDEBUG(D_MOUNT, "Mounting server from %s\n", lmd->lmd_dev);
-	rc = server_fill_super(sb);
-	/*
-	 * server_fill_super calls lustre_start_mgc after the mount
-	 * because we need the MGS NIDs which are stored on disk.
-	 * Plus, we may need to start the MGS first.
-	 *
-	 * server_fill_super will call server_put_super on failure
-	 *
-	 * If error happens in fill_super() call, @lsi will be killed there.
-	 * This is why we do not put it here.
-	 */
-out:
-	if (rc) {
-		CERROR("Unable to mount %s (%d)\n",
-		       s2lsi(sb) ? lmd->lmd_dev : "", rc);
-	} else {
-		CDEBUG(D_SUPER, "Mount %s complete\n",
-		       lmd->lmd_dev);
-	}
-	lockdep_on();
-	return rc;
+	kref_put(&lmd->lmd_ref, lustre_put_lsm_free);
+	fc->fs_private = NULL;
 }
-
-/***************** FS registration ******************/
-static struct dentry *lustre_tgt_mount(struct file_system_type *fs_type,
-				       int flags, const char *devname,
-				       void *data)
-{
-	return mount_nodev(fs_type, flags, data, lustre_tgt_fill_super);
-}
-
-/* Register the "lustre_tgt" fs type.
- *
- * Right now this isn't any different than the normal "lustre" filesystem
- * type, but it is added so that there is some compatibility to allow
- * changing documentation and scripts to start using the "lustre_tgt" type
- * at mount time. That will simplify test interop, and in case of upgrades
- * that change to the new type and then need to roll back for some reason.
- *
- * The long-term goal is to disentangle the client and server mount code.
- */
-static struct file_system_type lustre_tgt_fstype = {
-	.owner		= THIS_MODULE,
-	.name		= "lustre_tgt",
-	.mount		= lustre_tgt_mount,
-	.kill_sb	= kill_anon_super,
-	.fs_flags	= FS_REQUIRES_DEV | FS_RENAME_DOES_D_MOVE,
-};
-MODULE_ALIAS_FS("lustre_tgt");
-
-int lustre_tgt_register_fs(void)
-{
-	return register_filesystem(&lustre_tgt_fstype);
-}
-
-void lustre_tgt_unregister_fs(void)
-{
-	unregister_filesystem(&lustre_tgt_fstype);
-}
-
-#endif /* HAVE_SERVER_SUPPORT */
+EXPORT_SYMBOL(lustre_fc_free);
