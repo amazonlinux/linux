@@ -113,6 +113,9 @@
 /* backing_dev_info has io_pages */
 #undef HAVE_BDI_IO_PAGES
 
+/* 'bio_add_folio()' is available */
+#undef HAVE_BIO_ADD_FOLIO
+
 /* struct bio has bi_phys_segments member */
 #undef HAVE_BIO_BI_PHYS_SEGMENTS
 
@@ -188,6 +191,9 @@
 /* copy_file_range() is supported */
 #undef HAVE_COPY_FILE_RANGE
 
+/* 'copy_folio_from_iter_atomic' exists */
+#undef HAVE_COPY_FOLIO_FROM_ITER_ATOMIC
+
 /* 'cpus_read_lock' exist */
 #undef HAVE_CPUS_READ_LOCK
 
@@ -223,6 +229,9 @@
 
 /* list dentry.d_u.d_alias exist */
 #undef HAVE_DENTRY_D_U_D_ALIAS
+
+/* dentry->__d_name exists */
+#undef HAVE_DENTRY__D_NAME
 
 /* DES3 enctype is supported by krb5 */
 #undef HAVE_DES3_SUPPORT
@@ -353,8 +362,14 @@
 /* kernel has file_dentry */
 #undef HAVE_FILE_DENTRY
 
+/* struct file_kattr exists */
+#undef HAVE_FILE_KATTR
+
 /* file_operations.[read|write]_iter functions exist */
 #undef HAVE_FILE_OPERATIONS_READ_WRITE_ITER
+
+/* file->__f_path exists */
+#undef HAVE_FILE__F_PATH
 
 /* filldir_t needs struct dir_context as argument */
 #undef HAVE_FILLDIR_USE_CTX
@@ -376,6 +391,9 @@
 
 /* 'folio_mapcount()' is available */
 #undef HAVE_FOLIO_MAPCOUNT
+
+/* folio_memcg_lock is defined */
+#undef HAVE_FOLIO_MEMCG_LOCK
 
 /* file_operations has iterate_shared */
 #undef HAVE_FOP_ITERATE_SHARED
@@ -440,6 +458,9 @@
 /* glob_match() is available */
 #undef HAVE_GLOB
 
+/* grab_cache_page_write_begin() is available */
+#undef HAVE_GRAB_CACHE_PAGE_WRITE_BEGIN
+
 /* grab_cache_page_write_begin() has flags argument */
 #undef HAVE_GRAB_CACHE_PAGE_WRITE_BEGIN_WITH_FLAGS
 
@@ -469,6 +490,9 @@
 
 /* hotplug state machine is supported */
 #undef HAVE_HOTPLUG_STATE_MACHINE
+
+/* hrtimer_setup() is available */
+#undef HAVE_HRTIMER_SETUP
 
 /* hypervisor_is_type function exists */
 #undef HAVE_HYPERVISOR_IS_TYPE
@@ -515,6 +539,9 @@
 /* inode_operations .getattr member function can gather advance stats */
 #undef HAVE_INODEOPS_ENHANCED_GETATTR
 
+/* inode_generic_drop() exists */
+#undef HAVE_INODE_GENERIC_DROP
+
 /* 'inode_get_ctime()' exists */
 #undef HAVE_INODE_GET_CTIME
 
@@ -550,6 +577,9 @@
 
 /* 'in_dev_for_each_ifa_rtnl' is defined */
 #undef HAVE_IN_DEV_FOR_EACH_IFA_RTNL
+
+/* inode_operations.mkdir() returns dentry */
+#undef HAVE_IOPS_MKDIR_RETURNS_DENTRY
 
 /* inode_operations->rename need flags as argument */
 #undef HAVE_IOPS_RENAME_WITH_FLAGS
@@ -805,6 +835,9 @@
 /* memalloc_noreclaim_{save,restore}() is supported */
 #undef HAVE_MEMALLOC_RECLAIM
 
+/* page->flags is struct */
+#undef HAVE_MEMDESC_FLAGS_T
+
 /* Define to 1 if you have the <memory.h> header file. */
 #undef HAVE_MEMORY_H
 
@@ -831,6 +864,9 @@
 
 /* Define to 1 if you have the <netdb.h> header file. */
 #undef HAVE_NETDB_H
+
+/* netif_get_flags exists */
+#undef HAVE_NETIF_GET_FLAGS
 
 /* struct genl_ops has 'start' callback */
 #undef HAVE_NETLINK_CALLBACK_START
@@ -958,8 +994,8 @@
 /* rdma_reject has 4 arguments */
 #undef HAVE_RDMA_REJECT_4ARGS
 
-/* read_cache_page() filler_t needs struct file */
-#undef HAVE_READ_CACHE_PAGE_WANTS_FILE
+/* read_cache_folio() filler_t needs struct file */
+#undef HAVE_READ_CACHE_FOLIO_WANTS_FILE
 
 /* refcount_t is supported */
 #undef HAVE_REFCOUNT_T
@@ -1019,6 +1055,12 @@
    gss_krb5_set_allowable_enctypes */
 #undef HAVE_SET_ALLOWABLE_ENCTYPES
 
+/* set_default_d_op exists */
+#undef HAVE_SET_DEFAULT_D_OP
+
+/* 'sg_set_folio()' is available */
+#undef HAVE_SG_SET_FOLIO
+
 /* 'shrinker_alloc()' exists */
 #undef HAVE_SHRINKER_ALLOC
 
@@ -1030,6 +1072,9 @@
 
 /* sock_create_kern use net as first parameter */
 #undef HAVE_SOCK_CREATE_KERN_USE_NET
+
+/* sock_inuse_add() is available */
+#undef HAVE_SOCK_INUSE_ADD
 
 /* sock_not_owned_by_me defined in sock.h */
 #undef HAVE_SOCK_NOT_OWNED_BY_ME
@@ -1145,6 +1190,9 @@
 /* kernel has truncate_inode_pages_final */
 #undef HAVE_TRUNCATE_INODE_PAGES_FINAL
 
+/* try_lookup_noperm() is available */
+#undef HAVE_TRY_LOOKUP_NOPERM
+
 /* 'kernel_cap_t' has u64 val */
 #undef HAVE_U64_CAPABILITY
 
@@ -1165,6 +1213,9 @@
 
 /* 'uuid_t' exist */
 #undef HAVE_UUID_T
+
+/* vfs_pressure_ratio() is available */
+#undef HAVE_VFS_PRESSURE_RATIO
 
 /* kernel has vfs_rename with 5 args */
 #undef HAVE_VFS_RENAME_5ARGS
@@ -1199,6 +1250,9 @@
 /* if struct wait_bit_queue_entry exists */
 #undef HAVE_WAIT_BIT_QUEUE_ENTRY
 
+/* wait_on_page_locked() is available */
+#undef HAVE_WAIT_ON_PAGE_LOCKED
+
 /* 'wait_queue_entry_t' is available */
 #undef HAVE_WAIT_QUEUE_ENTRY
 
@@ -1213,6 +1267,9 @@
 
 /* write_begin() takes folio */
 #undef HAVE_WRITE_BEGIN_FOLIO
+
+/* write_begin() takes struct kiocb */
+#undef HAVE_WRITE_BEGIN_KIOCB
 
 /* kernel Xarray implementation lacks 'xa_is_value' */
 #undef HAVE_XARRAY_SUPPORT
@@ -1258,6 +1315,9 @@
 
 /* struct bio has __bi_cnt */
 #undef HAVE___BI_CNT
+
+/* __filemap_get_folio() exists */
+#undef HAVE___FILEMAP_GET_FOLIO
 
 /* 'struct iov_iter' has '__iov' member */
 #undef HAVE___IOV_MEMBER
@@ -1340,6 +1400,9 @@
 /* Define to the version of this package. */
 #undef PACKAGE_VERSION
 
+/* struct page.flags as unsigned long */
+#undef PAGE_FLAGS
+
 /* name of parallel fsck program */
 #undef PFSCK
 
@@ -1402,11 +1465,29 @@
 /* zfs patch version */
 #undef ZFS_PATCH
 
+/* dentry->__d_name is not available use d_name */
+#undef __d_name
+
+/* file->__f_path is not available use f_path */
+#undef __f_path
+
 /* 'struct iov_iter' has 'iov' member */
 #undef __iov
 
+/* Use fileattr for struct file_kattr */
+#undef file_kattr
+
 /* 'folio_test_mlocked()' replacement */
 #undef folio_test_mlocked_page
+
+/* fs_struct does not have seqlock: write_seqlock */
+#undef fs_write_seqlock
+
+/* fs_struct does not have seqlock: write_sequnlock */
+#undef fs_write_sequnlock
+
+/* Use tuple_size for metadata_size */
+#undef get_metadata_size
 
 /* get_random_u32() is not available, use prandom_u32 */
 #undef get_random_u32
@@ -1414,14 +1495,26 @@
 /* get_random_u32_below() is not available */
 #undef get_random_u32_below
 
+/* grab_cache_page_write_begin() is unavailable */
+#undef grab_cache_page_write_begin
+
+/* hrtimer_setup() is unavailable */
+#undef hrtimer_setup
+
 /* 'iov_iter()' provides iov */
 #undef iter_iov
 
 /* 'class_create' expects module arg */
 #undef ll_class_create
 
+/* lookup_noperm() was lookup_one_len() */
+#undef lookup_noperm
+
 /* struct lsm_context also known as struct lsmcontext in ubuntu kernels */
 #undef lsm_context
+
+/* netif_get_flags does not exist, use dev_get_flags */
+#undef netif_get_flags
 
 /* need 'page_mapcount_is_type()' replacement */
 #undef page_mapcount_is_type
@@ -1429,8 +1522,23 @@
 /* function pde_data() unavailable */
 #undef pde_data
 
+/* Use simple_dentry_operations to not cache dentries */
+#undef sb_dentry_not_cache
+
+/* set_default_d_op not available */
+#undef set_default_d_op
+
 /* timer_delete() not is available */
 #undef timer_delete
 
 /* timer_delete_sync() not is available */
 #undef timer_delete_sync
+
+/* try_lookup_noperm() was d_hash_and_lookup() */
+#undef try_lookup_noperm
+
+/* vfs_pressure_ratio() is not available */
+#undef vfs_pressure_ratio
+
+/* wait_on_page_locked() is unavailable */
+#undef wait_on_page_locked
