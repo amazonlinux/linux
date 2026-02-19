@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 #include <lustre_disk.h>
 #include <uapi/linux/llcrypt.h>
+#include <libcfs/linux/folio.h>
 
 #define LL_CRYPTO_BLOCK_SIZE		16
 
@@ -112,6 +113,23 @@ static inline void llcrypt_handle_d_move(struct dentry *dentry)
 	dentry->d_flags &= ~DCACHE_ENCRYPTED_NAME;
 }
 
+static inline void folio_bounce_private(struct folio *src, s16 srcpg,
+					struct folio *dst, s16 dstpg)
+{
+	s16 spg __maybe_unused = srcpg > 0 ? srcpg : 0;
+	s16 dpg __maybe_unused = dstpg > 0 ? srcpg : 0;
+
+	if (spg) {
+		struct page *vmpg;
+
+		vmpg = folio_page(src, spg);
+		SetPagePrivate(vmpg);
+		vmpg->private = (unsigned long)folio_page(dst, dpg);
+		return;
+	}
+	folio_change_private(src, folio_page(dst, dpg));
+}
+
 /* crypto.c */
 extern int __init llcrypt_init(void);
 extern void __exit llcrypt_exit(void);
@@ -119,42 +137,56 @@ extern void llcrypt_enqueue_decrypt_work(struct work_struct *);
 extern struct llcrypt_ctx *llcrypt_get_ctx(gfp_t);
 extern void llcrypt_release_ctx(struct llcrypt_ctx *);
 
-extern struct page *llcrypt_encrypt_pagecache_blocks(struct page *page,
-						     unsigned int len,
-						     unsigned int offs,
-						     gfp_t gfp_flags);
-extern int llcrypt_encrypt_block(const struct inode *inode, struct page *src,
-			 struct page *dst, unsigned int len,
-			 unsigned int offs, u64 lblk_num, gfp_t gfp_flags);
+extern struct folio *llcrypt_encrypt_pagecache_blocks(struct folio *folio,
+						      s16 pgno,
+						      unsigned int len,
+						      unsigned int offs,
+						      gfp_t gfp_flags);
 
-extern int llcrypt_decrypt_pagecache_blocks(struct page *page, unsigned int len,
+extern int llcrypt_encrypt_block(const struct inode *inode, struct folio *src,
+				 s16 srcpg, struct folio *dst, s16 dstpg,
+				 unsigned int len, unsigned int offs,
+				 u64 lblk_num, gfp_t gfp_flags);
+
+extern int llcrypt_decrypt_pagecache_blocks(struct folio *folio, s16 pgno,
+					    unsigned int len,
 					    unsigned int offs);
 
-extern int llcrypt_decrypt_block(const struct inode *inode, struct page *src,
-			 struct page *dst, unsigned int len,
-			 unsigned int offs, u64 lblk_num, gfp_t gfp_flags);
+extern int llcrypt_decrypt_block(const struct inode *inode,
+				 struct folio *src, s16 src_pgno,
+				 struct folio *dst, s16 dst_pgno,
+				 unsigned int len, unsigned int offs,
+				 u64 lblk_num, gfp_t gfp_flags);
 
 static inline int llcrypt_decrypt_block_inplace(const struct inode *inode,
-						struct page *page,
+						struct page *vmpage,
 						unsigned int len,
 						unsigned int offs,
 						u64 lblk_num)
 {
-	return llcrypt_decrypt_block(inode, page, page, len, offs, lblk_num,
-				     GFP_NOFS);
+	struct folio *folio = page_folio(vmpage);
+	s16 pgno = folio_page_idx(folio, vmpage);
+
+	return llcrypt_decrypt_block(inode, folio, pgno, folio, pgno,
+				     len, offs, lblk_num, GFP_NOFS);
 }
 
-static inline bool llcrypt_is_bounce_page(struct page *page)
+static inline bool llcrypt_is_bounce_page(struct folio *folio, s16 pgno)
 {
-	return page->mapping == NULL;
+	if (pgno > 0)
+		return folio_page(folio, pgno)->mapping == NULL;
+	return folio->mapping == NULL;
 }
 
-static inline struct page *llcrypt_pagecache_page(struct page *bounce_page)
+static inline struct folio *llcrypt_pagecache_page(struct folio *bounce_folio,
+						   s16 pgno)
 {
-	return (struct page *)page_private(bounce_page);
+	if (pgno > 0)
+		return (void *)folio_page(bounce_folio, pgno)->private;
+	return folio_get_private(bounce_folio);
 }
 
-extern void llcrypt_free_bounce_page(struct page *bounce_page);
+extern void llcrypt_free_bounce_page(struct folio *bounce_page);
 
 /* policy.c */
 extern int llcrypt_ioctl_set_policy(struct file *, const void __user *);
@@ -333,23 +365,26 @@ static inline void llcrypt_release_ctx(struct llcrypt_ctx *ctx)
 	return;
 }
 
-static inline struct page *llcrypt_encrypt_pagecache_blocks(struct page *page,
-							    unsigned int len,
-							    unsigned int offs,
-							    gfp_t gfp_flags)
+static inline
+struct folio *llcrypt_encrypt_pagecache_blocks(struct folio *folio,
+					       s16 pgno,
+					       unsigned int len,
+					       unsigned int offs,
+					       gfp_t gfp_flags)
 {
 	return ERR_PTR(-EOPNOTSUPP);
 }
 
 static inline int llcrypt_encrypt_block(const struct inode *inode,
-					struct page *src, struct page *dst,
+					struct folio *src, s16 srcpg,
+					struct folio *dst, s16 dstpg,
 					unsigned int len, unsigned int offs,
 					u64 lblk_num, gfp_t gfp_flags)
 {
 	return -EOPNOTSUPP;
 }
 
-static inline int llcrypt_decrypt_pagecache_blocks(struct page *page,
+static inline int llcrypt_decrypt_pagecache_blocks(struct folio *folio, s16 pg,
 						   unsigned int len,
 						   unsigned int offs)
 {
@@ -357,7 +392,8 @@ static inline int llcrypt_decrypt_pagecache_blocks(struct page *page,
 }
 
 static inline int llcrypt_decrypt_block(const struct inode *inode,
-					struct page *src, struct page *dst,
+					struct folio *src, s16 spg,
+					struct folio *dst, s16 dpg,
 					unsigned int len, unsigned int offs,
 					u64 lblk_num, gfp_t gfp_flags)
 {
@@ -372,18 +408,18 @@ static inline int llcrypt_decrypt_block_inplace(const struct inode *inode,
 	return -EOPNOTSUPP;
 }
 
-static inline bool llcrypt_is_bounce_page(struct page *page)
+static inline bool llcrypt_is_bounce_page(struct folio *folio, s16 pg)
 {
 	return false;
 }
 
-static inline struct page *llcrypt_pagecache_page(struct page *bounce_page)
+static inline struct folio *llcrypt_pagecache_page(struct folio *folio, s16 pg)
 {
 	WARN_ON_ONCE(1);
 	return ERR_PTR(-EINVAL);
 }
 
-static inline void llcrypt_free_bounce_page(struct page *bounce_page)
+static inline void llcrypt_free_bounce_page(struct folio *bounce_page)
 {
 }
 
@@ -784,14 +820,17 @@ static inline int llcrypt_encrypt_symlink(struct inode *inode,
 	return 0;
 }
 
-/* If *pagep is a bounce page, free it and set *pagep to the pagecache page */
-static inline void llcrypt_finalize_bounce_page(struct page **pagep)
+/* If *foliop is a bounce folio, free it and set *foliop to the cache folio */
+static inline void llcrypt_finalize_bounce_page(struct folio **foliop,
+						s16 *pgno)
 {
-	struct page *page = *pagep;
+	struct folio *folio = *foliop;
+	s16 no = *pgno > 0 ? *pgno : 0;
 
-	if (llcrypt_is_bounce_page(page)) {
-		*pagep = llcrypt_pagecache_page(page);
-		llcrypt_free_bounce_page(page);
+	if (llcrypt_is_bounce_page(folio, no)) {
+		*foliop = llcrypt_pagecache_page(folio, no);
+		*pgno = -no;
+		llcrypt_free_bounce_page(folio);
 	}
 }
 
