@@ -178,6 +178,11 @@ static struct ll_sb_info *ll_init_sbi(void)
 	/* metadata statahead is enabled by default */
 	sbi->ll_sa_running_max = LL_SA_RUNNING_DEF;
 	sbi->ll_sa_max = LL_SA_RPC_DEF;
+
+	/* FSxL: https://sim.amazon.com/issues/Simba-71343 */
+	if (num_online_cpus() >= 64)
+		sbi->ll_sa_max = LL_SA_RPC_MAX;
+
 	atomic_set(&sbi->ll_sa_total, 0);
 	atomic_set(&sbi->ll_sa_wrong, 0);
 	atomic_set(&sbi->ll_sa_running, 0);
@@ -1361,7 +1366,7 @@ int ll_fill_super(struct super_block *sb)
 #endif
 
 	/* kernel >= 2.6.38 store dentry operations in sb->s_d_op. */
-	sb->s_d_op = &ll_d_ops;
+	set_default_d_op(sb, &ll_d_ops);
 
 	/* UUID handling */
 	generate_random_uuid(uuid.b);
@@ -2076,7 +2081,7 @@ static int ll_io_zero_page(struct inode *inode, pgoff_t index, pgoff_t offset,
 
 	if (!PageDirty(vmpage)) {
 		/* associate cl_page */
-		clpage = cl_page_find(env, clob, vmpage->index,
+		clpage = cl_page_find(env, clob, folio_index_page(vmpage),
 				      vmpage, CPT_CACHEABLE);
 		if (IS_ERR(clpage))
 			GOTO(pagefini, rc = PTR_ERR(clpage));
@@ -2112,7 +2117,7 @@ static int ll_io_zero_page(struct inode *inode, pgoff_t index, pgoff_t offset,
 	/* Thanks to PagePrivate2 flag, ll_io_read_page() did not unlock
 	 * the vmpage, so we are good to proceed and zero range in page.
 	 */
-	zero_user(vmpage, offset, len);
+	zero_user_segments(vmpage, offset, offset + len, 0, 0);
 
 	if (holdinglock && clpage) {
 		/* explicitly write newly modified page */
@@ -2878,6 +2883,8 @@ void ll_truncate_inode_pages_final(struct inode *inode)
 
 	truncate_inode_pages_final(mapping);
 
+	CFS_FAIL_TIMEOUT(OBD_FAIL_LLITE_DELAY_TRUNCATE, 5);
+
 	/* Workaround for LU-118: Note nrpages may not be totally updated when
 	 * truncate_inode_pages() returns, as there can be a page in the process
 	 * of deletion (inside __delete_from_page_cache()) in the specified
@@ -2892,10 +2899,38 @@ void ll_truncate_inode_pages_final(struct inode *inode)
 		ll_xa_unlock_irqrestore(&mapping->i_pages, flags);
 	} /* Workaround end */
 
-	LASSERTF(nrpages == 0, "%s: inode="DFID"(%p) nrpages=%lu, "
-		 "see https://jira.whamcloud.com/browse/LU-118\n",
-		 ll_i2sbi(inode)->ll_fsname,
-		 PFID(ll_inode2fid(inode)), inode, nrpages);
+	if (nrpages) {
+#ifdef HAVE_XARRAY_SUPPORT
+		XA_STATE(xas, &mapping->i_pages, 0);
+		struct page *page;
+#endif
+		CWARN("%s: inode="DFID"(%p) nrpages=%lu "
+			 "state %#lx, lli_flags %#lx, "
+			 "see https://jira.whamcloud.com/browse/LU-118\n",
+			 ll_i2sbi(inode)->ll_fsname,
+			 PFID(ll_inode2fid(inode)), inode, nrpages,
+			 (unsigned long)inode->i_state, ll_i2info(inode)->lli_flags);
+#ifdef HAVE_XARRAY_SUPPORT
+		rcu_read_lock();
+		xas_for_each(&xas, page, ULONG_MAX) {
+			if (xas_retry(&xas, page))
+				continue;
+
+			if (xa_is_value(page))
+				continue;
+
+			/*
+			 * We can only have non-uptodate pages
+			 * without internal state at this point
+			 */
+			LASSERTF(!PageUptodate(page) &&
+				 !PageDirty(page) &&
+				 !PagePrivate(page),
+				 "%p", page);
+		}
+		rcu_read_unlock();
+#endif
+	}
 }
 
 int ll_read_inode2(struct inode *inode, void *opaque)
@@ -3138,38 +3173,6 @@ void ll_umount_begin(struct super_block *sb)
 	}
 
 	EXIT;
-}
-
-int ll_remount_fs(struct super_block *sb, int *flags, char *data)
-{
-	struct ll_sb_info *sbi = ll_s2sbi(sb);
-	char *profilenm = get_profile_name(sb);
-	int err;
-	__u32 read_only;
-
-	if ((*flags & MS_RDONLY) != (sb->s_flags & SB_RDONLY)) {
-		read_only = *flags & MS_RDONLY;
-		err = obd_set_info_async(NULL, sbi->ll_md_exp,
-					 sizeof(KEY_READ_ONLY),
-					 KEY_READ_ONLY, sizeof(read_only),
-					 &read_only, NULL);
-		if (err) {
-			LCONSOLE_WARN("Failed to remount %s %s (%d)\n",
-				      profilenm, read_only ?
-				      "read-only" : "read-write", err);
-			return err;
-		}
-
-		if (read_only)
-			sb->s_flags |= SB_RDONLY;
-		else
-			sb->s_flags &= ~SB_RDONLY;
-
-		if (test_bit(LL_SBI_VERBOSE, sbi->ll_flags))
-			LCONSOLE_WARN("Remounted %s %s\n", profilenm,
-				      read_only ?  "read-only" : "read-write");
-	}
-	return 0;
 }
 
 /**

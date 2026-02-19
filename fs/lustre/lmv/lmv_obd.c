@@ -2639,7 +2639,7 @@ static int lmv_fsync(struct obd_export *exp, const struct lu_fid *fid,
 }
 
 struct stripe_dirent {
-	struct page		*sd_page;
+	struct folio		*sd_folio;
 	struct lu_dirpage	*sd_dp;
 	struct lu_dirent	*sd_ent;
 	bool			 sd_eof;
@@ -2656,10 +2656,10 @@ struct lmv_dir_ctxt {
 
 static inline void stripe_dirent_unload(struct stripe_dirent *stripe)
 {
-	if (stripe->sd_page) {
-		kunmap(stripe->sd_page);
-		put_page(stripe->sd_page);
-		stripe->sd_page = NULL;
+	if (stripe->sd_folio) {
+		ll_kunmap_local(stripe->sd_dp);
+		folio_put(stripe->sd_folio);
+		stripe->sd_folio = NULL;
 		stripe->sd_ent = NULL;
 	}
 }
@@ -2716,7 +2716,7 @@ static struct lu_dirent *stripe_dirent_load(struct lmv_dir_ctxt *ctxt,
 	LASSERT(!ent);
 
 	do {
-		if (stripe->sd_page) {
+		if (stripe->sd_folio) {
 			__u64 end = le64_to_cpu(stripe->sd_dp->ldp_hash_end);
 
 			/* @hash should be the last dirent hash */
@@ -2751,7 +2751,7 @@ static struct lu_dirent *stripe_dirent_load(struct lmv_dir_ctxt *ctxt,
 		op_data->op_data = oinfo->lmo_root;
 
 		rc = md_read_page(tgt->ltd_exp, op_data, ctxt->ldc_mrinfo, hash,
-				  &stripe->sd_page);
+				  &stripe->sd_folio);
 
 		op_data->op_fid1 = fid;
 		op_data->op_fid2 = fid;
@@ -2760,7 +2760,7 @@ static struct lu_dirent *stripe_dirent_load(struct lmv_dir_ctxt *ctxt,
 		if (rc)
 			break;
 
-		stripe->sd_dp = page_address(stripe->sd_page);
+		stripe->sd_dp = ll_kmap_local_folio(stripe->sd_folio, 0);
 		ent = stripe_dirent_get(ctxt, lu_dirent_start(stripe->sd_dp),
 					stripe_index);
 		/* in case a page filled with ., .. and dummy, read next */
@@ -2887,9 +2887,9 @@ static struct lu_dirent *lmv_dirent_next(struct lmv_dir_ctxt *ctxt)
 static int lmv_striped_read_page(struct obd_export *exp,
 				 struct md_op_data *op_data,
 				 struct md_readdir_info *mrinfo, __u64 offset,
-				 struct page **ppage)
+				 struct folio **pfolio)
 {
-	struct page *page = NULL;
+	struct folio *folio = NULL;
 	struct lu_dirpage *dp;
 	void *start;
 	struct lu_dirent *ent;
@@ -2903,13 +2903,14 @@ static int lmv_striped_read_page(struct obd_export *exp,
 	ENTRY;
 
 	/* Allocate a page and read entries from all of stripes and fill
-	 * the page by hash order */
-	page = alloc_page(GFP_KERNEL);
-	if (!page)
+	 * the page by hash order
+	 */
+	folio = folio_alloc(GFP_KERNEL, 0);
+	if (IS_ERR_OR_NULL(folio))
 		RETURN(-ENOMEM);
 
 	/* Initialize the entry page */
-	dp = kmap(page);
+	dp = ll_kmap_local_folio(folio, 0);
 	memset(dp, 0, sizeof(*dp));
 	dp->ldp_hash_start = cpu_to_le64(offset);
 
@@ -2983,23 +2984,24 @@ static int lmv_striped_read_page(struct obd_export *exp,
 	dp->ldp_flags = cpu_to_le32(dp->ldp_flags);
 	dp->ldp_hash_end = cpu_to_le64(ctxt->ldc_hash);
 
+	ll_kunmap_local(dp);
 	put_lmv_dir_ctxt(ctxt);
 	OBD_FREE(ctxt, offsetof(typeof(*ctxt), ldc_stripes[stripe_count]));
 
-	*ppage = page;
+	*pfolio = folio;
 
 	RETURN(0);
 
 free_page:
-	kunmap(page);
-	__free_page(page);
+	ll_kunmap_local(dp);
+	folio_put(folio);
 
 	return rc;
 }
 
 static int lmv_read_page(struct obd_export *exp, struct md_op_data *op_data,
 			 struct md_readdir_info *mrinfo, __u64 offset,
-			 struct page **ppage)
+			 struct folio **pfolio)
 {
 	struct obd_device *obd = exp->exp_obd;
 	struct lmv_obd *lmv = &obd->u.lmv;
@@ -3012,7 +3014,8 @@ static int lmv_read_page(struct obd_export *exp, struct md_op_data *op_data,
 		RETURN(-ENODATA);
 
 	if (unlikely(lmv_dir_striped(op_data->op_lso1))) {
-		rc = lmv_striped_read_page(exp, op_data, mrinfo, offset, ppage);
+		rc = lmv_striped_read_page(exp, op_data, mrinfo, offset,
+					   pfolio);
 		RETURN(rc);
 	}
 
@@ -3020,7 +3023,7 @@ static int lmv_read_page(struct obd_export *exp, struct md_op_data *op_data,
 	if (IS_ERR(tgt))
 		RETURN(PTR_ERR(tgt));
 
-	rc = md_read_page(tgt->ltd_exp, op_data, mrinfo, offset, ppage);
+	rc = md_read_page(tgt->ltd_exp, op_data, mrinfo, offset, pfolio);
 
 	RETURN(rc);
 }
