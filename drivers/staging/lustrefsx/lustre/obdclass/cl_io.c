@@ -1247,8 +1247,8 @@ static void cl_sub_dio_end(const struct lu_env *env, struct cl_sync_io *anchor)
 		cl_page_list_del(env, &sdio->csd_pages, page);
 	}
 
-	ll_release_user_pages(sdio->csd_dio_pages.ldp_pages,
-			      sdio->csd_dio_pages.ldp_count);
+	ll_release_user_pages(sdio->csd_dio_pages.cdp_pages,
+			      sdio->csd_dio_pages.cdp_count);
 	cl_sync_io_note(env, &sdio->csd_ll_aio->cda_sync, ret);
 
 	EXIT;
