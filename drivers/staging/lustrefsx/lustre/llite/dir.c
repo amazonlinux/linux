@@ -223,47 +223,45 @@ out_exit:
  * mdc_adjust_dirpages().
  *
  */
-struct page *ll_get_dir_page(struct inode *dir, struct md_op_data *op_data,
-			     __u64 offset, int *partial_readdir_rc)
+struct folio *ll_get_dir_page(struct inode *dir, struct md_op_data *op_data,
+			      __u64 offset, int *partial_readdir_rc)
 {
 	struct md_readdir_info mrinfo = {
 					.mr_blocking_ast = ll_md_blocking_ast };
-	struct page *page;
+	struct folio *folio;
 	int rc;
 
 	rc = ll_check_and_trigger_restore(dir);
 	if (rc != 0)
 		return ERR_PTR(rc);
 
-	rc = md_read_page(ll_i2mdexp(dir), op_data, &mrinfo, offset, &page);
+	rc = md_read_page(ll_i2mdexp(dir), op_data, &mrinfo, offset, &folio);
 	if (rc != 0)
 		return ERR_PTR(rc);
 
 	if (partial_readdir_rc && mrinfo.mr_partial_readdir_rc)
 		*partial_readdir_rc = mrinfo.mr_partial_readdir_rc;
 
-	return page;
+	return folio;
 }
 
-void ll_release_page(struct inode *inode, struct page *page,
+void ll_release_page(struct inode *inode, struct folio *folio,
 		     bool remove)
 {
-	kunmap(page);
-
 	/* Always remove the page for striped dir, because the page is
 	 * built from temporarily in LMV layer */
 	if (inode && ll_dir_striped(inode)) {
-		__free_page(page);
+		folio_put(folio);
 		return;
 	}
 
 	if (remove) {
-		lock_page(page);
-		if (likely(page->mapping != NULL))
-			cfs_delete_from_page_cache(page);
-		unlock_page(page);
+		folio_lock(folio);
+		if (likely(folio->mapping != NULL))
+			cfs_folio_delete_from_cache(folio);
+		folio_unlock(folio);
 	}
-	put_page(page);
+	folio_put(folio);
 }
 
 #ifdef HAVE_DIR_CONTEXT
@@ -279,7 +277,7 @@ int ll_dir_read(struct inode *inode, __u64 *ppos, struct md_op_data *op_data,
 	__u64 pos = *ppos;
 	bool is_api32 = ll_need_32bit_api(sbi);
 	bool is_hash64 = test_bit(LL_SBI_64BIT_HASH, sbi->ll_flags);
-	struct page *page;
+	struct folio *folio;
 	bool done = false;
 	struct llcrypt_str lltr = LLTR_INIT(NULL, 0);
 	int rc = 0;
@@ -291,21 +289,24 @@ int ll_dir_read(struct inode *inode, __u64 *ppos, struct md_op_data *op_data,
 			RETURN(rc);
 	}
 
-	page = ll_get_dir_page(inode, op_data, pos, partial_readdir_rc);
+	folio = ll_get_dir_page(inode, op_data, pos,
+				partial_readdir_rc);
 
 	while (rc == 0 && !done) {
+		void *kaddr = NULL;
 		struct lu_dirpage *dp;
 		struct lu_dirent  *ent;
 		__u64 hash;
 		__u64 next;
 
-		if (IS_ERR(page)) {
-			rc = PTR_ERR(page);
+		if (IS_ERR(folio)) {
+			rc = PTR_ERR(folio);
 			break;
 		}
 
 		hash = MDS_DIR_END_OFF;
-		dp = page_address(page);
+		kaddr = ll_kmap_local_folio(folio, 0);
+		dp = kaddr;
 		for (ent = lu_dirent_start(dp); ent != NULL && !done;
 		     ent = lu_dirent_next(ent)) {
 			__u16          type;
@@ -366,7 +367,11 @@ int ll_dir_read(struct inode *inode, __u64 *ppos, struct md_op_data *op_data,
 
 		if (done) {
 			pos = hash;
-			ll_release_page(inode, page, false);
+			if (kaddr) {
+				ll_kunmap_local(kaddr);
+				kaddr = NULL;
+			}
+			ll_release_page(inode, folio, false);
 			break;
 		}
 
@@ -377,18 +382,26 @@ int ll_dir_read(struct inode *inode, __u64 *ppos, struct md_op_data *op_data,
 			 * End of directory reached.
 			 */
 			done = 1;
-			ll_release_page(inode, page, false);
+			if (kaddr) {
+				ll_kunmap_local(kaddr);
+				kaddr = NULL;
+			}
+			ll_release_page(inode, folio, false);
 		} else {
 			/*
 			 * Normal case: continue to the next
 			 * page.
 			 */
-			ll_release_page(inode, page,
+			if (kaddr) {
+				ll_kunmap_local(kaddr);
+				kaddr = NULL;
+			}
+			ll_release_page(inode, folio,
 					le32_to_cpu(dp->ldp_flags) &
 					LDF_COLLIDE);
 			next = pos;
-			page = ll_get_dir_page(inode, op_data, pos,
-					       partial_readdir_rc);
+			folio = ll_get_dir_page(inode, op_data, pos,
+						partial_readdir_rc);
 		}
 	}
 #ifdef HAVE_DIR_CONTEXT
