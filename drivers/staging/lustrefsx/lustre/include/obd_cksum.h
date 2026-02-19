@@ -34,6 +34,7 @@
 #include <libcfs/libcfs.h>
 #include <libcfs/libcfs_crypto.h>
 #include <uapi/linux/lustre/lustre_idl.h>
+#include <lustre_compat.h>
 
 int obd_t10_cksum_speed(const char *obd_name,
 			enum cksum_types cksum_type);
@@ -142,8 +143,8 @@ typedef __be16 (obd_dif_csum_fn) (void *, unsigned int);
 
 __be16 obd_dif_crc_fn(void *data, unsigned int len);
 __be16 obd_dif_ip_fn(void *data, unsigned int len);
-int obd_page_dif_generate_buffer(const char *obd_name, struct page *page,
-				 __u32 offset, __u32 length,
+int obd_page_dif_generate_buffer(const char *obd_name, struct folio *folio,
+				 __s16 pgno, __u32 offset, __u32 length,
 				 __be16 *guard_start, int guard_number,
 				 int *used_number, int sector_size,
 				 obd_dif_csum_fn *fn);

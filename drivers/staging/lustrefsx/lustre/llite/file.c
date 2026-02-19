@@ -492,13 +492,18 @@ static inline int ll_dom_readpage(void *data, struct page *page)
 			unsigned int offs = 0;
 
 			while (offs < PAGE_SIZE) {
+				struct folio *vmfolio;
+				s16 pgno;
+
 				/* decrypt only if page is not empty */
 				if (memcmp(page_address(page) + offs,
 					   page_address(ZERO_PAGE(0)),
 					   LUSTRE_ENCRYPTION_UNIT_SIZE) == 0)
 					break;
-
-				rc = llcrypt_decrypt_pagecache_blocks(page,
+				vmfolio = page_folio(page);
+				pgno = folio_page_idx(vmfolio, page);
+				rc = llcrypt_decrypt_pagecache_blocks(vmfolio,
+								      pgno,
 						    LUSTRE_ENCRYPTION_UNIT_SIZE,
 								      offs);
 				if (rc)
@@ -513,7 +518,7 @@ static inline int ll_dom_readpage(void *data, struct page *page)
 	return rc;
 }
 
-#ifdef HAVE_READ_CACHE_PAGE_WANTS_FILE
+#ifdef HAVE_READ_CACHE_FOLIO_WANTS_FILE
 static inline int ll_dom_read_folio(struct file *file, struct folio *folio0)
 {
 	return ll_dom_readpage(file->private_data, folio_page(folio0, 0));
@@ -617,7 +622,7 @@ void ll_dom_finish_open(struct inode *inode, struct ptlrpc_request *req)
 			break;
 		}
 		/* attach VM page to CL page cache */
-		page = cl_page_find(env, obj, vmpage->index, vmpage,
+		page = cl_page_find(env, obj, folio_index_page(vmpage), vmpage,
 				    CPT_CACHEABLE);
 		if (IS_ERR(page)) {
 			ClearPageUptodate(vmpage);
@@ -3769,9 +3774,9 @@ int ll_ioctl_project(struct file *file, unsigned int cmd,
 	/* apply child dentry if name is valid */
 	name_len = strnlen(lu_project.project_name, NAME_MAX);
 	if (name_len > 0 && name_len <= NAME_MAX) {
+		struct qstr qstr = QSTR_INIT(lu_project.project_name, name_len);
 		inode_lock(inode);
-		child_dentry = lookup_one_len(lu_project.project_name,
-					      dentry, name_len);
+		child_dentry = lookup_noperm(&qstr, dentry);
 		inode_unlock(inode);
 		if (IS_ERR(child_dentry)) {
 			rc = PTR_ERR(child_dentry);
