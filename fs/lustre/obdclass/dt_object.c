@@ -791,7 +791,6 @@ out:
 	return rc;
 }
 
-
 /*
  * Walk index and fill lu_page containers with key/record pairs
  *
@@ -816,7 +815,7 @@ int dt_index_walk(const struct lu_env *env, struct dt_object *obj,
 	int rc;
 	ENTRY;
 
-	LASSERT(rdpg->rp_pages != NULL);
+	LASSERT(rdpg->rp_folios != NULL);
 	LASSERT(obj->do_index_ops != NULL);
 
 	if (filler == NULL)
@@ -864,11 +863,12 @@ int dt_index_walk(const struct lu_env *env, struct dt_object *obj,
 	 *  rc <  0 -> error.
 	 */
 	for (pageidx = 0; rc == 0 && nob > 0; pageidx++) {
+		void *addr;
 		union lu_page	*lp;
 		int		 i;
 
 		LASSERT(pageidx < rdpg->rp_npages);
-		lp = kmap(rdpg->rp_pages[pageidx]);
+		lp = addr = ll_kmap_local_folio(rdpg->rp_folios[pageidx], 0);
 
 		/* fill lu pages */
 		for (i = 0; i < LU_PAGE_COUNT; i++, lp++, nob -= LU_PAGE_SIZE) {
@@ -882,7 +882,7 @@ int dt_index_walk(const struct lu_env *env, struct dt_object *obj,
 				/* end of index */
 				break;
 		}
-		kunmap(rdpg->rp_pages[i]);
+		ll_kunmap_local(addr);
 	}
 
 out:
