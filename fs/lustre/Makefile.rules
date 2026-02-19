@@ -1,0 +1,8 @@
+ccflags-y += -include $(srctree)/fs/lustre/undef.h
+ccflags-y += -include $(srctree)/fs/lustre/config.h
+ccflags-y += -I$(srctree)/net/lnet/libcfs/include
+ccflags-y += -I$(srctree)/net/lnet/lnet/include
+ccflags-y += -I$(srctree)/net/lnet/lnet/include/uapi
+ccflags-y += -I$(srctree)/fs/lustre/include
+ccflags-y += -I$(srctree)/fs/lustre/include/uapi
+ccflags-y += -Wno-format-truncation -Werror
