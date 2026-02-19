@@ -116,16 +116,35 @@ struct obd_type {
 #define OBD_LU_TYPE_SETUP ((void *)0x01UL)
 
 struct brw_page {
-	u64		 off;
-	struct page	*pg;
-	u32		 count;
-	u32		 flag;
+	u64		 bp_off;
+	struct folio	*bp_folio;
+	u32		 bp_count;
+	u32		 bp_flag;
 	/* used for encryption: difference with offset in clear text page */
 	u16		 bp_off_diff;
 	/* used for encryption: difference with count in clear text page */
 	u16		 bp_count_diff;
-	u32		 bp_padding;
+	s16		 bp_pgno;
 };
+
+static inline u32 brw_page_offset(struct brw_page *brwpg)
+{
+	return brwpg->bp_off & ~PAGE_MASK;
+}
+
+static inline void *brw_kmap_local(struct brw_page *brwpg)
+{
+	struct folio *folio = brwpg->bp_folio;
+
+	return kmap_local_folio(folio, brwpg->bp_pgno << PAGE_SHIFT);
+}
+
+static inline struct page *brw_folio_page(struct brw_page *brwpg)
+{
+	struct folio *folio = brwpg->bp_folio;
+
+	return folio_page(folio, brwpg->bp_pgno);
+}
 
 struct timeout_item {
 	enum timeout_event ti_event;
@@ -1162,7 +1181,7 @@ struct md_ops {
 
 	int (*m_read_page)(struct obd_export *, struct md_op_data *,
 			   struct md_readdir_info *mrinfo, __u64 hash_offset,
-			   struct page **ppage);
+			   struct folio **pfolio);
 
 	int (*m_unlink)(struct obd_export *, struct md_op_data *,
 			struct ptlrpc_request **);
