@@ -437,7 +437,7 @@ static struct page *vvp_pgcache_current(struct vvp_seq_private *priv)
 						    priv->vsp_page_index,
 						    &vmpage);
 		if (nr > 0) {
-			priv->vsp_page_index = vmpage->index;
+			priv->vsp_page_index = folio_index_page(vmpage);
 			break;
 		}
 		lu_object_ref_del(&priv->vsp_clob->co_lu, "dump", current);
@@ -450,7 +450,7 @@ static struct page *vvp_pgcache_current(struct vvp_seq_private *priv)
 }
 
 #define seq_page_flag(seq, page, flag, has_flags) do {                  \
-	if (test_bit(PG_##flag, &(page)->flags)) {                  \
+	if (test_bit(PG_##flag, &PAGE_FLAGS(page))) {                  \
                 seq_printf(seq, "%s"#flag, has_flags ? "|" : "");       \
                 has_flags = 1;                                          \
         }                                                               \
@@ -472,7 +472,7 @@ static void vvp_pgcache_page_show(const struct lu_env *env,
 		   PageWriteback(vmpage) ? "wb" : "-",
 		   vmpage,
 		   PFID(ll_inode2fid(vmpage->mapping->host)),
-		   vmpage->mapping->host, vmpage->index,
+		   vmpage->mapping->host, folio_index_page(vmpage),
 		   page_count(vmpage));
 	has_flags = 0;
 	seq_page_flag(seq, vmpage, locked, has_flags);
@@ -492,7 +492,7 @@ static int vvp_pgcache_show(struct seq_file *f, void *v)
 	struct page *vmpage = v;
 	struct cl_page *page;
 
-	seq_printf(f, "%8lx@" DFID ": ", vmpage->index,
+	seq_printf(f, "%8lx@" DFID ": ", folio_index_page(vmpage),
 		   PFID(lu_object_fid(&priv->vsp_clob->co_lu)));
 	lock_page(vmpage);
 	page = cl_vmpage_page(vmpage, priv->vsp_clob);
