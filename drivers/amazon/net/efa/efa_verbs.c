@@ -537,7 +537,7 @@ static void efa_qp_terminate(struct efa_qp *qp)
 	efa_cq_dec_ref_cnt(send_cq, qp->sq.wq.sub_cq_idx);
 	efa_cq_dec_ref_cnt(recv_cq, qp->rq.wq.sub_cq_idx);
 
-	dev->qp_table[qp->ibqp.qp_num] = NULL;
+	dev->qp_table[qp->ibqp.qp_num & dev->qp_table_mask] = NULL;
 
 	efa_unlock_cqs(send_cq, recv_cq);
 	spin_unlock(&dev->qp_table_lock);
@@ -968,7 +968,7 @@ static int efa_create_qp_kernel(struct ib_qp *ibqp, struct ib_qp_init_attr *init
 	efa_unlock_cqs(send_cq, recv_cq);
 
 	spin_lock(&dev->qp_table_lock);
-	dev->qp_table[ibqp->qp_num] = qp;
+	dev->qp_table[ibqp->qp_num & dev->qp_table_mask] = qp;
 	spin_unlock(&dev->qp_table_lock);
 
 	ibdev_dbg(&dev->ibdev, "Created qp[%d] type %d\n", qp->ibqp.qp_num, init_attr->qp_type);
@@ -1572,7 +1572,7 @@ err_out:
 int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		       struct ib_umem *umem, struct uverbs_attr_bundle *attrs)
 {
-	struct ib_udata *udata = NULL;
+	struct ib_udata *udata = &attrs->driver_udata;
 	struct efa_ucontext *ucontext = rdma_udata_to_drv_context(
 		udata, struct efa_ucontext, ibucontext);
 	struct efa_com_create_cq_params params = {};
@@ -1598,14 +1598,6 @@ int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		err = -EINVAL;
 		goto err_out;
 	}
-
-	if (attrs) {
-		udata = &attrs->driver_udata;
-		ucontext = rdma_udata_to_drv_context(udata, struct efa_ucontext, ibucontext);
-	}
-
-	if (!udata)
-		return efa_create_cq_kernel(ibcq, attr);
 
 	if (offsetofend(typeof(cmd), num_sub_cqs) > udata->inlen) {
 		ibdev_dbg(ibdev,
@@ -1661,13 +1653,13 @@ int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		if (umem->length < cq->size) {
 			ibdev_dbg(&dev->ibdev, "External memory too small\n");
 			err = -EINVAL;
-			goto err_free_mem;
+			goto err_out;
 		}
 
 		if (!ib_umem_is_contiguous(umem)) {
 			ibdev_dbg(&dev->ibdev, "Non contiguous CQ unsupported\n");
 			err = -EINVAL;
-			goto err_free_mem;
+			goto err_out;
 		}
 
 		cq->cpu_addr = NULL;
@@ -1696,7 +1688,7 @@ int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 
 	err = efa_com_create_cq(&dev->edev, &params, &result);
 	if (err)
-		goto err_free_mem;
+		goto err_free_mapped;
 
 	resp.db_off = result.db_off;
 	resp.cq_idx = result.cq_idx;
@@ -1744,11 +1736,10 @@ err_remove_mmap:
 	efa_cq_user_mmap_entries_remove(cq);
 err_destroy_cq:
 	efa_destroy_cq_idx(dev, cq->cq_idx);
-err_free_mem:
-	if (umem)
-		ib_umem_release(umem);
-	else
-		efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size, DMA_FROM_DEVICE);
+err_free_mapped:
+	if (!umem)
+		efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size,
+				DMA_FROM_DEVICE);
 
 err_out:
 	atomic64_inc(&dev->stats.create_cq_err);
@@ -1758,6 +1749,8 @@ err_out:
 int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		  struct uverbs_attr_bundle *attrs)
 {
+	if (!attrs)
+		return efa_create_cq_kernel(ibcq, attr);
 	return efa_create_cq_umem(ibcq, attr, NULL, attrs);
 }
 
@@ -1767,14 +1760,10 @@ static int umem_to_page_list(struct efa_dev *dev,
 			     u32 hp_cnt,
 			     u8 hp_shift)
 {
-	u32 pages_in_hp = BIT(hp_shift - PAGE_SHIFT);
 	struct ib_block_iter biter;
 	unsigned int hp_idx = 0;
 
-	ibdev_dbg(&dev->ibdev, "hp_cnt[%u], pages_in_hp[%u]\n",
-		  hp_cnt, pages_in_hp);
-
-	efa_rdma_umem_for_each_dma_block(umem, &biter, BIT(hp_shift))
+	rdma_umem_for_each_dma_block(umem, &biter, BIT(hp_shift))
 		page_list[hp_idx++] = rdma_block_iter_dma_address(&biter);
 
 	return 0;
@@ -2171,9 +2160,9 @@ static int efa_register_mr(struct ib_pd *ibpd, struct efa_mr *mr, u64 start,
 		goto skip_umem_pg_sz;
 	}
 
-	pg_sz = efa_umem_find_best_pgsz(mr->umem,
-					dev->dev_attr.page_size_cap,
-					virt_addr);
+	pg_sz = ib_umem_find_best_pgsz(mr->umem,
+				       dev->dev_attr.page_size_cap,
+				       virt_addr);
 	if (!pg_sz) {
 		ibdev_dbg(&dev->ibdev, "Failed to find a suitable page size in page_size_cap %#llx\n",
 			  dev->dev_attr.page_size_cap);
