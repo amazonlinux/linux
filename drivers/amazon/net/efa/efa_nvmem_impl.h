@@ -1,12 +1,21 @@
 // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
 /*
- * Copyright 2019-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2019-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
+
+#ifndef _EFA_NVMEM_IMPL_H_
+#define _EFA_NVMEM_IMPL_H_
 
 #include <linux/module.h>
 
 #include "efa_p2p.h"
+#ifndef NV_P2P_MAJOR_VERSION
+#error "NV_P2P_MAJOR_VERSION has to be defined"
+#elif NV_P2P_MAJOR_VERSION == 1
 #include "nv-p2p.h"
+#else
+#include "nv-p2p_v2.h"
+#endif
 
 #define GPU_PAGE_SHIFT 16
 #define GPU_PAGE_SIZE BIT_ULL(GPU_PAGE_SHIFT)
@@ -297,24 +306,17 @@ static char *nvmem_provider_string(void)
 	return prov_string;
 }
 
-struct nvmem_provider {
-	struct efa_p2p_provider p2p;
-};
-
-static const struct nvmem_provider prov = {
-	.p2p = {
-		.ops = {
-			.get_provider_string = nvmem_provider_string,
-			.try_get = nvmem_get,
-			.to_page_list = nvmem_to_page_list,
-			.release = nvmem_release,
-			.get_page_size = nvmem_pgsz,
-		},
-		.type = EFA_P2P_PROVIDER_NVMEM,
+static const struct efa_p2p_provider prov = {
+	.ops = {
+		.get_provider_string = nvmem_provider_string,
+		.try_get = nvmem_get,
+		.to_page_list = nvmem_to_page_list,
+		.release = nvmem_release,
+		.get_page_size = nvmem_pgsz,
 	},
 };
 
-const struct efa_p2p_provider *nvmem_get_provider(void)
+static const struct efa_p2p_provider *nvmem_get_provider(void)
 {
 	struct efa_nvmem_ops ops = {};
 	int err;
@@ -328,5 +330,7 @@ const struct efa_p2p_provider *nvmem_get_provider(void)
 			nvmem_put_fp(&ops);
 	}
 
-	return &prov.p2p;
+	return &prov;
 }
+
+#endif /* _EFA_NVMEM_IMPL_H_ */
