@@ -5530,11 +5530,13 @@ static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
 	if (!READ_ONCE(helper)) {
 		mutex_lock(&helper_mutex);
 		if (!helper) {
-			helper = scx_create_rt_helper("scx_ops_enable_helper");
-			if (!helper) {
+			struct kthread_worker *w =
+				scx_create_rt_helper("scx_ops_enable_helper");
+			if (!w) {
 				mutex_unlock(&helper_mutex);
 				return -ENOMEM;
 			}
+			WRITE_ONCE(helper, w);
 		}
 		mutex_unlock(&helper_mutex);
 	}
