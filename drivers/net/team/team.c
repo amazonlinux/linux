@@ -2178,29 +2178,21 @@ static int team_header_create(struct sk_buff *skb, struct net_device *team_dev,
 	return ret;
 }
 
-static int team_header_parse(const struct sk_buff *skb, unsigned char *haddr)
+static int team_header_parse(const struct sk_buff *skb,
+			     const struct net_device *team_dev,
+			     unsigned char *haddr)
 {
-	const struct net_device *dev = skb->dev;
+	struct team *team = netdev_priv(team_dev);
 	const struct header_ops *port_ops;
 	struct team_port *port;
 	int ret = 0;
 
 	rcu_read_lock();
-	for (;;) {
-		if (!(dev->priv_flags & IFF_TEAM))
-			break;
-		port = team_header_port_get_rcu(netdev_priv(dev), false);
-		if (!port)
-			break;
+	port = team_header_port_get_rcu(team, false);
+	if (port) {
 		port_ops = READ_ONCE(port->dev->header_ops);
-		if (!port_ops || !port_ops->parse)
-			break;
-		if (port_ops->parse == team_header_parse) {
-			dev = port->dev;
-			continue;
-		}
-		ret = port_ops->parse(skb, haddr);
-		break;
+		if (port_ops && port_ops->parse)
+			ret = port_ops->parse(skb, port->dev, haddr);
 	}
 	rcu_read_unlock();
 	return ret;
