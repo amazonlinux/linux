@@ -246,12 +246,12 @@ static inline bool af_alg_readable(struct sock *sk)
 }
 
 DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_count_tsgl, unsigned int,
-	(struct sock *sk, size_t bytes, size_t offset),
-	(sk, bytes, offset));
+	(struct sock *sk, size_t bytes),
+	(sk, bytes));
 
 DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_pull_tsgl, void,
-	(struct sock *sk, size_t used, struct scatterlist *dst, size_t dst_offset),
-	(sk, used, dst, dst_offset));
+	(struct sock *sk, size_t used, struct scatterlist *dst),
+	(sk, used, dst));
 
 DECLARE_CRYPTO_API(CONFIG_CRYPTO_USER_API, af_alg_wmem_wakeup, void,
 	(struct sock *sk),
