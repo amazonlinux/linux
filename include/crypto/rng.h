@@ -12,6 +12,7 @@
 #include <linux/atomic.h>
 #include <linux/container_of.h>
 #include <linux/crypto.h>
+#include <crypto/fips140-redirect.h>
 
 struct crypto_rng;
 
@@ -57,7 +58,11 @@ struct crypto_rng {
 	struct crypto_tfm base;
 };
 
-extern struct crypto_rng *crypto_default_rng;
+DECLARE_CRYPTO_VAR(CONFIG_CRYPTO_RNG2, crypto_default_rng, struct crypto_rng *, );
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_CRYPTO_RNG2)
+#define crypto_default_rng (*((struct crypto_rng **)CRYPTO_VAR_NAME(crypto_default_rng)))
+#endif
 
 int crypto_get_default_rng(void);
 void crypto_put_default_rng(void);
