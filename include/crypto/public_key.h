@@ -13,6 +13,7 @@
 #include <linux/errno.h>
 #include <linux/keyctl.h>
 #include <linux/oid_registry.h>
+#include <crypto/fips140-redirect.h>
 
 /*
  * Cryptographic data for the public-key subtype of the asymmetric key type.
@@ -53,7 +54,11 @@ struct public_key_signature {
 
 extern void public_key_signature_free(struct public_key_signature *sig);
 
-extern struct asymmetric_key_subtype public_key_subtype;
+DECLARE_CRYPTO_VAR(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE, public_key_subtype, struct asymmetric_key_subtype, );
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_ASYMMETRIC_PUBLIC_KEY_SUBTYPE)
+#define public_key_subtype (*((struct asymmetric_key_subtype*)CRYPTO_VAR_NAME(public_key_subtype)))
+#endif
 
 struct key;
 struct key_type;
