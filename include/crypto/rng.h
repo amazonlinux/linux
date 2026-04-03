@@ -14,6 +14,7 @@
 #include <linux/crypto.h>
 #include <linux/fips.h>
 #include <linux/random.h>
+#include <crypto/fips140-redirect.h>
 
 struct crypto_rng;
 
