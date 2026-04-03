@@ -456,3 +456,4 @@ error:
 	kfree_sensitive(ctx.digest);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(verify_pefile_signature);
