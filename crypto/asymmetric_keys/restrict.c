@@ -111,6 +111,7 @@ int restrict_link_by_signature(struct key *dest_keyring,
 	key_put(key);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(restrict_link_by_signature);
 
 /**
  * restrict_link_by_ca - Restrict additions to a ring of CA keys
@@ -195,6 +196,7 @@ int restrict_link_by_digsig(struct key *dest_keyring,
 	return restrict_link_by_signature(dest_keyring, type, payload,
 					  trust_keyring);
 }
+EXPORT_SYMBOL_GPL(restrict_link_by_digsig);
 
 static bool match_either_id(const struct asymmetric_key_id **pair,
 			    const struct asymmetric_key_id *single)
