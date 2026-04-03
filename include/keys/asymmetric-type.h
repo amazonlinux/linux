@@ -12,8 +12,13 @@
 
 #include <linux/key-type.h>
 #include <linux/verification.h>
+#include <crypto/fips140-redirect.h>
 
-extern struct key_type key_type_asymmetric;
+DECLARE_CRYPTO_VAR(CONFIG_ASYMMETRIC_KEY_TYPE, key_type_asymmetric, struct key_type, );
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_ASYMMETRIC_KEY_TYPE)
+#define key_type_asymmetric (*((struct key_type*)CRYPTO_VAR_NAME(key_type_asymmetric)))
+#endif
 
 /*
  * The key payload is four words.  The asymmetric-type key uses them as

@@ -1,8 +1,9 @@
 
 crypto-objs-y += \
-	fips140-module.o 
+	fips140-module.o  \
+	fips140-var-redirect-fips.o
 
-obj-y += fips140-loader.o
+obj-y += fips140-loader.o fips140-var-redirect-main.o
 
 CFLAGS_fips140-fn-redirect.o += -I$(obj)
 CFLAGS_fips140-module.o += -DFIPS140_CORE
