@@ -10,6 +10,7 @@
 #ifdef __KERNEL__
 /* Internal flags */
 #define MODULE_INIT_CRYPTO_FROM_MEM		(1 << 8)
+#define MODULE_INIT_CRYPTO_OBJS_M		(1 << 9)
 #endif
 
 #endif /* _UAPI_LINUX_MODULE_H */
