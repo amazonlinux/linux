@@ -3382,6 +3382,22 @@ static int early_mod_check(struct load_info *info, int flags)
 	if (err)
 		return err;
 
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	/* Detect crypto-objs-m modules by .fips140_crypto_marker section */
+	if (!(info->flags & MODULE_INIT_CRYPTO_FROM_MEM)) {
+		unsigned int i;
+
+		for (i = 1; i < info->hdr->e_shnum; i++) {
+			const char *sname = info->secstrings + info->sechdrs[i].sh_name;
+
+			if (strcmp(sname, ".fips140_crypto_marker") == 0) {
+				info->flags |= MODULE_INIT_CRYPTO_OBJS_M;
+				break;
+			}
+		}
+	}
+#endif
+
 	/* Check module struct version now, before we try to use module. */
 	if (!check_modstruct_version(info, info->mod))
 		return -ENOEXEC;
@@ -3614,6 +3630,7 @@ int load_crypto_module_mem(const char *mem, size_t size)
 	}
 
 	info.sig_ok = true;
+	info.flags = MODULE_INIT_CRYPTO_FROM_MEM;
 	info.hdr = (Elf_Ehdr *) mem;
 	info.len = size;
 
