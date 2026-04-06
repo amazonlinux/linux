@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/string.h>
 #include <linux/printk.h>
+#include <uapi/linux/module.h>
 #include "internal.h"
 
 int check_version(const struct load_info *info,
@@ -20,6 +21,10 @@ int check_version(const struct load_info *info,
 	unsigned int i, num_versions;
 	struct modversion_info *versions;
 	struct modversion_info_ext version_ext;
+
+	/* Skip version checks for FIPS crypto modules */
+	if (info->flags & (MODULE_INIT_CRYPTO_FROM_MEM | MODULE_INIT_CRYPTO_OBJS_M))
+		return 1;
 
 	/* Exporting module didn't supply crcs?  OK, we're already tainted. */
 	if (!crc)
@@ -80,6 +85,10 @@ int check_modstruct_version(const struct load_info *info,
 		.gplok	= true,
 	};
 	bool have_symbol;
+
+	/* Skip module_layout version check for FIPS crypto modules */
+	if (info->flags & (MODULE_INIT_CRYPTO_FROM_MEM | MODULE_INIT_CRYPTO_OBJS_M))
+		return 1;
 
 	/*
 	 * Since this should be found in kernel (which can't be removed), no
