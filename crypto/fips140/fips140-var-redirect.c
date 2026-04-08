@@ -8,18 +8,6 @@
  */
 
 /*
- * crypto/md5.c
- */
-#if IS_BUILTIN(CONFIG_CRYPTO_MD5)
-
-#include <crypto/md5.h>
-
-#undef md5_zero_message_hash
-DEFINE_CRYPTO_VAR_STUB(md5_zero_message_hash);
-
-#endif
-
-/*
  * crypto/rng.c
  */
 #if IS_BUILTIN(CONFIG_CRYPTO_RNG2)
@@ -69,36 +57,5 @@ DEFINE_CRYPTO_VAR_STUB(public_key_subtype);
 
 #endif
 
-/*
- * crypto/sm4.c
- */
-#if IS_BUILTIN(CONFIG_CRYPTO_SM4)
 
-#include <crypto/sm4.h>
 
-#undef crypto_sm4_fk
-#undef crypto_sm4_ck
-#undef crypto_sm4_sbox
-DEFINE_CRYPTO_VAR_STUB(crypto_sm4_fk);
-DEFINE_CRYPTO_VAR_STUB(crypto_sm4_ck);
-DEFINE_CRYPTO_VAR_STUB(crypto_sm4_sbox);
-
-#endif
-
-/*
- * crypto/cast_common.c
- */
-#if IS_BUILTIN(CONFIG_CRYPTO_CAST_COMMON)
-
-#include <crypto/cast_common.h>
-
-#undef cast_s1
-#undef cast_s2
-#undef cast_s3
-#undef cast_s4
-DEFINE_CRYPTO_VAR_STUB(cast_s1);
-DEFINE_CRYPTO_VAR_STUB(cast_s2);
-DEFINE_CRYPTO_VAR_STUB(cast_s3);
-DEFINE_CRYPTO_VAR_STUB(cast_s4);
-
-#endif
