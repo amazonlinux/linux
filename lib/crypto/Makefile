@@ -188,7 +188,7 @@ clean-files += arm/poly1305-core.S \
 
 ################################################################################
 
-obj-$(CONFIG_CRYPTO_LIB_SHA1) += libsha1.o
+crypto-objs-$(CONFIG_CRYPTO_LIB_SHA1) += libsha1.o
 libsha1-y := sha1.o
 ifeq ($(CONFIG_CRYPTO_LIB_SHA1_ARCH),y)
 CFLAGS_sha1.o += -I$(src)/$(SRCARCH)
@@ -210,7 +210,7 @@ endif # CONFIG_CRYPTO_LIB_SHA1_ARCH
 
 ################################################################################
 
-obj-$(CONFIG_CRYPTO_LIB_SHA256) += libsha256.o
+crypto-objs-$(CONFIG_CRYPTO_LIB_SHA256) += libsha256.o
 libsha256-y := sha256.o
 ifeq ($(CONFIG_CRYPTO_LIB_SHA256_ARCH),y)
 CFLAGS_sha256.o += -I$(src)/$(SRCARCH)
@@ -240,7 +240,7 @@ endif # CONFIG_CRYPTO_LIB_SHA256_ARCH
 
 ################################################################################
 
-obj-$(CONFIG_CRYPTO_LIB_SHA512) += libsha512.o
+crypto-objs-$(CONFIG_CRYPTO_LIB_SHA512) += libsha512.o
 libsha512-y := sha512.o
 ifeq ($(CONFIG_CRYPTO_LIB_SHA512_ARCH),y)
 CFLAGS_sha512.o += -I$(src)/$(SRCARCH)
