@@ -20,13 +20,7 @@
 #define CRYPTO_MD5_STATESIZE \
 	CRYPTO_HASH_STATESIZE(MD5_STATE_SIZE, MD5_HMAC_BLOCK_SIZE)
 
-#include <crypto/fips140-redirect.h>
-
-DECLARE_CRYPTO_VAR(CONFIG_CRYPTO_MD5, md5_zero_message_hash, const u8, [MD5_DIGEST_SIZE]);
-
-#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_CRYPTO_MD5)
-#define md5_zero_message_hash (((const u8*)CRYPTO_VAR_NAME(md5_zero_message_hash)))
-#endif
+extern const u8 md5_zero_message_hash[MD5_DIGEST_SIZE];
 
 struct md5_state {
 	u32 hash[MD5_HASH_WORDS];
