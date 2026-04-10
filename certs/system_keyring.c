@@ -7,6 +7,7 @@
 
 #include <linux/export.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/cred.h>
 #include <linux/err.h>
@@ -71,6 +72,7 @@ int restrict_link_by_digsig_builtin(struct key *dest_keyring,
 	return restrict_link_by_digsig(dest_keyring, type, payload,
 				       builtin_trusted_keys);
 }
+EXPORT_SYMBOL_GPL(restrict_link_by_digsig_builtin);
 
 #ifdef CONFIG_SECONDARY_TRUSTED_KEYRING
 /**
@@ -273,6 +275,7 @@ __init int load_module_cert(struct key *keyring)
 	return x509_load_certificate_list(system_certificate_list,
 					  module_cert_size, keyring);
 }
+EXPORT_SYMBOL_GPL(load_module_cert);
 
 /*
  * Load the compiled-in list of X.509 certificates.
@@ -426,4 +429,5 @@ void __init set_platform_trusted_keys(struct key *keyring)
 {
 	platform_trusted_keys = keyring;
 }
+EXPORT_SYMBOL_GPL(set_platform_trusted_keys);
 #endif
