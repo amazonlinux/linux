@@ -6,8 +6,9 @@
 crypto-objs-$(CONFIG_CRYPTO) += crypto.o
 crypto-y := api.o cipher.o
 
-crypto-objs-$(CONFIG_CRYPTO_ENGINE) += crypto_engine.o
-obj-$(CONFIG_CRYPTO_FIPS) += fips.o
+obj-$(CONFIG_CRYPTO_ENGINE) += crypto_engine.o
+crypto-objs-$(CONFIG_CRYPTO_FIPS) += fips.o
+obj-$(CONFIG_CRYPTO_FIPS) += fips_builtin.o
 
 crypto_algapi-$(CONFIG_PROC_FS) += proc.o
 crypto_algapi-y := algapi.o scatterwalk.o $(crypto_algapi-y)
@@ -21,11 +22,11 @@ crypto_skcipher-y += skcipher.o
 
 crypto-objs-$(CONFIG_CRYPTO_SKCIPHER2) += crypto_skcipher.o
 ifeq ($(CONFIG_BPF_SYSCALL),y)
-crypto-objs-$(CONFIG_CRYPTO_SKCIPHER2) += bpf_crypto_skcipher.o
+obj-$(CONFIG_CRYPTO_SKCIPHER2) += bpf_crypto_skcipher.o
 endif
 
 crypto-objs-$(CONFIG_CRYPTO_SEQIV) += seqiv.o
-crypto-objs-$(CONFIG_CRYPTO_ECHAINIV) += echainiv.o
+obj-$(CONFIG_CRYPTO_ECHAINIV) += echainiv.o
 
 crypto_hash-y += ahash.o
 crypto_hash-y += shash.o
@@ -34,7 +35,7 @@ crypto-objs-$(CONFIG_CRYPTO_HASH2) += crypto_hash.o
 crypto-objs-$(CONFIG_CRYPTO_AKCIPHER2) += akcipher.o
 crypto-objs-$(CONFIG_CRYPTO_SIG2) += sig.o
 crypto-objs-$(CONFIG_CRYPTO_KPP2) += kpp.o
-crypto-objs-$(CONFIG_CRYPTO_HKDF) += hkdf.o
+obj-$(CONFIG_CRYPTO_HKDF) += hkdf.o
 
 dh_generic-y := dh.o
 dh_generic-y += dh_helper.o
@@ -62,44 +63,44 @@ crypto-objs-$(CONFIG_CRYPTO_ECDSA) += ecdsa_generic.o
 
 crypto_acompress-y := acompress.o
 crypto_acompress-y += scompress.o
-crypto-objs-$(CONFIG_CRYPTO_ACOMP2) += crypto_acompress.o
+obj-$(CONFIG_CRYPTO_ACOMP2) += crypto_acompress.o
 
 cryptomgr-y := algboss.o testmgr.o
 
 crypto-objs-$(CONFIG_CRYPTO_MANAGER2) += cryptomgr.o
-crypto-objs-$(CONFIG_CRYPTO_USER) += crypto_user.o
+obj-$(CONFIG_CRYPTO_USER) += crypto_user.o
 crypto-objs-$(CONFIG_CRYPTO_CMAC) += cmac.o
 crypto-objs-$(CONFIG_CRYPTO_HMAC) += hmac.o
-crypto-objs-$(CONFIG_CRYPTO_XCBC) += xcbc.o
-crypto-objs-$(CONFIG_CRYPTO_NULL) += crypto_null.o
-crypto-objs-$(CONFIG_CRYPTO_MD4) += md4.o
-crypto-objs-$(CONFIG_CRYPTO_MD5) += md5.o
-crypto-objs-$(CONFIG_CRYPTO_RMD160) += rmd160.o
+obj-$(CONFIG_CRYPTO_XCBC) += xcbc.o
+obj-$(CONFIG_CRYPTO_NULL) += crypto_null.o
+obj-$(CONFIG_CRYPTO_MD4) += md4.o
+obj-$(CONFIG_CRYPTO_MD5) += md5.o
+obj-$(CONFIG_CRYPTO_RMD160) += rmd160.o
 crypto-objs-$(CONFIG_CRYPTO_SHA1) += sha1.o
 crypto-objs-$(CONFIG_CRYPTO_SHA256) += sha256.o
 crypto-objs-$(CONFIG_CRYPTO_SHA512) += sha512.o
 crypto-objs-$(CONFIG_CRYPTO_SHA3) += sha3_generic.o
-crypto-objs-$(CONFIG_CRYPTO_SM3_GENERIC) += sm3_generic.o
-crypto-objs-$(CONFIG_CRYPTO_STREEBOG) += streebog_generic.o
-crypto-objs-$(CONFIG_CRYPTO_WP512) += wp512.o
+obj-$(CONFIG_CRYPTO_SM3_GENERIC) += sm3_generic.o
+obj-$(CONFIG_CRYPTO_STREEBOG) += streebog_generic.o
+obj-$(CONFIG_CRYPTO_WP512) += wp512.o
 CFLAGS_wp512.o := $(call cc-option,-fno-schedule-insns)  # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=79149
-crypto-objs-$(CONFIG_CRYPTO_BLAKE2B) += blake2b_generic.o
+obj-$(CONFIG_CRYPTO_BLAKE2B) += blake2b_generic.o
 CFLAGS_blake2b_generic.o := -Wframe-larger-than=4096 #  https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105930
 crypto-objs-$(CONFIG_CRYPTO_ECB) += ecb.o
 crypto-objs-$(CONFIG_CRYPTO_CBC) += cbc.o
-crypto-objs-$(CONFIG_CRYPTO_PCBC) += pcbc.o
+obj-$(CONFIG_CRYPTO_PCBC) += pcbc.o
 crypto-objs-$(CONFIG_CRYPTO_CTS) += cts.o
-crypto-objs-$(CONFIG_CRYPTO_LRW) += lrw.o
+obj-$(CONFIG_CRYPTO_LRW) += lrw.o
 crypto-objs-$(CONFIG_CRYPTO_XTS) += xts.o
 crypto-objs-$(CONFIG_CRYPTO_CTR) += ctr.o
-crypto-objs-$(CONFIG_CRYPTO_XCTR) += xctr.o
-crypto-objs-$(CONFIG_CRYPTO_HCTR2) += hctr2.o
-crypto-objs-$(CONFIG_CRYPTO_ADIANTUM) += adiantum.o
-crypto-objs-$(CONFIG_CRYPTO_NHPOLY1305) += nhpoly1305.o
+obj-$(CONFIG_CRYPTO_XCTR) += xctr.o
+obj-$(CONFIG_CRYPTO_HCTR2) += hctr2.o
+obj-$(CONFIG_CRYPTO_ADIANTUM) += adiantum.o
+obj-$(CONFIG_CRYPTO_NHPOLY1305) += nhpoly1305.o
 crypto-objs-$(CONFIG_CRYPTO_GCM) += gcm.o
 crypto-objs-$(CONFIG_CRYPTO_CCM) += ccm.o
-crypto-objs-$(CONFIG_CRYPTO_CHACHA20POLY1305) += chacha20poly1305.o
-crypto-objs-$(CONFIG_CRYPTO_AEGIS128) += aegis128.o
+obj-$(CONFIG_CRYPTO_CHACHA20POLY1305) += chacha20poly1305.o
+obj-$(CONFIG_CRYPTO_AEGIS128) += aegis128.o
 aegis128-y := aegis128-core.o
 
 ifeq ($(ARCH),arm)
@@ -122,66 +123,66 @@ endif
 # Enable <arm_neon.h>
 CFLAGS_aegis128-neon-inner.o += -isystem $(shell $(CC) -print-file-name=include)
 
-crypto-objs-$(CONFIG_CRYPTO_PCRYPT) += pcrypt.o
-crypto-objs-$(CONFIG_CRYPTO_CRYPTD) += cryptd.o
-crypto-objs-$(CONFIG_CRYPTO_DES) += des_generic.o
-crypto-objs-$(CONFIG_CRYPTO_FCRYPT) += fcrypt.o
-crypto-objs-$(CONFIG_CRYPTO_BLOWFISH) += blowfish_generic.o
-crypto-objs-$(CONFIG_CRYPTO_BLOWFISH_COMMON) += blowfish_common.o
-crypto-objs-$(CONFIG_CRYPTO_TWOFISH) += twofish_generic.o
-crypto-objs-$(CONFIG_CRYPTO_TWOFISH_COMMON) += twofish_common.o
-crypto-objs-$(CONFIG_CRYPTO_SERPENT) += serpent_generic.o
+obj-$(CONFIG_CRYPTO_PCRYPT) += pcrypt.o
+obj-$(CONFIG_CRYPTO_CRYPTD) += cryptd.o
+obj-$(CONFIG_CRYPTO_DES) += des_generic.o
+obj-$(CONFIG_CRYPTO_FCRYPT) += fcrypt.o
+obj-$(CONFIG_CRYPTO_BLOWFISH) += blowfish_generic.o
+obj-$(CONFIG_CRYPTO_BLOWFISH_COMMON) += blowfish_common.o
+obj-$(CONFIG_CRYPTO_TWOFISH) += twofish_generic.o
+obj-$(CONFIG_CRYPTO_TWOFISH_COMMON) += twofish_common.o
+obj-$(CONFIG_CRYPTO_SERPENT) += serpent_generic.o
 CFLAGS_serpent_generic.o := $(call cc-option,-fsched-pressure)  # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=79149
 crypto-objs-$(CONFIG_CRYPTO_AES) += aes_generic.o
 CFLAGS_aes_generic.o := $(call cc-option,-fno-code-hoisting) # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=83356
-crypto-objs-$(CONFIG_CRYPTO_SM4) += sm4.o
-crypto-objs-$(CONFIG_CRYPTO_SM4_GENERIC) += sm4_generic.o
-crypto-objs-$(CONFIG_CRYPTO_AES_TI) += aes_ti.o
-crypto-objs-$(CONFIG_CRYPTO_CAMELLIA) += camellia_generic.o
-crypto-objs-$(CONFIG_CRYPTO_CAST_COMMON) += cast_common.o
-crypto-objs-$(CONFIG_CRYPTO_CAST5) += cast5_generic.o
-crypto-objs-$(CONFIG_CRYPTO_CAST6) += cast6_generic.o
-crypto-objs-$(CONFIG_CRYPTO_ARC4) += arc4.o
-crypto-objs-$(CONFIG_CRYPTO_TEA) += tea.o
-crypto-objs-$(CONFIG_CRYPTO_KHAZAD) += khazad.o
-crypto-objs-$(CONFIG_CRYPTO_ANUBIS) += anubis.o
-crypto-objs-$(CONFIG_CRYPTO_SEED) += seed.o
-crypto-objs-$(CONFIG_CRYPTO_ARIA) += aria_generic.o
-crypto-objs-$(CONFIG_CRYPTO_CHACHA20) += chacha.o
+obj-$(CONFIG_CRYPTO_SM4) += sm4.o
+obj-$(CONFIG_CRYPTO_SM4_GENERIC) += sm4_generic.o
+obj-$(CONFIG_CRYPTO_AES_TI) += aes_ti.o
+obj-$(CONFIG_CRYPTO_CAMELLIA) += camellia_generic.o
+obj-$(CONFIG_CRYPTO_CAST_COMMON) += cast_common.o
+obj-$(CONFIG_CRYPTO_CAST5) += cast5_generic.o
+obj-$(CONFIG_CRYPTO_CAST6) += cast6_generic.o
+obj-$(CONFIG_CRYPTO_ARC4) += arc4.o
+obj-$(CONFIG_CRYPTO_TEA) += tea.o
+obj-$(CONFIG_CRYPTO_KHAZAD) += khazad.o
+obj-$(CONFIG_CRYPTO_ANUBIS) += anubis.o
+obj-$(CONFIG_CRYPTO_SEED) += seed.o
+obj-$(CONFIG_CRYPTO_ARIA) += aria_generic.o
+obj-$(CONFIG_CRYPTO_CHACHA20) += chacha.o
 CFLAGS_chacha.o += -DARCH=$(ARCH)
-crypto-objs-$(CONFIG_CRYPTO_DEFLATE) += deflate.o
-crypto-objs-$(CONFIG_CRYPTO_MICHAEL_MIC) += michael_mic.o
+obj-$(CONFIG_CRYPTO_DEFLATE) += deflate.o
+obj-$(CONFIG_CRYPTO_MICHAEL_MIC) += michael_mic.o
 crypto-objs-$(CONFIG_CRYPTO_CRC32C) += crc32c-cryptoapi.o
 crc32c-cryptoapi-y := crc32c.o
 crypto-objs-$(CONFIG_CRYPTO_CRC32) += crc32-cryptoapi.o
 crc32-cryptoapi-y := crc32.o
-crypto-objs-$(CONFIG_CRYPTO_AUTHENC) += authenc.o authencesn.o
-crypto-objs-$(CONFIG_CRYPTO_KRB5ENC) += krb5enc.o
-crypto-objs-$(CONFIG_CRYPTO_LZO) += lzo.o lzo-rle.o
-crypto-objs-$(CONFIG_CRYPTO_LZ4) += lz4.o
-crypto-objs-$(CONFIG_CRYPTO_LZ4HC) += lz4hc.o
-crypto-objs-$(CONFIG_CRYPTO_XXHASH) += xxhash_generic.o
-crypto-objs-$(CONFIG_CRYPTO_842) += 842.o
+obj-$(CONFIG_CRYPTO_AUTHENC) += authenc.o authencesn.o
+obj-$(CONFIG_CRYPTO_KRB5ENC) += krb5enc.o
+obj-$(CONFIG_CRYPTO_LZO) += lzo.o lzo-rle.o
+obj-$(CONFIG_CRYPTO_LZ4) += lz4.o
+obj-$(CONFIG_CRYPTO_LZ4HC) += lz4hc.o
+obj-$(CONFIG_CRYPTO_XXHASH) += xxhash_generic.o
+obj-$(CONFIG_CRYPTO_842) += 842.o
 crypto-objs-$(CONFIG_CRYPTO_RNG2) += rng.o
-crypto-objs-$(CONFIG_CRYPTO_ANSI_CPRNG) += ansi_cprng.o
+obj-$(CONFIG_CRYPTO_ANSI_CPRNG) += ansi_cprng.o
 crypto-objs-$(CONFIG_CRYPTO_DRBG) += drbg.o
 crypto-objs-$(CONFIG_CRYPTO_JITTERENTROPY) += jitterentropy_rng.o
 CFLAGS_jitterentropy.o = -O0
 KASAN_SANITIZE_jitterentropy.o = n
 UBSAN_SANITIZE_jitterentropy.o = n
 jitterentropy_rng-y := jitterentropy.o jitterentropy-kcapi.o
-crypto-objs-$(CONFIG_CRYPTO_JITTERENTROPY_TESTINTERFACE) += jitterentropy-testing.o
+obj-$(CONFIG_CRYPTO_JITTERENTROPY_TESTINTERFACE) += jitterentropy-testing.o
 crypto-objs-$(CONFIG_CRYPTO_BENCHMARK) += tcrypt.o
 crypto-objs-$(CONFIG_CRYPTO_GHASH) += ghash-generic.o
-crypto-objs-$(CONFIG_CRYPTO_POLYVAL) += polyval-generic.o
-crypto-objs-$(CONFIG_CRYPTO_USER_API) += af_alg.o
-crypto-objs-$(CONFIG_CRYPTO_USER_API_HASH) += algif_hash.o
-crypto-objs-$(CONFIG_CRYPTO_USER_API_SKCIPHER) += algif_skcipher.o
-crypto-objs-$(CONFIG_CRYPTO_USER_API_RNG) += algif_rng.o
-crypto-objs-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
-crypto-objs-$(CONFIG_CRYPTO_ZSTD) += zstd.o
+obj-$(CONFIG_CRYPTO_POLYVAL) += polyval-generic.o
+obj-$(CONFIG_CRYPTO_USER_API) += af_alg.o
+obj-$(CONFIG_CRYPTO_USER_API_HASH) += algif_hash.o
+obj-$(CONFIG_CRYPTO_USER_API_SKCIPHER) += algif_skcipher.o
+obj-$(CONFIG_CRYPTO_USER_API_RNG) += algif_rng.o
+obj-$(CONFIG_CRYPTO_USER_API_AEAD) += algif_aead.o
+obj-$(CONFIG_CRYPTO_ZSTD) += zstd.o
 crypto-objs-$(CONFIG_CRYPTO_ECC) += ecc.o
-crypto-objs-$(CONFIG_CRYPTO_ESSIV) += essiv.o
+obj-$(CONFIG_CRYPTO_ESSIV) += essiv.o
 
 ecdh_generic-y += ecdh.o
 ecdh_generic-y += ecdh_helper.o
@@ -193,16 +194,16 @@ $(obj)/ecrdsa.o: $(obj)/ecrdsa_params.asn1.h $(obj)/ecrdsa_pub_key.asn1.h
 ecrdsa_generic-y += ecrdsa.o
 ecrdsa_generic-y += ecrdsa_params.asn1.o
 ecrdsa_generic-y += ecrdsa_pub_key.asn1.o
-crypto-objs-$(CONFIG_CRYPTO_ECRDSA) += ecrdsa_generic.o
+obj-$(CONFIG_CRYPTO_ECRDSA) += ecrdsa_generic.o
 
 #
 # generic algorithms and the async_tx api
 #
-crypto-objs-$(CONFIG_XOR_BLOCKS) += xor.o
+obj-$(CONFIG_XOR_BLOCKS) += xor.o
 obj-$(CONFIG_ASYNC_CORE) += async_tx/
 obj-$(CONFIG_ASYMMETRIC_KEY_TYPE) += asymmetric_keys/
 crypto_simd-y := simd.o
-crypto-objs-$(CONFIG_CRYPTO_SIMD) += crypto_simd.o
+obj-$(CONFIG_CRYPTO_SIMD) += crypto_simd.o
 
 #
 # Key derivation function
