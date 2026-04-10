@@ -9,6 +9,7 @@
 #define _CRYPTO_INTERNAL_H
 
 #include <crypto/algapi.h>
+#include <crypto/fips140-redirect.h>
 #include <linux/completion.h>
 #include <linux/err.h>
 #include <linux/jump_label.h>
@@ -61,9 +62,14 @@ enum {
 /* Maximum number of (rtattr) parameters for each template. */
 #define CRYPTO_MAX_ATTRS 32
 
-extern struct list_head crypto_alg_list;
-extern struct rw_semaphore crypto_alg_sem;
+DECLARE_CRYPTO_VAR(CONFIG_CRYPTO, crypto_alg_list, struct list_head, );
+DECLARE_CRYPTO_VAR(CONFIG_CRYPTO, crypto_alg_sem, struct rw_semaphore, );
 extern struct blocking_notifier_head crypto_chain;
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_CRYPTO)
+#define crypto_alg_list (*((struct list_head *)CRYPTO_VAR_NAME(crypto_alg_list)))
+#define crypto_alg_sem (*((struct rw_semaphore *)CRYPTO_VAR_NAME(crypto_alg_sem)))
+#endif
 
 int alg_test(const char *driver, const char *alg, u32 type, u32 mask);
 
