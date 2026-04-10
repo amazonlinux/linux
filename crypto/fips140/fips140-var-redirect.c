@@ -8,14 +8,16 @@
  */
 
 /*
- * crypto/md5.c
+ * crypto/api.c
  */
-#if IS_BUILTIN(CONFIG_CRYPTO_MD5)
+#if IS_BUILTIN(CONFIG_CRYPTO)
 
-#include <crypto/md5.h>
+#include "../internal.h"
 
-#undef md5_zero_message_hash
-DEFINE_CRYPTO_VAR_STUB(md5_zero_message_hash);
+#undef crypto_alg_list
+#undef crypto_alg_sem
+DEFINE_CRYPTO_VAR_STUB(crypto_alg_list);
+DEFINE_CRYPTO_VAR_STUB(crypto_alg_sem);
 
 #endif
 
@@ -28,6 +30,18 @@ DEFINE_CRYPTO_VAR_STUB(md5_zero_message_hash);
 
 #undef crypto_default_rng
 DEFINE_CRYPTO_VAR_STUB(crypto_default_rng);
+
+#endif
+
+/*
+ * crypto/fips.c
+ */
+#if IS_BUILTIN(CONFIG_CRYPTO_FIPS)
+
+#include <linux/fips.h>
+
+#undef fips_fail_notif_chain
+DEFINE_CRYPTO_VAR_STUB(fips_fail_notif_chain);
 
 #endif
 
@@ -55,36 +69,5 @@ DEFINE_CRYPTO_VAR_STUB(public_key_subtype);
 
 #endif
 
-/*
- * crypto/sm4.c
- */
-#if IS_BUILTIN(CONFIG_CRYPTO_SM4)
 
-#include <crypto/sm4.h>
 
-#undef crypto_sm4_fk
-#undef crypto_sm4_ck
-#undef crypto_sm4_sbox
-DEFINE_CRYPTO_VAR_STUB(crypto_sm4_fk);
-DEFINE_CRYPTO_VAR_STUB(crypto_sm4_ck);
-DEFINE_CRYPTO_VAR_STUB(crypto_sm4_sbox);
-
-#endif
-
-/*
- * crypto/cast_common.c
- */
-#if IS_BUILTIN(CONFIG_CRYPTO_CAST_COMMON)
-
-#include <crypto/cast_common.h>
-
-#undef cast_s1
-#undef cast_s2
-#undef cast_s3
-#undef cast_s4
-DEFINE_CRYPTO_VAR_STUB(cast_s1);
-DEFINE_CRYPTO_VAR_STUB(cast_s2);
-DEFINE_CRYPTO_VAR_STUB(cast_s3);
-DEFINE_CRYPTO_VAR_STUB(cast_s4);
-
-#endif
