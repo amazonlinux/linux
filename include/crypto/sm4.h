@@ -11,7 +11,6 @@
 
 #include <linux/types.h>
 #include <linux/crypto.h>
-#include <crypto/fips140-redirect.h>
 
 #define SM4_KEY_SIZE	16
 #define SM4_BLOCK_SIZE	16
@@ -22,15 +21,9 @@ struct sm4_ctx {
 	u32 rkey_dec[SM4_RKEY_WORDS];
 };
 
-DECLARE_CRYPTO_VAR(CONFIG_CRYPTO_SM4, crypto_sm4_fk, const u32, [4]);
-DECLARE_CRYPTO_VAR(CONFIG_CRYPTO_SM4, crypto_sm4_ck, const u32, [32]);
-DECLARE_CRYPTO_VAR(CONFIG_CRYPTO_SM4, crypto_sm4_sbox, const u8, [256]);
-
-#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_CRYPTO_SM4)
-#define crypto_sm4_fk (((const u32*)CRYPTO_VAR_NAME(crypto_sm4_fk)))
-#define crypto_sm4_ck (((const u32*)CRYPTO_VAR_NAME(crypto_sm4_ck)))
-#define crypto_sm4_sbox (((const u8*)CRYPTO_VAR_NAME(crypto_sm4_sbox)))
-#endif
+extern const u32 crypto_sm4_fk[];
+extern const u32 crypto_sm4_ck[];
+extern const u8 crypto_sm4_sbox[];
 
 /**
  * sm4_expandkey - Expands the SM4 key as described in GB/T 32907-2016
