@@ -44,13 +44,25 @@ static __init void uefi_revocation_list_x509(const char *source,
 }
 
 /*
+ * Add X509 certs from UEFI db to both platform and machine keyrings.
+ */
+static __init void add_to_platform_and_machine_keyring(const char *source,
+							const void *data,
+							size_t len)
+{
+	add_to_platform_keyring(source, data, len);
+	if (IS_ENABLED(CONFIG_INTEGRITY_MACHINE_KEYRING))
+		add_to_machine_keyring(source, data, len);
+}
+
+/*
  * Return the appropriate handler for particular signature list types found in
  * the UEFI db tables.
  */
 __init efi_element_handler_t get_handler_for_db(const efi_guid_t *sig_type)
 {
 	if (efi_guidcmp(*sig_type, efi_cert_x509_guid) == 0)
-		return add_to_platform_keyring;
+		return add_to_platform_and_machine_keyring;
 	return NULL;
 }
 
