@@ -242,7 +242,7 @@ int ceph_handle_auth_reply(struct ceph_auth_client *ac,
 		ac->negotiating = false;
 	}
 
-	if (result) {
+	if (result < 0) {
 		pr_err("auth method '%s' mauth authentication failed %d\n",
 		       ac->ops->name, result);
 		ret = result;
