@@ -757,13 +757,18 @@ static bool __ep_remove(struct eventpoll *ep, struct epitem *epi, bool force)
 	 */
 	ep_unregister_pollwait(ep, epi);
 
-	/* Remove the current item from the list of epoll hooks */
-	spin_lock(&file->f_lock);
-	if (epi->dying && !force) {
-		spin_unlock(&file->f_lock);
-		return false;
+	if (!force) {
+		/*
+		 * If we manage to grab a reference it means we're not in
+		 * eventpoll_release_file() and aren't going to be.
+		 */
+		file = epi_fget(epi);
+		if (!file)
+			return false;
 	}
 
+	/* Remove the current item from the list of epoll hooks */
+	spin_lock(&file->f_lock);
 	to_free = NULL;
 	head = file->f_ep;
 	if (head->first == &epi->fllink && !epi->fllink.next) {
@@ -798,6 +803,11 @@ static bool __ep_remove(struct eventpoll *ep, struct epitem *epi, bool force)
 	call_rcu(&epi->rcu, epi_rcu_free);
 
 	percpu_counter_dec(&ep->user->epoll_watches);
+
+	/* Drop the reference grabbed via epi_fget() above. */
+	if (!force)
+		fput(file);
+
 	return ep_refcount_dec_and_test(ep);
 }
 
