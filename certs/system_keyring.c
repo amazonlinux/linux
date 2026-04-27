@@ -185,6 +185,7 @@ void __init add_to_secondary_keyring(const char *source, const void *data, size_
 	pr_notice("Loaded X.509 cert '%s'\n", key_ref_to_ptr(key)->description);
 	key_ref_put(key);
 }
+EXPORT_SYMBOL_GPL(add_to_secondary_keyring);
 #endif
 #ifdef CONFIG_INTEGRITY_MACHINE_KEYRING
 void __init set_machine_trusted_keys(struct key *keyring)
@@ -194,6 +195,7 @@ void __init set_machine_trusted_keys(struct key *keyring)
 	if (key_link(secondary_trusted_keys, machine_trusted_keys) < 0)
 		panic("Can't link (machine) trusted keyrings\n");
 }
+EXPORT_SYMBOL_GPL(set_machine_trusted_keys);
 
 /**
  * restrict_link_by_builtin_secondary_and_machine - Restrict keyring addition.
