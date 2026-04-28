@@ -1286,14 +1286,18 @@ ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
 vmlinux: crypto/fips140/nonfips140-embedded.o
 endif
 crypto/fips140/fips140-embedded.o: fips140-ready
+	@$(STRIP) --strip-debug -o crypto/fips140/.fips140.ko.stripped \
+		$(fips140_build)/crypto/fips140/fips140.ko
 	@echo "  LD      $@"
-	@$(LD) -r -b binary -o $@ $(fips140_build)/crypto/fips140/fips140.ko
+	@$(LD) -r -b binary -o $@ crypto/fips140/.fips140.ko.stripped
 	@$(OBJCOPY) --rename-section .data=.fips140_module_data $@
 
 ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
 crypto/fips140/nonfips140-embedded.o: fips140-ready
+	@$(STRIP) --strip-debug -o crypto/fips140/.nonfips140.ko.stripped \
+		crypto/fips140/fips140.ko
 	@echo "  LD      $@"
-	@$(LD) -r -b binary -o $@ crypto/fips140/fips140.ko
+	@$(LD) -r -b binary -o $@ crypto/fips140/.nonfips140.ko.stripped
 	@$(OBJCOPY) --rename-section .data=.nonfips140_module_data \
 		--prefix-symbols nonfips140_ $@
 endif
@@ -1301,7 +1305,7 @@ endif
 crypto/fips140/.fips140.hmac: crypto/fips140/fips140-embedded.o
 	@echo "  HMAC    $@"
 	@hmac_key=$$(awk -F'"' '/^CONFIG_CRYPTO_FIPS140_HMAC_KEY=/{print $$2}' .config); \
-	openssl dgst -sha256 -hmac "$$hmac_key" -binary -out $@ $(fips140_build)/crypto/fips140/fips140.ko
+	openssl dgst -sha256 -hmac "$$hmac_key" -binary -out $@ crypto/fips140/.fips140.ko.stripped
 
 crypto/fips140/fips140-digest.o: crypto/fips140/.fips140.hmac
 	@echo "  LD      $@"
