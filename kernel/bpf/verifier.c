@@ -12576,6 +12576,12 @@ check_ok:
 					reg_arg_name(env, argno));
 				return -EINVAL;
 			}
+			if (!tnum_equals_const(reg->var_off, 0)) {
+				verbose(env,
+					"%s must have zero offset when passed to bpf_refcount_acquire\n",
+					reg_arg_name(env, argno));
+				return -EINVAL;
+			}
 			if (!type_is_non_owning_ref(reg->type) && reg_is_referenced(env, reg))
 				meta->arg_owning_ref = true;
 
