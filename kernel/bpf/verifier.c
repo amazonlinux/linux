@@ -12495,6 +12495,12 @@ static int check_kfunc_args(struct bpf_verifier_env *env, struct bpf_kfunc_call_
 				verbose(env, "arg#%d is neither owning or non-owning ref\n", i);
 				return -EINVAL;
 			}
+			if (!tnum_equals_const(reg->var_off, 0)) {
+				verbose(env,
+					"R%d must have zero offset when passed to bpf_refcount_acquire\n",
+					regno);
+				return -EINVAL;
+			}
 			if (!type_is_non_owning_ref(reg->type))
 				meta->arg_owning_ref = true;
 
