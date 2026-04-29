@@ -9,6 +9,7 @@
 struct node_acquire {
 	long key;
 	long data;
+	long pad;
 	struct bpf_rb_node node;
 	struct bpf_refcount refcount;
 };
@@ -115,6 +116,41 @@ int BPF_PROG(rbtree_fail_sleepable_lock_across_rcu,
 	bpf_spin_unlock(&glock);
 	bpf_rcu_read_unlock();
 
+	return 0;
+}
+
+SEC("?tc")
+__failure __msg("R1 must have zero offset when passed to bpf_refcount_acquire")
+long refcount_acquire_const_offset(void *ctx)
+{
+	struct node_acquire *n, *m;
+
+	n = bpf_obj_new(typeof(*n));
+	if (!n)
+		return 0;
+	/* verifier must reject: arg has fixed off=8 */
+	m = bpf_refcount_acquire((void *)n + 8);
+	if (m)
+		bpf_obj_drop(m);
+	bpf_obj_drop(n);
+	return 0;
+}
+
+SEC("?tc")
+__failure __msg("R1 must have zero offset when passed to bpf_refcount_acquire")
+long refcount_acquire_var_offset(void *ctx)
+{
+	struct node_acquire *n, *m;
+	long off = bpf_get_prandom_u32() & 8;
+
+	n = bpf_obj_new(typeof(*n));
+	if (!n)
+		return 0;
+	/* verifier must reject: arg has variable offset */
+	m = bpf_refcount_acquire((void *)n + off);
+	if (m)
+		bpf_obj_drop(m);
+	bpf_obj_drop(n);
 	return 0;
 }
 
