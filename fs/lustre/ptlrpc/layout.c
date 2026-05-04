@@ -93,10 +93,23 @@ static const struct req_msg_field *mdt_body_only[] = {
         &RMF_MDT_BODY
 };
 
+static const struct req_msg_field *mdt_body_acl[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_MDT_BODY,
+	&RMF_ACL,
+};
+
 static const struct req_msg_field *mdt_body_capa[] = {
         &RMF_PTLRPC_BODY,
         &RMF_MDT_BODY,
         &RMF_CAPA1
+};
+
+static const struct req_msg_field *mdt_body_capa_acl[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_MDT_BODY,
+	&RMF_CAPA1,
+	&RMF_ACL,
 };
 
 static const struct req_msg_field *quotactl_only[] = {
@@ -230,6 +243,13 @@ static const struct req_msg_field *mds_reint_create_sym_client[] = {
 	&RMF_FILE_ENCCTX,
 };
 
+static const struct req_msg_field *mds_reint_create_acl_server[] = {
+        &RMF_PTLRPC_BODY,
+        &RMF_MDT_BODY,
+        &RMF_CAPA1,
+        &RMF_ACL
+};
+
 static const struct req_msg_field *mds_reint_open_client[] = {
 	&RMF_PTLRPC_BODY,
 	&RMF_REC_REINT,
@@ -303,6 +323,16 @@ static const struct req_msg_field *mds_last_unlink_server[] = {
         &RMF_LOGCOOKIES,
         &RMF_CAPA1,
         &RMF_CAPA2
+};
+
+static const struct req_msg_field *mds_last_unlink_server_acl[] = {
+	&RMF_PTLRPC_BODY,
+	&RMF_MDT_BODY,
+	&RMF_MDT_MD,
+	&RMF_LOGCOOKIES,
+	&RMF_CAPA1,
+	&RMF_CAPA2,
+	&RMF_ACL,
 };
 
 static const struct req_msg_field *mds_reint_setattr_client[] = {
@@ -1462,7 +1492,7 @@ EXPORT_SYMBOL(RQF_MDS_REINT_CREATE);
 
 struct req_format RQF_MDS_REINT_CREATE_ACL =
 	DEFINE_REQ_FMT0("MDS_REINT_CREATE_ACL",
-			mds_reint_create_acl_client, mdt_body_capa);
+			mds_reint_create_acl_client, mds_reint_create_acl_server);
 EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_ACL);
 
 struct req_format RQF_MDS_REINT_CREATE_SLAVE =
@@ -1472,7 +1502,7 @@ EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_SLAVE);
 
 struct req_format RQF_MDS_REINT_CREATE_SYM =
         DEFINE_REQ_FMT0("MDS_REINT_CREATE_SYM",
-                        mds_reint_create_sym_client, mdt_body_capa);
+                        mds_reint_create_sym_client, mdt_body_capa_acl);
 EXPORT_SYMBOL(RQF_MDS_REINT_CREATE_SYM);
 
 struct req_format RQF_MDS_REINT_OPEN =
@@ -1482,17 +1512,17 @@ EXPORT_SYMBOL(RQF_MDS_REINT_OPEN);
 
 struct req_format RQF_MDS_REINT_UNLINK =
         DEFINE_REQ_FMT0("MDS_REINT_UNLINK", mds_reint_unlink_client,
-                        mds_last_unlink_server);
+                        mds_last_unlink_server_acl);
 EXPORT_SYMBOL(RQF_MDS_REINT_UNLINK);
 
 struct req_format RQF_MDS_REINT_LINK =
         DEFINE_REQ_FMT0("MDS_REINT_LINK",
-                        mds_reint_link_client, mdt_body_only);
+                        mds_reint_link_client, mdt_body_acl);
 EXPORT_SYMBOL(RQF_MDS_REINT_LINK);
 
 struct req_format RQF_MDS_REINT_RENAME =
         DEFINE_REQ_FMT0("MDS_REINT_RENAME", mds_reint_rename_client,
-                        mds_last_unlink_server);
+                        mds_last_unlink_server_acl);
 EXPORT_SYMBOL(RQF_MDS_REINT_RENAME);
 
 struct req_format RQF_MDS_REINT_MIGRATE =
