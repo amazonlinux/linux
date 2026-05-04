@@ -752,6 +752,9 @@
 /* 'ktime_to_timespec64' is available */
 #define HAVE_KTIME_TO_TIMESPEC64 1
 
+/* lbug_with_loc is in objtool global_noreturns array */
+/* #undef HAVE_LBUG_WITH_LOC_IN_OBJTOOL */
+
 /* ldiskfsfs_dirhash takes an inode argument */
 /* #undef HAVE_LDISKFSFS_GETHASH_INODE_ARG */
 
@@ -1361,7 +1364,7 @@
 #define LUSTRE_PATCH 6
 
 /* A copy of PACKAGE_VERSION */
-#define LUSTRE_VERSION_STRING "2.15.6_723_gfa92cdb_dirty"
+#define LUSTRE_VERSION_STRING "2.15.6"
 
 /* maximum number of MDS threads */
 /* #undef MDS_MAX_THREADS */
@@ -1391,7 +1394,7 @@
 #define PACKAGE_NAME "Lustre"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "Lustre 2.15.6_723_gfa92cdb_dirty"
+#define PACKAGE_STRING "Lustre 2.15.6"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "lustre"
@@ -1400,7 +1403,7 @@
 #define PACKAGE_URL ""
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "2.15.6_723_gfa92cdb_dirty"
+#define PACKAGE_VERSION "2.15.6"
 
 /* struct page.flags as unsigned long */
 #define PAGE_FLAGS(page) ((page)->flags.f)
@@ -1447,7 +1450,7 @@
 /* #undef USE_HEALTH_CHECK_WRITE */
 
 /* Version number of package */
-#define VERSION "2.15.6_723_gfa92cdb_dirty"
+#define VERSION "2.15.6"
 
 /* vfs_setxattr() value argument is non-const */
 #define VFS_SETXATTR_VALUE(value) ((void *)(value))
