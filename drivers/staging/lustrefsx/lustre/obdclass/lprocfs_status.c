@@ -463,6 +463,7 @@ int lprocfs_stats_lock(struct lprocfs_stats *stats,
 		return stats->ls_biggest_alloc_num;
 	default:
 		LBUG();
+		return -EINVAL;
 	}
 }
 
