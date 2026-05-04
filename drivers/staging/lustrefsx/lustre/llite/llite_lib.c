@@ -1931,6 +1931,40 @@ void ll_clear_inode(struct inode *inode)
 	EXIT;
 }
 
+/* This function implements a retry mechanism on top of md_setattr().
+ * This is useful because the server can hint at the useful groups, by putting
+ * in the request reply the target inode's GID, and also its ACL.
+ */
+static int __ll_setattr(struct obd_export *exp, struct md_op_data *op_data,
+			void *ea, size_t ealen, struct ptlrpc_request **request)
+{
+	bool tryagain = true;
+	int rc;
+
+	ENTRY;
+
+seta:
+	rc = md_setattr(exp, op_data, ea, ealen, request);
+	CDEBUG(D_VFSTRACE,
+	       "setattr "DFID" suppgids %d %d: rc %d\n",
+	       PFID(&op_data->op_fid1), op_data->op_suppgids[0],
+	       op_data->op_suppgids[1], rc);
+	if (tryagain && *request && rc == -EACCES) {
+		/* we need w perms on inode to setattr */
+		rc = new_suppgid_from_req(true, op_data, request, S_IWGRP >> 3);
+		if (rc < 0)
+			GOTO(out, rc);
+
+		ptlrpc_req_finished(*request);
+		*request = NULL;
+		tryagain = false;
+		goto seta;
+	}
+
+out:
+	RETURN(rc);
+}
+
 static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 {
 	struct lustre_md md;
@@ -1957,7 +1991,7 @@ static int ll_md_setattr(struct dentry *dentry, struct md_op_data *op_data)
 	}
 
 
-	rc = md_setattr(sbi->ll_md_exp, op_data, NULL, 0, &request);
+	rc = __ll_setattr(sbi->ll_md_exp, op_data, NULL, 0, &request);
 	if (rc) {
 		ptlrpc_req_finished(request);
 		if (rc == -ENOENT) {
