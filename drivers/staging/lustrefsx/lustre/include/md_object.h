@@ -172,7 +172,9 @@ struct md_op_spec {
 		     sp_rm_entry:1,  /* only remove name entry */
 		     sp_permitted:1, /* do not check permission */
 		     sp_migrate_close:1, /* close the file during migrate */
-		     sp_migrate_nsonly:1; /* migrate dirent only */
+		     sp_migrate_nsonly:1, /* migrate dirent only */
+			 /* rename must retry again with target ACLs */
+		     sp_rename_again:1;
 
 	/** to create directory */
 	const struct dt_index_features *sp_feat;

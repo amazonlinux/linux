@@ -1565,6 +1565,10 @@ static long ll_dir_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			RETURN(rc);
 
 		filename = data->ioc_inlbuf1;
+		if (!filename) {
+			CDEBUG(D_INFO, "IOC_MDC_LOOKUP filename is NULL\n");
+			GOTO(out_free, rc = -EINVAL);
+		}
 		namelen = strlen(filename);
 		if (namelen < 1) {
 			CDEBUG(D_INFO, "IOC_MDC_LOOKUP missing filename\n");
@@ -2258,36 +2262,42 @@ out_quotactl:
 		RETURN(index);
 	}
 	case LL_IOC_HSM_REQUEST: {
-		struct hsm_user_request	*hur;
+		struct hsm_user_request	*hur, *hur_hdr;
 		ssize_t			 totalsize;
 
-		OBD_ALLOC_PTR(hur);
-		if (hur == NULL)
+		OBD_ALLOC_PTR(hur_hdr);
+		if (hur_hdr == NULL)
 			RETURN(-ENOMEM);
 
 		/* We don't know the true size yet; copy the fixed-size part */
-		if (copy_from_user(hur, (void __user *)arg, sizeof(*hur))) {
-			OBD_FREE_PTR(hur);
-			RETURN(-EFAULT);
-		}
+		if (copy_from_user(hur_hdr,
+				(void __user *)arg, sizeof(*hur_hdr)))
+			GOTO(out_hur_hdr, rc = -EFAULT);
 
 		/* Compute the whole struct size */
-		totalsize = hur_len(hur);
-		OBD_FREE_PTR(hur);
+		totalsize = hur_len(hur_hdr);
 		if (totalsize < 0)
-			RETURN(-E2BIG);
+			GOTO(out_hur_hdr, rc = -E2BIG);
 
 		/* Final size will be more than double totalsize */
 		if (totalsize >= MDS_MAXREQSIZE / 3)
-			RETURN(-E2BIG);
+			GOTO(out_hur_hdr, rc = -E2BIG);
 
 		OBD_ALLOC_LARGE(hur, totalsize);
 		if (hur == NULL)
-			RETURN(-ENOMEM);
+			GOTO(out_hur_hdr, rc = -ENOMEM);
 
-		/* Copy the whole struct */
-		if (copy_from_user(hur, (void __user *)arg, totalsize))
-			GOTO(out_hur, rc = -EFAULT);
+		memcpy(hur, hur_hdr, sizeof(*hur));
+		OBD_FREE_PTR(hur_hdr);
+		hur_hdr = NULL;
+
+		/* Copy the variable-sized part */
+		if (totalsize > sizeof(*hur)) {
+			if (copy_from_user(hur->hur_user_item,
+					(void __user *)arg + sizeof(*hur),
+					totalsize - sizeof(*hur)))
+				GOTO(out_hur, rc = -EFAULT);
+		}
 
 		if (hur->hur_request.hr_action == HUA_RELEASE) {
 			const struct lu_fid *fid;
@@ -2313,9 +2323,14 @@ out_quotactl:
 		}
 
 out_hur:
-		OBD_FREE_LARGE(hur, totalsize);
+		if (hur)
+			OBD_FREE_LARGE(hur, totalsize);
 
+out_hur_hdr:
+		if (hur_hdr)
+			OBD_FREE_PTR(hur_hdr);
 		RETURN(rc);
+
 	}
 	case LL_IOC_HSM_PROGRESS: {
 		struct hsm_progress_kernel	hpk;
