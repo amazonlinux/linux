@@ -752,6 +752,9 @@
 /* 'ktime_to_timespec64' is available */
 #define HAVE_KTIME_TO_TIMESPEC64 1
 
+/* lbug_with_loc is in objtool global_noreturns array */
+#define HAVE_LBUG_WITH_LOC_IN_OBJTOOL 1
+
 /* ldiskfsfs_dirhash takes an inode argument */
 /* #undef HAVE_LDISKFSFS_GETHASH_INODE_ARG */
 
