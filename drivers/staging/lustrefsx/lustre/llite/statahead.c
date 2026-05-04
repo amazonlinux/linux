@@ -118,14 +118,23 @@ sa_rehash(struct ll_statahead_info *sai, struct sa_entry *entry)
 }
 
 /* unhash entry from sai_cache */
-static inline void
-sa_unhash(struct ll_statahead_info *sai, struct sa_entry *entry)
+static inline int
+sa_unhash(struct ll_statahead_info *sai, struct sa_entry *entry, bool inuse_check)
 {
 	int i = sa_hash(entry->se_qstr.hash);
+	int rc = 0;
+
+	if (inuse_check && atomic_read(&sai->sai_inuse_count) > 0)
+		return -EAGAIN;
 
 	spin_lock(&sai->sai_cache_lock[i]);
-	list_del_init(&entry->se_hash);
+	if (inuse_check && atomic_read(&sai->sai_inuse_count) > 0)
+		rc = -EAGAIN;
+	else
+		list_del_init(&entry->se_hash);
 	spin_unlock(&sai->sai_cache_lock[i]);
+
+	return rc;
 }
 
 static inline int agl_should_run(struct ll_statahead_info *sai,
@@ -251,38 +260,55 @@ sa_get(struct ll_statahead_info *sai, const struct qstr *qstr)
 	list_for_each_entry(entry, &sai->sai_cache[i], se_hash) {
 		if (entry->se_qstr.hash == qstr->hash &&
 		    entry->se_qstr.len == qstr->len &&
-		    memcmp(entry->se_qstr.name, qstr->name, qstr->len) == 0)
+		    memcmp(entry->se_qstr.name, qstr->name, qstr->len) == 0) {
+			atomic_inc(&sai->sai_inuse_count);
 			return entry;
+		}
 	}
 	return NULL;
 }
 
 /* unhash and unlink sa_entry, and then free it */
-static inline void
-sa_kill(struct ll_statahead_info *sai, struct sa_entry *entry)
+static inline int sa_kill(struct ll_statahead_info *sai, struct sa_entry *entry,
+			  bool locked, bool inuse_check)
 {
 	struct ll_inode_info *lli = ll_i2info(sai->sai_dentry->d_inode);
+	int rc;
 
 	LASSERT(!sa_unhashed(entry));
 	LASSERT(!list_empty(&entry->se_list));
 	LASSERT(sa_ready(entry));
 
-	sa_unhash(sai, entry);
+	rc = sa_unhash(sai, entry, inuse_check);
+	if (rc)
+		return rc;
 
-	spin_lock(&lli->lli_sa_lock);
+	if (!locked)
+		spin_lock(&lli->lli_sa_lock);
 	list_del_init(&entry->se_list);
 	spin_unlock(&lli->lli_sa_lock);
 
 	iput(entry->se_inode);
 
 	sa_free(sai, entry);
+	if (locked)
+		spin_lock(&lli->lli_sa_lock);
+
+	return 0;
+}
+
+static inline int sa_kill_try(struct ll_statahead_info *sai,
+			      struct sa_entry *entry, bool locked)
+{
+	return sa_kill(sai, entry, locked, true);
 }
 
 /* called by scanner after use, sa_entry will be killed */
-static void
-sa_put(struct ll_statahead_info *sai, struct sa_entry *entry)
+static void sa_put(struct inode *dir, struct ll_statahead_info *sai,
+		   struct sa_entry *entry, bool inuse)
 {
-	struct sa_entry *tmp, *next;
+	struct ll_inode_info *lli = ll_i2info(dir);
+	struct sa_entry *tmp;
 
 	if (entry && entry->se_state == SA_ENTRY_SUCC) {
 		struct ll_sb_info *sbi = ll_i2sbi(sai->sai_dentry->d_inode);
@@ -295,18 +321,32 @@ sa_put(struct ll_statahead_info *sai, struct sa_entry *entry)
 		sai->sai_consecutive_miss++;
 	}
 
-	if (entry)
-		sa_kill(sai, entry);
-
-	/*
-	 * kill old completed entries, only scanner process does this, no need
-	 * to lock
-	 */
-	list_for_each_entry_safe(tmp, next, &sai->sai_entries, se_list) {
-		if (!is_omitted_entry(sai, tmp->se_index))
-			break;
-		sa_kill(sai, tmp);
+	if (entry) {
+		inuse = true;
+		sa_kill(sai, entry, false, false);
+		CFS_FAIL_TIMEOUT(OBD_FAIL_LLITE_STATAHEAD_PAUSE, cfs_fail_val);
 	}
+
+	spin_lock(&lli->lli_sa_lock);
+	if (inuse) {
+		/*
+		 * kill old completed entries. Maybe kicking old entries can
+		 * be ignored?
+		 */
+
+		while ((tmp = list_first_entry_or_null(&sai->sai_entries,
+				struct sa_entry, se_list))) {
+			if (!is_omitted_entry(sai, tmp->se_index))
+				break;
+
+			/* ll_sa_lock is dropped by sa_kill(), restart list */
+			sa_kill(sai, tmp, true, false);
+		}
+	}
+
+	if (inuse)
+		atomic_dec(&sai->sai_inuse_count);
+	spin_unlock(&lli->lli_sa_lock);
 }
 
 /*
@@ -487,6 +527,7 @@ static struct ll_statahead_info *ll_sai_alloc(struct dentry *dentry)
 		spin_lock_init(&sai->sai_cache_lock[i]);
 	}
 	atomic_set(&sai->sai_cache_count, 0);
+	atomic_set(&sai->sai_inuse_count, 0);
 
 	spin_lock(&sai_generation_lock);
 	lli->lli_sa_generation = ++sai_generation;
@@ -532,7 +573,6 @@ static void ll_sai_put(struct ll_statahead_info *sai)
 	struct ll_inode_info *lli = ll_i2info(sai->sai_dentry->d_inode);
 
 	if (atomic_dec_and_lock(&sai->sai_refcount, &lli->lli_sa_lock)) {
-		struct sa_entry *entry, *next;
 		struct ll_sb_info *sbi = ll_i2sbi(sai->sai_dentry->d_inode);
 
 		lli->lli_sai = NULL;
@@ -543,9 +583,10 @@ static void ll_sai_put(struct ll_statahead_info *sai)
 		LASSERT(sai->sai_sent == sai->sai_replied);
 		LASSERT(!sa_has_callback(sai));
 
-		list_for_each_entry_safe(entry, next, &sai->sai_entries,
-					 se_list)
-			sa_kill(sai, entry);
+		if (atomic_read(&sai->sai_inuse_count) > 0) {
+			CERROR("%s: sai_inuse_count=%d at cleanup\n",
+			       sbi->ll_fsname, atomic_read(&sai->sai_inuse_count));
+		}
 
 		LASSERT(atomic_read(&sai->sai_cache_count) == 0);
 		LASSERT(agl_list_empty(sai));
@@ -1073,6 +1114,8 @@ static int ll_statahead_thread(void *arg)
 	struct md_op_data *op_data;
 	struct folio *folio = NULL;
 	__u64 pos = 0;
+	struct sa_entry *entry;
+	int tries = 0;
 	int rc = 0;
 	void *kaddr;
 
@@ -1290,6 +1333,28 @@ out:
 
 	atomic_add(sai->sai_hit, &sbi->ll_sa_hit_total);
 	atomic_add(sai->sai_miss, &sbi->ll_sa_miss_total);
+	
+	/* Kill all local cached entry. */
+	spin_lock(&lli->lli_sa_lock);
+	while ((entry = list_first_entry_or_null(&sai->sai_entries,
+						 struct sa_entry, se_list))) {
+		/*
+		 * If the entry is being used by the user process, wait for
+		 * inuse entry finished and restart to kill local cached
+		 * entries.
+		 */
+		if (sa_kill_try(sai, entry, true)) {
+			spin_unlock(&lli->lli_sa_lock);
+			msleep(125);
+			if (++tries % 1024 == 0) {
+				CWARN("%s: statahead thread waited %lums for inuse entry "DFID" to be finished\n",
+				      sbi->ll_fsname, tries * 125/MSEC_PER_SEC,
+				      PFID(&entry->se_fid));
+			}
+			spin_lock(&lli->lli_sa_lock);
+		}
+	}
+	spin_unlock(&lli->lli_sa_lock);
 
 	ll_sai_put(sai);
 
@@ -1531,6 +1596,7 @@ static int revalidate_statahead_dentry(struct inode *dir,
 	struct sa_entry *entry = NULL;
 	struct ll_dentry_data *lld;
 	struct ll_inode_info *lli = ll_i2info(dir);
+	bool inuse = false;
 	int rc = 0;
 
 	ENTRY;
@@ -1573,13 +1639,14 @@ static int revalidate_statahead_dentry(struct inode *dir,
 	if (!sa_ready(entry) && sai->sai_in_readpage)
 		sa_handle_callback(sai);
 
+	inuse = true;
 	if (!sa_ready(entry)) {
 		spin_lock(&lli->lli_sa_lock);
 		sai->sai_index_wait = entry->se_index;
 		spin_unlock(&lli->lli_sa_lock);
 		rc = wait_event_idle_timeout(sai->sai_waitq, sa_ready(entry),
 					     cfs_time_seconds(30));
-		if (rc == 0) {
+		if (rc == 0 || !sa_ready(entry)) {
 			/*
 			 * entry may not be ready, so it may be used by inflight
 			 * statahead RPC, don't free it.
@@ -1651,12 +1718,11 @@ out:
 	if (lld)
 		lld->lld_sa_generation = lli->lli_sa_generation;
 	rcu_read_unlock();
-	sa_put(sai, entry);
+	sa_put(dir, sai, entry, inuse);
 	spin_lock(&lli->lli_sa_lock);
 	if (sai->sai_task)
 		wake_up_process(sai->sai_task);
 	spin_unlock(&lli->lli_sa_lock);
-
 	RETURN(rc);
 }
 
