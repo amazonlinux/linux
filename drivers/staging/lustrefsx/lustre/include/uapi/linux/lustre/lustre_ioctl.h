@@ -111,16 +111,20 @@ struct obd_ioctl_hdr {
 	__u32		ioc_version;
 };
 
-static inline __u32 obd_ioctl_packlen(struct obd_ioctl_data *data)
+static inline int obd_ioctl_packlen(struct obd_ioctl_data *data, __u32 *out)
 {
-	__u32 len = __ALIGN_KERNEL(sizeof(*data), 8);
+	__u64 len = __ALIGN_KERNEL(sizeof(*data), 8);
 
-	len += __ALIGN_KERNEL(data->ioc_inllen1, 8);
-	len += __ALIGN_KERNEL(data->ioc_inllen2, 8);
-	len += __ALIGN_KERNEL(data->ioc_inllen3, 8);
-	len += __ALIGN_KERNEL(data->ioc_inllen4, 8);
+	len += __ALIGN_KERNEL((__u64)data->ioc_inllen1, 8);
+	len += __ALIGN_KERNEL((__u64)data->ioc_inllen2, 8);
+	len += __ALIGN_KERNEL((__u64)data->ioc_inllen3, 8);
+	len += __ALIGN_KERNEL((__u64)data->ioc_inllen4, 8);
 
-	return len;
+	if (len > (__u64)(__u32)-1)
+		return -EINVAL;
+
+	*out = (__u32) len;
+	return 0;
 }
 
 /*
