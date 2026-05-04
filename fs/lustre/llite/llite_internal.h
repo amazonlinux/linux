@@ -1180,6 +1180,8 @@ int ll_intent_lock(struct obd_export *exp, struct md_op_data *op_data,
 		   struct lookup_intent *it, struct ptlrpc_request **reqp,
 		   ldlm_blocking_callback cb_blocking, __u64 extra_lock_flags,
 		   bool tryagain);
+int new_suppgid_from_req(bool update_opdata, struct md_op_data *op_data,
+			 struct ptlrpc_request **reqp, int accmode);
 
 /* llite/rw.c */
 #ifndef HAVE___FILEMAP_GET_FOLIO
@@ -1379,6 +1381,7 @@ void ll_dom_finish_open(struct inode *inode, struct ptlrpc_request *req);
 /* Compute expected user md size when passing in a md from user space */
 static inline ssize_t ll_lov_user_md_size(const struct lov_user_md *lum)
 {
+	ssize_t res;
 	switch (lum->lmm_magic) {
 	case LOV_USER_MAGIC_V1:
 		return sizeof(struct lov_user_md_v1);
@@ -1391,9 +1394,15 @@ static inline ssize_t ll_lov_user_md_size(const struct lov_user_md *lum)
 		return lov_user_md_size(lum->lmm_stripe_count,
 					LOV_USER_MAGIC_SPECIFIC);
 	case LOV_USER_MAGIC_COMP_V1:
-		return ((struct lov_comp_md_v1 *)lum)->lcm_size;
+		res = ((struct lov_comp_md_v1 *)lum)->lcm_size;
+		if (res <= 0 || res > XATTR_SIZE_MAX)
+			return -EINVAL;
+		return res;
 	case LOV_USER_MAGIC_FOREIGN:
-		return foreign_size(lum);
+		res = foreign_size(lum);
+		if (res <= 0 || res > XATTR_SIZE_MAX)
+			return -EINVAL;
+		return res;
 	}
 
 	return -EINVAL;
@@ -1598,6 +1607,7 @@ struct ll_statahead_info {
 	struct dentry	       *sai_dentry;
 	atomic_t		sai_refcount;   /* when access this struct, hold
 						 * refcount */
+	atomic_t		sai_inuse_count;/* inuse entry count */
 	unsigned int            sai_max;        /* max ahead of lookup */
 	__u64                   sai_sent;       /* stat requests sent count */
 	__u64                   sai_replied;    /* stat requests which received

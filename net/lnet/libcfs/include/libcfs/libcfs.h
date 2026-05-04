@@ -129,6 +129,10 @@ do {									\
 		);							\
 } while (0)
 
+#ifndef unsafe_memcpy
+#define unsafe_memcpy(to, from, size, reason)	memcpy((to), (from), (size))
+#endif
+
 #define FLEXIBLE_OBJECT \
 	"Struct contains a flexible member, the size of object is checked" \
 	"and can be safely copied in a single memcpy()"
