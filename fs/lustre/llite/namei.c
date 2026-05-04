@@ -854,8 +854,10 @@ static inline int accmode_from_openflags(u64 open_flags)
 	return may_mask;
 }
 
-static __u32 get_uc_group_from_acl(const struct posix_acl *acl, int want)
+static __u32 get_uc_group_from_acl(const struct posix_acl *acl, int want,
+								   struct md_op_data *op_data)
 {
+	__u32 uc_group = (__u32)__kgid_val(INVALID_GID);
 	const struct posix_acl_entry *pa, *pe;
 
 	FOREACH_ACL_ENTRY(pa, acl, pe) {
@@ -863,9 +865,13 @@ static __u32 get_uc_group_from_acl(const struct posix_acl *acl, int want)
 		case ACL_GROUP_OBJ:
 		case ACL_GROUP:
 			if (in_group_p(pa->e_gid) &&
-			    (pa->e_perm & want) == want)
-				return (__u32)from_kgid(&init_user_ns,
-							pa->e_gid);
+			    (pa->e_perm & want) == want) {
+				uc_group = (__u32)from_kgid(&init_user_ns,
+							    pa->e_gid);
+				if (uc_group != op_data->op_suppgids[0] &&
+				    uc_group != op_data->op_suppgids[1])
+					return uc_group;
+			}
 			break;
 		default:
 			/* nothing to do */
@@ -873,7 +879,7 @@ static __u32 get_uc_group_from_acl(const struct posix_acl *acl, int want)
 		}
 	}
 
-	return (__u32)__kgid_val(INVALID_GID);
+	return uc_group;
 }
 
 static bool failed_it_can_retry(int retval, struct lookup_intent *it)
@@ -888,6 +894,51 @@ static bool failed_it_can_retry(int retval, struct lookup_intent *it)
 	}
 
 	return (rc == -EACCES);
+}
+
+int new_suppgid_from_req(bool update_opdata, struct md_op_data *op_data,
+				struct ptlrpc_request **reqp, int accmode)
+{
+	struct mdt_body *body;
+	__u32 new_suppgid;
+	int rc = 0;
+
+	ENTRY;
+
+	if (!req_capsule_field_present(&(*reqp)->rq_pill,
+				       &RMF_MDT_BODY, RCL_SERVER))
+		GOTO(out, rc = -EACCES);
+
+	body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
+	new_suppgid = body->mbo_gid;
+	CDEBUG(D_SEC, "new suppgid from body: %d\n", new_suppgid);
+	if (op_data->op_suppgids[0] == new_suppgid ||
+	    op_data->op_suppgids[1] == new_suppgid ||
+	    !in_group_p(make_kgid(&init_user_ns, new_suppgid))) {
+		struct posix_acl *acl;
+
+		rc = get_acl_from_req(*reqp, &acl);
+		if (rc || !acl)
+			GOTO(out, rc = -EACCES);
+
+		new_suppgid = get_uc_group_from_acl(acl, accmode, op_data);
+		posix_acl_release(acl);
+		CDEBUG(D_SEC, "new suppgid from acl: %d\n", new_suppgid);
+
+		if (new_suppgid == (__u32)__kgid_val(INVALID_GID))
+			GOTO(out, rc = -EACCES);
+	}
+
+	if (update_opdata) {
+		if (op_data->op_suppgids[0] == (__u32)__kgid_val(INVALID_GID))
+			op_data->op_suppgids[0] = new_suppgid;
+		else
+			op_data->op_suppgids[1] = new_suppgid;
+	} else {
+		rc = new_suppgid;
+	}
+out:
+	RETURN(rc);
 }
 
 /* This function implements a retry mechanism on top of md_intent_lock().
@@ -919,34 +970,12 @@ intent:
 	       it->it_op, PFID(&op_data->op_fid1),
 	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc);
 	if (tryagain && *reqp && failed_it_can_retry(rc, it)) {
-		struct mdt_body *body;
-		__u32 new_suppgid;
-
-		body = req_capsule_server_get(&(*reqp)->rq_pill, &RMF_MDT_BODY);
-		new_suppgid = body->mbo_gid;
-		CDEBUG(D_SEC, "new suppgid from body: %d\n", new_suppgid);
-		if (op_data->op_suppgids[0] == body->mbo_gid ||
-		    op_data->op_suppgids[1] == body->mbo_gid ||
-		    !in_group_p(make_kgid(&init_user_ns, body->mbo_gid))) {
-			int accmode = accmode_from_openflags(it->it_flags);
-			struct posix_acl *acl;
-
-			rc = get_acl_from_req(*reqp, &acl);
-			if (rc || !acl)
-				GOTO(out, rc = -EACCES);
-
-			new_suppgid = get_uc_group_from_acl(acl, accmode);
-			posix_acl_release(acl);
-			CDEBUG(D_SEC, "new suppgid from acl: %d\n",
-			       new_suppgid);
-
-			if (new_suppgid == (__u32)__kgid_val(INVALID_GID))
-				GOTO(out, rc = -EACCES);
-		}
-
+		rc = new_suppgid_from_req(true, op_data, reqp,
+					  accmode_from_openflags(it->it_flags));
+		if (rc < 0)
+			GOTO(out, rc);
 		if (!(it->it_flags & MDS_OPEN_BY_FID))
 			fid_zero(&op_data->op_fid2);
-		op_data->op_suppgids[1] = new_suppgid;
 		ptlrpc_req_finished(*reqp);
 		*reqp = NULL;
 		ll_intent_release(it);
@@ -1672,6 +1701,44 @@ unlock:
 	up_read(&rlli->lli_lsm_sem);
 }
 
+/* This function implements a retry mechanism on top of md_create().
+ * This is useful because the server can hint at the useful groups, by putting
+ * in the request reply the target inode's GID, and also its ACL.
+ */
+static int __ll_create(struct obd_export *exp, struct md_op_data *op_data,
+		       const void *data, size_t datalen, umode_t mode,
+		       uid_t uid, gid_t gid, kernel_cap_t cap_effective,
+		       __u64 rdev, struct ptlrpc_request **request,
+		       bool tryagain)
+{
+	int rc;
+
+	ENTRY;
+
+creat:
+	rc = md_create(exp, op_data, data, datalen, mode, uid, gid,
+		       cap_effective, rdev, request);
+	CDEBUG(D_VFSTRACE,
+	       "create "DFID"/%.*s suppgids %d %d: rc %d\n",
+	       PFID(&op_data->op_fid1), (int)op_data->op_namelen, op_data->op_name,
+	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc);
+	if (tryagain && *request && rc == -EACCES) {
+		/* we need wx perms on dir to create */
+		rc = new_suppgid_from_req(true, op_data, request,
+					  (S_IWGRP | S_IXGRP) >> 3);
+		if (rc < 0)
+			GOTO(out, rc);
+
+		ptlrpc_req_finished(*request);
+		*request = NULL;
+		tryagain = false;
+		goto creat;
+	}
+
+out:
+	RETURN(rc);
+}
+
 static int ll_new_node(struct inode *dir, struct dentry *dchild,
 		       const char *tgt, umode_t mode, __u64 rdev, __u32 opc)
 {
@@ -1763,11 +1830,11 @@ again:
 		}
 	}
 
-	err = md_create(sbi->ll_md_exp, op_data, tgt ? disk_link->name : NULL,
+	err = __ll_create(sbi->ll_md_exp, op_data, tgt ? disk_link->name : NULL,
 			tgt ? disk_link->len : 0, mode,
 			from_kuid(&init_user_ns, current_fsuid()),
 			from_kgid(&init_user_ns, current_fsgid()),
-			current_cap(), rdev, &request);
+			current_cap(), rdev, &request, true);
 #if LUSTRE_VERSION_CODE < OBD_OCD_VERSION(2, 15, 58, 0)
 	/*
 	 * server < 2.12.58 doesn't pack default LMV in intent_getattr reply,
@@ -1994,6 +2061,42 @@ static int ll_symlink(struct mnt_idmap *map, struct inode *dir,
 	RETURN(err);
 }
 
+/* This function implements a retry mechanism on top of md_link().
+ * This is useful because the server can hint at the useful groups, by putting
+ * in the request reply the target inode's GID, and also its ACL.
+ */
+static int __ll_link(struct obd_export *exp, struct md_op_data *op_data,
+			    struct ptlrpc_request **request)
+{
+	bool tryagain = true;
+	int rc;
+
+	ENTRY;
+
+link:
+	rc = md_link(exp, op_data, request);
+	CDEBUG(D_VFSTRACE,
+	       "link "DFID" to "DFID"/%.*s suppgids %d %d: rc %d\n",
+	       PFID(&op_data->op_fid1), PFID(&op_data->op_fid2),
+	       (int)op_data->op_namelen, op_data->op_name, op_data->op_suppgids[0],
+	       op_data->op_suppgids[1], rc);
+	if (tryagain && *request && rc == -EACCES) {
+		/* we need wx perms on dir to link */
+		rc = new_suppgid_from_req(true, op_data, request,
+					  (S_IWGRP | S_IXGRP) >> 3);
+		if (rc < 0)
+			GOTO(out, rc);
+
+		ptlrpc_req_finished(*request);
+		*request = NULL;
+		tryagain = false;
+		goto link;
+	}
+
+out:
+	RETURN(rc);
+}
+
 static int ll_link(struct dentry *old_dentry, struct inode *dir,
 		   struct dentry *new_dentry)
 {
@@ -2020,7 +2123,7 @@ static int ll_link(struct dentry *old_dentry, struct inode *dir,
 	if (IS_ERR(op_data))
 		RETURN(PTR_ERR(op_data));
 
-	err = md_link(sbi->ll_md_exp, op_data, &request);
+	err = __ll_link(sbi->ll_md_exp, op_data, &request);
 	ll_finish_md_op_data(op_data);
 	if (err)
 		GOTO(out, err);
@@ -2080,6 +2183,40 @@ static int ll_mkdir(struct inode *dir, struct dentry *dchild, umode_t mode)
 }
 #endif
 
+/* This function implements a retry mechanism on top of md_unlink().
+ * This is useful because the server can hint at the useful groups, by putting
+ * in the request reply the target inode's GID, and also its ACL.
+ */
+static int __ll_unlink(struct obd_export *exp, struct md_op_data *op_data,
+		       struct ptlrpc_request **request, bool tryagain)
+{
+	int rc;
+
+	ENTRY;
+
+unlink:
+	rc = md_unlink(exp, op_data, request);
+	CDEBUG(D_VFSTRACE,
+	       "unlink "DFID"/%.*s suppgids %d %d: rc %d\n",
+	       PFID(&op_data->op_fid1), (int)op_data->op_namelen, op_data->op_name,
+	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc);
+	if (tryagain && *request && rc == -EACCES) {
+		/* we need wx perms on dir to unlink */
+		rc = new_suppgid_from_req(true, op_data, request,
+					  (S_IWGRP | S_IXGRP) >> 3);
+		if (rc < 0)
+			GOTO(out, rc);
+
+		ptlrpc_req_finished(*request);
+		*request = NULL;
+		tryagain = false;
+		goto unlink;
+	}
+
+out:
+	RETURN(rc);
+}
+
 static int ll_rmdir(struct inode *dir, struct dentry *dchild)
 {
 	const struct qstr *name = &dchild->d_name;
@@ -2110,7 +2247,7 @@ static int ll_rmdir(struct inode *dir, struct dentry *dchild)
 
 	if (fid_is_zero(&op_data->op_fid2))
 		op_data->op_fid2 = op_data->op_fid3;
-	rc = md_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request);
+	rc = __ll_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request, true);
 	ll_finish_md_op_data(op_data);
 	if (!rc) {
 		struct mdt_body *body;
@@ -2206,7 +2343,7 @@ static int ll_unlink(struct inode *dir, struct dentry *dchild)
 		op_data->op_cli_flags |= CLI_DIRTY_DATA;
 	if (fid_is_zero(&op_data->op_fid2))
 		op_data->op_fid2 = op_data->op_fid3;
-	rc = md_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request);
+	rc = __ll_unlink(ll_i2sbi(dir)->ll_md_exp, op_data, &request, true);
 	ll_finish_md_op_data(op_data);
 	if (rc)
 		GOTO(out, rc);
@@ -2229,6 +2366,52 @@ out:
 	if (!rc)
 		ll_stats_ops_tally(ll_i2sbi(dir), LPROC_LL_UNLINK,
 				   ktime_us_delta(ktime_get(), kstart));
+	RETURN(rc);
+}
+
+/* This function implements a retry mechanism on top of md_rename().
+ * This is useful because the server can hint at the useful groups, by putting
+ * in the request reply the target inode's GID, and also its ACL.
+ */
+static int __ll_rename(struct obd_export *exp, struct md_op_data *op_data,
+		       const char *old, size_t oldlen,
+		       const char *new, size_t newlen,
+		       struct ptlrpc_request **request, bool tryagain)
+{
+	int rc;
+
+	ENTRY;
+
+rename:
+	rc = md_rename(exp, op_data, old, oldlen, new, newlen, request);
+	CDEBUG(D_VFSTRACE,
+	       "rename "DFID"/%.*s to "DFID"/%.*s suppgids %d %d: rc %d\n",
+	       PFID(&op_data->op_fid1), (int)oldlen, old,
+	       PFID(&op_data->op_fid2), (int)newlen, new,
+	       op_data->op_suppgids[0], op_data->op_suppgids[1], rc);
+	if (tryagain && *request && rc == -EACCES) {
+		/* we need wx perms on both source and target
+		 * dirs to rename
+		 */
+		rc = new_suppgid_from_req(false, op_data, request,
+					  (S_IWGRP | S_IXGRP) >> 3);
+		if (rc < 0)
+			GOTO(out, rc);
+
+		if (op_data->op_bias & MDS_RENAME_AGAIN) {
+			op_data->op_suppgids[1] = (__u32)rc;
+			tryagain = false;
+		} else {
+			op_data->op_bias |= MDS_RENAME_AGAIN;
+			op_data->op_suppgids[0] = (__u32)rc;
+		}
+
+		ptlrpc_req_finished(*request);
+		*request = NULL;
+		goto rename;
+	}
+
+out:
 	RETURN(rc);
 }
 
@@ -2309,10 +2492,10 @@ static int ll_rename(struct mnt_idmap *map,
 		llcrypt_free_filename(&foldname);
 		RETURN(err);
 	}
-	err = md_rename(sbi->ll_md_exp, op_data,
-			foldname.disk_name.name, foldname.disk_name.len,
-			fnewname.disk_name.name, fnewname.disk_name.len,
-			&request);
+	err = __ll_rename(sbi->ll_md_exp, op_data,
+			  foldname.disk_name.name, foldname.disk_name.len,
+			  fnewname.disk_name.name, fnewname.disk_name.len,
+			  &request, true);
 	llcrypt_free_filename(&foldname);
 	llcrypt_free_filename(&fnewname);
 	ll_finish_md_op_data(op_data);
