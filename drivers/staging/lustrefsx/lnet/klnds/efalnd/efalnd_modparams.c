@@ -8,15 +8,15 @@
 /*
  * This file is part of Lustre, http://www.lustre.org/
  *
- * lnet/lnds/efalnd/efalnd.c
- *
  * Author: Yehuda Yitschak <yehuday@amazon.com>
+ * Author: Yonatan Nachum <ynachum@amazon.com>
  */
 
 #include "efalnd.h"
 
 /* Number of threads in each scheduler pool which is percpt,
- * we will estimate reasonable value based on CPUs if it's set to zero. */
+ * we will estimate reasonable value based on CPUs if it's set to zero.
+ */
 static int nscheds;
 module_param(nscheds, int, 0444);
 MODULE_PARM_DESC(nscheds, "number of threads in each scheduler pool");
@@ -35,7 +35,7 @@ static int peer_credits = DEFAULT_PEER_CREDITS;
 module_param(peer_credits, int, 0444);
 MODULE_PARM_DESC(peer_credits, "# concurrent sends to 1 peer");
 
-static int peer_buffer_credits = 0;
+static int peer_buffer_credits;
 module_param(peer_buffer_credits, int, 0444);
 MODULE_PARM_DESC(peer_buffer_credits, "# per-peer router buffer credits");
 
@@ -43,6 +43,10 @@ static int peer_timeout = DEFAULT_PEER_TIMEOUT;
 module_param(peer_timeout, int, 0444);
 MODULE_PARM_DESC(peer_timeout, "Seconds without aliveness news to declare peer dead (<=0 to disable)");
 
+/* Infiniband spec for RNR values:
+ * 0-6: Exact number of retries
+ * 7: Infinite RNR
+ */
 static int rnr_retry_count = 7;
 module_param(rnr_retry_count, int, 0644);
 MODULE_PARM_DESC(rnr_retry_count, "RNR retransmissions");
@@ -92,8 +96,8 @@ kefalnd_tunables_setup(struct lnet_ni *ni)
 	if (net_tunables->lct_peer_rtr_credits == -1)
 		net_tunables->lct_peer_rtr_credits = peer_buffer_credits;
 
-	if (net_tunables->lct_peer_tx_credits < EFALND_CREDITS_DEFAULT)
-		net_tunables->lct_peer_tx_credits = EFALND_CREDITS_DEFAULT;
+	if (net_tunables->lct_peer_tx_credits < EFALND_CREDITS_MIN)
+		net_tunables->lct_peer_tx_credits = EFALND_CREDITS_MIN;
 
 	if (net_tunables->lct_peer_tx_credits > EFALND_CREDITS_MAX)
 		net_tunables->lct_peer_tx_credits = EFALND_CREDITS_MAX;
