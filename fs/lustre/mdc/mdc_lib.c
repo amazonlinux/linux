@@ -474,7 +474,7 @@ void mdc_unlink_pack(struct req_capsule *pill, struct md_op_data *op_data)
 	rec->ul_cap = ll_capability_u32(op_data->op_cap);
 	rec->ul_mode = op_data->op_mode;
 	rec->ul_suppgid1 = op_data->op_suppgids[0];
-	rec->ul_suppgid2 = -1;
+	rec->ul_suppgid2 = op_data->op_suppgids[1];
 	rec->ul_fid1 = op_data->op_fid1;
 	rec->ul_fid2 = op_data->op_fid2;
 	rec->ul_time = op_data->op_mod_time;
