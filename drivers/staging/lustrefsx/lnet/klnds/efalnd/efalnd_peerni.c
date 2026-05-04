@@ -10,10 +10,10 @@
  *
  * EFA GID/QP Discovery via TCP
  *
- * The EFA LND automatically discovers remote EFA NIs GID and manager QP
- * data by doing a TCP LNET ping. This allows instances to communicate over
- * EFA without needing large NID support and without needing the GID to be
- * provided manually.
+ * For IPv4 NIDs the EFA LND automatically discovers remote EFA NIs GID and
+ * manager QP data by doing a TCP LNET ping. This allows instances to
+ * communicate over EFA without needing large NID support and without
+ * needing the GID to be provided manually.
  *
  * The GIDs and manager QP data for all remote NIs for a particular
  * node are passed via the LNET ping REPLY packet. Since a node will
@@ -45,6 +45,7 @@
  * remote node.
  *
  * Author: Timothy Day <timday@amazon.com>
+ * Author: Yonatan Nachum <ynachum@amazon.com>
  */
 
 #include <linux/delay.h>
@@ -53,8 +54,6 @@
 #include <linux/inet.h>
 #include <linux/inetdevice.h>
 #include <linux/smp.h>
-
-#include <asm/page.h>
 
 #include <rdma/ib_verbs.h>
 
@@ -119,7 +118,8 @@ static struct kefa_peer_ni *get_peer_ni(u32 nid_addr)
 }
 
 struct kefa_peer_ni *
-kefalnd_lookup_or_create_peer_ni(lnet_nid_t nid, union ib_gid *gid, u16 cm_qpn, u32 cm_qkey)
+kefalnd_lookup_or_create_peer_ni(lnet_nid_t nid, union ib_gid *gid, u16 cm_qpn,
+				 u32 cm_qkey)
 {
 	struct kefa_peer_ni *new_peer_ni, *old_peer_ni;
 
@@ -155,7 +155,8 @@ kefalnd_lookup_or_create_peer_ni(lnet_nid_t nid, union ib_gid *gid, u16 cm_qpn, 
 	}
 
 	if (old_peer_ni) {
-		CDEBUG(EFALND_CD, "Found pre-existing mapping for peer NI[%s]\n",
+		CDEBUG(EFALND_CD,
+		       "Found pre-existing mapping for peer NI[%s]\n",
 		       libcfs_nid2str(nid));
 
 		if (!kref_get_unless_zero(&old_peer_ni->refcount))
@@ -284,7 +285,8 @@ kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev, struct lnet_nid *efa_nid)
 out_success:
 	LIBCFS_FREE(mapping, mapping_size);
 
-	EFA_DEV_DEBUG(efa_dev, "Completed ping and found GID[0x%016llx] from TCP peer NI[%s]\n",
+	EFA_DEV_DEBUG(efa_dev,
+		      "Completed ping and found GID[0x%016llx] from TCP peer NI[%s]\n",
 		      cpu_to_be64(peer_ni->gid.global.interface_id),
 		      libcfs_nid2str(tcp_nid4));
 
@@ -306,7 +308,8 @@ out_error:
  *
  * Return: have we found a valid mapping?
  */
-int kefalnd_get_nid_metadata(struct lnet_ni *ni, struct lnet_nid_md_entry *md_entry)
+int kefalnd_get_nid_metadata(struct lnet_ni *ni,
+			     struct lnet_nid_md_entry *md_entry)
 {
 	struct kefa_nid_md_entry *kefa_ni_md = (struct kefa_nid_md_entry *)md_entry;
 	struct kefa_ni *efa_ni = ni->ni_data;
@@ -324,32 +327,4 @@ int kefalnd_get_nid_metadata(struct lnet_ni *ni, struct lnet_nid_md_entry *md_en
 		      cpu_to_be64(efa_dev->gid.global.interface_id));
 
 	return 0;
-}
-
-/**
- * kefalnd_create_efa_nid() - Get EFA NID from IP and PCI bus/devfn number.
- * @ip_addr: IP address of interface used for TCP ping.
- * @bus_num: PCI bus number of EFA device.
- * @devfn: PCI devfn.
- *
- * The EFA 32 bit NID address is made of three parts: the host
- * identifier, PCI bus number, and PCI devfn number.
- * For example, if a node uses 172.43.23.2@tcp for TCP pings, the
- * EFA interface would be assigned 23.2.0.2@efa for EFA device with
- * bus number 0 and devfn number 2.
- *
- * Return: Newly created EFA NID
- */
-lnet_nid_t kefalnd_create_efa_nid(u32 ip_addr, u32 bus_num, u32 devfn)
-{
-	lnet_nid_t efa_nid;
-	u32 addr;
-
-	addr = (ip_addr & 0xffff) << 16;
-	addr = addr | ((bus_num & 0xff) << 8);
-	addr = addr | (devfn & 0xff);
-
-	efa_nid = LNET_MKNID(LNET_MKNET(EFALND, 0), addr);
-
-	return efa_nid;
 }
