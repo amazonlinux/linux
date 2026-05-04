@@ -234,7 +234,7 @@ rebuild:
          */
 	mdc_create_pack(&req->rq_pill, op_data, data, datalen, mode, uid,
 			gid, cap_effective, rdev);
-
+	req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER, 0);
         ptlrpc_request_set_replen(req);
 
 	/* ask ptlrpc not to resend on EINPROGRESS since we have our own retry
@@ -333,6 +333,7 @@ int mdc_unlink(struct obd_export *exp, struct md_op_data *op_data,
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obd->u.cli.cl_default_mds_easize);
+	req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER, 0);
 	ptlrpc_request_set_replen(req);
 
         *request = req;
@@ -388,6 +389,7 @@ int mdc_link(struct obd_export *exp, struct md_op_data *op_data,
 	}
 
 	mdc_link_pack(&req->rq_pill, op_data);
+	req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER, 0);
 	ptlrpc_request_set_replen(req);
 
 	rc = mdc_reint(req, LUSTRE_IMP_FULL);
@@ -471,6 +473,8 @@ int mdc_rename(struct obd_export *exp, struct md_op_data *op_data,
 
 	req_capsule_set_size(&req->rq_pill, &RMF_MDT_MD, RCL_SERVER,
 			     obd->u.cli.cl_default_mds_easize);
+	if (!(op_data->op_cli_flags & CLI_MIGRATE))
+		req_capsule_set_size(&req->rq_pill, &RMF_ACL, RCL_SERVER, 0);
 	ptlrpc_request_set_replen(req);
 
 	rc = mdc_reint(req, LUSTRE_IMP_FULL);
