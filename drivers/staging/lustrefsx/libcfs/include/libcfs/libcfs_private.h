@@ -111,12 +111,17 @@ do {									\
 # define LINVRNT(exp) ((void)sizeof!!(exp))
 #endif
 
-void __noreturn lbug_with_loc(struct libcfs_debug_msg_data *msg);
+void
+#ifdef HAVE_LBUG_WITH_LOC_IN_OBJTOOL
+__noreturn
+#endif
+lbug_with_loc(struct libcfs_debug_msg_data *msg);
 
 #define LBUG()                                                          \
 do {                                                                    \
-        LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_EMERG, NULL);             \
-        lbug_with_loc(&msgdata);                                        \
+	LIBCFS_DEBUG_MSG_DATA_DECL(msgdata, D_EMERG, NULL);             \
+	lbug_with_loc(&msgdata);                                        \
+	break;                                                          \
 } while(0)
 
 /*
@@ -214,19 +219,14 @@ do {									    \
 
 #define LIBCFS_FREE(ptr, size)						\
 do {									\
-	int s = (size);							\
-	if (unlikely((ptr) == NULL)) {					\
-		CERROR("LIBCFS: free NULL '" #ptr "' (%d bytes) at "	\
-		       "%s:%d\n", s, __FILE__, __LINE__);		\
-		break;							\
+	size_t s = (size);						\
+	if (likely(ptr)) {						\
+		LIBCFS_FREE_PRE(ptr, (size), "kfreed");			\
+		if (unlikely(s > LIBCFS_VMALLOC_SIZE))			\
+			libcfs_vfree_atomic(ptr);			\
+		else							\
+			kfree(ptr);					\
 	}								\
-	libcfs_kmem_dec((ptr), s);					\
-	CDEBUG(D_MALLOC, "kfreed '" #ptr "': %d at %p (tot %lld).\n",	\
-	       s, (ptr), libcfs_kmem_read());				\
-	if (unlikely(s > LIBCFS_VMALLOC_SIZE))				\
-		libcfs_vfree_atomic(ptr);				\
-	else								\
-		kfree(ptr);						\
 } while (0)
 
 #define LIBCFS_FREE_PRE(ptr, size, name)				\
