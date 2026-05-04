@@ -141,6 +141,8 @@ out:
 
 static int obd_ioctl_is_invalid(struct obd_ioctl_data *data)
 {
+	int err;
+	__u32 packlen;
 	const int maxlen = 1 << 30;
 	if (data->ioc_len > maxlen) {
 		CERROR("OBD ioctl: ioc_len larger than 1<<30\n");
@@ -207,9 +209,15 @@ static int obd_ioctl_is_invalid(struct obd_ioctl_data *data)
 		return 1;
 	}
 
-	if (obd_ioctl_packlen(data) > data->ioc_len) {
+	err = obd_ioctl_packlen(data, &packlen);
+	if (err) {
+		CERROR("OBD ioctl: packlen doesn't fit u32\n");
+		return 1;
+	}
+
+	if (packlen > data->ioc_len) {
 		CERROR("OBD ioctl: packlen exceeds ioc_len (%d > %d)\n",
-		       obd_ioctl_packlen(data), data->ioc_len);
+		       packlen, data->ioc_len);
 		return 1;
 	}
 
