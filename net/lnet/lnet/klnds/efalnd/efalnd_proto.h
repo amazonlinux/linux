@@ -8,9 +8,8 @@
 /*
  * This file is part of Lustre, http://www.lustre.org/
  *
- * lnet/lnds/efalnd/efalnd-proto.h
- *
  * Author: Yehuda Yitschak <yehuday@amazon.com>
+ * Author: Yonatan Nachum <ynachum@amazon.com>
  */
 
 #ifndef _EFALND_PROTO_H_
