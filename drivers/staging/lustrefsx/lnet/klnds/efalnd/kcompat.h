@@ -1,14 +1,12 @@
-// SPDX-License-Identifier: GPL-2.0
+/* SPDX-License-Identifier: GPL-2.0 */
 
 /*
- * Copyright (c) 2024, Amazon and/or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2025, Amazon and/or its affiliates. All rights reserved.
  * Use is subject to license terms.
  */
 
 /*
  * This file is part of Lustre, http://www.lustre.org/
- *
- * lnet/lnds/efalnd/kcompat.h
  *
  * Author: Michael Margolin <mrgolin@amazon.com>
  */
