@@ -3284,7 +3284,66 @@ out:
 		&paddr);
 }
 
-static void its_cpu_init_collection(struct its_node *its)
+static cpumask_var_t its_restore_pending_cpus;
+
+static void its_restore_device(struct its_device *its_dev)
+{
+	/*
+	 * Bring each device back to a quiescent mapping state, as required
+	 * by GICv3 ITS architecture §5.6.1 (Enabling an ITS) after an ITS
+	 * reset: the device table entries are gone, so software must
+	 * reconfigure them with ITS commands. MAPD(V=1) with a non-zero
+	 * ITT is UNPREDICTABLE (§5.3.10, §5.2.4), so unmap first, zero the
+	 * ITT, and map again with a clean ITT. MAPTI replay is deferred to
+	 * its_cpu_init_collection() so that the collection a given event
+	 * targets is MAPC'd before MAPTI is issued for it.
+	 */
+	its_send_mapd(its_dev, 0);
+	memset(its_dev->itt, 0, its_dev->itt_sz);
+	gic_flush_dcache_to_poc(its_dev->itt, its_dev->itt_sz);
+	its_send_mapd(its_dev, 1);
+}
+
+static void its_cpu_replay_mapti(struct its_node *its)
+{
+	int cpu = smp_processor_id();
+	struct its_device *its_dev;
+	int event;
+
+	/*
+	 * Walk its_device_list without holding its->dev_alloc_lock.
+	 * Device add/remove normally requires that mutex, but this
+	 * function only runs on the resume path, from
+	 * its_cpu_init_collection() on either the boot CPU (called
+	 * directly from its_restore_enable() under its_lock) or a
+	 * secondary CPU (called from its_cpu_init_collections() under
+	 * its_lock). Concurrency with driver MSI alloc/free is excluded
+	 * by the hibernate sequence:
+	 *
+	 *   syscore_resume()            <- its_restore_enable() runs here
+	 *   pm_sleep_enable_secondary_cpus()  <- its_cpu_init() on each CPU
+	 *   dpm_resume_start() / dpm_resume()  <- driver .resume callbacks
+	 *
+	 * See kernel/power/hibernate.c:resume_target_kernel(). Drivers
+	 * cannot add or remove MSI allocations until their .resume
+	 * callbacks run, which is strictly after every CPU has passed
+	 * through its_cpu_init_collection().
+	 */
+	list_for_each_entry(its_dev, &its->its_device_list, entry) {
+		if (its_dev->event_map.vm)
+			continue;
+		for_each_set_bit(event, its_dev->event_map.lpi_map,
+				 its_dev->event_map.nr_lpis) {
+			if (its_dev->event_map.col_map[event] != cpu)
+				continue;
+			its_send_mapti(its_dev,
+				       its_dev->event_map.lpi_base + event,
+				       event);
+		}
+	}
+}
+
+static void its_cpu_init_collection(struct its_node *its, bool replay)
 {
 	int cpu = smp_processor_id();
 	u64 target;
@@ -3321,17 +3380,33 @@ static void its_cpu_init_collection(struct its_node *its)
 
 	its_send_mapc(its, &its->collections[cpu], 1);
 	its_send_invall(its, &its->collections[cpu]);
+
+	/*
+	 * On resume from hibernation, its_restore_enable() has reprogrammed
+	 * the device table but deferred per-event MAPTI replay until each
+	 * target collection is MAPC'd. Now that the local collection is
+	 * mapped, replay MAPTIs for events targeting this CPU on this ITS.
+	 */
+	if (replay)
+		its_cpu_replay_mapti(its);
 }
 
 static void its_cpu_init_collections(void)
 {
 	struct its_node *its;
+	bool replay;
+
+	/*
+	 * On resume from hibernation, its_restore_enable() arms this cpumask
+	 * for every secondary CPU that still needs MAPTI replay. Test-and-
+	 * clear once per CPU and propagate the flag to every ITS on this CPU.
+	 */
+	replay = cpumask_test_and_clear_cpu(smp_processor_id(),
+					    its_restore_pending_cpus);
 
 	raw_spin_lock(&its_lock);
-
 	list_for_each_entry(its, &its_nodes, entry)
-		its_cpu_init_collection(its);
-
+		its_cpu_init_collection(its, replay);
 	raw_spin_unlock(&its_lock);
 }
 
@@ -5037,8 +5112,22 @@ static void its_restore_enable(void)
 	struct its_node *its;
 	int ret;
 
+	/*
+	 * Arm MAPTI replay for every secondary CPU. The boot CPU does not
+	 * go through its_cpu_init_collections() on resume, so it is handled
+	 * directly in the per-ITS loop below; exclude it here to avoid
+	 * leaving a stale bit set.
+	 *
+	 * See §5.6.1 of the GICv3 ITS architecture specification: after an
+	 * ITS reset, software must reconfigure devices, collections and
+	 * translations via ITS commands.
+	 */
+	cpumask_copy(its_restore_pending_cpus, cpu_possible_mask);
+	cpumask_clear_cpu(smp_processor_id(), its_restore_pending_cpus);
+
 	raw_spin_lock(&its_lock);
 	list_for_each_entry(its, &its_nodes, entry) {
+		struct its_device *its_dev;
 		void __iomem *base;
 		int i;
 
@@ -5081,13 +5170,23 @@ static void its_restore_enable(void)
 		writel_relaxed(its->ctlr_save, base + GITS_CTLR);
 
 		/*
-		 * Reinit the collection if it's stored in the ITS. This is
-		 * indicated by the col_id being less than the HCC field.
-		 * CID < HCC as specified in the GIC v3 Documentation.
+		 * Reset and remap each device on this ITS. After resume,
+		 * the ITS has no device table entries and ITT contents may
+		 * be stale; per GICv3 ITS §5.3.10, MAPD(V=1) with a non-zero
+		 * ITT is UNPREDICTABLE. Unmap first, zero the ITT, then map
+		 * again.
 		 */
-		if (its->collections[smp_processor_id()].col_id <
-		    GITS_TYPER_HCC(gic_read_typer(base + GITS_TYPER)))
-			its_cpu_init_collection(its);
+		list_for_each_entry(its_dev, &its->its_device_list, entry)
+			its_restore_device(its_dev);
+
+		/*
+		 * Unconditionally MAPC the boot CPU's collection and replay
+		 * MAPTIs for events targeting it, on every ITS. This mirrors
+		 * the unconditional MAPC that secondary CPUs do in their
+		 * cpuhp startup path, and covers both HW-resident and
+		 * memory-resident collections.
+		 */
+		its_cpu_init_collection(its, true);
 	}
 	raw_spin_unlock(&its_lock);
 }
@@ -5824,6 +5923,11 @@ int __init its_init(struct fwnode_handle *handle, struct rdists *rdists,
 	itt_pool = gen_pool_create(get_order(ITS_ITT_ALIGN), -1);
 	if (!itt_pool)
 		return -ENOMEM;
+
+	if (!zalloc_cpumask_var(&its_restore_pending_cpus, GFP_KERNEL)) {
+		gen_pool_destroy(itt_pool);
+		return -ENOMEM;
+	}
 
 	gic_rdists = rdists;
 
