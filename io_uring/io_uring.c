@@ -6870,8 +6870,13 @@ static struct io_wq_work *io_wq_free_work(struct io_wq_work *work)
 	struct io_kiocb *nxt = NULL;
 
 	if (req_ref_put_and_test(req)) {
-		if (req->flags & (REQ_F_LINK|REQ_F_HARDLINK))
+		if (req->flags & (REQ_F_LINK|REQ_F_HARDLINK)) {
+			struct io_ring_ctx *ctx = req->ctx;
+
+			mutex_lock(&ctx->uring_lock);
 			nxt = io_req_find_next(req);
+			mutex_unlock(&ctx->uring_lock);
+		}
 		__io_free_req(req);
 	}
 	return nxt ? &nxt->work : NULL;
