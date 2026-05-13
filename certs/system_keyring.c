@@ -103,6 +103,7 @@ int restrict_link_by_builtin_and_secondary_trusted(
 	return restrict_link_by_signature(dest_keyring, type, payload,
 					  secondary_trusted_keys);
 }
+EXPORT_SYMBOL_GPL(restrict_link_by_builtin_and_secondary_trusted);
 
 /**
  * restrict_link_by_digsig_builtin_and_secondary - Restrict by digitalSignature.
