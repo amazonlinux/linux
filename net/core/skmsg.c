@@ -1058,7 +1058,17 @@ out:
 static void sk_psock_verdict_data_ready(struct sock *sk)
 {
 	struct socket *sock = sk->sk_socket;
+	struct sk_psock *psock;
 	read_descriptor_t desc;
+
+	rcu_read_lock();
+	psock = sk_psock(sk);
+	if (psock && tls_sw_has_ctx_rx(sk)) {
+		psock->parser.saved_data_ready(sk);
+		rcu_read_unlock();
+		return;
+	}
+	rcu_read_unlock();
 
 	if (unlikely(!sock || !sock->ops || !sock->ops->read_sock))
 		return;
