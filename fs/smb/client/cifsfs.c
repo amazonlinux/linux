@@ -239,6 +239,9 @@ cifs_read_super(struct super_block *sb)
 	if (cifs_sb_flags(cifs_sb) & CIFS_MOUNT_POSIXACL)
 		sb->s_flags |= SB_POSIXACL;
 
+	/* Prevent device node opens from remote filesystem by default */
+	sb->s_iflags |= SB_I_NODEV;
+
 	if (tcon->snapshot_time)
 		sb->s_flags |= SB_RDONLY;
 
