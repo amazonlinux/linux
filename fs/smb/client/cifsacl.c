@@ -708,13 +708,14 @@ static __u16 fill_ace_for_sid(struct smb_ace *pntace,
 	pntace->access_req = cpu_to_le32(access_req);
 
 	pntace->sid.revision = psid->revision;
-	pntace->sid.num_subauth = psid->num_subauth;
+	pntace->sid.num_subauth = min_t(u8, psid->num_subauth,
+					SID_MAX_SUB_AUTHORITIES);
 	for (i = 0; i < NUM_AUTHS; i++)
 		pntace->sid.authority[i] = psid->authority[i];
-	for (i = 0; i < psid->num_subauth; i++)
+	for (i = 0; i < pntace->sid.num_subauth; i++)
 		pntace->sid.sub_auth[i] = psid->sub_auth[i];
 
-	size = 1 + 1 + 2 + 4 + 1 + 1 + 6 + (psid->num_subauth * 4);
+	size = 1 + 1 + 2 + 4 + 1 + 1 + 6 + (pntace->sid.num_subauth * 4);
 	pntace->size = cpu_to_le16(size);
 
 	return size;
@@ -1249,7 +1250,7 @@ static int parse_sid(struct smb_sid *psid, char *end_of_acl)
 		cifs_dbg(FYI, "SID revision %d num_auth %d\n",
 			 psid->revision, psid->num_subauth);
 
-		for (i = 0; i < psid->num_subauth; i++) {
+		for (i = 0; i < min_t(u8, psid->num_subauth, SID_MAX_SUB_AUTHORITIES); i++) {
 			cifs_dbg(FYI, "SID sub_auth[%d]: 0x%x\n",
 				 i, le32_to_cpu(psid->sub_auth[i]));
 		}
