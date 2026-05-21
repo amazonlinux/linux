@@ -2464,6 +2464,8 @@ static void nvme_reset_done(struct pci_dev *pdev)
 static void nvme_shutdown(struct pci_dev *pdev)
 {
 	struct nvme_dev *dev = pci_get_drvdata(pdev);
+	nvme_change_ctrl_state(&dev->ctrl, NVME_CTRL_RESETTING);
+	flush_work(&dev->ctrl.scan_work);
 	nvme_dev_disable(dev, true);
 }
 
