@@ -53,8 +53,10 @@ static int verify_integrity(void)
 
 	shash_desc_zero(desc);
 
-	if (memcmp(digest, _binary_crypto_hmac_start, sizeof(digest)))
+	if (memcmp(digest, _binary_crypto_hmac_start, sizeof(digest))) {
+		memzero_explicit(digest, sizeof(digest));
 		panic("FIPS 140: failed integrity check\n");
+	}
 
 	pr_info("FIPS 140: integrity verification passed\n");
 
