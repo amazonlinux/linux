@@ -27,6 +27,7 @@ config CRYPTO_FIPS
 	bool "FIPS 200 compliance"
 	depends on (CRYPTO_ANSI_CPRNG || CRYPTO_DRBG) && CRYPTO_SELFTESTS
 	depends on (MODULE_SIG || !MODULES)
+	select CRYPTO_HKDF
 	help
 	  This option enables the fips boot option which is
 	  required if you want the system to operate in a FIPS 200
