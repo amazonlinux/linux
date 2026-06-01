@@ -726,8 +726,11 @@ resume:
 		err = -EAFNOSUPPORT;
 		rcu_read_lock();
 		afinfo = xfrm_state_afinfo_get_rcu(x->props.family);
-		if (likely(afinfo))
+		if (likely(afinfo)) {
+			if (async && !xfrm_gro)
+				dev_hold(skb->dev);
 			err = afinfo->transport_finish(skb, xfrm_gro || async);
+		}
 		rcu_read_unlock();
 		if (xfrm_gro) {
 			sp = skb_sec_path(skb);
