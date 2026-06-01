@@ -740,8 +740,11 @@ resume:
 
 		err = -EAFNOSUPPORT;
 		afinfo = xfrm_state_afinfo_get_rcu(family);
-		if (likely(afinfo))
+		if (likely(afinfo)) {
+			if (async && !xfrm_gro)
+				dev_hold(skb->dev);
 			err = afinfo->transport_finish(skb, xfrm_gro || async);
+		}
 		if (xfrm_gro) {
 			sp = skb_sec_path(skb);
 			if (sp)
