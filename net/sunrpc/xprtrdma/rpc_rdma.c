@@ -1510,4 +1510,7 @@ out_shortreply:
 
 out:
 	rpcrdma_recv_buffer_put(rep);
+	rpcrdma_post_recvs(r_xprt,
+			   buf->rb_credits + (buf->rb_bc_srv_max_requests << 1),
+			   false);
 }
