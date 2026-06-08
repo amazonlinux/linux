@@ -18,13 +18,7 @@
 #include <linux/fips.h>
 
 /* FIPS140 synchronization between kernel and module */
-extern atomic_t fips140_kernel_level_complete;
-extern atomic_t fips140_module_level_complete;
-extern wait_queue_head_t fips140_kernel_wq;
-
-void fips140_mark_kernel_level_complete(int level);
-bool fips140_is_kernel_level_complete(int level);
-bool fips140_is_module_level_complete(int level);
-void fips140_mark_module_level_complete(int level);
+void fips140_mark_module_wait_kernel(int level);
+void fips140_mark_module_wait_kernel_sync(int level);
 
 #endif /* _CRYPTO_FIPS140_MODULE_H */
