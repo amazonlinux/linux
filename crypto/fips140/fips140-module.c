@@ -70,55 +70,86 @@ static int verify_integrity(void)
  * Run FIPS module initcalls level by level, synchronizing with the
  * kernel's initcall progression.
  *
- * Initcall section mapping (see include/linux/module.h):
- *   Level 0 (.fips_initcall0) <- subsys_initcall()
- *                                Syncs with kernel subsys_initcall (initcall level 4)
- *   Level 1 (.fips_initcall1) <- module_init()
- *                                Syncs with kernel device_initcall (initcall level 6)
- *   Level 2 (.fips_initcall2) <- late_initcall()
- *                                Syncs with kernel late_initcall (initcall level 7)
+ * At each level, the FIPS module runs first (via linker-section barriers
+ * in the kernel), then the kernel's initcalls run. This ensures crypto
+ * algorithms are registered and tested before kernel code uses them.
+ *
+ * Sections use kernel initcall level numbers directly:
+ *   Level 4 (.fips_initcall4/4s) <- subsys_initcall / subsys_initcall_sync
+ *   Level 5 (.fips_initcall5/5s) <- fs_initcall / fs_initcall_sync / rootfs_initcall
+ *   Level 6 (.fips_initcall6/6s) <- module_init / device_initcall / device_initcall_sync
+ *   Level 7 (.fips_initcall7/7s) <- late_initcall / late_initcall_sync
  */
+
+#define FIPS_LOADER_LEVEL 3
+#define FIPS_FIRST_LEVEL 4
+#define FIPS_LAST_LEVEL  7
+#define FIPS_ROOTFS_LEVEL 0
+#define FIPS_NUM_LEVELS  (FIPS_LAST_LEVEL - FIPS_FIRST_LEVEL + 1)
 
 static int __init run_initcalls(void)
 {
 	typedef int (*initcall_t)(void);
-	
-	extern initcall_t __fips140_initcall0_start[], __fips140_initcall0_end[];
-	extern initcall_t __fips140_initcall1_start[], __fips140_initcall1_end[];
-	extern initcall_t __fips140_initcall2_start[], __fips140_initcall2_end[];
 
-	initcall_t *starts[] = {
-		__fips140_initcall0_start,
-		__fips140_initcall1_start,
-		__fips140_initcall2_start,
-	};
-	
-	initcall_t *ends[] = {
-		__fips140_initcall0_end,
-		__fips140_initcall1_end,
-		__fips140_initcall2_end,
+	extern initcall_t __fips140_initcall4_start[], __fips140_initcall4_end[];
+	extern initcall_t __fips140_initcall4s_start[], __fips140_initcall4s_end[];
+	extern initcall_t __fips140_initcall5_start[], __fips140_initcall5_end[];
+	extern initcall_t __fips140_initcall5s_start[], __fips140_initcall5s_end[];
+	extern initcall_t __fips140_initcall_rootfs_start[], __fips140_initcall_rootfs_end[];
+	extern initcall_t __fips140_initcall6_start[], __fips140_initcall6_end[];
+	extern initcall_t __fips140_initcall6s_start[], __fips140_initcall6s_end[];
+	extern initcall_t __fips140_initcall7_start[], __fips140_initcall7_end[];
+	extern initcall_t __fips140_initcall7s_start[], __fips140_initcall7s_end[];
+
+	struct {
+		initcall_t *start, *end;
+		initcall_t *sync_start, *sync_end;
+	} levels[FIPS_NUM_LEVELS] = {
+		[0] = { __fips140_initcall4_start, __fips140_initcall4_end,
+			__fips140_initcall4s_start, __fips140_initcall4s_end },
+		[1] = { __fips140_initcall5_start, __fips140_initcall5_end,
+			__fips140_initcall5s_start, __fips140_initcall5s_end },
+		[2] = { __fips140_initcall6_start, __fips140_initcall6_end,
+			__fips140_initcall6s_start, __fips140_initcall6s_end },
+		[3] = { __fips140_initcall7_start, __fips140_initcall7_end,
+			__fips140_initcall7s_start, __fips140_initcall7s_end },
 	};
 
 	pr_info("FIPS 140: run_initcalls starting\n");
 
-	for (int level = 0; level < ARRAY_SIZE(starts); level++) {
-		
-		/* Run FIPS initcalls for this level */
-		for (initcall_t *initcall = starts[level]; initcall < ends[level]; ++initcall) {
-			int ret;
-			initcall_t fn = *initcall;
-			
-			ret = fn();
-			if (!ret || ret == -ENODEV)
-				continue;
+	for (int i = 0; i < FIPS_NUM_LEVELS; i++) {
+		int level = FIPS_FIRST_LEVEL + i;
+		initcall_t *fn;
 
-			pr_err("FIPS 140: initcall %pS failed: %d\n", fn, ret);
+		/* Run non-sync initcalls */
+		for (fn = levels[i].start; fn < levels[i].end; fn++) {
+			int ret = (*fn)();
+			if (ret && ret != -ENODEV)
+				pr_err("FIPS 140: initcall %pS failed: %d\n", *fn, ret);
 		}
-	
-		if (level < 2)
-			fips140_mark_module_level_complete(level + 1);
-		/* Wait for kernel to complete this level */
-		wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(level + 1));
+
+		fips140_mark_module_wait_kernel(level);
+
+		/* Run _sync initcalls */
+		for (fn = levels[i].sync_start; fn < levels[i].sync_end; fn++) {
+			int ret = (*fn)();
+			if (ret && ret != -ENODEV)
+				pr_err("FIPS 140: initcall_sync %pS failed: %d\n", *fn, ret);
+		}
+
+		if (level < FIPS_LAST_LEVEL)
+			fips140_mark_module_wait_kernel_sync(level);
+
+		/* Run rootfs initcalls after level 5 sync (gated by rootfs barrier) */
+		if (level == 5) {
+			for (fn = __fips140_initcall_rootfs_start; fn < __fips140_initcall_rootfs_end; fn++) {
+				int ret = (*fn)();
+				if (ret && ret != -ENODEV)
+					pr_err("FIPS 140: rootfs initcall %pS failed: %d\n", *fn, ret);
+			}
+			fips140_mark_module_wait_kernel(FIPS_ROOTFS_LEVEL);
+			fips140_mark_module_wait_kernel_sync(FIPS_ROOTFS_LEVEL);
+		}
 	}
 
 	pr_info("FIPS 140: run_initcalls finished\n");
@@ -128,19 +159,20 @@ static int __init run_initcalls(void)
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
-	/* Signal that module is loaded and address placeholders are populated */
-	fips140_mark_module_level_complete(0);
-	wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(0));
+	/* Signal that module is loaded — unblock kernel level 3 sync barrier */
+	fips140_mark_module_wait_kernel_sync(FIPS_LOADER_LEVEL);
 
-    pr_info("loading " FIPS140_MODULE_NAME "\n");
+	pr_info("loading " FIPS140_MODULE_NAME "\n");
 
 	run_initcalls();
 
-	if (fips_enabled){
+	if (fips_enabled) {
 		verify_integrity(); /* Panics if integrity check fails */
 	}
-	fips140_mark_module_level_complete(3);
-    return 0;
+
+	/* Final sync after verify_integrity */
+	fips140_mark_module_wait_kernel_sync(FIPS_LAST_LEVEL);
+	return 0;
 }
 
 static void __exit fips140_exit(void)
