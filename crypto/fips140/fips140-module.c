@@ -123,12 +123,12 @@ static int __init run_initcalls(void)
 		if (level < 2) {
 			pr_err("FIPS 140: marking module_level %d complete\n", level + 1);
 			fips140_mark_module_level_complete(level + 1);
+			/* Wait for kernel to complete this level */
+			pr_err("FIPS 140: waiting for kernel_level %d (current kernel_level=0x%x)\n",
+				level + 1, atomic_read(&fips140_kernel_level_complete));
+			wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(level + 1));
+			pr_err("FIPS 140: kernel_level %d complete\n", level + 1);
 		}
-		/* Wait for kernel to complete this level */
-		pr_err("FIPS 140: waiting for kernel_level %d (current kernel_level=0x%x)\n",
-			level + 1, atomic_read(&fips140_kernel_level_complete));
-		wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(level + 1));
-		pr_err("FIPS 140: kernel_level %d complete\n", level + 1);
 	}
 
 	pr_info("FIPS 140: run_initcalls finished\n");
