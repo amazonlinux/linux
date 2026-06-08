@@ -185,6 +185,26 @@ void __init wait_until_fips140_level_sync(int level)
 	}
 }
 
+/*
+ * FIPS sync initcalls placed in .initcallN-fips140.init sections.
+ * These run between regular initcalls and _sync initcalls at each level,
+ * ensuring FIPS crypto is fully initialized before _sync variants execute.
+ */
+#define DEFINE_FIPS140_LEVEL_SYNC(lvl)					\
+	static int __init fips140_sync_level##lvl(void)			\
+	{								\
+		wait_until_fips140_level_sync(lvl);			\
+		return 0;						\
+	}								\
+	static initcall_t __used					\
+		__section(".initcall" #lvl "-fips140.init")		\
+		__fips140_sync_level##lvl = fips140_sync_level##lvl
+
+DEFINE_FIPS140_LEVEL_SYNC(3);
+DEFINE_FIPS140_LEVEL_SYNC(4);
+DEFINE_FIPS140_LEVEL_SYNC(6);
+DEFINE_FIPS140_LEVEL_SYNC(7);
+
 EXPORT_SYMBOL(fips140_kernel_level_complete);
 EXPORT_SYMBOL(fips140_module_level_complete);
 EXPORT_SYMBOL(fips140_kernel_wq);
