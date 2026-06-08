@@ -933,6 +933,7 @@ defined(CONFIG_AUTOFDO_CLANG) || defined(CONFIG_PROPELLER_CLANG)
 		KEEP(*(.initcall##level##.init))			\
 		KEEP(*(.initcall##level##-fips140.init))		\
 		KEEP(*(.initcall##level##s.init))			\
+		KEEP(*(.initcall##level##-fips140post.init))		\
 
 #define INIT_CALLS							\
 		__initcall_start = .;					\

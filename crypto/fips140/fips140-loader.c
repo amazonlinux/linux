@@ -164,35 +164,57 @@ void __init start_fips140_loader(void)
 	}
 }
 
+/*
+ * Map kernel initcall levels to FIPS module sync levels:
+ *   kernel 3 (arch_initcall_sync)    → fips 0: loader start + module init
+ *   kernel 4 (subsys_initcall_sync)  → fips 1: fips initcall level 0 (subsys)
+ *   kernel 6 (device_initcall_sync)  → fips 2: fips initcall level 1 (module)
+ *   kernel 7 (late_initcall_sync)    → fips 3: fips initcall level 2 (late) + verify_integrity
+ */
+static int __init fips140_level_to_fips(int level)
+{
+	if (level == 3) return 0;
+	if (level == 4) return 1;
+	if (level == 6) return 2;
+	if (level == 7) return 3;
+	return -1;
+}
+
 void __init wait_until_fips140_level_sync(int level)
 {
-	/* Map kernel initcall levels to FIPS module levels */
-	int fips_level = -1;
-	if (level == 3) { /* Start FIPS loader thread at arch_initcall_sync level */
+	int fips_level = fips140_level_to_fips(level);
+
+	if (level == 3) {
 		pr_err("FIPS 140: sync level %d: starting loader\n", level);
 		start_fips140_loader();
-		fips_level = 0;
-	} else if (level == 4) /* subsys_initcall */
-		fips_level = 1;
-	else if (level == 6) /* device_initcall */
-		fips_level = 2;
-	else if (level == 7) /* late_initcall */
-		fips_level = 3;
+	}
 
 	if (fips_level >= 0) {
-		pr_err("FIPS 140: sync level %d: marking kernel_level %d complete, waiting module_level %d (current module_level=0x%x)\n",
-			level, fips_level, fips_level,
+		pr_err("FIPS 140: sync level %d: waiting module_level %d (current module_level=0x%x)\n",
+			level, fips_level,
 			atomic_read(&fips140_module_level_complete));
-		fips140_mark_kernel_level_complete(fips_level);
 		wait_event(fips140_module_wq, fips140_is_module_level_complete(fips_level));
 		pr_err("FIPS 140: sync level %d: module_level %d complete\n", level, fips_level);
 	}
 }
 
+void __init fips140_mark_kernel_level_done(int level)
+{
+	int fips_level = fips140_level_to_fips(level);
+
+	if (fips_level >= 0) {
+		pr_err("FIPS 140: post level %d: marking kernel_level %d complete\n",
+			level, fips_level);
+		fips140_mark_kernel_level_complete(fips_level);
+	}
+}
+
 /*
- * FIPS sync initcalls placed in .initcallN-fips140.init sections.
- * These run between regular initcalls and _sync initcalls at each level,
- * ensuring FIPS crypto is fully initialized before _sync variants execute.
+ * FIPS sync initcalls:
+ * - .initcallN-fips140.init: runs AFTER regular initcalls, BEFORE _sync.
+ *   Waits for FIPS module to complete this level.
+ * - .initcallN-fips140post.init: runs AFTER _sync initcalls.
+ *   Marks kernel level complete so FIPS module can proceed to next level.
  */
 #define DEFINE_FIPS140_LEVEL_SYNC(lvl)					\
 	static int __init fips140_sync_level##lvl(void)			\
@@ -202,7 +224,15 @@ void __init wait_until_fips140_level_sync(int level)
 	}								\
 	static initcall_t __used					\
 		__section(".initcall" #lvl "-fips140.init")		\
-		__fips140_sync_level##lvl = fips140_sync_level##lvl
+		__fips140_sync_level##lvl = fips140_sync_level##lvl;	\
+	static int __init fips140_post_level##lvl(void)			\
+	{								\
+		fips140_mark_kernel_level_done(lvl);			\
+		return 0;						\
+	}								\
+	static initcall_t __used					\
+		__section(".initcall" #lvl "-fips140post.init")		\
+		__fips140_post_level##lvl = fips140_post_level##lvl
 
 DEFINE_FIPS140_LEVEL_SYNC(3);
 DEFINE_FIPS140_LEVEL_SYNC(4);
