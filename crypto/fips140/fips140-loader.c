@@ -169,6 +169,7 @@ void __init wait_until_fips140_level_sync(int level)
 	/* Map kernel initcall levels to FIPS module levels */
 	int fips_level = -1;
 	if (level == 3) { /* Start FIPS loader thread at arch_initcall_sync level */
+		pr_err("FIPS 140: sync level %d: starting loader\n", level);
 		start_fips140_loader();
 		fips_level = 0;
 	} else if (level == 4) /* subsys_initcall */
@@ -179,9 +180,12 @@ void __init wait_until_fips140_level_sync(int level)
 		fips_level = 3;
 
 	if (fips_level >= 0) {
-		/* Mark kernel level complete and wait for module level completion */
+		pr_err("FIPS 140: sync level %d: marking kernel_level %d complete, waiting module_level %d (current module_level=0x%x)\n",
+			level, fips_level, fips_level,
+			atomic_read(&fips140_module_level_complete));
 		fips140_mark_kernel_level_complete(fips_level);
 		wait_event(fips140_module_wq, fips140_is_module_level_complete(fips_level));
+		pr_err("FIPS 140: sync level %d: module_level %d complete\n", level, fips_level);
 	}
 }
 

@@ -122,9 +122,13 @@ int freeze_processes(void)
 {
 	int error;
 
+	pr_err("PM: hibernation: DEBUG: freeze_processes: calling __usermodehelper_disable()\n");
 	error = __usermodehelper_disable(UMH_FREEZING);
-	if (error)
+	if (error) {
+		pr_err("PM: hibernation: DEBUG: __usermodehelper_disable failed: %d\n", error);
 		return error;
+	}
+	pr_err("PM: hibernation: DEBUG: __usermodehelper_disable succeeded\n");
 
 	/* Make sure this task doesn't get frozen */
 	current->flags |= PF_SUSPEND_TASK;

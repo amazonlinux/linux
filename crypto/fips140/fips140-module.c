@@ -103,6 +103,9 @@ static int __init run_initcalls(void)
 
 	for (int level = 0; level < ARRAY_SIZE(starts); level++) {
 		
+		pr_err("FIPS 140: run_initcalls level %d starting (%ld initcalls)\n",
+			level, (long)(ends[level] - starts[level]));
+
 		/* Run FIPS initcalls for this level */
 		for (initcall_t *initcall = starts[level]; initcall < ends[level]; ++initcall) {
 			int ret;
@@ -114,11 +117,18 @@ static int __init run_initcalls(void)
 
 			pr_err("FIPS 140: initcall %pS failed: %d\n", fn, ret);
 		}
+
+		pr_err("FIPS 140: run_initcalls level %d done\n", level);
 	
-		if (level < 2)
+		if (level < 2) {
+			pr_err("FIPS 140: marking module_level %d complete\n", level + 1);
 			fips140_mark_module_level_complete(level + 1);
+		}
 		/* Wait for kernel to complete this level */
+		pr_err("FIPS 140: waiting for kernel_level %d (current kernel_level=0x%x)\n",
+			level + 1, atomic_read(&fips140_kernel_level_complete));
 		wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(level + 1));
+		pr_err("FIPS 140: kernel_level %d complete\n", level + 1);
 	}
 
 	pr_info("FIPS 140: run_initcalls finished\n");
@@ -128,17 +138,25 @@ static int __init run_initcalls(void)
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
+	pr_err("FIPS 140: fips140_init entered\n");
 	/* Signal that module is loaded and address placeholders are populated */
+	pr_err("FIPS 140: marking module_level 0 complete\n");
 	fips140_mark_module_level_complete(0);
+	pr_err("FIPS 140: waiting for kernel_level 0 (current kernel_level=0x%x)\n",
+		atomic_read(&fips140_kernel_level_complete));
 	wait_event(fips140_kernel_wq, fips140_is_kernel_level_complete(0));
+	pr_err("FIPS 140: kernel_level 0 complete\n");
 
     pr_info("loading " FIPS140_MODULE_NAME "\n");
 
 	run_initcalls();
 
 	if (fips_enabled){
+		pr_err("FIPS 140: starting verify_integrity()\n");
 		verify_integrity(); /* Panics if integrity check fails */
+		pr_err("FIPS 140: verify_integrity() done\n");
 	}
+	pr_err("FIPS 140: marking module_level 3 complete\n");
 	fips140_mark_module_level_complete(3);
     return 0;
 }

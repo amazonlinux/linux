@@ -1339,9 +1339,17 @@ static void __init do_initcall_level(int level, char *command_line)
 		   level, level,
 		   NULL, ignore_unknown_bootoption);
 
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	if (level >= 3)
+		pr_err("FIPS 140: do_initcall_level(%d) starting\n", level);
+#endif
 	do_trace_initcall_level(initcall_level_names[level]);
 	for (fn = initcall_levels[level]; fn < initcall_levels[level+1]; fn++)
 		do_one_initcall(initcall_from_entry(fn));
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+	if (level >= 3)
+		pr_err("FIPS 140: do_initcall_level(%d) done\n", level);
+#endif
 }
 
 static void __init do_initcalls(void)

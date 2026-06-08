@@ -1038,6 +1038,8 @@ static int software_resume(void)
 {
 	int error;
 
+	pr_err("PM: hibernation: DEBUG: software_resume() entered\n");
+
 	pm_pr_dbg("Hibernation image partition %d:%d present\n",
 		MAJOR(swsusp_resume_device), MINOR(swsusp_resume_device));
 
@@ -1045,6 +1047,7 @@ static int software_resume(void)
 
 	mutex_lock(&system_transition_mutex);
 	error = swsusp_check(true);
+	pr_err("PM: hibernation: DEBUG: swsusp_check returned %d\n", error);
 	if (error)
 		goto Unlock;
 
@@ -1057,11 +1060,13 @@ static int software_resume(void)
 			strscpy(hib_comp_algo, COMPRESSION_ALGO_LZ4);
 		else
 			strscpy(hib_comp_algo, COMPRESSION_ALGO_LZO);
+		pr_err("PM: hibernation: DEBUG: checking crypto_has_acomp(%s)\n", hib_comp_algo);
 		if (!crypto_has_acomp(hib_comp_algo, 0, CRYPTO_ALG_ASYNC)) {
 			pr_err("%s compression is not available\n", hib_comp_algo);
 			error = -EOPNOTSUPP;
 			goto Unlock;
 		}
+		pr_err("PM: hibernation: DEBUG: crypto_has_acomp(%s) succeeded\n", hib_comp_algo);
 	}
 
 	/* The snapshot device should not be opened while we're running */
@@ -1080,7 +1085,9 @@ static int software_resume(void)
 	filesystems_freeze(filesystem_freeze_enabled);
 
 	pm_pr_dbg("Preparing processes for hibernation restore.\n");
+	pr_err("PM: hibernation: DEBUG: calling freeze_processes()\n");
 	error = freeze_processes();
+	pr_err("PM: hibernation: DEBUG: freeze_processes returned %d\n", error);
 	if (error) {
 		filesystems_thaw();
 		goto Close_Finish;
@@ -1129,6 +1136,7 @@ static int software_resume(void)
  */
 static int __init software_resume_initcall(void)
 {
+	pr_err("PM: hibernation: DEBUG: software_resume_initcall entered\n");
 	/*
 	 * If the user said "noresume".. bail out early.
 	 */

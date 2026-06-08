@@ -105,7 +105,11 @@ static int call_usermodehelper_exec_async(void *data)
 
 	commit_creds(new);
 
+	pr_err("PM: DEBUG: UMH pid %d (%s) calling wait_for_initramfs, path=%s\n",
+		current->pid, current->comm, sub_info->path);
 	wait_for_initramfs();
+	pr_err("PM: DEBUG: UMH pid %d (%s) wait_for_initramfs done, execing %s\n",
+		current->pid, current->comm, sub_info->path);
 	retval = kernel_execve(sub_info->path,
 			       (const char *const *)sub_info->argv,
 			       (const char *const *)sub_info->envp);
@@ -307,12 +311,16 @@ int __usermodehelper_disable(enum umh_disable_depth depth)
 	 * be zero at one point (it may be increased later, but that
 	 * doesn't matter).
 	 */
+	pr_err("PM: DEBUG: __usermodehelper_disable: running_helpers=%d, waiting up to %ds\n",
+		atomic_read(&running_helpers), RUNNING_HELPERS_TIMEOUT / HZ);
 	retval = wait_event_timeout(running_helpers_waitq,
 					atomic_read(&running_helpers) == 0,
 					RUNNING_HELPERS_TIMEOUT);
 	if (retval)
 		return 0;
 
+	pr_err("PM: DEBUG: __usermodehelper_disable: TIMEOUT, running_helpers=%d\n",
+		atomic_read(&running_helpers));
 	__usermodehelper_set_disable_depth(UMH_ENABLED);
 	return -EAGAIN;
 }
@@ -325,6 +333,9 @@ static void helper_lock(void)
 
 static void helper_unlock(void)
 {
+	pr_err("PM: DEBUG: UMH done: running_helpers=%d->%d\n",
+		atomic_read(&running_helpers),
+		atomic_read(&running_helpers) - 1);
 	if (atomic_dec_and_test(&running_helpers))
 		wake_up(&running_helpers_waitq);
 }
@@ -408,6 +419,9 @@ int call_usermodehelper_exec(struct subprocess_info *sub_info, int wait)
 		call_usermodehelper_freeinfo(sub_info);
 		return -EINVAL;
 	}
+	pr_err("PM: DEBUG: UMH exec: path=%s, running_helpers=%d->%d\n",
+		sub_info->path, atomic_read(&running_helpers),
+		atomic_read(&running_helpers) + 1);
 	helper_lock();
 	if (usermodehelper_disabled) {
 		retval = -EBUSY;
