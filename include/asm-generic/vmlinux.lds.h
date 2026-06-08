@@ -930,7 +930,9 @@ defined(CONFIG_AUTOFDO_CLANG) || defined(CONFIG_PROPELLER_CLANG)
 
 #define INIT_CALLS_LEVEL(level)						\
 		__initcall##level##_start = .;				\
+		KEEP(*(.initcall##level##-fips140.init))		\
 		KEEP(*(.initcall##level##.init))			\
+		KEEP(*(.initcall##level##-fips140s.init))		\
 		KEEP(*(.initcall##level##s.init))			\
 
 #define INIT_CALLS							\
