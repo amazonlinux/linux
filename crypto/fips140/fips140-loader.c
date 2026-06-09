@@ -216,28 +216,28 @@ void __init fips140_mark_kernel_level_done(int level)
  * - .initcallN-fips140post.init: runs AFTER _sync initcalls.
  *   Marks kernel level complete so FIPS module can proceed to next level.
  */
-#define DEFINE_FIPS140_LEVEL_SYNC(lvl)					\
+#define DEFINE_FIPS140_LEVEL_SYNC(lvl, sec_pre, sec_post)		\
 	static int __init fips140_sync_level##lvl(void)			\
 	{								\
 		wait_until_fips140_level_sync(lvl);			\
 		return 0;						\
 	}								\
-	static initcall_t __used					\
-		__section(".initcall" #lvl "-fips140.init")		\
-		__fips140_sync_level##lvl = fips140_sync_level##lvl;	\
+	____define_initcall(fips140_sync_level##lvl,			\
+		fips140_sync_level##lvl,				\
+		__initcall_fips140_sync##lvl, sec_pre);			\
 	static int __init fips140_post_level##lvl(void)			\
 	{								\
 		fips140_mark_kernel_level_done(lvl);			\
 		return 0;						\
 	}								\
-	static initcall_t __used					\
-		__section(".initcall" #lvl "-fips140post.init")		\
-		__fips140_post_level##lvl = fips140_post_level##lvl
+	____define_initcall(fips140_post_level##lvl,			\
+		fips140_post_level##lvl,				\
+		__initcall_fips140_post##lvl, sec_post)
 
-DEFINE_FIPS140_LEVEL_SYNC(3);
-DEFINE_FIPS140_LEVEL_SYNC(4);
-DEFINE_FIPS140_LEVEL_SYNC(6);
-DEFINE_FIPS140_LEVEL_SYNC(7);
+DEFINE_FIPS140_LEVEL_SYNC(3, ".initcall3-fips140.init", ".initcall3-fips140post.init");
+DEFINE_FIPS140_LEVEL_SYNC(4, ".initcall4-fips140.init", ".initcall4-fips140post.init");
+DEFINE_FIPS140_LEVEL_SYNC(6, ".initcall6-fips140.init", ".initcall6-fips140post.init");
+DEFINE_FIPS140_LEVEL_SYNC(7, ".initcall7-fips140.init", ".initcall7-fips140post.init");
 
 EXPORT_SYMBOL(fips140_kernel_level_complete);
 EXPORT_SYMBOL(fips140_module_level_complete);
