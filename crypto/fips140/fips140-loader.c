@@ -170,6 +170,9 @@ static void __init fips140_mark_kernel_wait_module_sync(int level)
 }
 
 /* Module non-sync: mark module done, wait for kernel done */
+/* Rootfs completion flag — set after populate_rootfs runs */
+static atomic_t fips140_kernel_rootfs_done = ATOMIC_INIT(0);
+
 void fips140_mark_module_wait_kernel(int level)
 {
 	pr_err("FIPS 140: module mark_and_wait(%d)\n", level);
@@ -185,7 +188,14 @@ void fips140_mark_module_wait_kernel_sync(int level)
 	pr_err("FIPS 140: module mark_and_wait_sync(%d)\n", level);
 	atomic_or(1 << level, &fips140_module_done_sync);
 	wake_up(&fips140_module_wq);
-	wait_event(fips140_kernel_wq, atomic_read(&fips140_kernel_done_sync) & (1 << level));
+	if (level == 5) {
+		/* Also wait for rootfs (runs between level 5 sync and level 6) */
+		wait_event(fips140_kernel_wq,
+			(atomic_read(&fips140_kernel_done_sync) & (1 << level)) &&
+			atomic_read(&fips140_kernel_rootfs_done));
+	} else {
+		wait_event(fips140_kernel_wq, atomic_read(&fips140_kernel_done_sync) & (1 << level));
+	}
 	pr_err("FIPS 140: module mark_and_wait_sync(%d) done\n", level);
 }
 
@@ -217,6 +227,17 @@ DEFINE_FIPS140_LEVEL_SYNC(4, ".initcall4-fips140.init", ".initcall4-fips140s.ini
 DEFINE_FIPS140_LEVEL_SYNC(5, ".initcall5-fips140.init", ".initcall5-fips140s.init");
 DEFINE_FIPS140_LEVEL_SYNC(6, ".initcall6-fips140.init", ".initcall6-fips140s.init");
 DEFINE_FIPS140_LEVEL_SYNC(7, ".initcall7-fips140.init", ".initcall7-fips140s.init");
+
+/* Mark rootfs complete — placed after populate_rootfs in .initcallrootfs-fips140s.init */
+static int __init fips140_rootfs_done(void)
+{
+	pr_err("FIPS 140: rootfs done\n");
+	atomic_set(&fips140_kernel_rootfs_done, 1);
+	wake_up(&fips140_kernel_wq);
+	return 0;
+}
+____define_initcall(fips140_rootfs_done, fips140_rootfs_done,
+	__initcall_fips140_rootfs_done, ".initcallrootfs-fips140s.init");
 
 EXPORT_SYMBOL(fips140_mark_module_wait_kernel);
 EXPORT_SYMBOL(fips140_mark_module_wait_kernel_sync);
