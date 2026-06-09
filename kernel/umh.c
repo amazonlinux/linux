@@ -208,7 +208,7 @@ static DECLARE_WAIT_QUEUE_HEAD(usermodehelper_disabled_waitq);
  * Time to wait for running_helpers to become zero before the setting of
  * usermodehelper_disabled in usermodehelper_disable() fails
  */
-#define RUNNING_HELPERS_TIMEOUT	(5 * HZ)
+#define RUNNING_HELPERS_TIMEOUT	(20 * HZ)
 
 int usermodehelper_read_trylock(void)
 {
