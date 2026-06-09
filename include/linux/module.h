@@ -129,7 +129,7 @@ extern void cleanup_module(void);
 	static initcall_t __used __section(".fips_initcall5s") \
 		__fips_##fn = fn;
 #define rootfs_initcall(fn) \
-	static initcall_t __used __section(".fips_initcall5s") \
+	static initcall_t __used __section(".fips_initcall_rootfs") \
 		__fips_##fn = fn;
 #define device_initcall(fn) \
 	static initcall_t __used __section(".fips_initcall6") \

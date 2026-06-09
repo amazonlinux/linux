@@ -80,6 +80,7 @@ static int verify_integrity(void)
 #define FIPS_LOADER_LEVEL 3
 #define FIPS_FIRST_LEVEL 4
 #define FIPS_LAST_LEVEL  7
+#define FIPS_ROOTFS_LEVEL 0
 #define FIPS_NUM_LEVELS  (FIPS_LAST_LEVEL - FIPS_FIRST_LEVEL + 1)
 
 static int __init run_initcalls(void)
@@ -90,6 +91,7 @@ static int __init run_initcalls(void)
 	extern initcall_t __fips140_initcall4s_start[], __fips140_initcall4s_end[];
 	extern initcall_t __fips140_initcall5_start[], __fips140_initcall5_end[];
 	extern initcall_t __fips140_initcall5s_start[], __fips140_initcall5s_end[];
+	extern initcall_t __fips140_initcall_rootfs_start[], __fips140_initcall_rootfs_end[];
 	extern initcall_t __fips140_initcall6_start[], __fips140_initcall6_end[];
 	extern initcall_t __fips140_initcall6s_start[], __fips140_initcall6s_end[];
 	extern initcall_t __fips140_initcall7_start[], __fips140_initcall7_end[];
@@ -133,6 +135,17 @@ static int __init run_initcalls(void)
 
 		if (level < FIPS_LAST_LEVEL)
 			fips140_mark_module_wait_kernel_sync(level);
+
+		/* Run rootfs initcalls after level 5 sync (gated by rootfs barrier) */
+		if (level == 5) {
+			for (fn = __fips140_initcall_rootfs_start; fn < __fips140_initcall_rootfs_end; fn++) {
+				int ret = (*fn)();
+				if (ret && ret != -ENODEV)
+					pr_err("FIPS 140: rootfs initcall %pS failed: %d\n", *fn, ret);
+			}
+			fips140_mark_module_wait_kernel(FIPS_ROOTFS_LEVEL);
+			fips140_mark_module_wait_kernel_sync(FIPS_ROOTFS_LEVEL);
+		}
 	}
 
 	pr_info("FIPS 140: run_initcalls finished\n");

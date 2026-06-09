@@ -29,6 +29,9 @@ SECTIONS {
 		__fips140_initcall5s_start = .;
 		*(.fips_initcall5s)
 		__fips140_initcall5s_end = .;
+		__fips140_initcall_rootfs_start = .;
+		*(.fips_initcall_rootfs)
+		__fips140_initcall_rootfs_end = .;
 		__fips140_initcall6_start = .;
 		*(.fips_initcall6)
 		__fips140_initcall6_end = .;
