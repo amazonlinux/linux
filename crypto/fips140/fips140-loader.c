@@ -152,33 +152,41 @@ static void __init fips140_mark_kernel_wait_module(int level)
 	if (level == FIPS_LEVEL_MIN)
 		start_fips140_loader();
 
+	pr_err("FIPS 140: kernel mark_and_wait(%d)\n", level);
 	atomic_or(1 << level, &fips140_kernel_done);
 	wake_up(&fips140_kernel_wq);
 	wait_event(fips140_module_wq, atomic_read(&fips140_module_done) & (1 << level));
+	pr_err("FIPS 140: kernel mark_and_wait(%d) done\n", level);
 }
 
 /* Kernel sync barrier: mark kernel sync done, wait for module sync done */
 static void __init fips140_mark_kernel_wait_module_sync(int level)
 {
+	pr_err("FIPS 140: kernel mark_and_wait_sync(%d)\n", level);
 	atomic_or(1 << level, &fips140_kernel_done_sync);
 	wake_up(&fips140_kernel_wq);
 	wait_event(fips140_module_wq, atomic_read(&fips140_module_done_sync) & (1 << level));
+	pr_err("FIPS 140: kernel mark_and_wait_sync(%d) done\n", level);
 }
 
 /* Module non-sync: mark module done, wait for kernel done */
 void fips140_mark_module_wait_kernel(int level)
 {
+	pr_err("FIPS 140: module mark_and_wait(%d)\n", level);
 	atomic_or(1 << level, &fips140_module_done);
 	wake_up(&fips140_module_wq);
 	wait_event(fips140_kernel_wq, atomic_read(&fips140_kernel_done) & (1 << level));
+	pr_err("FIPS 140: module mark_and_wait(%d) done\n", level);
 }
 
 /* Module sync: mark module sync done, wait for kernel sync done */
 void fips140_mark_module_wait_kernel_sync(int level)
 {
+	pr_err("FIPS 140: module mark_and_wait_sync(%d)\n", level);
 	atomic_or(1 << level, &fips140_module_done_sync);
 	wake_up(&fips140_module_wq);
 	wait_event(fips140_kernel_wq, atomic_read(&fips140_kernel_done_sync) & (1 << level));
+	pr_err("FIPS 140: module mark_and_wait_sync(%d) done\n", level);
 }
 
 /*
