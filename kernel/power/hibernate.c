@@ -21,6 +21,7 @@
 #include <linux/async.h>
 #include <linux/delay.h>
 #include <linux/fs.h>
+#include <linux/initrd.h>
 #include <linux/mount.h>
 #include <linux/pm.h>
 #include <linux/nmi.h>
@@ -1086,6 +1087,9 @@ static int software_resume(void)
 
 	pm_pr_dbg("Preparing processes for hibernation restore.\n");
 	pr_err("PM: hibernation: DEBUG: calling freeze_processes()\n");
+	pr_err("PM: hibernation: DEBUG: waiting for initramfs\n");
+	wait_for_initramfs();
+	pr_err("PM: hibernation: DEBUG: initramfs ready\n");
 	error = freeze_processes();
 	pr_err("PM: hibernation: DEBUG: freeze_processes returned %d\n", error);
 	if (error) {
