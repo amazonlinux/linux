@@ -155,8 +155,7 @@ static int __init run_initcalls(void)
 /* Initialize the FIPS 140 module */
 static int __init fips140_init(void)
 {
-	/* Signal that module is loaded and ready to start */
-	fips140_mark_module_wait_kernel(FIPS_LOADER_LEVEL);
+	/* Signal that module is loaded — unblock kernel level 3 sync barrier */
 	fips140_mark_module_wait_kernel_sync(FIPS_LOADER_LEVEL);
 
 	pr_info("loading " FIPS140_MODULE_NAME "\n");

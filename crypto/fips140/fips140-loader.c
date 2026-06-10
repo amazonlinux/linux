@@ -150,7 +150,7 @@ static void __init start_fips140_loader(void)
 static void __init fips140_mark_kernel_wait_module(int level)
 {
 	if (level == FIPS_LEVEL_MIN)
-		start_fips140_loader();
+		return;
 
 	pr_err("FIPS 140: kernel mark_and_wait(%d)\n", level);
 	atomic_or(1 << level, &fips140_kernel_done);
@@ -162,6 +162,9 @@ static void __init fips140_mark_kernel_wait_module(int level)
 /* Kernel sync barrier: mark kernel sync done, wait for module sync done */
 static void __init fips140_mark_kernel_wait_module_sync(int level)
 {
+	if (level == FIPS_LEVEL_MIN)
+		start_fips140_loader();
+
 	pr_err("FIPS 140: kernel mark_and_wait_sync(%d)\n", level);
 	atomic_or(1 << level, &fips140_kernel_done_sync);
 	wake_up(&fips140_kernel_wq);
