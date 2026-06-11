@@ -1080,4 +1080,14 @@ source "kernel/gcov/Kconfig"
 
 source "scripts/gcc-plugins/Kconfig"
 
+config MICROVM
+	bool "MicroVM support"
+	depends on X86_64 || ARM64
+	default n
+	help
+	  MicroVM is a light weight virtual machine which provides
+	  enhanced security and workload isolation over traditional
+	  VMs. This configuration isolates changes targeted towards
+	  MicroVM optimized kernel.
+
 endmenu
