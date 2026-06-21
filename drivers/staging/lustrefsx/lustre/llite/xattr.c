@@ -396,7 +396,22 @@ int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
 	if (type == XATTR_SECURITY_T && strcmp(name, "security.c") == 0)
 		GOTO(out_xattr, rc = -EPERM);
 
+	/* For seclabels (security.selinux, security.SMACK64), the positive
+	 * value is cached in the kernel security slab and bypasses the
+	 * Lustre xattr cache. But when the seclabel doesn't exist, we
+	 * may have a negative entry in the xattr cache (set when the MDS
+	 * returned MBO_XA_SEC_SELINUX/MBO_XA_SEC_SMACK during lookup).
+	 *
+	 * Use the lightweight check that does not trigger a cache refill.
+	 */
 	if (sbi->ll_xattr_cache_enabled &&
+	    type == XATTR_SECURITY_T && ll_xattr_is_seclabel(name) &&
+	    (valid & OBD_MD_FLXATTR) &&
+	    ll_xattr_cache_check_negative(inode, name))
+		GOTO(out_xattr, rc = -ENODATA);
+
+	if (sbi->ll_xattr_cache_enabled && type != XATTR_ACL_ACCESS_T &&
+	    (type != XATTR_SECURITY_T || !ll_xattr_is_seclabel(name)) &&
 	    (type != XATTR_TRUSTED_T || strcmp(name, XATTR_NAME_SOM))) {
 		rc = ll_xattr_cache_get(inode, name, buffer, size, valid);
 		if (rc == -EAGAIN)
@@ -420,8 +435,15 @@ int ll_xattr_list(struct inode *inode, const char *name, int type, void *buffer,
 getxattr_nocache:
 		rc = md_getxattr(sbi->ll_md_exp, ll_inode2fid(inode), valid,
 				 name, size, &req);
-		if (rc < 0)
+		if (rc < 0) {
+			if (rc == -ENODATA && name &&
+			    (valid & OBD_MD_FLXATTR) &&
+			    sbi->ll_xattr_cache_enabled &&
+			    sbi->ll_neg_xattr_cache_enabled)
+				ll_xattr_cache_insert_negative(inode, name,
+							       true, false);
 			GOTO(out_xattr, rc);
+		}
 
 		/* only detect the xattr size */
 		if (size == 0)
