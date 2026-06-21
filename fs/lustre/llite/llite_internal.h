@@ -393,39 +393,6 @@ static inline void trunc_sem_up_write(struct ll_trunc_sem *sem)
 	wake_up_var(&sem->ll_trunc_readers);
 }
 
-#ifdef CONFIG_LUSTRE_FS_POSIX_ACL
-static inline void lli_clear_acl(struct ll_inode_info *lli)
-{
-	if (lli->lli_posix_acl) {
-		posix_acl_release(lli->lli_posix_acl);
-		lli->lli_posix_acl = NULL;
-	}
-}
-
-static inline void lli_replace_acl(struct ll_inode_info *lli,
-				   struct posix_acl *acl)
-{
-	write_lock(&lli->lli_lock);
-	if (lli->lli_posix_acl)
-		posix_acl_release(lli->lli_posix_acl);
-	lli->lli_posix_acl = acl;
-	if (!acl) {
-		forget_cached_acl(&lli->lli_vfs_inode, ACL_TYPE_ACCESS);
-		forget_cached_acl(&lli->lli_vfs_inode, ACL_TYPE_DEFAULT);
-	}
-	write_unlock(&lli->lli_lock);
-}
-#else
-static inline void lli_clear_acl(struct ll_inode_info *lli)
-{
-}
-
-static inline void lli_replace_acl(struct ll_inode_info *lli,
-				   struct posix_acl *acl)
-{
-}
-#endif
-
 static inline __u32 ll_layout_version_get(struct ll_inode_info *lli)
 {
 	__u32 gen;
@@ -457,10 +424,61 @@ enum ll_file_flags {
 	LLIF_UPDATE_ATIME	= 4,
 	/* foreign file/dir can be unlinked unconditionnaly */
 	LLIF_FOREIGN_REMOVABLE	= 5,
+	/* lli_posix_acl reflects the authoritative state (LU-17238) */
+	LLIF_ACL_VALID		= 6,
 	/* Xattr cache is filled */
 	LLIF_XATTR_CACHE_FILLED	= 7,
 
 };
+
+#ifdef CONFIG_LUSTRE_FS_POSIX_ACL
+static inline void lli_clear_acl(struct ll_inode_info *lli)
+{
+	if (lli->lli_posix_acl) {
+		posix_acl_release(lli->lli_posix_acl);
+		lli->lli_posix_acl = NULL;
+	}
+	clear_bit(LLIF_ACL_VALID, &lli->lli_flags);
+}
+
+/* Install @acl into lli_posix_acl (transfers ownership; @acl may be NULL)
+ * and mark the cached state authoritative. Caller handles inode->i_acl.
+ */
+static inline void lli_install_acl(struct ll_inode_info *lli,
+				   struct posix_acl *acl)
+{
+	write_lock(&lli->lli_lock);
+	if (lli->lli_posix_acl)
+		posix_acl_release(lli->lli_posix_acl);
+	lli->lli_posix_acl = acl;
+	set_bit(LLIF_ACL_VALID, &lli->lli_flags);
+	write_unlock(&lli->lli_lock);
+}
+
+static inline void lli_replace_acl(struct ll_inode_info *lli,
+				   struct posix_acl *acl)
+{
+	lli_install_acl(lli, acl);
+	if (!acl) {
+		forget_cached_acl(&lli->lli_vfs_inode, ACL_TYPE_ACCESS);
+		forget_cached_acl(&lli->lli_vfs_inode, ACL_TYPE_DEFAULT);
+	}
+}
+#else
+static inline void lli_clear_acl(struct ll_inode_info *lli)
+{
+}
+
+static inline void lli_install_acl(struct ll_inode_info *lli,
+				   struct posix_acl *acl)
+{
+}
+
+static inline void lli_replace_acl(struct ll_inode_info *lli,
+				   struct posix_acl *acl)
+{
+}
+#endif
 
 int ll_xattr_cache_destroy(struct inode *inode);
 int ll_xattr_cache_empty(struct inode *inode);
@@ -477,6 +495,13 @@ int ll_xattr_cache_insert(struct inode *inode,
 			  size_t size);
 
 int ll_xattr_cache_refill(struct inode *inode, bool single_use);
+
+int ll_xattr_cache_insert_negative(struct inode *inode, const char *name,
+				    bool require_xattr_lock, bool use_mbo_name);
+
+bool ll_xattr_cache_check_negative(struct inode *inode, const char *name);
+
+void ll_xattr_cache_remove_negative(struct inode *inode, const char *name);
 
 static inline bool obd_connect_has_secctx(struct obd_connect_data *data)
 {
@@ -771,7 +796,8 @@ struct ll_sb_info {
 				 ll_xattr_cache_set:1, /* already set to 0/1 */
 				 ll_client_common_fill_super_succeeded:1,
 				 ll_checksum_set:1,
-				 ll_inode_cache_enabled:1;
+				 ll_inode_cache_enabled:1,
+				 ll_neg_xattr_cache_enabled:1;
 
 	struct lustre_client_ocd ll_lco;
 

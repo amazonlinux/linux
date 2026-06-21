@@ -41,17 +41,33 @@
 
 /* If we ever have hundreds of extended attributes, we might want to consider
  * using a hash or a tree structure instead of list for faster lookups.
+ *
+ * An entry with xe_value == ERR_PTR(-ENODATA) and xe_vallen == 0 indicates
+ * that the xattr name was looked up on the MDT and confirmed to not exist.
+ * This avoids repeated RPCs for xattr names that are absent.
  */
 struct ll_xattr_entry {
-	struct list_head	xe_list;    /* protected with
-					     * lli_xattrs_list_rwsem */
-	char			*xe_name;   /* xattr name, \0-terminated */
-	char			*xe_value;  /* xattr value */
-	unsigned		xe_namelen; /* strlen(xe_name) + 1 */
-	unsigned		xe_vallen;  /* xattr value length */
 
+	struct list_head xe_list; /* protected by lli_xattrs_list_rwsem */
+	char *xe_name;            /* xattr name, \0-terminated */
+	char *xe_value;           /* xattr value, or ERR_PTR(-ENODATA) */
+	unsigned int _xe_namelen; /* strlen(xe_name) + 1, | XE_NAME_STATIC */
+	unsigned int xe_vallen;   /* xattr value length, 0 for negative */
 	bool			xe_single_use; /* flush from cache after 1 use */
 };
+
+/* As an optimization for common xattrs, xe_name stores a direct pointer
+ * to the static xattr name strings in MBO_XA_NAMES. The top bit of _xe_namelen
+ * is used as a sentinel value to mark this behavior, so that we don't attempt
+ * to free a static name string. _xe_namelen stores strlen(name) + 1, which is
+ * bounded by XATTR_NAME_MAX + 1 = 256, so bit 31 never conflicts with the
+ * length.
+ */
+#define XE_NAME_STATIC BIT(31)
+#define xe_namelen_get(entry) ((entry)->_xe_namelen & ~XE_NAME_STATIC)
+#define xe_name_is_static(entry) ((entry)->_xe_namelen & XE_NAME_STATIC)
+
+static const char * const mbo_xa_names[] = MBO_XA_NAMES;
 
 static struct kmem_cache *xattr_kmem;
 static struct lu_kmem_descr xattr_caches[] = {
@@ -73,6 +89,51 @@ int ll_xattr_init(void)
 void ll_xattr_fini(void)
 {
 	lu_kmem_fini(xattr_caches);
+}
+
+static void ll_xattr_free_name(struct ll_xattr_entry *xattr)
+{
+	if (!xe_name_is_static(xattr))
+		OBD_FREE(xattr->xe_name, xe_namelen_get(xattr));
+}
+
+/**
+ * Set xe_name on @xattr. If @use_mbo_name is true, try to match @name against
+ * the MBO_XA_NAMES table and use the static pointer if found. Falls back to
+ * allocation on miss.
+ */
+static int ll_xattr_set_name(struct ll_xattr_entry *xattr, const char *name,
+			     bool use_mbo_name)
+{
+	if (use_mbo_name) {
+		int i;
+
+		for (i = 0; i < ARRAY_SIZE(mbo_xa_names); i++)
+			if (mbo_xa_names[i] &&
+			    strcmp(name, mbo_xa_names[i]) == 0) {
+				xattr->xe_name = (char *)mbo_xa_names[i];
+				xattr->_xe_namelen = (strlen(name) + 1) |
+						    XE_NAME_STATIC;
+				return 0;
+			}
+	}
+
+	xattr->_xe_namelen = strlen(name) + 1;
+	OBD_ALLOC(xattr->xe_name, xattr->_xe_namelen);
+	if (!xattr->xe_name)
+		return -ENOMEM;
+	memcpy(xattr->xe_name, name, xattr->_xe_namelen);
+	return 0;
+}
+
+/**
+ * The canonical test for a negative cache entry is
+ * xe_value == ERR_PTR(-ENODATA). All code paths that consume cache entries must
+ * use this helper, never xe_vallen.
+ */
+static inline bool ll_xattr_is_negative(struct ll_xattr_entry *entry)
+{
+	return entry->xe_value == ERR_PTR(-ENODATA);
 }
 
 /**
@@ -123,77 +184,10 @@ static int ll_xattr_cache_find(struct list_head *cache,
 }
 
 /**
- * This adds an xattr.
+ * ll_xattr_cache_del() - This removes an extended attribute from cache.
  *
- * Add @xattr_name attr with @xattr_val value and @xattr_val_len length,
- *
- * \retval 0       success
- * \retval -ENOMEM if no memory could be allocated for the cached attr
- * \retval -EPROTO if duplicate xattr is being added
- */
-static int ll_xattr_cache_add(struct list_head *cache,
-			      const char *xattr_name,
-			      const char *xattr_val,
-			      unsigned xattr_val_len,
-			      bool single_use)
-{
-	struct ll_xattr_entry *xattr;
-
-	ENTRY;
-
-	if (ll_xattr_cache_find(cache, xattr_name, &xattr) == 0) {
-		if (!strcmp(xattr_name, LL_XATTR_NAME_ENCRYPTION_CONTEXT) ||
-		    !strcmp(xattr_name, LL_XATTR_NAME_ENCRYPTION_CONTEXT_OLD))
-			/* it means enc ctx was already in cache,
-			 * ignore error as it cannot be modified
-			 */
-			RETURN(0);
-
-		CDEBUG(D_CACHE, "duplicate xattr: [%s]\n", xattr_name);
-		RETURN(-EPROTO);
-	}
-
-	OBD_SLAB_ALLOC_PTR_GFP(xattr, xattr_kmem, GFP_NOFS);
-	if (xattr == NULL) {
-		CDEBUG(D_CACHE, "failed to allocate xattr\n");
-		RETURN(-ENOMEM);
-	}
-
-	xattr->xe_namelen = strlen(xattr_name) + 1;
-
-	OBD_ALLOC(xattr->xe_name, xattr->xe_namelen);
-	if (!xattr->xe_name) {
-		CDEBUG(D_CACHE, "failed to alloc xattr name %u\n",
-		       xattr->xe_namelen);
-		goto err_name;
-	}
-	OBD_ALLOC(xattr->xe_value, xattr_val_len);
-	if (!xattr->xe_value) {
-		CDEBUG(D_CACHE, "failed to alloc xattr value %d\n",
-		       xattr_val_len);
-		goto err_value;
-	}
-
-	memcpy(xattr->xe_name, xattr_name, xattr->xe_namelen);
-	memcpy(xattr->xe_value, xattr_val, xattr_val_len);
-	xattr->xe_vallen = xattr_val_len;
-	xattr->xe_single_use = single_use;
-	list_add(&xattr->xe_list, cache);
-
-	CDEBUG(D_CACHE, "set: [%s]=%.*s\n", xattr_name,
-		xattr_val_len, xattr_val);
-
-	RETURN(0);
-err_value:
-	OBD_FREE(xattr->xe_name, xattr->xe_namelen);
-err_name:
-	OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
-
-	RETURN(-ENOMEM);
-}
-
-/**
- * This removes an extended attribute from cache.
+ * @cache: list of xattr for an inode (struct ll_xattr_entry)
+ * @xattr_name: name of xattr to be deleted to the cache list
  *
  * Remove @xattr_name attribute from @cache.
  *
@@ -211,8 +205,9 @@ static int ll_xattr_cache_del(struct list_head *cache,
 
 	if (ll_xattr_cache_find(cache, xattr_name, &xattr) == 0) {
 		list_del(&xattr->xe_list);
-		OBD_FREE(xattr->xe_name, xattr->xe_namelen);
-		OBD_FREE(xattr->xe_value, xattr->xe_vallen);
+		ll_xattr_free_name(xattr);
+		if (!ll_xattr_is_negative(xattr))
+			OBD_FREE(xattr->xe_value, xattr->xe_vallen);
 		OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
 
 		RETURN(0);
@@ -222,7 +217,136 @@ static int ll_xattr_cache_del(struct list_head *cache,
 }
 
 /**
- * This iterates cached extended attributes.
+ * ll_xattr_cache_add() - This adds an xattr.
+ *
+ * @cache: list of xattr for an inode (struct ll_xattr_entry)
+ * @xattr_name: name of xattr to be added to the cache list
+ * @xattr_val: value of xattr to be added to the cache list
+ * @xattr_val_len: length of xattr value
+ *
+ * Add @xattr_name attr with @xattr_val value and @xattr_val_len length,
+ *
+ * Returns:
+ * * %0       success
+ * * %-ENOMEM if no memory could be allocated for the cached attr
+ * * %-EPROTO if duplicate xattr is being added
+ */
+static int ll_xattr_cache_add(struct list_head *cache,
+			      const char *xattr_name,
+			      const char *xattr_val,
+			      unsigned int xattr_val_len,
+			      bool single_use)
+{
+	struct ll_xattr_entry *xattr = NULL;
+
+	ENTRY;
+
+	if (ll_xattr_cache_find(cache, xattr_name, &xattr) == 0) {
+		if (ll_xattr_is_negative(xattr)) {
+			/* Positive entry overwrites negative (absence) cache */
+			ll_xattr_cache_del(cache, xattr_name);
+		} else if (!strcmp(xattr_name,
+				   LL_XATTR_NAME_ENCRYPTION_CONTEXT) ||
+			   !strcmp(xattr_name,
+				   LL_XATTR_NAME_ENCRYPTION_CONTEXT_OLD)) {
+			/* enc ctx already in cache, cannot be modified */
+			RETURN(0);
+		} else {
+			CDEBUG(D_CACHE, "duplicate xattr: [%s]\n", xattr_name);
+			RETURN(-EPROTO);
+		}
+	}
+
+	OBD_SLAB_ALLOC_PTR_GFP(xattr, xattr_kmem, GFP_NOFS);
+	if (xattr == NULL) {
+		CDEBUG(D_CACHE, "failed to allocate xattr\n");
+		RETURN(-ENOMEM);
+	}
+
+	if (ll_xattr_set_name(xattr, xattr_name, false)) {
+		CDEBUG(D_CACHE, "failed to alloc xattr name %s\n",
+		       xattr_name);
+		goto err_name;
+	}
+	OBD_ALLOC(xattr->xe_value, xattr_val_len);
+	if (!xattr->xe_value) {
+		CDEBUG(D_CACHE, "failed to alloc xattr value %d\n",
+		       xattr_val_len);
+		goto err_value;
+	}
+
+	memcpy(xattr->xe_value, xattr_val, xattr_val_len);
+	xattr->xe_vallen = xattr_val_len;
+	xattr->xe_single_use = single_use;
+	list_add(&xattr->xe_list, cache);
+
+	CDEBUG(D_CACHE, "set: [%s]=%.*s\n", xattr_name,
+		xattr_val_len, xattr_val);
+
+	RETURN(0);
+err_value:
+	ll_xattr_free_name(xattr);
+err_name:
+	OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
+
+	RETURN(-ENOMEM);
+}
+
+/**
+ * ll_xattr_cache_add_negative() - Cache that an xattr does not exist.
+ *
+ * @cache: list of xattr for an inode (struct ll_xattr_entry)
+ * @xattr_name: name of xattr confirmed absent
+ * @use_mbo_name: If true, attempt to match @name against the MBO_XA_NAMES
+ *             table and use the static pointer to avoid per-entry allocation.
+ *             Falls back to allocation if the name is not in the table.
+ *
+ * Add a negative cache entry for @xattr_name, indicating the MDT confirmed
+ * this xattr does not exist. The entry stores ERR_PTR(-ENODATA) as the value.
+ * This prevents repeated RPCs for xattr names that are known to be absent.
+ *
+ * Returns:
+ * * %0       success
+ * * %-ENOMEM if no memory could be allocated
+ * * %0       if the name is already cached (positive or negative)
+ */
+static int ll_xattr_cache_add_negative(struct list_head *cache,
+				       const char *xattr_name,
+				       bool use_mbo_name)
+{
+	struct ll_xattr_entry *xattr;
+
+	ENTRY;
+
+	/* Duplicate entries are fine in the negative case */
+	if (ll_xattr_cache_find(cache, xattr_name, &xattr) == 0)
+		RETURN(0);
+
+	OBD_SLAB_ALLOC_PTR_GFP(xattr, xattr_kmem, GFP_NOFS);
+	if (xattr == NULL) {
+		CDEBUG(D_CACHE, "failed to allocate xattr\n");
+		RETURN(-ENOMEM);
+	}
+
+	if (ll_xattr_set_name(xattr, xattr_name, use_mbo_name)) {
+		CDEBUG(D_CACHE, "failed to alloc xattr name %s\n",
+		       xattr_name);
+		OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
+		RETURN(-ENOMEM);
+	}
+
+	xattr->xe_single_use = false;
+	xattr->xe_value = ERR_PTR(-ENODATA);
+	xattr->xe_vallen = 0;
+	list_add(&xattr->xe_list, cache);
+
+	CDEBUG(D_CACHE, "set negative: [%s]\n", xattr_name);
+
+	RETURN(0);
+}
+
+/**
+ * ll_xattr_cache_list() - This iterates cached extended attributes.
  *
  * Walk over cached attributes in @cache and
  * fill in @xld_buffer or only calculate buffer
@@ -241,17 +365,21 @@ static int ll_xattr_cache_list(struct list_head *cache,
 	ENTRY;
 
 	list_for_each_entry_safe(xattr, tmp, cache, xe_list) {
+		/* Skip negative cache entries in listxattr output */
+		if (ll_xattr_is_negative(xattr))
+			continue;
+
 		CDEBUG(D_CACHE, "list: buffer=%p[%d] name=%s\n",
 			xld_buffer, xld_tail, xattr->xe_name);
 
 		if (xld_buffer) {
-			xld_size -= xattr->xe_namelen;
+			xld_size -= xe_namelen_get(xattr);
 			if (xld_size < 0)
 				break;
 			memcpy(&xld_buffer[xld_tail],
-			       xattr->xe_name, xattr->xe_namelen);
+			       xattr->xe_name, xe_namelen_get(xattr));
 		}
-		xld_tail += xattr->xe_namelen;
+		xld_tail += xe_namelen_get(xattr);
 	}
 
 	if (xld_size < 0)
@@ -343,8 +471,9 @@ int ll_xattr_cache_empty(struct inode *inode)
 
 		CDEBUG(D_CACHE, "delete: %s\n", entry->xe_name);
 		list_del(&entry->xe_list);
-		OBD_FREE(entry->xe_name, entry->xe_namelen);
-		OBD_FREE(entry->xe_value, entry->xe_vallen);
+		ll_xattr_free_name(entry);
+		if (!ll_xattr_is_negative(entry))
+			OBD_FREE(entry->xe_value, entry->xe_vallen);
 		OBD_SLAB_FREE_PTR(entry, xattr_kmem);
 	}
 	clear_bit(LLIF_XATTR_CACHE_FILLED, &lli->lli_flags);
@@ -443,6 +572,7 @@ int ll_xattr_cache_refill(struct inode *inode, bool single_use)
 	struct ll_inode_info *lli = ll_i2info(inode);
 	struct mdt_body *body;
 	__u32 *xsizes;
+	bool inode_has_seclabel = false;
 	int rc = 0, i;
 
 	ENTRY;
@@ -523,6 +653,7 @@ int ll_xattr_cache_refill(struct inode *inode, bool single_use)
 							*xsizes, true);
 			} else {
 				CDEBUG(D_CACHE, "not caching %s\n", xdata);
+				inode_has_seclabel = true;
 				rc = 0;
 			}
 		} else if (!strcmp(xdata, XATTR_NAME_SOM)) {
@@ -541,6 +672,11 @@ int ll_xattr_cache_refill(struct inode *inode, bool single_use)
 		xval  += *xsizes;
 		xsizes++;
 	}
+
+	if (!inode_has_seclabel && sbi->ll_secctx_name &&
+	    sbi->ll_neg_xattr_cache_enabled)
+		ll_xattr_cache_add_negative(&lli->lli_xattrs,
+					    sbi->ll_secctx_name, true);
 
 	if (xdata != xtail || xval != xvtail)
 		CERROR("a hole in xattr data\n");
@@ -601,6 +737,18 @@ int ll_xattr_cache_get(struct inode *inode,
 	if ((valid & OBD_MD_FLXATTRLS ||
 	     strcmp(name, xattr_for_enc(inode)) != 0) &&
 	    !ll_xattr_cache_filled(lli)) {
+		if (valid & OBD_MD_FLXATTR && ll_xattr_cache_valid(lli)) {
+			struct ll_xattr_entry *xattr;
+
+			if (ll_xattr_cache_find(&lli->lli_xattrs, name,
+						&xattr) == 0 &&
+			    ll_xattr_is_negative(xattr)) {
+				CDEBUG(D_CACHE,
+				       "negative cache hit: [%s] on "DFID"\n",
+				       name, PFID(ll_inode2fid(inode)));
+				GOTO(out, rc = -ENODATA);
+			}
+		}
 		up_read(&lli->lli_xattrs_list_rwsem);
 		rc = ll_xattr_cache_refill(inode, false);
 		if (rc)
@@ -621,6 +769,12 @@ int ll_xattr_cache_get(struct inode *inode,
 
 		rc = ll_xattr_cache_find(&lli->lli_xattrs, name, &xattr);
 		if (rc == 0) {
+			if (ll_xattr_is_negative(xattr)) {
+				CDEBUG(D_CACHE,
+				       "negative cache hit: [%s] on "DFID"\n",
+				       name, PFID(ll_inode2fid(inode)));
+				GOTO(out, rc = -ENODATA);
+			}
 			rc = xattr->xe_vallen;
 			/* zero size means we are only requested size in rc */
 			if (size != 0) {
@@ -633,8 +787,9 @@ int ll_xattr_cache_get(struct inode *inode,
 
 			if (xattr->xe_single_use) {
 				list_del(&xattr->xe_list);
-				OBD_FREE(xattr->xe_name, xattr->xe_namelen);
-				OBD_FREE(xattr->xe_value, xattr->xe_vallen);
+				ll_xattr_free_name(xattr);
+				if (!ll_xattr_is_negative(xattr))
+					OBD_FREE(xattr->xe_value, xattr->xe_vallen);
 				OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
 			}
 		/* Return the project id when the virtual project id xattr
@@ -691,4 +846,109 @@ int ll_xattr_cache_insert(struct inode *inode,
 	rc = ll_xattr_cache_add(&lli->lli_xattrs, name, buffer, size, false);
 	up_write(&lli->lli_xattrs_list_rwsem);
 	RETURN(rc);
+}
+
+/**
+ * ll_xattr_cache_insert_negative() - Cache that an xattr does not exist.
+ *
+ * @inode: Whose xattr is being cached
+ * @name: xattr name confirmed absent on the MDT
+ * @require_xattr_lock: If true, require MDS_INODELOCK_XATTR lock to be held at
+ *                insertion time. Callers that are inserting a value not cached
+ *                under the XATTR lock (e.g. security.selinux) can ignore this
+ *                requirement with false.
+ * @use_mbo_name: If true, attempt to match @name against the MBO_XA_NAMES
+ *             table and use the static pointer to avoid per-entry allocation.
+ *             Falls back to allocation if the name is not in the table.
+ *
+ * Insert a negative cache entry for @name on @inode, indicating the MDT
+ * confirmed this xattr does not exist.
+ *
+ * The negative entry is invalidated when the MDS_INODELOCK_XATTR lock
+ * is cancelled, since another client could create the xattr at that point.
+ *
+ * Returns:
+ * * %0       success (or lock lost and insert skipped)
+ * * %-ENOMEM if no memory could be allocated
+ * * %0       if the name is already cached (positive or negative)
+ */
+int ll_xattr_cache_insert_negative(struct inode *inode, const char *name,
+				    bool require_xattr_lock, bool use_mbo_name)
+{
+	struct ll_inode_info *lli = ll_i2info(inode);
+	int rc;
+
+	ENTRY;
+
+	down_write(&lli->lli_xattrs_list_rwsem);
+
+	if (require_xattr_lock) {
+		__u64 ibits = MDS_INODELOCK_XATTR;
+
+		if (!ll_have_md_lock(inode, &ibits, LCK_MINMODE)) {
+			up_write(&lli->lli_xattrs_list_rwsem);
+			RETURN(0);
+		}
+	}
+
+	if (!ll_xattr_cache_valid(lli))
+		ll_xattr_cache_init(lli);
+	rc = ll_xattr_cache_add_negative(&lli->lli_xattrs, name, use_mbo_name);
+	up_write(&lli->lli_xattrs_list_rwsem);
+	RETURN(rc);
+}
+
+/**
+ * ll_xattr_cache_check_negative() - Check if an xattr has a negative entry.
+ *
+ * @inode: Whose xattr cache to check
+ * @name: xattr name to look up
+ *
+ * Check if @name has a negative cache entry.
+ * This does not trigger a cache refill — it only checks existing entries.
+ *
+ * Returns:
+ * * %true    negative entry found (xattr confirmed absent)
+ * * %false   no negative entry (xattr may or may not exist)
+ */
+bool ll_xattr_cache_check_negative(struct inode *inode, const char *name)
+{
+	struct ll_inode_info *lli = ll_i2info(inode);
+	struct ll_xattr_entry *xattr = NULL;
+	bool negative = false;
+
+	down_read(&lli->lli_xattrs_list_rwsem);
+	if (test_bit(LLIF_XATTR_CACHE, &lli->lli_flags) &&
+	    ll_xattr_cache_find(&lli->lli_xattrs, name, &xattr) == 0 &&
+	    ll_xattr_is_negative(xattr))
+		negative = true;
+	up_read(&lli->lli_xattrs_list_rwsem);
+
+	return negative;
+}
+
+/**
+ * ll_xattr_cache_remove_negative() - Remove a negative cache entry by name.
+ *
+ * @inode: Whose xattr cache to update
+ * @name: xattr name whose negative entry should be removed
+ *
+ * Remove the negative cache entry for @name if one exists. Positive entries
+ * are left untouched. Not all xattrs are cached under the MDS_INODELOCK_XATTR,
+ * so this allows dropping individual entries even if we still have XATTR lock.
+ */
+void ll_xattr_cache_remove_negative(struct inode *inode, const char *name)
+{
+	struct ll_inode_info *lli = ll_i2info(inode);
+	struct ll_xattr_entry *xattr = NULL;
+
+	down_write(&lli->lli_xattrs_list_rwsem);
+	if (test_bit(LLIF_XATTR_CACHE, &lli->lli_flags) &&
+	    ll_xattr_cache_find(&lli->lli_xattrs, name, &xattr) == 0 &&
+	    ll_xattr_is_negative(xattr)) {
+		list_del(&xattr->xe_list);
+		ll_xattr_free_name(xattr);
+		OBD_SLAB_FREE_PTR(xattr, xattr_kmem);
+	}
+	up_write(&lli->lli_xattrs_list_rwsem);
 }

@@ -386,8 +386,16 @@ static void ll_lock_cancel_bits(struct ldlm_lock *lock, __u64 to_cancel)
 	    inode->i_sb->s_root && !is_root_inode(inode))
 		ll_prune_aliases(inode);
 
-	if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM))
+	if (bits & (MDS_INODELOCK_LOOKUP | MDS_INODELOCK_PERM)) {
 		forget_all_cached_acls(inode);
+		clear_bit(LLIF_ACL_VALID, &lli->lli_flags);
+		/* Clear negative cache entries for xattrs whose absence
+		 * was established via lookup prepacks.
+		 */
+		if (ll_i2sbi(inode)->ll_secctx_name)
+			ll_xattr_cache_remove_negative(inode,
+					ll_i2sbi(inode)->ll_secctx_name);
+	}
 
 	iput(inode);
 	RETURN_EXIT;
@@ -1195,6 +1203,10 @@ inherit:
 		op_data->op_archive_id = pca->pca_dataset->pccd_rwid;
 		it->it_flags |= MDS_OPEN_PCC;
 	}
+
+	/* we want at least read access for getattr */
+	if (it->it_op & IT_GETATTR)
+		it->it_flags |= FMODE_READ;
 
 	/* If the MDS allows the client to chgrp (CFS_SETGRP_PERM), but the
 	 * client does not know which suppgid should be sent to the MDS, or
