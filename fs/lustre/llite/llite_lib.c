@@ -547,6 +547,7 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 			 * during processing llog, it won't be enabled here. */
 			set_bit(LL_SBI_XATTR_CACHE, sbi->ll_flags);
 			sbi->ll_xattr_cache_enabled = 1;
+			sbi->ll_neg_xattr_cache_enabled = 0;
 		}
 	}
 
@@ -2740,6 +2741,23 @@ int ll_update_inode(struct inode *inode, struct lustre_md *md)
 
 	if (body->mbo_valid & OBD_MD_FLACL)
 		lli_replace_acl(lli, md->posix_acl);
+
+	if (sbi->ll_xattr_cache_enabled && sbi->ll_neg_xattr_cache_enabled &&
+	    body->mbo_xattr_absent & MBO_XA_KNOWN) {
+		static const char * const mbo_xa_names[] = MBO_XA_NAMES;
+		__u64 absent = body->mbo_xattr_absent;
+		int bit;
+
+		for (bit = 0; (absent & MBO_XA_KNOWN) &&
+		     BIT(bit) <= MBO_XA_KNOWN; bit++) {
+			if (absent & BIT(bit)) {
+				ll_xattr_cache_insert_negative(inode,
+							       mbo_xa_names[bit],
+							       false, true);
+				absent &= ~BIT(bit);
+			}
+		}
+	}
 
 	api32 = test_bit(LL_SBI_32BIT_API, sbi->ll_flags);
 	inode->i_ino = cl_fid_build_ino(&body->mbo_fid1, api32);
