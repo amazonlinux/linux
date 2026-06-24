@@ -33,7 +33,6 @@
 
 #include <linux/slab.h>
 #include <rdma/ib_user_verbs.h>
-#include <rdma/iter.h>
 
 #include "mlx4_ib.h"
 
