@@ -2,4 +2,4 @@ upstream_repo: git://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
 upstream_base: 5.10.247
 base: 5.4.302
 upstream_version: 5.10.247
-version: 5.4.302
+version: 5.4.303

@@ -1,0 +1,36 @@
+c5a32fa47a0f83dc4c41b568cd2e3b143b9da636:
+  title: 'crypto: af_alg - Disallow concurrent writes in af_alg_sendmsg'
+  mainline: 1b34cbbf4f011a121ef7b2d7d6e6920a036d5285
+12a80542b35ecd484d5e5fd726dc488f10b9a7e7:
+  title: 'crypto: doc - fix kernel-doc notation in chacha.c and af_alg.c'
+  mainline: b2a4411aca29ab7feb17c927d1d91d979361983c
+2c3ca8b1386cc28ebe41566dbd29695b9bf40738:
+  title: 'crypto: scatterwalk - Backport memcpy_sglist()'
+  mainline: 4dffc9bbffb9ccfcda730d899c97c553599e7ca8
+872a421020c1fd4484dd4d8fe3ea03369c958c92:
+  title: 'crypto: algif_aead - use memcpy_sglist() instead of null skcipher'
+  mainline: f2804d0eee8ddd57aa79d0b82872b74c21e1b69b
+48deed3d2a8454a2155cb41c1508a6971e1ff6fa:
+  title: 'crypto: algif_aead - Revert to operating out-of-place'
+  mainline: a664bf3d603dc3bdcf9ae47cc21e0daec706d7a5
+f994af32768a48579d5b82eae977ca2d40b3d111:
+  title: 'crypto: algif_aead - snapshot IV for async AEAD requests'
+  mainline: 5aa58c3a572b3e3b6c786953339f7978b845cc52
+99cc994da3d3a852d1028b1f93ab41b70a235b32:
+  title: 'crypto: authenc - use memcpy_sglist() instead of null skcipher'
+  mainline: dbc4b1458e931e47198c3165ff5853bc1ad6bd7a
+0344732dd0d0bf449909caabf96f40f163687d2a:
+  title: 'crypto: authencesn - Do not place hiseq at end of dst for out-of-place decryption'
+  mainline: e02494114ebf7c8b42777c6cd6982f113bfdbec7
+a57726d4427f586355f17af73cee39e206cddc33:
+  title: 'crypto: authencesn - Fix src offset when decrypting in-place'
+  mainline: 1f48ad3b19a9dfc947868edda0bb8e48e5b5a8fa
+bc299e90bad4061b2e7b6f8bb7eb24b3f0ae7d2a:
+  title: 'crypto: af_alg - Fix page reassignment overflow in af_alg_pull_tsgl'
+  mainline: 31d00156e50ecad37f2cb6cbf04aaa9a260505ef
+6693625a834531044184de82cb47112995c796bf:
+  title: 'crypto: algif_aead - Fix minimum RX size check for decryption'
+  mainline: 3d14bd48e3a77091cbce637a12c2ae31b4a1687c
+3fd70f5de9d2d2988f4b4ee2e38f8df7784e9dde:
+  title: 'xfrm: esp: avoid in-place decrypt on shared skb frags'
+  mainline: f4c50a4034e62ab75f1d5cdd191dd5f9c77fdff4
