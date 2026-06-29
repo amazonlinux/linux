@@ -380,6 +380,9 @@ void br_dev_delete(struct net_device *dev, struct list_head *head)
 
 	br_fdb_delete_by_port(br, NULL, 0, 1);
 
+	del_timer_sync(&br->hello_timer);
+	del_timer_sync(&br->topology_change_timer);
+	del_timer_sync(&br->tcn_timer);
 	cancel_delayed_work_sync(&br->gc_work);
 
 	br_sysfs_delbr(br->dev);
