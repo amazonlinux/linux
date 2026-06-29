@@ -190,6 +190,16 @@ config THREAD_INFO_IN_TASK
 
 menu "General setup"
 
+config MICROVM
+	bool "MicroVM support"
+	default n
+	depends on X86_64 || ARM64
+	help
+	  MicroVM is a light weight virtual machine which provides
+	  enhanced security and workload isolation over traditional
+	  VMs. This configuration isolates changes targetted towards
+	  MicroVM optimized kernel.
+
 config BROKEN
 	bool
 	help
