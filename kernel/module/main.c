@@ -127,8 +127,22 @@ static void mod_update_bounds(struct module *mod)
 }
 
 /* Block module loading/unloading? */
+#ifdef CONFIG_MICROVM
+/*
+ * On a microVM kernel, module loading is permanently disabled: modules_disabled
+ * is forced "on" and can never be cleared. The sysctl below only permits a
+ * 0 -> 1 transition, so userspace can never clear it even as root. The
+ * "nomodule" command line parameter is still accepted for compatibility but is
+ * bound to a throwaway variable, so it cannot turn module loading back on
+ * (e.g. "nomodule=0" has no effect).
+ */
+static int modules_disabled = 1;
+static int nomodule_unused;
+core_param(nomodule, nomodule_unused, bint, 0);
+#else
 static int modules_disabled;
 core_param(nomodule, modules_disabled, bint, 0);
+#endif
 
 static const struct ctl_table module_sysctl_table[] = {
 	{
