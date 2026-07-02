@@ -75,12 +75,13 @@ struct hbucket {
 struct htable_gc {
 	struct delayed_work dwork;
 	struct ip_set *set;	/* Set the gc belongs to */
+	spinlock_t lock;	/* Lock to exclude gc and resize */
 	u32 region;		/* Last gc run position */
 };
 
 /* The hash table: the table size stored here in order to make resizing easy */
 struct htable {
-	atomic_t ref;		/* References for resizing */
+	bool resizing;		/* Mark ongoing resize */
 	atomic_t uref;		/* References for dumping and gc */
 	u8 htable_bits;		/* size of hash table == 2^htable_bits */
 	u32 maxelem;		/* Maxelem per region */
@@ -582,9 +583,12 @@ mtype_gc(struct work_struct *work)
 	if (next_run < HZ/10)
 		next_run = HZ/10;
 
-	mtype_gc_do(set, h, t, r);
+	spin_lock_bh(&gc->lock);
+	if (!t->resizing)
+		mtype_gc_do(set, h, t, r);
+	spin_unlock_bh(&gc->lock);
 
-	if (atomic_dec_and_test(&t->uref) && atomic_read(&t->ref)) {
+	if (atomic_dec_and_test(&t->uref) && t->resizing) {
 		pr_debug("Table destroy after resize by expire: %p\n", t);
 		mtype_ahash_destroy(set, t, false);
 	}
@@ -672,11 +676,13 @@ retry:
 		spin_lock_init(&t->hregion[i].lock);
 
 	/* There can't be another parallel resizing,
-	 * but dumping, gc, kernel side add/del are possible
+	 * but dumping and kernel side add/del are possible
 	 */
 	orig = ipset_dereference_bh_nfnl(h->table);
-	atomic_set(&orig->ref, 1);
 	atomic_inc(&orig->uref);
+	spin_lock_bh(&h->gc.lock);
+	orig->resizing = true;
+	spin_unlock_bh(&h->gc.lock);
 	pr_debug("attempt to resize set %s from %u to %u, t %p\n",
 		 set->name, orig->htable_bits, htable_bits, orig);
 	for (r = 0; r < ahash_numof_locks(orig->htable_bits); r++) {
@@ -792,7 +798,9 @@ out:
 
 cleanup:
 	rcu_read_unlock_bh();
-	atomic_set(&orig->ref, 0);
+	spin_lock_bh(&h->gc.lock);
+	orig->resizing = false;
+	spin_unlock_bh(&h->gc.lock);
 	atomic_dec(&orig->uref);
 	mtype_ahash_destroy(set, t, false);
 	if (ret == -EAGAIN)
@@ -1000,7 +1008,7 @@ overwrite_extensions:
 	ret = 0;
 resize:
 	spin_unlock_bh(&t->hregion[r].lock);
-	if (atomic_read(&t->ref) && ext->target) {
+	if (t->resizing && ext && ext->target) {
 		/* Resize is in process and kernel side add, save values */
 		struct mtype_resize_ad *x;
 
@@ -1027,7 +1035,7 @@ set_full:
 unlock:
 	spin_unlock_bh(&t->hregion[r].lock);
 out:
-	if (atomic_dec_and_test(&t->uref) && atomic_read(&t->ref)) {
+	if (atomic_dec_and_test(&t->uref) && t->resizing) {
 		pr_debug("Table destroy after resize by add: %p\n", t);
 		mtype_ahash_destroy(set, t, false);
 	}
@@ -1090,7 +1098,7 @@ mtype_del(struct ip_set *set, void *value, const struct ip_set_ext *ext,
 #endif
 		ip_set_ext_destroy(set, data);
 
-		if (atomic_read(&t->ref) && ext->target) {
+		if (t->resizing && ext && ext->target) {
 			/* Resize is in process and kernel side del,
 			 * save values
 			 */
@@ -1142,7 +1150,7 @@ out:
 		list_add(&x->list, &h->ad);
 		spin_unlock_bh(&set->lock);
 	}
-	if (atomic_dec_and_test(&t->uref) && atomic_read(&t->ref)) {
+	if (atomic_dec_and_test(&t->uref) && t->resizing) {
 		pr_debug("Table destroy after resize by del: %p\n", t);
 		mtype_ahash_destroy(set, t, false);
 	}
@@ -1351,7 +1359,7 @@ mtype_uref(struct ip_set *set, struct netlink_callback *cb, bool start)
 		rcu_read_unlock_bh();
 	} else if (cb->args[IPSET_CB_PRIVATE]) {
 		t = (struct htable *)cb->args[IPSET_CB_PRIVATE];
-		if (atomic_dec_and_test(&t->uref) && atomic_read(&t->ref)) {
+		if (atomic_dec_and_test(&t->uref) && t->resizing) {
 			pr_debug("Table destroy after resize "
 				 " by dump: %p\n", t);
 			mtype_ahash_destroy(set, t, false);
@@ -1591,6 +1599,7 @@ IPSET_TOKEN(HTYPE, _create)(struct net *net, struct ip_set *set,
 		return -ENOMEM;
 	}
 	h->gc.set = set;
+	spin_lock_init(&h->gc.lock);
 	for (i = 0; i < ahash_numof_locks(hbits); i++)
 		spin_lock_init(&t->hregion[i].lock);
 	h->maxelem = maxelem;
