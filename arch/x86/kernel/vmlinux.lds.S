@@ -63,7 +63,7 @@ const_cpu_current_top_of_stack = cpu_current_top_of_stack;
 #define X86_ALIGN_RODATA_END					\
 		. = ALIGN(HPAGE_SIZE);				\
 		__end_rodata_hpage_align = .;			\
-		__end_rodata_aligned = .;
+		__end_rodata_aligned = ALIGN(__end_rodata, HPAGE_SIZE);
 
 #if defined(CONFIG_MITIGATION_PAGE_TABLE_ISOLATION) || defined(CONFIG_MITIGATION_SRSO)
 #define ALIGN_ENTRY_TEXT_BEGIN	. = ALIGN(PMD_SIZE);
@@ -175,7 +175,6 @@ SECTIONS
 
 	X86_ALIGN_RODATA_BEGIN
 	RO_DATA(PAGE_SIZE)
-	X86_ALIGN_RODATA_END
 
 #ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 	/* FIPS 140 embedded module data */
@@ -216,6 +215,8 @@ SECTIONS
 #endif
 #endif
 #endif
+
+	X86_ALIGN_RODATA_END
 
 	/* Data */
 	.data : AT(ADDR(.data) - LOAD_OFFSET) {
