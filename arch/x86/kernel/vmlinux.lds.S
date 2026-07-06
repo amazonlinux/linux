@@ -166,7 +166,6 @@ SECTIONS
 
 	X86_ALIGN_RODATA_BEGIN
 	RO_DATA(PAGE_SIZE)
-	X86_ALIGN_RODATA_END
 
 #ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
 	/* FIPS 140 embedded module data */
@@ -207,6 +206,8 @@ SECTIONS
 #endif
 #endif
 #endif
+
+	X86_ALIGN_RODATA_END
 
 	/* Data */
 	.data : AT(ADDR(.data) - LOAD_OFFSET) {
