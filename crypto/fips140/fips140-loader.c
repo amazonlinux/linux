@@ -152,7 +152,7 @@ static int fips140_sync_thread(void *data)
 	return 0;
 }
 
-static void __init start_fips140_loader(void)
+static void start_fips140_loader(void)
 {
 	struct task_struct *task;
 
@@ -162,7 +162,7 @@ static void __init start_fips140_loader(void)
 }
 
 /* Kernel non-sync barrier: mark kernel done, wait for module done */
-static void __init fips140_mark_kernel_wait_module(int level)
+static void fips140_mark_kernel_wait_module(int level)
 {
 	if (level == FIPS_LEVEL_MIN)
 		return;
@@ -173,7 +173,7 @@ static void __init fips140_mark_kernel_wait_module(int level)
 }
 
 /* Kernel sync barrier: mark kernel sync done, wait for module sync done */
-static void __init fips140_mark_kernel_wait_module_sync(int level)
+static void fips140_mark_kernel_wait_module_sync(int level)
 {
 	if (level == FIPS_LEVEL_MIN)
 		start_fips140_loader();
@@ -208,7 +208,7 @@ void fips140_mark_module_wait_kernel_sync(int level)
  * - .initcallN-fips140s.init: after .initcallNs.init
  */
 #define DEFINE_FIPS140_LEVEL_SYNC(lvl, sec_pre, sec_post)		\
-	static int __init fips140_pre_level##lvl(void)			\
+	static int fips140_pre_level##lvl(void)				\
 	{								\
 		fips140_mark_kernel_wait_module(lvl);			\
 		return 0;						\
@@ -216,7 +216,7 @@ void fips140_mark_module_wait_kernel_sync(int level)
 	____define_initcall(fips140_pre_level##lvl,			\
 		fips140_pre_level##lvl,					\
 		__initcall_fips140_pre##lvl, sec_pre);			\
-	static int __init fips140_post_level##lvl(void)			\
+	static int fips140_post_level##lvl(void)			\
 	{								\
 		fips140_mark_kernel_wait_module_sync(lvl);		\
 		return 0;						\
