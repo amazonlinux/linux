@@ -63,11 +63,4 @@ rdma_udata_to_uverbs_attr_bundle(struct ib_udata *udata)
 	return container_of(udata, struct uverbs_attr_bundle, driver_udata);
 }
 
-enum efa_uverbs_attrs_create_cq_cmd_attr_ids {
-	UVERBS_ATTR_CREATE_CQ_BUFFER_VA = 8,
-	UVERBS_ATTR_CREATE_CQ_BUFFER_LENGTH,
-	UVERBS_ATTR_CREATE_CQ_BUFFER_FD,
-	UVERBS_ATTR_CREATE_CQ_BUFFER_OFFSET,
-};
-
 #endif /* _KCOMPAT_H_ */
