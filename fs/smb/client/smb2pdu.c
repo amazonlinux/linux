@@ -3355,6 +3355,7 @@ replay_again:
 		file_info->EndOfFile = rsp->EndofFile;
 		file_info->Attributes = rsp->FileAttributes;
 		file_info->NumberOfLinks = cpu_to_le32(1);
+		buf->unknown_nlink = true;
 		file_info->DeletePending = 0; /* successful open = not delete pending */
 	}
 
