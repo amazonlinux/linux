@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0 OR Linux-OpenIB
 /*
- * Copyright 2018-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "kcompat.h"
@@ -10,7 +10,7 @@
 #include <linux/log2.h>
 
 #include <rdma/ib_addr.h>
-#include <rdma/ib_umem.h>
+#include <rdma/iter.h>
 #include <rdma/ib_user_verbs.h>
 #include <rdma/ib_verbs.h>
 #include <rdma/efa_verbs.h>
@@ -648,7 +648,7 @@ static int qp_mmap_entries_setup(struct efa_qp *qp,
 
 	resp->llq_desc_offset &= ~PAGE_MASK;
 
-	if (qp->rq_size) {
+	if (qp->rq_cpu_addr) {
 		address = dev->db_bar_addr + resp->rq_db_offset;
 
 		qp->rq_db_mmap_entry =
@@ -710,11 +710,11 @@ static int efa_qp_validate_cap(struct efa_dev *dev,
 			  init_attr->cap.max_recv_sge, dev->dev_attr.max_rq_sge);
 		return -EINVAL;
 	}
-	if (init_attr->cap.max_inline_data > dev->dev_attr.inline_buf_size) {
+	if (init_attr->cap.max_inline_data > dev->dev_attr.inline_buf_size_ex) {
 		ibdev_dbg(&dev->ibdev,
 			  "qp: requested inline data[%u] exceeds the max[%u]\n",
 			  init_attr->cap.max_inline_data,
-			  dev->dev_attr.inline_buf_size);
+			  dev->dev_attr.inline_buf_size_ex);
 		return -EINVAL;
 	}
 
@@ -782,13 +782,14 @@ static void efa_qp_init_indices(struct efa_qp *qp)
 	qp->rq.wq.wrid_idx_pool_next = 0;
 }
 
-static void efa_setup_qp(struct efa_qp *qp, struct ib_qp_cap *cap)
+static void efa_setup_qp(struct efa_qp *qp, struct efa_dev *dev, struct ib_qp_cap *cap)
 {
 	u32 rq_desc_cnt;
 
 	efa_qp_init_indices(qp);
 
-	qp->sq.wq.max_wqes = roundup_pow_of_two(cap->max_send_wr);
+	qp->sq.wq.max_wqes = roundup_pow_of_two(max_t(u32, cap->max_send_wr,
+						      dev->dev_attr.min_sq_depth));
 	qp->sq.wq.max_sge = cap->max_send_sge;
 	qp->sq.wq.queue_mask = qp->sq.wq.max_wqes - 1;
 
@@ -903,7 +904,7 @@ static int efa_create_qp_kernel(struct ib_qp *ibqp, struct ib_qp_init_attr *init
 	if (err)
 		goto err_out;
 
-	efa_setup_qp(qp, &init_attr->cap);
+	efa_setup_qp(qp, dev, &init_attr->cap);
 
 	create_qp_params.uarn = dev->uarn;
 	create_qp_params.pd = to_epd(ibqp->pd)->pdn;
@@ -979,7 +980,7 @@ err_terminate_rq:
 err_destroy_qp:
 	efa_destroy_qp_handle(dev, create_qp_resp.qp_handle);
 err_free_mapped:
-	if (qp->rq_size)
+	if (qp->rq_cpu_addr)
 		efa_free_mapped(dev, qp->rq_cpu_addr, qp->rq_dma_addr, qp->rq_size, DMA_TO_DEVICE);
 err_out:
 	atomic64_inc(&dev->stats.create_qp_err);
@@ -1141,7 +1142,7 @@ err_remove_mmap_entries:
 err_destroy_qp:
 	efa_destroy_qp_handle(dev, create_qp_resp.qp_handle);
 err_free_mapped:
-	if (qp->rq_size)
+	if (qp->rq_cpu_addr)
 		efa_free_mapped(dev, qp->rq_cpu_addr, qp->rq_dma_addr,
 				qp->rq_size, DMA_TO_DEVICE);
 err_out:
@@ -1396,16 +1397,17 @@ int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata)
 		  cq->cq_idx, cq->cpu_addr, cq->size, &cq->dma_addr);
 
 	efa_destroy_cq_idx(dev, cq->cq_idx);
-	efa_cq_user_mmap_entries_remove(cq);
+	if (cq->cpu_addr)
+		efa_cq_user_mmap_entries_remove(cq);
 	if (cq->eq) {
 		xa_erase(&dev->cqs_xa, cq->cq_idx);
 		synchronize_irq(cq->eq->irq.irqn);
 	}
 
-	if (cq->umem)
-		ib_umem_release(cq->umem);
-	else
+	if (cq->cpu_addr)
 		efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size, DMA_FROM_DEVICE);
+	else
+		ib_umem_release(cq->umem);
 	kfree(cq->sub_cq_arr);
 	return 0;
 }
@@ -1589,9 +1591,14 @@ int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	if (attr->flags)
 		return -EOPNOTSUPP;
 
-	if (entries < 1 || entries > dev->dev_attr.max_cq_depth) {
+	if (entries < 1) {
+		err = -EINVAL;
+		goto err_out;
+	}
+
+	if (entries > dev->dev_attr.max_cq_depth) {
 		ibdev_dbg(ibdev,
-			  "cq: requested entries[%u] non-positive or greater than max[%u]\n",
+			  "cq: requested entries[%u] greater than max[%u]\n",
 			  entries, dev->dev_attr.max_cq_depth);
 		err = -EINVAL;
 		goto err_out;
@@ -1660,7 +1667,6 @@ int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 			goto err_out;
 		}
 
-		cq->cpu_addr = NULL;
 		cq->dma_addr = ib_umem_start_dma_addr(umem);
 		cq->umem = umem;
 	} else {
@@ -1694,7 +1700,7 @@ int efa_create_cq_umem(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 	cq->ibcq.cqe = result.actual_depth;
 	WARN_ON_ONCE(entries != result.actual_depth);
 
-	if (!umem)
+	if (cq->cpu_addr)
 		err = cq_mmap_entries_setup(dev, cq, &resp, result.db_valid);
 
 	if (err) {
@@ -1731,11 +1737,12 @@ err_xa_erase:
 	if (cq->eq)
 		xa_erase(&dev->cqs_xa, cq->cq_idx);
 err_remove_mmap:
-	efa_cq_user_mmap_entries_remove(cq);
+	if (cq->cpu_addr)
+		efa_cq_user_mmap_entries_remove(cq);
 err_destroy_cq:
 	efa_destroy_cq_idx(dev, cq->cq_idx);
 err_free_mapped:
-	if (!umem)
+	if (cq->cpu_addr)
 		efa_free_mapped(dev, cq->cpu_addr, cq->dma_addr, cq->size,
 				DMA_FROM_DEVICE);
 
@@ -2608,6 +2615,7 @@ int efa_alloc_ucontext(struct ib_ucontext *ibucontext, struct ib_udata *udata)
 	resp.cmds_supp_udata_mask |= EFA_USER_CMDS_SUPP_UDATA_CREATE_AH;
 	resp.sub_cqs_per_cq = dev->dev_attr.sub_cqs_per_cq;
 	resp.inline_buf_size = dev->dev_attr.inline_buf_size;
+	resp.inline_buf_size_ex = dev->dev_attr.inline_buf_size_ex;
 	resp.max_llq_size = dev->dev_attr.max_llq_size;
 	resp.max_tx_batch = dev->dev_attr.max_tx_batch;
 	resp.min_sq_wr = dev->dev_attr.min_sq_depth;
