@@ -109,11 +109,4 @@ static inline bool ib_umem_is_contiguous(struct ib_umem *umem)
 	return !!ib_umem_find_best_pgsz(umem, pgsz, dma_addr);
 }
 
-enum efa_uverbs_attrs_create_cq_cmd_attr_ids {
-	UVERBS_ATTR_CREATE_CQ_BUFFER_VA = 8,
-	UVERBS_ATTR_CREATE_CQ_BUFFER_LENGTH,
-	UVERBS_ATTR_CREATE_CQ_BUFFER_FD,
-	UVERBS_ATTR_CREATE_CQ_BUFFER_OFFSET,
-};
-
 #endif /* _KCOMPAT_H_ */
