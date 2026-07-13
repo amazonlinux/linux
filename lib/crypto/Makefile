@@ -238,6 +238,10 @@ libsha256-$(CONFIG_X86) += x86/sha256-ssse3-asm.o \
 			   x86/sha256-ni-asm.o
 endif # CONFIG_CRYPTO_LIB_SHA256_ARCH
 
+# Boot-time crypto implementation override for FIPS testing (always built-in)
+obj-$(CONFIG_X86) += x86/crypto_impl_override.o
+obj-$(CONFIG_ARM64) += arm64/crypto_impl_override.o
+
 ################################################################################
 
 crypto-objs-$(CONFIG_CRYPTO_LIB_SHA512) += libsha512.o
