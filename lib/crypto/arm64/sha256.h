@@ -7,9 +7,12 @@
 #include <asm/neon.h>
 #include <asm/simd.h>
 #include <linux/cpufeature.h>
+#include <linux/static_call.h>
 
 static __ro_after_init DEFINE_STATIC_KEY_FALSE(have_neon);
 static __ro_after_init DEFINE_STATIC_KEY_FALSE(have_ce);
+
+DEFINE_STATIC_CALL(sha256_blocks_arm64, sha256_blocks_generic);
 
 asmlinkage void sha256_block_data_order(struct sha256_block_state *state,
 					const u8 *data, size_t nblocks);
@@ -40,7 +43,7 @@ static void sha256_blocks(struct sha256_block_state *state,
 			kernel_neon_end();
 		}
 	} else {
-		sha256_block_data_order(state, data, nblocks);
+		static_call(sha256_blocks_arm64)(state, data, nblocks);
 	}
 }
 
@@ -85,10 +88,23 @@ static bool sha256_finup_2x_is_optimized_arch(void)
 #define sha256_mod_init_arch sha256_mod_init_arch
 static void sha256_mod_init_arch(void)
 {
-	if (cpu_have_named_feature(ASIMD)) {
+	extern char *sha256_arm64_impl_override;
+	const char *impl = sha256_arm64_impl_override;
+
+	if ((!impl && cpu_have_named_feature(ASIMD)) ||
+	    (impl && !strcmp(impl, "ce"))) {
 		static_branch_enable(&have_neon);
-		if (cpu_have_named_feature(SHA2))
+		if ((!impl && cpu_have_named_feature(SHA2)) ||
+		    (impl && !strcmp(impl, "ce")))
 			static_branch_enable(&have_ce);
+	} else if (impl && !strcmp(impl, "neon")) {
+		static_branch_enable(&have_neon);
+	} else if (impl && !strcmp(impl, "generic")) {
+		static_call_update(sha256_blocks_arm64,
+				   sha256_blocks_generic);
+		return;
 	}
+
+	static_call_update(sha256_blocks_arm64, sha256_block_data_order);
 }
 #endif /* CONFIG_KERNEL_MODE_NEON */

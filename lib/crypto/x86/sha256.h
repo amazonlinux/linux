@@ -76,20 +76,28 @@ static bool sha256_finup_2x_is_optimized_arch(void)
 #define sha256_mod_init_arch sha256_mod_init_arch
 static void sha256_mod_init_arch(void)
 {
-	if (boot_cpu_has(X86_FEATURE_SHA_NI)) {
+	extern char *sha256_x86_impl_override;
+	const char *impl = sha256_x86_impl_override;
+
+	if ((!impl && boot_cpu_has(X86_FEATURE_SHA_NI)) ||
+	    (impl && !strcmp(impl, "ni"))) {
 		static_call_update(sha256_blocks_x86, sha256_blocks_ni);
 		static_branch_enable(&have_sha_ni);
-	} else if (cpu_has_xfeatures(XFEATURE_MASK_SSE | XFEATURE_MASK_YMM,
-				     NULL) &&
-		   boot_cpu_has(X86_FEATURE_AVX)) {
-		if (boot_cpu_has(X86_FEATURE_AVX2) &&
-		    boot_cpu_has(X86_FEATURE_BMI2))
-			static_call_update(sha256_blocks_x86,
-					   sha256_blocks_avx2);
-		else
-			static_call_update(sha256_blocks_x86,
-					   sha256_blocks_avx);
-	} else if (boot_cpu_has(X86_FEATURE_SSSE3)) {
+	} else if ((!impl && cpu_has_xfeatures(XFEATURE_MASK_SSE |
+			XFEATURE_MASK_YMM, NULL) &&
+		    boot_cpu_has(X86_FEATURE_AVX) &&
+		    boot_cpu_has(X86_FEATURE_AVX2) &&
+		    boot_cpu_has(X86_FEATURE_BMI2)) ||
+		   (impl && !strcmp(impl, "avx2"))) {
+		static_call_update(sha256_blocks_x86, sha256_blocks_avx2);
+	} else if ((!impl && cpu_has_xfeatures(XFEATURE_MASK_SSE |
+			XFEATURE_MASK_YMM, NULL) &&
+		    boot_cpu_has(X86_FEATURE_AVX)) ||
+		   (impl && !strcmp(impl, "avx"))) {
+		static_call_update(sha256_blocks_x86, sha256_blocks_avx);
+	} else if ((!impl && boot_cpu_has(X86_FEATURE_SSSE3)) ||
+		   (impl && !strcmp(impl, "ssse3"))) {
 		static_call_update(sha256_blocks_x86, sha256_blocks_ssse3);
 	}
+	/* else: stays at sha256_blocks_generic (default, or impl=="generic") */
 }
