@@ -4051,18 +4051,25 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u32 error_code,
 	else
 		write_lock(&vcpu->kvm->mmu_lock);
 
-	if (is_obsolete_sp(vcpu->kvm, to_shadow_page(vcpu->arch.mmu->root_hpa)))
-		goto out_unlock;
-	if (!is_noslot_pfn(pfn) && mmu_notifier_retry_hva(vcpu->kvm, mmu_seq, hva))
-		goto out_unlock;
-
 	if (is_tdp_mmu_fault) {
+		if (is_obsolete_sp(vcpu->kvm, to_shadow_page(vcpu->arch.mmu->root_hpa)))
+			goto out_unlock;
+		if (!is_noslot_pfn(pfn) && mmu_notifier_retry_hva(vcpu->kvm, mmu_seq, hva))
+			goto out_unlock;
 		r = kvm_tdp_mmu_map(vcpu, gpa, error_code, map_writable, max_level,
 				    pfn, prefault);
 	} else {
 		r = make_mmu_pages_available(vcpu);
 		if (r)
 			goto out_unlock;
+		if (is_obsolete_sp(vcpu->kvm, to_shadow_page(vcpu->arch.mmu->root_hpa))) {
+			r = RET_PF_RETRY;
+			goto out_unlock;
+		}
+		if (!is_noslot_pfn(pfn) && mmu_notifier_retry_hva(vcpu->kvm, mmu_seq, hva)) {
+			r = RET_PF_RETRY;
+			goto out_unlock;
+		}
 		r = __direct_map(vcpu, gpa, error_code, map_writable, max_level, pfn,
 				 prefault, is_tdp);
 	}
