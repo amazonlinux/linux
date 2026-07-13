@@ -3794,12 +3794,14 @@ static int direct_page_fault(struct kvm_vcpu *vcpu, gpa_t gpa, u32 error_code,
 
 	r = RET_PF_RETRY;
 	spin_lock(&vcpu->kvm->mmu_lock);
+	r = make_mmu_pages_available(vcpu);
+	if (r)
+		goto out_unlock;
+
+	r = RET_PF_RETRY;
 	if (is_obsolete_sp(vcpu->kvm, to_shadow_page(vcpu->arch.mmu->root_hpa)))
 		goto out_unlock;
 	if (mmu_notifier_retry(vcpu->kvm, mmu_seq))
-		goto out_unlock;
-	r = make_mmu_pages_available(vcpu);
-	if (r)
 		goto out_unlock;
 
 	if (is_tdp_mmu_root(vcpu->kvm, vcpu->arch.mmu->root_hpa))
