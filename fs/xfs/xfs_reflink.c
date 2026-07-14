@@ -417,6 +417,8 @@ retry:
 		if (!isnullstartblock(got.br_startblock)) {
 			xfs_trim_extent(&got, offset_fsb, count_fsb);
 			*imap = got;
+			if (tp)
+				xfs_trans_cancel(tp);
 			goto convert;
 		}
 
@@ -439,6 +441,21 @@ retry:
 
 		if (error)
 			return error;
+
+		/*
+		 * The data fork mapping may have changed while we dropped
+		 * the ILOCK (a racing O_DIRECT writer under IOLOCK_SHARED
+		 * can complete a full CoW cycle including
+		 * xfs_reflink_end_cow(), which remaps this offset and drops
+		 * the refcount of the old shared block).  Re-read it so the
+		 * shared-status recheck below operates on the current
+		 * mapping rather than a stale physical block.
+		 */
+		nimaps = 1;
+		error = xfs_bmapi_read(ip, offset_fsb, count_fsb, imap,
+				&nimaps, 0);
+		if (error)
+			goto out;
 
 		error = xfs_qm_dqattach_locked(ip, 0);
 		if (error)
