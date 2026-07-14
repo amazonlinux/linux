@@ -1679,7 +1679,7 @@ static int set_id_aa64isar1_el1(struct kvm_vcpu *vcpu,
 
 	/* Fields in ISAR2 */
 	gpa3 = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR2_EL1_GPA3),
-			 IDREG(vcpu->kvm, SYS_ID_AA64ISAR2_EL1));
+			 kvm_arm_read_id_reg(vcpu, SYS_ID_AA64ISAR2_EL1));
 
 	/* Fields in PFR1 */
 	sme = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64PFR1_EL1_SME),
@@ -1766,9 +1766,9 @@ static int set_id_aa64isar2_el1(struct kvm_vcpu *vcpu,
 
 	/* Fields in ISAR1 */
 	gpi = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_GPI),
-			IDREG(vcpu->kvm, SYS_ID_AA64ISAR1_EL1));
+			kvm_arm_read_id_reg(vcpu, SYS_ID_AA64ISAR1_EL1));
 	gpa = FIELD_GET(ARM64_FEATURE_MASK(ID_AA64ISAR1_EL1_GPA),
-			IDREG(vcpu->kvm, SYS_ID_AA64ISAR1_EL1));
+			kvm_arm_read_id_reg(vcpu, SYS_ID_AA64ISAR1_EL1));
 
 	/*
 	 * From Arm Architecture Reference Manual for A-profile architecture
