@@ -31,3 +31,22 @@ static int __init sha256_arm64_impl_setup(char *str)
 	return 1;
 }
 __setup("sha256_arm64_impl=", sha256_arm64_impl_setup);
+
+/*
+ * Kernel boot parameter: sha1_arm64_impl=<value>
+ *
+ * Valid values and the implementation they select:
+ *   generic - Pure C software implementation (sha1_blocks_generic)
+ *   ce      - ARMv8 Crypto Extensions (sha1c/sha1p/sha1m instructions)
+ *
+ * Example: add "sha1_arm64_impl=generic" to the kernel command line.
+ */
+char *sha1_arm64_impl_override;
+EXPORT_SYMBOL_GPL(sha1_arm64_impl_override);
+
+static int __init sha1_arm64_impl_setup(char *str)
+{
+	sha1_arm64_impl_override = str;
+	return 1;
+}
+__setup("sha1_arm64_impl=", sha1_arm64_impl_setup);
