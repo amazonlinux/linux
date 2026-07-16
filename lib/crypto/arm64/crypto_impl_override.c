@@ -50,3 +50,25 @@ static int __init sha1_arm64_impl_setup(char *str)
 	return 1;
 }
 __setup("sha1_arm64_impl=", sha1_arm64_impl_setup);
+
+/*
+ * Kernel boot parameter: sha512_arm64_impl=<value>
+ *
+ * Valid values and the implementation they select:
+ *   generic - Pure C software implementation (sha512_blocks_generic)
+ *   asm     - Scalar ARM64 assembly (sha512_block_data_order)
+ *   ce      - ARMv8.2 Crypto Extensions (sha512h/sha512h2 instructions)
+ *
+ * Also selects the SHA-384 implementation (same block function).
+ *
+ * Example: add "sha512_arm64_impl=asm" to the kernel command line.
+ */
+char *sha512_arm64_impl_override;
+EXPORT_SYMBOL_GPL(sha512_arm64_impl_override);
+
+static int __init sha512_arm64_impl_setup(char *str)
+{
+	sha512_arm64_impl_override = str;
+	return 1;
+}
+__setup("sha512_arm64_impl=", sha512_arm64_impl_setup);
