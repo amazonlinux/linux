@@ -54,3 +54,26 @@ static int __init sha1_x86_impl_setup(char *str)
 	return 1;
 }
 __setup("sha1_x86_impl=", sha1_x86_impl_setup);
+
+/*
+ * Kernel boot parameter: sha512_x86_impl=<value>
+ *
+ * Valid values and the implementation they select:
+ *   generic - Pure C software implementation (sha512_blocks_generic)
+ *   ssse3   - SSSE3 assembly (sha512_transform_ssse3)
+ *   avx     - AVX assembly (sha512_transform_avx)
+ *   avx2    - AVX2+BMI2 assembly (sha512_transform_rorx)
+ *
+ * Also selects the SHA-384 implementation (same block function).
+ *
+ * Example: add "sha512_x86_impl=avx2" to the kernel command line.
+ */
+char *sha512_x86_impl_override;
+EXPORT_SYMBOL_GPL(sha512_x86_impl_override);
+
+static int __init sha512_x86_impl_setup(char *str)
+{
+	sha512_x86_impl_override = str;
+	return 1;
+}
+__setup("sha512_x86_impl=", sha512_x86_impl_setup);
