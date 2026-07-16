@@ -57,18 +57,78 @@ static void sha1_blocks(struct sha1_block_state *state,
 #define sha1_mod_init_arch sha1_mod_init_arch
 static void sha1_mod_init_arch(void)
 {
-	if (boot_cpu_has(X86_FEATURE_SHA_NI)) {
+	extern char *sha1_x86_impl_override;
+	const char *requested = sha1_x86_impl_override;
+	const char *impl = requested;
+	const char *sel = "generic";
+	bool known = false;
+
+	if (impl) {
+		bool supported = false;
+
+		if (!strcmp(impl, "generic")) {
+			known = true;
+			supported = true;
+		} else if (!strcmp(impl, "ni")) {
+			known = true;
+			supported = boot_cpu_has(X86_FEATURE_SHA_NI);
+		} else if (!strcmp(impl, "avx2")) {
+			known = true;
+			supported = cpu_has_xfeatures(XFEATURE_MASK_SSE |
+					XFEATURE_MASK_YMM, NULL) &&
+				    boot_cpu_has(X86_FEATURE_AVX) &&
+				    boot_cpu_has(X86_FEATURE_AVX2) &&
+				    boot_cpu_has(X86_FEATURE_BMI1) &&
+				    boot_cpu_has(X86_FEATURE_BMI2);
+		} else if (!strcmp(impl, "avx")) {
+			known = true;
+			supported = cpu_has_xfeatures(XFEATURE_MASK_SSE |
+					XFEATURE_MASK_YMM, NULL) &&
+				    boot_cpu_has(X86_FEATURE_AVX);
+		} else if (!strcmp(impl, "ssse3")) {
+			known = true;
+			supported = boot_cpu_has(X86_FEATURE_SSSE3);
+		}
+
+		if (!supported)
+			impl = NULL;
+	}
+
+	if ((!impl && boot_cpu_has(X86_FEATURE_SHA_NI)) ||
+	    (impl && !strcmp(impl, "ni"))) {
 		static_call_update(sha1_blocks_x86, sha1_blocks_ni);
-	} else if (cpu_has_xfeatures(XFEATURE_MASK_SSE | XFEATURE_MASK_YMM,
-				     NULL) &&
-		   boot_cpu_has(X86_FEATURE_AVX)) {
-		if (boot_cpu_has(X86_FEATURE_AVX2) &&
+		sel = "SHA-NI";
+	} else if ((!impl && cpu_has_xfeatures(XFEATURE_MASK_SSE |
+			XFEATURE_MASK_YMM, NULL) &&
+		    boot_cpu_has(X86_FEATURE_AVX) &&
+		    boot_cpu_has(X86_FEATURE_AVX2) &&
 		    boot_cpu_has(X86_FEATURE_BMI1) &&
-		    boot_cpu_has(X86_FEATURE_BMI2))
-			static_call_update(sha1_blocks_x86, sha1_blocks_avx2);
-		else
-			static_call_update(sha1_blocks_x86, sha1_blocks_avx);
-	} else if (boot_cpu_has(X86_FEATURE_SSSE3)) {
+		    boot_cpu_has(X86_FEATURE_BMI2)) ||
+		   (impl && !strcmp(impl, "avx2"))) {
+		static_call_update(sha1_blocks_x86, sha1_blocks_avx2);
+		sel = "AVX2";
+	} else if ((!impl && cpu_has_xfeatures(XFEATURE_MASK_SSE |
+			XFEATURE_MASK_YMM, NULL) &&
+		    boot_cpu_has(X86_FEATURE_AVX)) ||
+		   (impl && !strcmp(impl, "avx"))) {
+		static_call_update(sha1_blocks_x86, sha1_blocks_avx);
+		sel = "AVX";
+	} else if ((!impl && boot_cpu_has(X86_FEATURE_SSSE3)) ||
+		   (impl && !strcmp(impl, "ssse3"))) {
 		static_call_update(sha1_blocks_x86, sha1_blocks_ssse3);
+		sel = "SSSE3";
+	}
+	/* else: stays at sha1_blocks_generic (default, or impl=="generic") */
+
+	if (requested) {
+		if (impl)
+			pr_info("sha1: using %s implementation (forced by sha1_x86_impl=%s)\n",
+				sel, requested);
+		else if (known)
+			pr_warn("sha1: CPU features unavailable for sha1_x86_impl=%s; override failed, using %s implementation\n",
+				requested, sel);
+		else
+			pr_warn("sha1: unknown sha1_x86_impl=%s; override failed, using %s implementation\n",
+				requested, sel);
 	}
 }
