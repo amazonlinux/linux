@@ -1563,7 +1563,8 @@ static void __user *nvme_to_user_ptr(uintptr_t ptrval)
 	return (void __user *)ptrval;
 }
 
-static int nvme_submit_io(struct nvme_ns *ns, struct nvme_user_io __user *uio)
+static int nvme_submit_io(struct nvme_ns *ns, struct nvme_user_io __user *uio,
+		bool partition, bool open_for_write)
 {
 	struct nvme_user_io io;
 	struct nvme_command c;
@@ -1620,6 +1621,14 @@ static int nvme_submit_io(struct nvme_ns *ns, struct nvme_user_io __user *uio)
 	c.rw.reftag = cpu_to_le32(io.reftag);
 	c.rw.apptag = cpu_to_le16(io.apptag);
 	c.rw.appmask = cpu_to_le16(io.appmask);
+
+	/*
+	 * Unprivileged I/O must not escape a partition or send data through
+	 * a file descriptor that was not opened for writing.
+	 */
+	if ((partition || (nvme_is_write(&c) && !open_for_write)) &&
+	    !capable(CAP_SYS_ADMIN))
+		return -EACCES;
 
 	return nvme_submit_user_cmd(ns->queue, &c,
 			nvme_to_user_ptr(io.addr), length,
@@ -1810,7 +1819,8 @@ static int nvme_ioctl(struct block_device *bdev, fmode_t mode,
 		ret = nvme_user_cmd(ns->ctrl, ns, argp);
 		break;
 	case NVME_IOCTL_SUBMIT_IO:
-		ret = nvme_submit_io(ns, argp);
+		ret = nvme_submit_io(ns, argp, bdev_is_partition(bdev),
+				     mode & FMODE_WRITE);
 		break;
 	case NVME_IOCTL_IO64_CMD:
 		ret = nvme_user_cmd64(ns->ctrl, ns, argp, false);
