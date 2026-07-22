@@ -40,6 +40,8 @@ if [ $? -ne 0 ];then
 	echo "SKIP: Could not create net namespace"
 	exit $ksft_skip
 fi
+ip netns exec ${nsrouter} sysctl -wq net.ipv4.conf.all.rp_filter=0
+ip netns exec ${nsrouter} sysctl -wq net.ipv4.conf.default.rp_filter=0
 
 trap cleanup EXIT
 
@@ -51,7 +53,11 @@ fi
 
 sysctl -q net.netfilter.nf_log_all_netns=1
 ip netns add ${ns1}
+ip netns exec ${ns1} sysctl -wq net.ipv4.conf.all.rp_filter=0
+ip netns exec ${ns1} sysctl -wq net.ipv4.conf.default.rp_filter=0
 ip netns add ${ns2}
+ip netns exec ${ns2} sysctl -wq net.ipv4.conf.all.rp_filter=0
+ip netns exec ${ns2} sysctl -wq net.ipv4.conf.default.rp_filter=0
 
 load_ruleset() {
 	local netns=$1
