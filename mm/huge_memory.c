@@ -3513,7 +3513,7 @@ int split_huge_page_to_list_to_order(struct page *page, struct list_head *list,
 		gfp_t gfp;
 
 		mapping = folio->mapping;
-		min_order = mapping_min_folio_order(folio->mapping);
+		min_order = mapping_min_folio_order(mapping);
 		if (new_order < min_order) {
 			VM_WARN_ONCE(1, "Cannot split mapped folio below min-order: %u",
 				     min_order);
@@ -3528,6 +3528,8 @@ int split_huge_page_to_list_to_order(struct page *page, struct list_head *list,
 			ret = -EBUSY;
 			goto out;
 		}
+
+		mapping_set_update(&xas, mapping);
 
 		xas_split_alloc(&xas, folio, folio_order(folio), gfp);
 		if (xas_error(&xas)) {
