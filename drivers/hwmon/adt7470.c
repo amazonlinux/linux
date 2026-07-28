@@ -579,9 +579,10 @@ static ssize_t temp_min_store(struct device *dev,
 	temp = DIV_ROUND_CLOSEST(temp, 1000);
 
 	mutex_lock(&data->lock);
-	data->temp_min[attr->index] = temp;
 	err = regmap_write(data->regmap, ADT7470_TEMP_MIN_REG(attr->index),
 				  temp);
+	if (!err)
+		data->temp_min[attr->index] = temp;
 	mutex_unlock(&data->lock);
 
 	return err < 0 ? err : count;
@@ -615,8 +616,9 @@ static ssize_t temp_max_store(struct device *dev,
 	temp = DIV_ROUND_CLOSEST(temp, 1000);
 
 	mutex_lock(&data->lock);
-	data->temp_max[attr->index] = temp;
 	err = regmap_write(data->regmap, ADT7470_TEMP_MAX_REG(attr->index), temp);
+	if (!err)
+		data->temp_max[attr->index] = temp;
 	mutex_unlock(&data->lock);
 
 	return err < 0 ? err : count;
@@ -820,8 +822,9 @@ static ssize_t pwm_store(struct device *dev, struct device_attribute *devattr,
 	temp = clamp_val(temp, 0, 255);
 
 	mutex_lock(&data->lock);
-	data->pwm[attr->index] = temp;
 	err = regmap_write(data->regmap, ADT7470_REG_PWM(attr->index), temp);
+	if (!err)
+		data->pwm[attr->index] = temp;
 	mutex_unlock(&data->lock);
 
 	return err < 0 ? err : count;
@@ -1058,10 +1061,11 @@ static ssize_t pwm_auto_store(struct device *dev,
 	temp--;
 
 	mutex_lock(&data->lock);
-	data->pwm_automatic[attr->index] = temp;
 	err = regmap_update_bits(data->regmap, ADT7470_REG_PWM_CFG(attr->index),
 				 pwm_auto_reg_mask,
 				 temp ? pwm_auto_reg_mask : 0);
+	if (!err)
+		data->pwm_automatic[attr->index] = temp;
 	mutex_unlock(&data->lock);
 
 	return err < 0 ? err : count;
