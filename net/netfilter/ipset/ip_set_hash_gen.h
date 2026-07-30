@@ -375,7 +375,7 @@ mtype_flush(struct ip_set *set)
 	memset(h->nets, 0, sizeof(h->nets));
 #endif
 	set->elements = 0;
-	set->ext_size = 0;
+	atomic64_set(&set->ext_size, 0);
 }
 
 /* Destroy the hashtable part of the set */
@@ -504,7 +504,8 @@ mtype_expire(struct ip_set *set, struct htype *h)
 				d++;
 			}
 			tmp->pos = d;
-			set->ext_size -= ext_size(AHASH_INIT_SIZE, dsize);
+			atomic64_sub(ext_size(AHASH_INIT_SIZE, dsize),
+				     &set->ext_size);
 			rcu_assign_pointer(hbucket(t, i), tmp);
 			kfree_rcu(n, rcu);
 		}
@@ -644,7 +645,7 @@ retry:
 		}
 	}
 	rcu_assign_pointer(h->table, t);
-	set->ext_size = extsize;
+	atomic64_set(&set->ext_size, extsize);
 
 	spin_unlock_bh(&set->lock);
 
@@ -712,7 +713,8 @@ mtype_add(struct ip_set *set, void *value, const struct ip_set_ext *ext,
 		if (!n)
 			return -ENOMEM;
 		n->size = AHASH_INIT_SIZE;
-		set->ext_size += ext_size(AHASH_INIT_SIZE, set->dsize);
+		atomic64_add(ext_size(AHASH_INIT_SIZE, set->dsize),
+			     &set->ext_size);
 		goto copy_elem;
 	}
 	for (i = 0; i < n->pos; i++) {
@@ -776,7 +778,8 @@ mtype_add(struct ip_set *set, void *value, const struct ip_set_ext *ext,
 		memcpy(n, old, sizeof(struct hbucket) +
 		       old->size * set->dsize);
 		n->size = old->size + AHASH_INIT_SIZE;
-		set->ext_size += ext_size(AHASH_INIT_SIZE, set->dsize);
+		atomic64_add(ext_size(AHASH_INIT_SIZE, set->dsize),
+			     &set->ext_size);
 	}
 
 copy_elem:
@@ -868,7 +871,7 @@ mtype_del(struct ip_set *set, void *value, const struct ip_set_ext *ext,
 				k++;
 		}
 		if (n->pos == 0 && k == 0) {
-			set->ext_size -= ext_size(n->size, dsize);
+			atomic64_sub(ext_size(n->size, dsize), &set->ext_size);
 			rcu_assign_pointer(hbucket(t, key), NULL);
 			kfree_rcu(n, rcu);
 		} else if (k >= AHASH_INIT_SIZE) {
@@ -887,7 +890,8 @@ mtype_del(struct ip_set *set, void *value, const struct ip_set_ext *ext,
 				k++;
 			}
 			tmp->pos = k;
-			set->ext_size -= ext_size(AHASH_INIT_SIZE, dsize);
+			atomic64_sub(ext_size(AHASH_INIT_SIZE, dsize),
+				     &set->ext_size);
 			rcu_assign_pointer(hbucket(t, key), tmp);
 			kfree_rcu(n, rcu);
 		}
@@ -1047,7 +1051,7 @@ mtype_head(struct ip_set *set, struct sk_buff *skb)
 
 	rcu_read_lock_bh();
 	t = rcu_dereference_bh_nfnl(h->table);
-	memsize = mtype_ahash_memsize(h, t) + set->ext_size;
+	memsize = mtype_ahash_memsize(h, t) + atomic64_read(&set->ext_size);
 	htable_bits = t->htable_bits;
 	rcu_read_unlock_bh();
 
