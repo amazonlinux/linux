@@ -621,6 +621,8 @@ static int do_bad(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 
 static int do_sea(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 {
+	static DEFINE_RATELIMIT_STATE(sea_rs, DEFAULT_RATELIMIT_INTERVAL,
+				      DEFAULT_RATELIMIT_BURST);
 	const struct fault_info *inf;
 	void __user *siaddr;
 
@@ -638,6 +640,26 @@ static int do_sea(unsigned long addr, unsigned int esr, struct pt_regs *regs)
 		siaddr = NULL;
 	else
 		siaddr  = (void __user *)addr;
+
+	/*
+	 * Diagnostic aid for virtualised guests. A synchronous external abort
+	 * taken from EL0 means the stage 1 translation succeeded, so the PTE
+	 * backing this address resolved to an address the hypervisor could not
+	 * satisfy. Dump the decoded ESR and the software page table walk while
+	 * the mapping is still live, before the task is signalled or killed.
+	 * An abort taken from EL0 is user triggerable and the dump spans
+	 * several lines, so ratelimit the whole block rather than any single
+	 * print.
+	 */
+	if (user_mode(regs) && __ratelimit(&sea_rs)) {
+		pr_alert("SEA from EL0: comm=%s pid=%d addr=%016lx esr=%08x pc=%016llx\n",
+			 current->comm, task_pid_nr(current), addr, esr,
+			 regs->pc);
+		mem_abort_decode(esr);
+		if (!(esr & ESR_ELx_FnV))
+			show_pte(addr);
+	}
+
 	arm64_notify_die(inf->name, regs, inf->sig, inf->code, siaddr, esr);
 
 	return 0;
