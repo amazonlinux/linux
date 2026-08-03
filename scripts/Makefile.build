@@ -31,7 +31,7 @@ subdir-ccflags-y :=
 
 crypto-objs-flags-y := -DFIPS_MODULE=1
 crypto-objs-y :=
-crypto-module-folders := crypto arch/$(ARCH)/crypto lib/crypto certs
+crypto-module-folders := crypto arch/$(SRCARCH)/crypto lib/crypto certs
 # Global crypto directory checking logic
 # Use relative paths so this works with both in-tree and O= out-of-tree builds
 define is-crypto-related-dir
