@@ -296,6 +296,13 @@ static bool tipc_update_nametbl(struct net *net, struct distr_item *i,
 	u32 port = ntohl(i->port);
 	u32 key = ntohl(i->key);
 
+	/* A peer-advertised binding with lower > upper can never be matched
+	 * or withdrawn and would leak the publication; the local bind path
+	 * rejects such ranges, so reject ranges learned from the network too.
+	 */
+	if (lower > upper)
+		return false;
+
 	if (dtype == PUBLICATION) {
 		p = tipc_nametbl_insert_publ(net, type, lower, upper,
 					     TIPC_CLUSTER_SCOPE, node,
