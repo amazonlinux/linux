@@ -98,10 +98,8 @@ static void __nf_queue_entry_init_physdevs(struct nf_queue_entry *entry)
 	}
 
 	if (entry->state.pf == NFPROTO_BRIDGE &&
-	    dst && (dst->flags & DST_FAKE_RTABLE)) {
-		WARN_ON_ONCE(!rcu_read_lock_held());
-		dev = READ_ONCE(dst->dev);
-	}
+	    dst && (dst->flags & DST_FAKE_RTABLE))
+		dev = dst_dev_rcu(dst);
 
 	/* Must hold a reference on the bridge device: dst_hold() protects
 	 * the dst itself, but the fake rtable is embedded in bridge-private
