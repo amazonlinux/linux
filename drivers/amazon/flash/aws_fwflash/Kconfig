@@ -1,0 +1,18 @@
+# aws_fwflash config
+
+config AMAZON_AWS_FWFLASH
+    tristate "AWS firmware flash driver"
+    depends on X86_64
+    help
+      Say M here to enable the AWS firmware flash driver (aws_fwflash).
+
+      This driver provides a character device (/dev/aws_fwflash) with a
+      restricted IOCTL interface for triggering Software Management
+      Interrupts (SMI) and accessing physical memory regions. It is used
+      by the aws_fwflash userspace tool to perform in-band firmware updates,
+      replacing the deprecated /dev/mem and ioperm() mechanisms which are
+      disabled on Amazon Linux 2023+ for security hardening. Access to the
+      device requires CAP_SYS_RAWIO and the node is created mode 0600.
+
+      To compile this driver as a module, choose M here.
+      The module will be called aws_fwflash.
