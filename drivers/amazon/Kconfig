@@ -42,4 +42,6 @@ config AMAZON_IGB_UIO
 
 source "drivers/amazon/media/v4l2-loopback/Kconfig"
 
+source "drivers/amazon/flash/aws_fwflash/Kconfig"
+
 endif # AMAZON_DRIVER_UPDATES
