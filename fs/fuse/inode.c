@@ -1189,6 +1189,16 @@ struct fuse_init_args {
 	struct fuse_init_out out;
 };
 
+/*
+ * A server can stall syncfs()/sync(), so only honor FUSE_HAS_SYNCFS for
+ * servers that opened /dev/fuse with CAP_SYS_ADMIN in the initial user
+ * namespace -- the same privilege required to mount virtiofs or fuseblk.
+ */
+static bool fuse_syncfs_enable(struct fuse_conn *fc, u64 flags)
+{
+	return (flags & FUSE_HAS_SYNCFS) && fc->syncfs_capable;
+}
+
 static void process_init_reply(struct fuse_mount *fm, struct fuse_args *args,
 			       int error)
 {
@@ -1282,6 +1292,9 @@ static void process_init_reply(struct fuse_mount *fm, struct fuse_args *args,
 				fc->setxattr_ext = 1;
 			if (flags & FUSE_SECURITY_CTX)
 				fc->init_security = 1;
+
+			if (fuse_syncfs_enable(fc, flags))
+				fc->sync_fs = 1;
 		} else {
 			ra_pages = fc->max_read / PAGE_SIZE;
 			fc->no_lock = 1;
@@ -1337,6 +1350,12 @@ void fuse_send_init(struct fuse_mount *fm)
 #endif
 	if (fm->fc->auto_submounts)
 		flags |= FUSE_SUBMOUNTS;
+
+	/* Only offered to sufficiently privileged servers; see
+	 * fuse_syncfs_enable().
+	 */
+	if (fm->fc->syncfs_capable)
+		flags |= FUSE_HAS_SYNCFS;
 
 	ia->in.flags = flags;
 	ia->in.flags2 = flags >> 32;
@@ -1670,6 +1689,7 @@ int fuse_fill_super_common(struct super_block *sb, struct fuse_fs_context *ctx)
 
 	fc->default_permissions = ctx->default_permissions;
 	fc->allow_other = ctx->allow_other;
+	fc->syncfs_capable = ctx->syncfs_capable;
 	fc->user_id = ctx->user_id;
 	fc->group_id = ctx->group_id;
 	fc->legacy_opts_show = ctx->legacy_opts_show;
@@ -1733,6 +1753,16 @@ static int fuse_fill_super(struct super_block *sb, struct fs_context *fsc)
 	if ((ctx->file->f_op != &fuse_dev_operations) ||
 	    (ctx->file->f_cred->user_ns != sb->s_user_ns))
 		return -EINVAL;
+
+	/*
+	 * Record whether the server opened /dev/fuse with CAP_SYS_ADMIN in the
+	 * initial user namespace -- the same privilege that mounting virtiofs
+	 * or fuseblk requires.  Only such servers are trusted to receive
+	 * FUSE_SYNCFS (see fuse_syncfs_enable()).
+	 */
+	ctx->syncfs_capable = file_ns_capable(ctx->file, &init_user_ns,
+					      CAP_SYS_ADMIN);
+
 	ctx->fudptr = &ctx->file->private_data;
 
 	err = fuse_fill_super_common(sb, ctx);
