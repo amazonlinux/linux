@@ -425,6 +425,12 @@ struct fuse_file_lock {
  * FUSE_HAS_RESEND: kernel supports resending pending requests, and the high bit
  *		    of the request ID indicates resend requests
  * FUSE_ALLOW_IDMAP: allow creation of idmapped mounts
+ * FUSE_HAS_SYNCFS: server requests that syncfs()/sync() be propagated as
+ *		FUSE_SYNCFS requests.  Since an untrusted server can use this
+ *		to stall sync(), it is only honored when /dev/fuse was opened
+ *		with CAP_SYS_ADMIN in the initial user namespace (the same
+ *		privilege that mounting virtiofs or fuseblk requires).
+ *		Insufficiently privileged servers ignore it.
  */
 #define FUSE_ASYNC_READ		(1 << 0)
 #define FUSE_POSIX_LOCKS	(1 << 1)
@@ -471,6 +477,7 @@ struct fuse_file_lock {
 /* Obsolete alias for FUSE_DIRECT_IO_ALLOW_MMAP */
 #define FUSE_DIRECT_IO_RELAX	FUSE_DIRECT_IO_ALLOW_MMAP
 #define FUSE_ALLOW_IDMAP	(1ULL << 40)
+#define FUSE_HAS_SYNCFS		(1ULL << 44)
 
 /**
  * CUSE INIT request/reply flags
