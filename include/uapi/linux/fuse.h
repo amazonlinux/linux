@@ -366,6 +366,12 @@ struct fuse_file_lock {
  *			mknod
  * FUSE_HAS_INODE_DAX:  use per inode DAX
  * FUSE_HAS_EXPIRE_ONLY: kernel supports expiry-only entry invalidation
+ * FUSE_HAS_SYNCFS: server requests that syncfs()/sync() be propagated as
+ *		FUSE_SYNCFS requests.  Since an untrusted server can use this
+ *		to stall sync(), it is only honored when /dev/fuse was opened
+ *		with CAP_SYS_ADMIN in the initial user namespace (the same
+ *		privilege that mounting virtiofs or fuseblk requires).
+ *		Insufficiently privileged servers ignore it.
  */
 #define FUSE_ASYNC_READ		(1 << 0)
 #define FUSE_POSIX_LOCKS	(1 << 1)
@@ -403,6 +409,7 @@ struct fuse_file_lock {
 #define FUSE_SECURITY_CTX	(1ULL << 32)
 #define FUSE_HAS_INODE_DAX	(1ULL << 33)
 #define FUSE_HAS_EXPIRE_ONLY	(1ULL << 35)
+#define FUSE_HAS_SYNCFS		(1ULL << 44)
 
 /**
  * CUSE INIT request/reply flags
