@@ -801,8 +801,9 @@ static int __maybe_unused crypto_ahash_report(
 	return nla_put(skb, CRYPTOCFGA_REPORT_HASH, sizeof(rhash), &rhash);
 }
 
-static void __maybe_unused crypto_ahash_show(struct seq_file *m,
-					     struct crypto_alg *alg)
+static void crypto_ahash_show(struct seq_file *m, struct crypto_alg *alg)
+	__maybe_unused;
+static void crypto_ahash_show(struct seq_file *m, struct crypto_alg *alg)
 {
 	seq_printf(m, "type         : ahash\n");
 	seq_printf(m, "async        : %s\n",
@@ -1019,13 +1020,17 @@ int crypto_register_ahashes(struct ahash_alg *algs, int count)
 
 	for (i = 0; i < count; i++) {
 		ret = crypto_register_ahash(&algs[i]);
-		if (ret) {
-			crypto_unregister_ahashes(algs, i);
-			return ret;
-		}
+		if (ret)
+			goto err;
 	}
 
 	return 0;
+
+err:
+	for (--i; i >= 0; --i)
+		crypto_unregister_ahash(&algs[i]);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(crypto_register_ahashes);
 

@@ -112,7 +112,15 @@ int aead_init_geniv(struct crypto_aead *aead)
 	struct crypto_aead *child;
 	int err;
 
-	err = crypto_stdrng_get_bytes(ctx->salt, crypto_aead_ivsize(aead));
+	spin_lock_init(&ctx->lock);
+
+	err = crypto_get_default_rng();
+	if (err)
+		goto out;
+
+	err = crypto_rng_get_bytes(crypto_default_rng, ctx->salt,
+				   crypto_aead_ivsize(aead));
+	crypto_put_default_rng();
 	if (err)
 		goto out;
 

@@ -169,6 +169,7 @@ static int __init fips140_init(void)
 	if (fips_enabled) {
 		verify_integrity(); /* Panics if integrity check fails */
 	}
+
 	/* Final sync after verify_integrity */
 	fips140_mark_module_wait_kernel_sync(FIPS_LAST_LEVEL);
 	return 0;

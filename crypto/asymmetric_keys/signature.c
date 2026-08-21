@@ -28,8 +28,7 @@ void public_key_signature_free(struct public_key_signature *sig)
 		for (i = 0; i < ARRAY_SIZE(sig->auth_ids); i++)
 			kfree(sig->auth_ids[i]);
 		kfree(sig->s);
-		if (sig->m_free)
-			kfree(sig->m);
+		kfree(sig->digest);
 		kfree(sig);
 	}
 }

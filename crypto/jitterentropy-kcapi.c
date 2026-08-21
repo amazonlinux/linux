@@ -37,6 +37,7 @@
  * DAMAGE.
  */
 
+#include <crypto/hash.h>
 #include <crypto/sha3.h>
 #include <linux/fips.h>
 #include <linux/kernel.h>
@@ -47,6 +48,8 @@
 #include <crypto/internal/rng.h>
 
 #include "jitterentropy.h"
+
+#define JENT_CONDITIONING_HASH	"sha3-256-generic"
 
 /***************************************************************************
  * Helper function
@@ -99,14 +102,22 @@ void jent_get_nstime(__u64 *out)
 	jent_raw_hires_entropy_store(tmp);
 }
 
-void jent_hash_time(struct sha3_ctx *hash_state, __u64 time, u8 *addtl,
-		    unsigned int addtl_len, __u64 hash_loop_cnt,
-		    unsigned int stuck)
+int jent_hash_time(void *hash_state, __u64 time, u8 *addtl,
+		   unsigned int addtl_len, __u64 hash_loop_cnt,
+		   unsigned int stuck)
 {
-	struct sha3_ctx tmp_state; /* zeroized by sha3_final() */
+	struct shash_desc *hash_state_desc = (struct shash_desc *)hash_state;
+	SHASH_DESC_ON_STACK(desc, hash_state_desc->tfm);
 	u8 intermediary[SHA3_256_DIGEST_SIZE];
 	__u64 j = 0;
+	int ret;
 
+	desc->tfm = hash_state_desc->tfm;
+
+	if (sizeof(intermediary) != crypto_shash_digestsize(desc->tfm)) {
+		pr_warn_ratelimited("Unexpected digest size\n");
+		return -EINVAL;
+	}
 	kmsan_unpoison_memory(intermediary, sizeof(intermediary));
 
 	/*
@@ -120,20 +131,24 @@ void jent_hash_time(struct sha3_ctx *hash_state, __u64 time, u8 *addtl,
 	 *
 	 * Note, it does not matter which or how much data you inject, we are
 	 * interested in one Keccack1600 compression operation performed with
-	 * the sha3_final.
+	 * the crypto_shash_final.
 	 */
 	for (j = 0; j < hash_loop_cnt; j++) {
-		sha3_256_init(&tmp_state);
-		sha3_update(&tmp_state, intermediary, sizeof(intermediary));
-		sha3_update(&tmp_state, addtl, addtl_len);
-		sha3_final(&tmp_state, intermediary);
+		ret = crypto_shash_init(desc) ?:
+		      crypto_shash_update(desc, intermediary,
+					  sizeof(intermediary)) ?:
+		      crypto_shash_finup(desc, addtl, addtl_len, intermediary);
+		if (ret)
+			goto err;
 	}
 
 	/*
 	 * Inject the data from the previous loop into the pool. This data is
 	 * not considered to contain any entropy, but it stirs the pool a bit.
 	 */
-	sha3_update(hash_state, intermediary, sizeof(intermediary));
+	ret = crypto_shash_update(hash_state_desc, intermediary, sizeof(intermediary));
+	if (ret)
+		goto err;
 
 	/*
 	 * Insert the time stamp into the hash context representing the pool.
@@ -148,24 +163,30 @@ void jent_hash_time(struct sha3_ctx *hash_state, __u64 time, u8 *addtl,
 		time = 0;
 	}
 
-	sha3_update(hash_state, (u8 *)&time, sizeof(__u64));
+	ret = crypto_shash_update(hash_state_desc, (u8 *)&time, sizeof(__u64));
+
+err:
+	shash_desc_zero(desc);
 	memzero_explicit(intermediary, sizeof(intermediary));
+
+	return ret;
 }
 
-void jent_read_random_block(struct sha3_ctx *hash_state, char *dst,
-			    unsigned int dst_len)
+int jent_read_random_block(void *hash_state, char *dst, unsigned int dst_len)
 {
+	struct shash_desc *hash_state_desc = (struct shash_desc *)hash_state;
 	u8 jent_block[SHA3_256_DIGEST_SIZE];
-
 	/* Obtain data from entropy pool and re-initialize it */
-	sha3_final(hash_state, jent_block);
-	sha3_256_init(hash_state);
-	sha3_update(hash_state, jent_block, sizeof(jent_block));
+	int ret = crypto_shash_final(hash_state_desc, jent_block) ?:
+		  crypto_shash_init(hash_state_desc) ?:
+		  crypto_shash_update(hash_state_desc, jent_block,
+				      sizeof(jent_block));
 
-	if (dst_len)
+	if (!ret && dst_len)
 		memcpy(dst, jent_block, dst_len);
 
 	memzero_explicit(jent_block, sizeof(jent_block));
+	return ret;
 }
 
 /***************************************************************************
@@ -175,7 +196,8 @@ void jent_read_random_block(struct sha3_ctx *hash_state, char *dst,
 struct jitterentropy {
 	struct mutex jent_lock;
 	struct rand_data *entropy_collector;
-	struct sha3_ctx hash_state;
+	struct crypto_shash *tfm;
+	struct shash_desc *sdesc;
 };
 
 static void jent_kcapi_cleanup(struct crypto_tfm *tfm)
@@ -184,7 +206,15 @@ static void jent_kcapi_cleanup(struct crypto_tfm *tfm)
 
 	mutex_lock(&rng->jent_lock);
 
-	memzero_explicit(&rng->hash_state, sizeof(rng->hash_state));
+	if (rng->sdesc) {
+		shash_desc_zero(rng->sdesc);
+		kfree(rng->sdesc);
+	}
+	rng->sdesc = NULL;
+
+	if (rng->tfm)
+		crypto_free_shash(rng->tfm);
+	rng->tfm = NULL;
 
 	if (rng->entropy_collector)
 		jent_entropy_collector_free(rng->entropy_collector);
@@ -195,15 +225,42 @@ static void jent_kcapi_cleanup(struct crypto_tfm *tfm)
 static int jent_kcapi_init(struct crypto_tfm *tfm)
 {
 	struct jitterentropy *rng = crypto_tfm_ctx(tfm);
-	int ret = 0;
+	struct crypto_shash *hash;
+	struct shash_desc *sdesc;
+	int size, ret = 0;
 
 	mutex_init(&rng->jent_lock);
 
-	/* Use SHA3-256 as conditioner */
-	sha3_256_init(&rng->hash_state);
+	/*
+	 * Use SHA3-256 as conditioner. We allocate only the generic
+	 * implementation as we are not interested in high-performance. The
+	 * execution time of the SHA3 operation is measured and adds to the
+	 * Jitter RNG's unpredictable behavior. If we have a slower hash
+	 * implementation, the execution timing variations are larger. When
+	 * using a fast implementation, we would need to call it more often
+	 * as its variations are lower.
+	 */
+	hash = crypto_alloc_shash(JENT_CONDITIONING_HASH, 0, 0);
+	if (IS_ERR(hash)) {
+		pr_err("Cannot allocate conditioning digest\n");
+		return PTR_ERR(hash);
+	}
+	rng->tfm = hash;
 
-	rng->entropy_collector = jent_entropy_collector_alloc(
-		CONFIG_CRYPTO_JITTERENTROPY_OSR, 0, &rng->hash_state);
+	size = sizeof(struct shash_desc) + crypto_shash_descsize(hash);
+	sdesc = kmalloc(size, GFP_KERNEL);
+	if (!sdesc) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	sdesc->tfm = hash;
+	crypto_shash_init(sdesc);
+	rng->sdesc = sdesc;
+
+	rng->entropy_collector =
+		jent_entropy_collector_alloc(CONFIG_CRYPTO_JITTERENTROPY_OSR, 0,
+					     sdesc);
 	if (!rng->entropy_collector) {
 		ret = -ENOMEM;
 		goto err;
@@ -277,16 +334,23 @@ static struct rng_alg jent_alg = {
 
 static int __init jent_mod_init(void)
 {
-	struct sha3_ctx hash_state;
+	SHASH_DESC_ON_STACK(desc, tfm);
+	struct crypto_shash *tfm;
 	int ret = 0;
 
 	jent_testing_init();
 
-	sha3_256_init(&hash_state);
+	tfm = crypto_alloc_shash(JENT_CONDITIONING_HASH, 0, 0);
+	if (IS_ERR(tfm)) {
+		jent_testing_exit();
+		return PTR_ERR(tfm);
+	}
 
-	ret = jent_entropy_init(CONFIG_CRYPTO_JITTERENTROPY_OSR, 0, &hash_state,
-				NULL);
-	memzero_explicit(&hash_state, sizeof(hash_state));
+	desc->tfm = tfm;
+	crypto_shash_init(desc);
+	ret = jent_entropy_init(CONFIG_CRYPTO_JITTERENTROPY_OSR, 0, desc, NULL);
+	shash_desc_zero(desc);
+	crypto_free_shash(tfm);
 	if (ret) {
 		/* Handle permanent health test error */
 		if (fips_enabled)

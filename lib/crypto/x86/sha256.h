@@ -31,27 +31,6 @@ DEFINE_X86_SHA256_FN(sha256_blocks_avx, sha256_transform_avx);
 DEFINE_X86_SHA256_FN(sha256_blocks_avx2, sha256_transform_rorx);
 DEFINE_X86_SHA256_FN(sha256_blocks_ni, sha256_ni_transform);
 
-#define PHE_ALIGNMENT 16
-static void sha256_blocks_phe(struct sha256_block_state *state,
-			      const u8 *data, size_t nblocks)
-{
-	/*
-	 * On Zhaoxin processors, XSHA256 requires the %rdi register
-	 * in 64-bit mode (or %edi in 32-bit mode) to point to
-	 * a 32-byte, 16-byte-aligned buffer.
-	 */
-	u8 buf[32 + PHE_ALIGNMENT - 1];
-	u8 *dst = PTR_ALIGN(&buf[0], PHE_ALIGNMENT);
-	size_t padding = -1;
-
-	memcpy(dst, state, SHA256_DIGEST_SIZE);
-	asm volatile(".byte 0xf3,0x0f,0xa6,0xd0" /* REP XSHA256 */
-		     : "+a"(padding), "+c"(nblocks), "+S"(data)
-		     : "D"(dst)
-		     : "memory");
-	memcpy(state, dst, SHA256_DIGEST_SIZE);
-}
-
 static void sha256_blocks(struct sha256_block_state *state,
 			  const u8 *data, size_t nblocks)
 {
@@ -97,24 +76,77 @@ static bool sha256_finup_2x_is_optimized_arch(void)
 #define sha256_mod_init_arch sha256_mod_init_arch
 static void sha256_mod_init_arch(void)
 {
-	if (boot_cpu_has(X86_FEATURE_SHA_NI)) {
+	extern char *sha256_x86_impl_override;
+	const char *requested = sha256_x86_impl_override;
+	const char *impl = requested;
+	const char *sel = "generic";
+	bool known = false;
+
+	if (impl) {
+		bool supported = false;
+
+		if (!strcmp(impl, "generic")) {
+			known = true;
+			supported = true;
+		} else if (!strcmp(impl, "ni")) {
+			known = true;
+			supported = boot_cpu_has(X86_FEATURE_SHA_NI);
+		} else if (!strcmp(impl, "avx2")) {
+			known = true;
+			supported = cpu_has_xfeatures(XFEATURE_MASK_SSE |
+					XFEATURE_MASK_YMM, NULL) &&
+				    boot_cpu_has(X86_FEATURE_AVX) &&
+				    boot_cpu_has(X86_FEATURE_AVX2) &&
+				    boot_cpu_has(X86_FEATURE_BMI2);
+		} else if (!strcmp(impl, "avx")) {
+			known = true;
+			supported = cpu_has_xfeatures(XFEATURE_MASK_SSE |
+					XFEATURE_MASK_YMM, NULL) &&
+				    boot_cpu_has(X86_FEATURE_AVX);
+		} else if (!strcmp(impl, "ssse3")) {
+			known = true;
+			supported = boot_cpu_has(X86_FEATURE_SSSE3);
+		}
+
+		if (!supported)
+			impl = NULL;
+	}
+
+	if ((!impl && boot_cpu_has(X86_FEATURE_SHA_NI)) ||
+	    (impl && !strcmp(impl, "ni"))) {
 		static_call_update(sha256_blocks_x86, sha256_blocks_ni);
 		static_branch_enable(&have_sha_ni);
-	} else if (IS_ENABLED(CONFIG_CPU_SUP_ZHAOXIN) &&
-		   boot_cpu_has(X86_FEATURE_PHE_EN) &&
-		   boot_cpu_data.x86 >= 0x07) {
-		static_call_update(sha256_blocks_x86, sha256_blocks_phe);
-	} else if (cpu_has_xfeatures(XFEATURE_MASK_SSE | XFEATURE_MASK_YMM,
-				     NULL) &&
-		   boot_cpu_has(X86_FEATURE_AVX)) {
-		if (boot_cpu_has(X86_FEATURE_AVX2) &&
-		    boot_cpu_has(X86_FEATURE_BMI2))
-			static_call_update(sha256_blocks_x86,
-					   sha256_blocks_avx2);
-		else
-			static_call_update(sha256_blocks_x86,
-					   sha256_blocks_avx);
-	} else if (boot_cpu_has(X86_FEATURE_SSSE3)) {
+		sel = "SHA-NI";
+	} else if ((!impl && cpu_has_xfeatures(XFEATURE_MASK_SSE |
+			XFEATURE_MASK_YMM, NULL) &&
+		    boot_cpu_has(X86_FEATURE_AVX) &&
+		    boot_cpu_has(X86_FEATURE_AVX2) &&
+		    boot_cpu_has(X86_FEATURE_BMI2)) ||
+		   (impl && !strcmp(impl, "avx2"))) {
+		static_call_update(sha256_blocks_x86, sha256_blocks_avx2);
+		sel = "AVX2";
+	} else if ((!impl && cpu_has_xfeatures(XFEATURE_MASK_SSE |
+			XFEATURE_MASK_YMM, NULL) &&
+		    boot_cpu_has(X86_FEATURE_AVX)) ||
+		   (impl && !strcmp(impl, "avx"))) {
+		static_call_update(sha256_blocks_x86, sha256_blocks_avx);
+		sel = "AVX";
+	} else if ((!impl && boot_cpu_has(X86_FEATURE_SSSE3)) ||
+		   (impl && !strcmp(impl, "ssse3"))) {
 		static_call_update(sha256_blocks_x86, sha256_blocks_ssse3);
+		sel = "SSSE3";
+	}
+	/* else: stays at sha256_blocks_generic (default, or impl=="generic") */
+
+	if (requested) {
+		if (impl)
+			pr_info("sha256: using %s implementation (forced by sha256_x86_impl=%s)\n",
+				sel, requested);
+		else if (known)
+			pr_warn("sha256: CPU features unavailable for sha256_x86_impl=%s; override failed, using %s implementation\n",
+				requested, sel);
+		else
+			pr_warn("sha256: unknown sha256_x86_impl=%s; override failed, using %s implementation\n",
+				requested, sel);
 	}
 }

@@ -4,31 +4,46 @@
  *
  * Copyright 2025 Google LLC
  */
+#include <asm/neon.h>
 #include <asm/simd.h>
 #include <linux/cpufeature.h>
+#include <linux/static_call.h>
 
 static __ro_after_init DEFINE_STATIC_KEY_FALSE(have_neon);
 static __ro_after_init DEFINE_STATIC_KEY_FALSE(have_ce);
+
+DEFINE_STATIC_CALL(sha256_blocks_arm64, sha256_blocks_generic);
 
 asmlinkage void sha256_block_data_order(struct sha256_block_state *state,
 					const u8 *data, size_t nblocks);
 asmlinkage void sha256_block_neon(struct sha256_block_state *state,
 				  const u8 *data, size_t nblocks);
-asmlinkage void sha256_ce_transform(struct sha256_block_state *state,
-				    const u8 *data, size_t nblocks);
+asmlinkage size_t __sha256_ce_transform(struct sha256_block_state *state,
+					const u8 *data, size_t nblocks);
 
 static void sha256_blocks(struct sha256_block_state *state,
 			  const u8 *data, size_t nblocks)
 {
-	if (static_branch_likely(&have_neon) && likely(may_use_simd())) {
-		scoped_ksimd() {
-			if (static_branch_likely(&have_ce))
-				sha256_ce_transform(state, data, nblocks);
-			else
-				sha256_block_neon(state, data, nblocks);
+	if (IS_ENABLED(CONFIG_KERNEL_MODE_NEON) &&
+	    static_branch_likely(&have_neon) && likely(may_use_simd())) {
+		if (static_branch_likely(&have_ce)) {
+			do {
+				size_t rem;
+
+				kernel_neon_begin();
+				rem = __sha256_ce_transform(state,
+							    data, nblocks);
+				kernel_neon_end();
+				data += (nblocks - rem) * SHA256_BLOCK_SIZE;
+				nblocks = rem;
+			} while (nblocks);
+		} else {
+			kernel_neon_begin();
+			sha256_block_neon(state, data, nblocks);
+			kernel_neon_end();
 		}
 	} else {
-		sha256_block_data_order(state, data, nblocks);
+		static_call(sha256_blocks_arm64)(state, data, nblocks);
 	}
 }
 
@@ -46,11 +61,17 @@ static bool sha256_finup_2x_arch(const struct __sha256_ctx *ctx,
 				 u8 out1[SHA256_DIGEST_SIZE],
 				 u8 out2[SHA256_DIGEST_SIZE])
 {
-	/* The assembly requires len >= SHA256_BLOCK_SIZE && len <= INT_MAX. */
-	if (static_branch_likely(&have_ce) && len >= SHA256_BLOCK_SIZE &&
-	    len <= INT_MAX && likely(may_use_simd())) {
-		scoped_ksimd()
-			sha256_ce_finup2x(ctx, data1, data2, len, out1, out2);
+	/*
+	 * The assembly requires len >= SHA256_BLOCK_SIZE && len <= INT_MAX.
+	 * Further limit len to 65536 to avoid spending too long with preemption
+	 * disabled.  (Of course, in practice len is nearly always 4096 anyway.)
+	 */
+	if (IS_ENABLED(CONFIG_KERNEL_MODE_NEON) &&
+	    static_branch_likely(&have_ce) && len >= SHA256_BLOCK_SIZE &&
+	    len <= 65536 && likely(may_use_simd())) {
+		kernel_neon_begin();
+		sha256_ce_finup2x(ctx, data1, data2, len, out1, out2);
+		kernel_neon_end();
 		kmsan_unpoison_memory(out1, SHA256_DIGEST_SIZE);
 		kmsan_unpoison_memory(out2, SHA256_DIGEST_SIZE);
 		return true;
@@ -63,12 +84,66 @@ static bool sha256_finup_2x_is_optimized_arch(void)
 	return static_key_enabled(&have_ce);
 }
 
+#ifdef CONFIG_KERNEL_MODE_NEON
 #define sha256_mod_init_arch sha256_mod_init_arch
 static void sha256_mod_init_arch(void)
 {
-	if (cpu_have_named_feature(ASIMD)) {
+	extern char *sha256_arm64_impl_override;
+	const char *requested = sha256_arm64_impl_override;
+	const char *impl = requested;
+	const char *sel = "scalar asm";
+	bool known = false;
+
+	if (impl) {
+		bool supported = false;
+
+		if (!strcmp(impl, "generic") || !strcmp(impl, "asm")) {
+			known = true;
+			supported = true;
+		} else if (!strcmp(impl, "neon")) {
+			known = true;
+			supported = cpu_have_named_feature(ASIMD);
+		} else if (!strcmp(impl, "ce")) {
+			known = true;
+			supported = cpu_have_named_feature(ASIMD) &&
+				    cpu_have_named_feature(SHA2);
+		}
+
+		if (!supported)
+			impl = NULL;
+	}
+
+	if ((!impl && cpu_have_named_feature(ASIMD)) ||
+	    (impl && !strcmp(impl, "ce"))) {
 		static_branch_enable(&have_neon);
-		if (cpu_have_named_feature(SHA2))
+		sel = "NEON";
+		if ((!impl && cpu_have_named_feature(SHA2)) ||
+		    (impl && !strcmp(impl, "ce"))) {
 			static_branch_enable(&have_ce);
+			sel = "CE";
+		}
+	} else if (impl && !strcmp(impl, "neon")) {
+		static_branch_enable(&have_neon);
+		sel = "NEON";
+	} else if (impl && !strcmp(impl, "generic")) {
+		static_call_update(sha256_blocks_arm64,
+				   sha256_blocks_generic);
+		sel = "generic";
+		goto done;
+	}
+
+	static_call_update(sha256_blocks_arm64, sha256_block_data_order);
+done:
+	if (requested) {
+		if (impl)
+			pr_info("sha256: using %s implementation (forced by sha256_arm64_impl=%s)\n",
+				sel, requested);
+		else if (known)
+			pr_warn("sha256: CPU features unavailable for sha256_arm64_impl=%s; override failed, using %s implementation\n",
+				requested, sel);
+		else
+			pr_warn("sha256: unknown sha256_arm64_impl=%s; override failed, using %s implementation\n",
+				requested, sel);
 	}
 }
+#endif /* CONFIG_KERNEL_MODE_NEON */

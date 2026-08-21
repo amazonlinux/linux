@@ -164,6 +164,37 @@ static int dh_is_pubkey_valid(struct dh_ctx *ctx, MPI y)
 	return 0;
 }
 
+/*
+ * SP800-56A pair-wise consistency check:
+ * section 5.6.2.1.4:
+ * For an FFC key pair (x, y): Use the private key, x, along with the generator g and
+ * prime modulus p included in the domain parameters associated with the key pair
+ * to compute g^x mod p. Compare the result to the public key, y.
+ */
+static int dh_pairwise_test(struct dh_ctx *ctx, MPI y)
+{
+	int ret;
+	MPI val;
+	val = mpi_alloc(0);
+	if (!val)
+		return -ENOMEM;
+
+	ret = _compute_val(ctx, ctx->g, val); /*g^x mod p*/
+	if (ret) {
+		goto err_free_val;
+	}
+
+	if (mpi_cmp(val, y)) {
+		ret = -EINVAL;
+		goto err_free_val;
+	}
+
+	ret = 0;
+err_free_val:
+	mpi_free(val);
+	return ret;
+}
+
 static int dh_compute_value(struct kpp_request *req)
 {
 	struct crypto_kpp *tfm = crypto_kpp_reqtfm(req);
@@ -227,6 +258,11 @@ static int dh_compute_value(struct kpp_request *req)
 
 		/* SP800-56A rev 3 5.6.2.1.3 key check */
 		} else {
+			if (fips_enabled && dh_pairwise_test(ctx, val)) {
+				fips_fail_notify();
+				panic("dh_pairwise_test failed");
+			}
+
 			if (dh_is_pubkey_valid(ctx, val)) {
 				ret = -EAGAIN;
 				goto err_free_val;
@@ -388,7 +424,13 @@ static void *dh_safe_prime_gen_privkey(const struct dh_safe_prime *safe_prime,
 	 * 5.6.1.1.3, step 3 (and implicitly step 4): obtain N + 64
 	 * random bits and interpret them as a big endian integer.
 	 */
-	err = crypto_stdrng_get_bytes(key, oversampling_size);
+	err = -EFAULT;
+	if (crypto_get_default_rng())
+		goto out_err;
+
+	err = crypto_rng_get_bytes(crypto_default_rng, (u8 *)key,
+				   oversampling_size);
+	crypto_put_default_rng();
 	if (err)
 		goto out_err;
 

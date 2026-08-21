@@ -15,24 +15,8 @@
 #include <linux/string_choices.h>
 #include <generated/utsrelease.h>
 
-int fips_enabled;
-EXPORT_SYMBOL_GPL(fips_enabled);
-
 ATOMIC_NOTIFIER_HEAD(fips_fail_notif_chain);
 EXPORT_SYMBOL_GPL(fips_fail_notif_chain);
-
-/* Process kernel command-line parameter at boot time. fips=0 or fips=1 */
-static int __init fips_enable(char *str)
-{
-	if (kstrtoint(str, 0, &fips_enabled))
-		return 0;
-
-	fips_enabled = !!fips_enabled;
-	pr_info("fips mode: %s\n", str_enabled_disabled(fips_enabled));
-	return 1;
-}
-
-__setup("fips=", fips_enable);
 
 #define FIPS_MODULE_NAME CONFIG_CRYPTO_FIPS_NAME
 #ifdef CONFIG_CRYPTO_FIPS_CUSTOM_VERSION

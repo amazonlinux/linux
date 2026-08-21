@@ -90,24 +90,33 @@ void ecc_digits_from_bytes(const u8 *in, unsigned int nbytes,
 }
 EXPORT_SYMBOL(ecc_digits_from_bytes);
 
-struct ecc_point *ecc_alloc_point(unsigned int ndigits)
+static u64 *ecc_alloc_digits_space(unsigned int ndigits)
 {
-	struct ecc_point *p;
-	size_t ndigits_sz;
+	size_t len = ndigits * sizeof(u64);
 
-	if (!ndigits)
+	if (!len)
 		return NULL;
 
-	p = kmalloc_obj(*p);
+	return kmalloc(len, GFP_KERNEL);
+}
+
+static void ecc_free_digits_space(u64 *space)
+{
+	kfree_sensitive(space);
+}
+
+struct ecc_point *ecc_alloc_point(unsigned int ndigits)
+{
+	struct ecc_point *p = kmalloc(sizeof(*p), GFP_KERNEL);
+
 	if (!p)
 		return NULL;
 
-	ndigits_sz = ndigits * sizeof(u64);
-	p->x = kmalloc(ndigits_sz, GFP_KERNEL);
+	p->x = ecc_alloc_digits_space(ndigits);
 	if (!p->x)
 		goto err_alloc_x;
 
-	p->y = kmalloc(ndigits_sz, GFP_KERNEL);
+	p->y = ecc_alloc_digits_space(ndigits);
 	if (!p->y)
 		goto err_alloc_y;
 
@@ -116,7 +125,7 @@ struct ecc_point *ecc_alloc_point(unsigned int ndigits)
 	return p;
 
 err_alloc_y:
-	kfree(p->x);
+	ecc_free_digits_space(p->x);
 err_alloc_x:
 	kfree(p);
 	return NULL;
@@ -393,14 +402,26 @@ static uint128_t mul_64_64(u64 left, u64 right)
 	return result;
 }
 
-static uint128_t add_128_128(uint128_t a, uint128_t b)
+/* Calculate addition with overflow checking. Returns true on wrap-around,
+ * false otherwise.
+ */
+static bool check_add_128_128_overflow(uint128_t *result, uint128_t a,
+				       uint128_t b)
 {
-	uint128_t result;
+	bool carry;
 
-	result.m_low = a.m_low + b.m_low;
-	result.m_high = a.m_high + b.m_high + (result.m_low < a.m_low);
+	result->m_low = a.m_low + b.m_low;
+	carry = (result->m_low < a.m_low);
 
-	return result;
+	result->m_high = a.m_high + b.m_high + carry;
+
+	/* Using constant-time bitwise arithmetic to prevent timing
+	 * side-channels.
+	 */
+	carry = (result->m_high < a.m_high) |
+		((result->m_high == a.m_high) & carry);
+
+	return carry;
 }
 
 static void vli_mult(u64 *result, const u64 *left, const u64 *right,
@@ -425,9 +446,7 @@ static void vli_mult(u64 *result, const u64 *left, const u64 *right,
 			uint128_t product;
 
 			product = mul_64_64(left[i], right[k - i]);
-
-			r01 = add_128_128(r01, product);
-			r2 += (r01.m_high < product.m_high);
+			r2 += check_add_128_128_overflow(&r01, r01, product);
 		}
 
 		result[k] = r01.m_low;
@@ -450,7 +469,7 @@ static void vli_umult(u64 *result, const u64 *left, u32 right,
 		uint128_t product;
 
 		product = mul_64_64(left[k], right);
-		r01 = add_128_128(r01, product);
+		check_add_128_128_overflow(&r01, r01, product);
 		/* no carry */
 		result[k] = r01.m_low;
 		r01.m_low = r01.m_high;
@@ -487,8 +506,7 @@ static void vli_square(u64 *result, const u64 *left, unsigned int ndigits)
 				product.m_low <<= 1;
 			}
 
-			r01 = add_128_128(r01, product);
-			r2 += (r01.m_high < product.m_high);
+			r2 += check_add_128_128_overflow(&r01, r01, product);
 		}
 
 		result[k] = r01.m_low;
@@ -1533,11 +1551,16 @@ int ecc_gen_privkey(unsigned int curve_id, unsigned int ndigits,
 	 * The maximum security strength identified by NIST SP800-57pt1r4 for
 	 * ECC is 256 (N >= 512).
 	 *
-	 * This condition is met by stdrng because it selects a favored DRBG
-	 * with a security strength of 256.
+	 * This condition is met by the default RNG because it selects a favored
+	 * DRBG with a security strength of 256.
 	 */
+	if (crypto_get_default_rng())
+		return -EFAULT;
+
 	/* Step 3: obtain N returned_bits from the DRBG. */
-	err = crypto_stdrng_get_bytes(private_key, nbytes);
+	err = crypto_rng_get_bytes(crypto_default_rng,
+				   (u8 *)private_key, nbytes);
+	crypto_put_default_rng();
 	if (err)
 		return err;
 
@@ -1548,6 +1571,54 @@ int ecc_gen_privkey(unsigned int curve_id, unsigned int ndigits,
 	return 0;
 }
 EXPORT_SYMBOL(ecc_gen_privkey);
+
+/**
+* SP800-56A section 5.6.2.1.4 Pair-Wise Consistency Test
+* ecc_pairwise_test() - Pair-wise Consistency test
+*
+* @curve: 		elliptic curve domain parameters
+* @private_key: 	pregenerated private key for the given curve
+* @pk: 		public key as a point
+* @ndigits: 		curve's number of digits
+*
+* Pair-wise Consistency test according to SP800-56A section 5.6.2.1.4
+*
+* Return: 0 if test is successful, -EINVAL if test is failed.
+*/
+static int ecc_pairwise_test(const struct ecc_curve *curve,
+		      const u64 *private_key,
+		      struct ecc_point *pk,
+		      unsigned int ndigits)
+{
+	struct ecc_point *epk;
+	int ret;
+
+
+	epk = ecc_alloc_point(ndigits);
+	if (!epk) {
+		ret = -ENOMEM;
+		goto err;
+	}
+
+	ecc_point_mult(epk, &curve->g, private_key, NULL, curve, ndigits);
+
+	/* check expected public key against the public_key */
+	if (vli_cmp(epk->x, pk->x, ndigits)) {
+		ret = -EINVAL;
+		goto err_free_point;
+	}
+
+	if (vli_cmp(epk->y, pk->y, ndigits)) {
+		ret = -EINVAL;
+		goto err_free_point;
+	}
+
+	ret = 0;
+err_free_point:
+	ecc_free_point(epk);
+err:
+	return ret;
+}
 
 int ecc_make_pub_key(unsigned int curve_id, unsigned int ndigits,
 		     const u64 *private_key, u64 *public_key)
@@ -1573,6 +1644,12 @@ int ecc_make_pub_key(unsigned int curve_id, unsigned int ndigits,
 	if (ecc_is_pubkey_valid_full(curve, pk)) {
 		ret = -EAGAIN;
 		goto err_free_point;
+	}
+
+	if (fips_enabled &&
+	    ecc_pairwise_test(curve, private_key, pk, ndigits)) {
+		fips_fail_notify();
+		panic("ecc_pairwise_test failed");
 	}
 
 	ecc_swap_digits(pk->x, public_key, ndigits);

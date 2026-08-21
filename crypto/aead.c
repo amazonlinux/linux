@@ -151,8 +151,9 @@ static int __maybe_unused crypto_aead_report(
 	return nla_put(skb, CRYPTOCFGA_REPORT_AEAD, sizeof(raead), &raead);
 }
 
-static void __maybe_unused crypto_aead_show(struct seq_file *m,
-					    struct crypto_alg *alg)
+static void crypto_aead_show(struct seq_file *m, struct crypto_alg *alg)
+	__maybe_unused;
+static void crypto_aead_show(struct seq_file *m, struct crypto_alg *alg)
 {
 	struct aead_alg *aead = container_of(alg, struct aead_alg, base);
 
@@ -203,25 +204,6 @@ struct crypto_aead *crypto_alloc_aead(const char *alg_name, u32 type, u32 mask)
 	return crypto_alloc_tfm(alg_name, &crypto_aead_type, type, mask);
 }
 EXPORT_SYMBOL_GPL(crypto_alloc_aead);
-
-struct crypto_sync_aead *crypto_alloc_sync_aead(const char *alg_name, u32 type, u32 mask)
-{
-	struct crypto_aead *tfm;
-
-	/* Only sync algorithms are allowed. */
-	mask |= CRYPTO_ALG_ASYNC;
-	type &= ~(CRYPTO_ALG_ASYNC);
-
-	tfm = crypto_alloc_tfm(alg_name, &crypto_aead_type, type, mask);
-
-	if (!IS_ERR(tfm) && WARN_ON(crypto_aead_reqsize(tfm) > MAX_SYNC_AEAD_REQSIZE)) {
-		crypto_free_aead(tfm);
-		return ERR_PTR(-EINVAL);
-	}
-
-	return (struct crypto_sync_aead *)tfm;
-}
-EXPORT_SYMBOL_GPL(crypto_alloc_sync_aead);
 
 int crypto_has_aead(const char *alg_name, u32 type, u32 mask)
 {

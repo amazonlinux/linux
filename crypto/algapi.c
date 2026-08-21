@@ -253,7 +253,6 @@ EXPORT_SYMBOL_GPL(crypto_remove_spawns);
 
 static void crypto_alg_finish_registration(struct crypto_alg *alg,
 					   struct list_head *algs_to_put)
-	__must_hold(&crypto_alg_sem)
 {
 	struct crypto_alg *q;
 
@@ -309,7 +308,6 @@ static struct crypto_larval *crypto_alloc_test_larval(struct crypto_alg *alg)
 
 static struct crypto_larval *
 __crypto_register_alg(struct crypto_alg *alg, struct list_head *algs_to_put)
-	__must_hold(&crypto_alg_sem)
 {
 	struct crypto_alg *q;
 	struct crypto_larval *larval;
@@ -522,13 +520,17 @@ int crypto_register_algs(struct crypto_alg *algs, int count)
 
 	for (i = 0; i < count; i++) {
 		ret = crypto_register_alg(&algs[i]);
-		if (ret) {
-			crypto_unregister_algs(algs, i);
-			return ret;
-		}
+		if (ret)
+			goto err;
 	}
 
 	return 0;
+
+err:
+	for (--i; i >= 0; --i)
+		crypto_unregister_alg(&algs[i]);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(crypto_register_algs);
 
@@ -536,7 +538,7 @@ void crypto_unregister_algs(struct crypto_alg *algs, int count)
 {
 	int i;
 
-	for (i = count - 1; i >= 0; --i)
+	for (i = 0; i < count; i++)
 		crypto_unregister_alg(&algs[i]);
 }
 EXPORT_SYMBOL_GPL(crypto_unregister_algs);

@@ -384,13 +384,17 @@ int crypto_register_lskciphers(struct lskcipher_alg *algs, int count)
 
 	for (i = 0; i < count; i++) {
 		ret = crypto_register_lskcipher(&algs[i]);
-		if (ret) {
-			crypto_unregister_lskciphers(algs, i);
-			return ret;
-		}
+		if (ret)
+			goto err;
 	}
 
 	return 0;
+
+err:
+	for (--i; i >= 0; --i)
+		crypto_unregister_lskcipher(&algs[i]);
+
+	return ret;
 }
 EXPORT_SYMBOL_GPL(crypto_register_lskciphers);
 
