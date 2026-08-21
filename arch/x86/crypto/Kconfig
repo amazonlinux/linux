@@ -2,6 +2,19 @@
 
 menu "Accelerated Cryptographic Algorithms for CPU (x86)"
 
+config CRYPTO_GHASH_CLMUL_NI_INTEL
+	tristate "Hash functions: GHASH (CLMUL-NI)"
+	depends on 64BIT
+	select CRYPTO_CRYPTD
+	help
+	  GCM GHASH hash function (NIST SP800-38D)
+
+	  Architecture: x86_64 using:
+	  - CLMUL-NI (carry-less multiplication new instructions)
+
+	  Provided by the certified FIPS crypto module
+	  (arch/x86/crypto/ghash-clmulni-intel_*).
+
 config CRYPTO_AES_NI_INTEL
 	tristate "Ciphers: AES, modes: ECB, CBC, CTS, CTR, XCTR, XTS, GCM (AES-NI/VAES)"
 	select CRYPTO_AEAD

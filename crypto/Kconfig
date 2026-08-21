@@ -885,6 +885,17 @@ config CRYPTO_CMAC
 	  CMAC (Cipher-based Message Authentication Code) authentication
 	  mode (NIST SP800-38B and IETF RFC4493)
 
+config CRYPTO_GHASH
+	tristate "GHASH"
+	select CRYPTO_HASH
+	select CRYPTO_LIB_GF128MUL
+	help
+	  GCM GHASH function (NIST SP800-38D)
+
+	  Provided by the certified FIPS crypto module (crypto/ghash-generic.c).
+	  Upstream dropped this symbol when it moved GHASH to the gf128hash
+	  library, but crypto/gcm.c still requests the "ghash" algorithm.
+
 config CRYPTO_HMAC
 	tristate "HMAC (Keyed-Hash MAC)"
 	select CRYPTO_HASH
@@ -1269,6 +1280,12 @@ config CRYPTO_JITTERENTROPY_TESTINTERFACE
 
 endif	# if !(CRYPTO_FIPS && EXPERT)
 endif	# if CRYPTO_JITTERENTROPY
+
+config CRYPTO_HKDF
+	tristate
+	select CRYPTO_SHA256 if CRYPTO_SELFTESTS
+	select CRYPTO_SHA512 if CRYPTO_SELFTESTS
+	select CRYPTO_HASH2
 
 config CRYPTO_KDF800108_CTR
 	tristate
