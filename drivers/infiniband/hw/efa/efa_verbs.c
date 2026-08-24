@@ -1888,13 +1888,13 @@ static int efa_user_supp_handshake(const struct ib_ucontext *ibucontext,
 	struct efa_dev *dev = to_edev(ibucontext->device);
 	char *attr_str;
 
-	if (EFA_CHECK_USER_SUPP(dev, cmd->supported_caps, max_tx_batch,
-				EFA_ALLOC_UCONTEXT_CMD_SUPP_CAPS_TX_BATCH,
+	if (EFA_CHECK_USER_SUPP(dev, cmd->comp_mask, max_tx_batch,
+				EFA_ALLOC_UCONTEXT_CMD_COMP_TX_BATCH,
 				attr_str))
 		goto err;
 
-	if (EFA_CHECK_USER_SUPP(dev, cmd->supported_caps, min_sq_depth,
-				EFA_ALLOC_UCONTEXT_CMD_SUPP_CAPS_MIN_SQ_WR,
+	if (EFA_CHECK_USER_SUPP(dev, cmd->comp_mask, min_sq_depth,
+				EFA_ALLOC_UCONTEXT_CMD_COMP_MIN_SQ_WR,
 				attr_str))
 		goto err;
 
