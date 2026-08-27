@@ -9,6 +9,7 @@
 #define _CRYPTO_INTERNAL_H
 
 #include <crypto/algapi.h>
+#include <crypto/fips140-redirect.h>
 #include <linux/completion.h>
 #include <linux/jump_label.h>
 #include <linux/list.h>
@@ -60,9 +61,26 @@ enum {
 /* Maximum number of (rtattr) parameters for each template. */
 #define CRYPTO_MAX_ATTRS 32
 
-extern struct rw_semaphore crypto_alg_sem;
-extern struct list_head crypto_alg_list __guarded_by(&crypto_alg_sem);
+/*
+ * crypto_alg_list and crypto_alg_sem live inside the certified FIPS module, so
+ * vmlinux must reach them through the pluggable-variable indirection rather
+ * than by direct reference.  DECLARE_CRYPTO_VAR() collapses to a plain extern
+ * when CONFIG_CRYPTO_FIPS140_EXTMOD is off.
+ *
+ * 7.1 annotates crypto_alg_list with __guarded_by(&crypto_alg_sem); that is
+ * deliberately not carried over.  In the built-in case below both names become
+ * macros expanding to a pointer dereference, so there is no declaration left
+ * for the attribute to bind to, and the definition side (crypto/api.c) is
+ * frozen at the certified revision and carries no annotation either.
+ */
+DECLARE_CRYPTO_VAR(CONFIG_CRYPTO, crypto_alg_list, struct list_head, );
+DECLARE_CRYPTO_VAR(CONFIG_CRYPTO, crypto_alg_sem, struct rw_semaphore, );
 extern struct blocking_notifier_head crypto_chain;
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_CRYPTO)
+#define crypto_alg_list (*((struct list_head *)CRYPTO_VAR_NAME(crypto_alg_list)))
+#define crypto_alg_sem (*((struct rw_semaphore *)CRYPTO_VAR_NAME(crypto_alg_sem)))
+#endif
 
 int alg_test(const char *driver, const char *alg, u32 type, u32 mask);
 

@@ -60,6 +60,24 @@ struct crypto_rng {
 	struct crypto_tfm base;
 };
 
+/*
+ * 7.1 dropped crypto_default_rng and its get/put helpers from this header in
+ * favour of crypto_stdrng_get_bytes() below, but crypto/rng.c is inside the
+ * certified FIPS boundary and still defines and exports all three, and the
+ * boundary users (crypto/geniv.c, crypto/ecc.c, crypto/dh.c) still call them.
+ * Restore the declarations as they were certified: crypto_default_rng lives in
+ * the module, so vmlinux reaches it through the pluggable-variable
+ * indirection.
+ */
+DECLARE_CRYPTO_VAR(CONFIG_CRYPTO_RNG2, crypto_default_rng, struct crypto_rng *, );
+
+#if defined(CONFIG_CRYPTO_FIPS140_EXTMOD) && !defined(FIPS_MODULE) && IS_BUILTIN(CONFIG_CRYPTO_RNG2)
+#define crypto_default_rng (*((struct crypto_rng **)CRYPTO_VAR_NAME(crypto_default_rng)))
+#endif
+
+int crypto_get_default_rng(void);
+void crypto_put_default_rng(void);
+
 int __crypto_stdrng_get_bytes(void *buf, unsigned int len);
 
 /**
