@@ -21,6 +21,16 @@
 #include <linux/compiler.h>
 #include <linux/container_of.h>
 #include <linux/bitops.h>
+/*
+ * Upstream 24c776355f40 ("kernel.h: drop hex.h and update all hex.h users")
+ * removed this include and added <linux/hex.h> directly to the ~120 files that
+ * need it.  Two of those files, crypto/asymmetric_keys/asymmetric_type.c and
+ * x509_public_key.c, are inside the certified FIPS boundary and are frozen at
+ * a revision that predates that commit, so they still reach hex2bin()/bin2hex()
+ * through this header.  Drop this include again once snapshot.vers is re-pinned
+ * to a certified revision that contains 24c776355f40.
+ */
+#include <linux/hex.h>
 #include <linux/kstrtox.h>
 #include <linux/log2.h>
 #include <linux/math.h>

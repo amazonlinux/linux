@@ -40,15 +40,25 @@ extern void public_key_free(struct public_key *key);
 
 /*
  * Public key cryptography signature data
+ *
+ * The certified FIPS module owns this structure: it is allocated and freed by
+ * boundary code (crypto/asymmetric_keys/{x509_cert_parser,pkcs7_parser,
+ * signature}.c) and read by crypto/asymmetric_keys/public_key.c on its way
+ * into fips140.ko, so the layout and the field names must be the ones those
+ * frozen sources were certified with.  7.1 renamed ->digest to ->m and added
+ * ->m_free / ->algo_takes_data for public key algorithms that sign data rather
+ * than a hash; the certified module has no such algorithm, and the frozen
+ * public_key_signature_free() frees ->digest unconditionally instead of
+ * honouring ->m_free, so those two fields are omitted deliberately.  Any future
+ * user of them then fails to compile rather than silently leaking or freeing
+ * borrowed memory.
  */
 struct public_key_signature {
 	struct asymmetric_key_id *auth_ids[3];
 	u8 *s;			/* Signature */
-	u8 *m;			/* Message data to pass to verifier */
+	u8 *digest;		/* Message data to pass to verifier */
 	u32 s_size;		/* Number of bytes in signature */
-	u32 m_size;		/* Number of bytes in ->m */
-	bool m_free;		/* T if ->m needs freeing */
-	bool algo_takes_data;	/* T if public key algo operates on data, not a hash */
+	u32 digest_size;	/* Number of bytes in ->digest */
 	const char *pkey_algo;
 	const char *hash_algo;
 	const char *encoding;

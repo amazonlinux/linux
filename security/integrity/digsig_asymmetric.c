@@ -122,8 +122,8 @@ static int asymmetric_verify_common(const struct key *key,
 		goto out;
 	}
 
-	pks.m = (u8 *)data;
-	pks.m_size = datalen;
+	pks.digest = (u8 *)data;
+	pks.digest_size = datalen;
 	pks.s = hdr->sig;
 	pks.s_size = siglen;
 	ret = verify_signature(key, &pks);
@@ -232,8 +232,8 @@ static int asymmetric_verify_v3_hashless(struct key *key,
 	};
 	size_t digest_size = hash_digest_size[algo];
 	struct public_key_signature pks = {
-		.m = (u8 *)&file_id,
-		.m_size = sizeof(file_id) - (HASH_MAX_DIGESTSIZE - digest_size),
+		.digest = (u8 *)&file_id,
+		.digest_size = sizeof(file_id) - (HASH_MAX_DIGESTSIZE - digest_size),
 		.s = hdr->sig,
 		.s_size = siglen - sizeof(*hdr),
 		.pkey_algo = pk->pkey_algo,
