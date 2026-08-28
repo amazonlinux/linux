@@ -317,4 +317,17 @@ config CRYPTO_AEGIS128_AESNI_SSE2
 	  - AES-NI (AES New Instructions)
 	  - SSE4.1 (Streaming SIMD Extensions 4.1)
 
+# Restored from the certified 6.18 sources: upstream (7.1) deleted this symbol
+# along with arch/x86/crypto/ghash-clmulni-intel*, which the snapshot restores
+# into the FIPS boundary and arch/x86/crypto/Makefile gates on it.
+config CRYPTO_GHASH_CLMUL_NI_INTEL
+	tristate "Hash functions: GHASH (CLMUL-NI)"
+	depends on 64BIT
+	select CRYPTO_CRYPTD
+	help
+	  GCM GHASH hash function (NIST SP800-38D)
+
+	  Architecture: x86_64 using:
+	  - CLMUL-NI (carry-less multiplication new instructions)
+
 endmenu

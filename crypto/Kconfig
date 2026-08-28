@@ -689,6 +689,14 @@ config CRYPTO_ECB
 
 config CRYPTO_HCTR2
 	tristate "HCTR2"
+	# Unavailable in this tree.  Upstream computes POLYVAL for HCTR2 with
+	# the gf128hash library, whose <crypto/gf128hash.h> defines a struct
+	# ghash_ctx that collides with the one in <crypto/ghash.h>, which is
+	# frozen inside the certified FIPS module boundary.  The certified tree
+	# had a crypto API POLYVAL instead, which upstream has removed.  HCTR2
+	# is not part of the certified module and is off in every shipped
+	# config.
+	depends on BROKEN
 	select CRYPTO_XCTR
 	select CRYPTO_LIB_GF128HASH
 	select CRYPTO_MANAGER
@@ -789,7 +797,10 @@ config CRYPTO_GCM
 	tristate "GCM (Galois/Counter Mode) and GMAC (GCM MAC)"
 	select CRYPTO_CTR
 	select CRYPTO_AEAD
-	select CRYPTO_LIB_GF128HASH
+	# The certified crypto/gcm.c uses the crypto API "ghash", which is
+	# crypto/ghash-generic.c inside the FIPS boundary, not upstream's
+	# gf128hash library.
+	select CRYPTO_GHASH
 	select CRYPTO_MANAGER
 	help
 	  GCM (Galois/Counter Mode) authenticated encryption mode and GMAC
@@ -881,6 +892,18 @@ config CRYPTO_CMAC
 	help
 	  CMAC (Cipher-based Message Authentication Code) authentication
 	  mode (NIST SP800-38B and IETF RFC4493)
+
+# Restored from the certified 6.18 sources: upstream (7.1) deleted this symbol
+# when it replaced the crypto API GHASH with the gf128hash library, but
+# crypto/ghash-generic.c is inside the FIPS boundary and crypto/Makefile gates
+# it on CONFIG_CRYPTO_GHASH, which the certified build set to y on both
+# architectures.
+config CRYPTO_GHASH
+	tristate "GHASH"
+	select CRYPTO_HASH
+	select CRYPTO_LIB_GF128MUL
+	help
+	  GCM GHASH function (NIST SP800-38D)
 
 config CRYPTO_HMAC
 	tristate "HMAC (Keyed-Hash MAC)"
