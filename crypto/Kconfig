@@ -344,6 +344,10 @@ config CRYPTO_ECRDSA
 
 config CRYPTO_MLDSA
 	tristate "ML-DSA (Module-Lattice-Based Digital Signature Algorithm)"
+	# Depends on CRYPTO_LIB_MLDSA, which is unavailable in this tree: its
+	# SHAKE backend was the library SHA-3, removed because SHA-3 lives
+	# inside the certified FIPS module boundary as crypto/sha3_generic.c.
+	depends on BROKEN
 	select CRYPTO_SIG
 	select CRYPTO_LIB_MLDSA
 	help
@@ -948,7 +952,6 @@ config CRYPTO_SHA512
 config CRYPTO_SHA3
 	tristate "SHA-3"
 	select CRYPTO_HASH
-	select CRYPTO_LIB_SHA3
 	help
 	  SHA-3 secure hash algorithms (FIPS 202, ISO/IEC 10118-3)
 
@@ -1120,7 +1123,7 @@ config CRYPTO_DRBG
 
 config CRYPTO_JITTERENTROPY
 	tristate "CPU Jitter Non-Deterministic RNG (Random Number Generator)"
-	select CRYPTO_LIB_SHA3
+	select CRYPTO_SHA3
 	select CRYPTO_RNG
 	help
 	  CPU Jitter RNG (Random Number Generator) from the Jitterentropy library

@@ -42,7 +42,8 @@ config MODULE_SIG_KEY_TYPE_ECDSA
 config MODULE_SIG_KEY_TYPE_MLDSA_44
 	bool "ML-DSA-44"
 	select CRYPTO_MLDSA
-	depends on OPENSSL_SUPPORTS_ML_DSA
+	# CRYPTO_MLDSA is unavailable in this tree; see crypto/Kconfig.
+	depends on OPENSSL_SUPPORTS_ML_DSA && BROKEN
 	help
 	  Use an ML-DSA-44 key (NIST FIPS 204) for module signing.  ML-DSA
 	  support requires OpenSSL-3.5 minimum; preferably OpenSSL-4+.  With
@@ -53,7 +54,8 @@ config MODULE_SIG_KEY_TYPE_MLDSA_44
 config MODULE_SIG_KEY_TYPE_MLDSA_65
 	bool "ML-DSA-65"
 	select CRYPTO_MLDSA
-	depends on OPENSSL_SUPPORTS_ML_DSA
+	# CRYPTO_MLDSA is unavailable in this tree; see crypto/Kconfig.
+	depends on OPENSSL_SUPPORTS_ML_DSA && BROKEN
 	help
 	  Use an ML-DSA-65 key (NIST FIPS 204) for module signing.  ML-DSA
 	  support requires OpenSSL-3.5 minimum; preferably OpenSSL-4+.  With
@@ -64,7 +66,8 @@ config MODULE_SIG_KEY_TYPE_MLDSA_65
 config MODULE_SIG_KEY_TYPE_MLDSA_87
 	bool "ML-DSA-87"
 	select CRYPTO_MLDSA
-	depends on OPENSSL_SUPPORTS_ML_DSA
+	# CRYPTO_MLDSA is unavailable in this tree; see crypto/Kconfig.
+	depends on OPENSSL_SUPPORTS_ML_DSA && BROKEN
 	help
 	  Use an ML-DSA-87 key (NIST FIPS 204) for module signing.  ML-DSA
 	  support requires OpenSSL-3.5 minimum; preferably OpenSSL-4+.  With

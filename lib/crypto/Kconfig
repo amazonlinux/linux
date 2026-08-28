@@ -167,7 +167,11 @@ config CRYPTO_LIB_MD5
 
 config CRYPTO_LIB_MLDSA
 	tristate
-	select CRYPTO_LIB_SHA3
+	# ML-DSA gets SHAKE128/256 from the library SHA-3, which is removed in
+	# this tree: SHA-3 is inside the certified FIPS module boundary as
+	# crypto/sha3_generic.c, and two SHA-3 implementations must not coexist.
+	# ML-DSA is not part of the certified module, so it is unavailable here.
+	depends on BROKEN
 	help
 	  The ML-DSA library functions.  Select this if your module uses any of
 	  the functions from <crypto/mldsa.h>.
@@ -281,19 +285,6 @@ config CRYPTO_LIB_SHA512_ARCH
 	default y if S390
 	default y if SPARC64
 	default y if X86_64
-
-config CRYPTO_LIB_SHA3
-	tristate
-	select CRYPTO_LIB_UTILS
-	help
-	  The SHA3 library functions.  Select this if your module uses any of
-	  the functions from <crypto/sha3.h>.
-
-config CRYPTO_LIB_SHA3_ARCH
-	bool
-	depends on CRYPTO_LIB_SHA3 && !UML
-	default y if ARM64
-	default y if S390
 
 config CRYPTO_LIB_SM3
 	tristate
