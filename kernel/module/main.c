@@ -3071,6 +3071,34 @@ static void do_crypto_fn(struct load_info *info)
 		WRITE_ONCE(*(fk->ptr), fk->func);
 	}
 }
+
+static struct module *crypto_params_mod;
+
+static int crypto_params_ignore(char *p, char *v, const char *doing, void *arg) { return 0; }
+
+static void do_crypto_params(struct module *mod)
+{
+	char *cmdline;
+
+	crypto_params_mod = mod;
+	if (!mod->num_kp || !saved_command_line)
+		return;
+	cmdline = kstrdup(saved_command_line, GFP_KERNEL);
+	if (!cmdline)
+		return;
+	parse_args("fips140", cmdline, mod->kp, mod->num_kp,
+		   -32768, 32767, NULL, crypto_params_ignore);
+	kfree(cmdline);
+}
+
+static int __init crypto_params_sysfs_init(void)
+{
+	if (crypto_params_mod)
+		fips140_add_module_params_sysfs(crypto_params_mod->kp,
+						crypto_params_mod->num_kp);
+	return 0;
+}
+late_initcall(crypto_params_sysfs_init);
 #endif
 
 /* Call module constructors. */
@@ -3158,6 +3186,7 @@ static noinline int do_init_module(struct load_info *info, struct module *mod, i
 		{
 			do_crypto_var(info);
 			do_crypto_fn(info);
+			do_crypto_params(mod);
 		}
 #endif
 
@@ -3637,8 +3666,10 @@ static int _load_module(struct load_info *info, const char __user *uargs,
 		       mod->name, after_dashes);
 	}
 
-	/* Link in to sysfs. */
-	err = mod_sysfs_setup(mod, info, mod->kp, mod->num_kp);
+	/* Link in to sysfs. Crypto module parameters are registered in
+	 * sysfs under their original prefix later, so skip them here */
+	err = mod_sysfs_setup(mod, info, mod->kp,
+			      (flags & MODULE_INIT_CRYPTO_FROM_MEM) ? 0 : mod->num_kp);
 	if (err < 0)
 		goto coming_cleanup;
 
