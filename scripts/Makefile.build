@@ -577,6 +577,11 @@ $(multi-crypto-objs-y): private KBUILD_CFLAGS += $(crypto-objs-flags-y)
 $(multi-crypto-objs-y): %.o: %.mod FORCE
 	$(call if_changed_rule,ld_multi_m)
 $(call multi_depend, $(multi-crypto-objs-y), .o, -objs -y -m)
+
+# Preserve the original module-name prefix of each relocated crypto parameter
+$(real-crypto-objs-y): private crypto_modname = $(basetarget)
+$(foreach m,$(multi-crypto-objs-y),$(eval $(addprefix $(dir $(m)),$($(notdir $(m:.o=))-y)): private crypto_modname := $(notdir $(m:.o=))))
+$(real-crypto-objs-y): private KBUILD_CFLAGS += -DMODULE_PARAM_PREFIX=$(call stringify,$(crypto_modname).)
 endif
 endif
 
