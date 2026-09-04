@@ -21,7 +21,9 @@
 /* You can override this manually, but generally this should match the
    module name. */
 #ifdef MODULE
+#ifndef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX /* empty */
+#endif
 #define __MODULE_INFO_PREFIX /* empty */
 #else
 #define MODULE_PARAM_PREFIX KBUILD_MODNAME "."
@@ -637,6 +639,11 @@ static inline int module_param_sysfs_setup(struct module *mod,
 
 static inline void module_param_sysfs_remove(struct module *mod)
 { }
+#endif
+
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+void fips140_add_module_params_sysfs(const struct kernel_param *kp,
+				     unsigned int num);
 #endif
 
 #endif /* _LINUX_MODULE_PARAMS_H */
