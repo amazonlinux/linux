@@ -207,6 +207,7 @@ struct svm_cpu_data {
 	u32 max_asid;
 	u32 next_asid;
 	u32 min_asid;
+	bool flush_all_asids;
 	struct kvm_ldttss_desc *tss_desc;
 
 	struct page *save_area;
