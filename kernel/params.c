@@ -838,6 +838,28 @@ static void __init param_sysfs_builtin(void)
 	}
 }
 
+#ifdef CONFIG_CRYPTO_FIPS140_EXTMOD
+void __init fips140_add_module_params_sysfs(const struct kernel_param *kp,
+					    unsigned int num)
+{
+	char modname[MODULE_NAME_LEN];
+	unsigned int i, name_len;
+
+	if (!module_kset)
+		return;
+
+	for (i = 0; i < num; i++) {
+		char *dot = strchr(kp[i].name, '.');
+
+		if (!kp[i].perm || !dot)
+			continue;
+		name_len = dot - kp[i].name + 1;
+		strscpy(modname, kp[i].name, name_len);
+		kernel_add_sysfs_param(modname, &kp[i], name_len);
+	}
+}
+#endif
+
 ssize_t __modver_version_show(const struct module_attribute *mattr,
 			      struct module_kobject *mk, char *buf)
 {
