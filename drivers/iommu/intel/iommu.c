@@ -578,8 +578,13 @@ static void pgtable_walk(struct intel_iommu *iommu, unsigned long pfn,
 	}
 }
 
-void dmar_fault_dump_ptes(struct intel_iommu *iommu, u16 source_id,
-			  unsigned long long addr, u32 pasid)
+/*
+ * noinline for the same reason as dmar_fault_do_one(): keep the symbol
+ * available as an ftrace/kprobe hook point for DMAR fault monitoring,
+ * independently of whether the build enables LTO.
+ */
+noinline void dmar_fault_dump_ptes(struct intel_iommu *iommu, u16 source_id,
+				   unsigned long long addr, u32 pasid)
 {
 	struct pasid_dir_entry *dir, *pde;
 	struct pasid_entry *entries, *pte;
