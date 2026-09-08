@@ -1811,7 +1811,13 @@ static const char *irq_remap_fault_reasons[] =
 	"Blocked an interrupt request due to source-id verification failure",
 };
 
-static const char *dmar_get_fault_reason(u8 fault_reason, int *fault_type)
+/*
+ * Keep out of the inliner so that the symbol survives in
+ * available_filter_functions and can be used as an ftrace/kprobe hook
+ * point for DMAR fault monitoring. See dmar_fault_do_one() below.
+ */
+static noinline const char *dmar_get_fault_reason(u8 fault_reason,
+						  int *fault_type)
 {
 	if (fault_reason >= 0x20 && (fault_reason - 0x20 <
 					ARRAY_SIZE(irq_remap_fault_reasons))) {
@@ -1884,7 +1890,16 @@ void dmar_msi_write(int irq, struct msi_msg *msg)
 	raw_spin_unlock_irqrestore(&iommu->register_lock, flag);
 }
 
-static int dmar_fault_do_one(struct intel_iommu *iommu, int type,
+/*
+ * dmar_fault_do_one() is only reached once a fault record has actually been
+ * read out of the hardware, which makes it the natural hook point for
+ * "a real DMAR fault happened" monitoring, as opposed to the dmar_fault()
+ * IRQ handler which runs on every DMAR interrupt.  It has a single call
+ * site, so the compiler would otherwise inline it away and the symbol would
+ * disappear from available_filter_functions.  Keep it out of line so that
+ * ftrace and kprobes can attach to it.
+ */
+static noinline int dmar_fault_do_one(struct intel_iommu *iommu, int type,
 		u8 fault_reason, u32 pasid, u16 source_id,
 		unsigned long long addr)
 {
