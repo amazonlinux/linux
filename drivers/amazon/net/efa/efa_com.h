@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
- * Copyright 2018-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef _EFA_COM_H_
@@ -15,6 +15,7 @@
 #include <rdma/ib_verbs.h>
 #include "kcompat.h"
 
+#include "efa_ah_cache.h"
 #include "efa_common_defs.h"
 #include "efa_admin_defs.h"
 #include "efa_admin_cmds_defs.h"
@@ -22,19 +23,27 @@
 
 #define EFA_MAX_HANDLERS 256
 
+#define EFA_ADMIN_V1_PROTO_VER 0
+#define EFA_ADMIN_V2_PROTO_VER 1
+
 struct efa_com_admin_cq {
 	struct efa_admin_acq_entry *entries;
 	dma_addr_t dma_addr;
 	spinlock_t lock; /* Protects ACQ */
+	bool validate_checksum;
 
 	u16 cc; /* consumer counter */
 	u8 phase;
 };
 
 struct efa_com_admin_sq {
-	struct efa_admin_aq_entry *entries;
+	u8 *buffer;
+	u16 entry_size;
+	u16 payload_offset;
+	u16 max_payload_size;
 	dma_addr_t dma_addr;
 	spinlock_t lock; /* Protects ASQ */
+	u8 proto_ver;
 
 	u32 __iomem *db_addr;
 
@@ -113,6 +122,9 @@ struct efa_com_dev {
 	u32 supported_features;
 	u32 dma_addr_bits;
 
+	u32 dev_api_ver;
+	struct efa_ah_cache ah_cache;
+
 	struct efa_com_mmio_read mmio_read;
 };
 
@@ -170,10 +182,9 @@ int efa_com_validate_version(struct efa_com_dev *edev);
 int efa_com_get_dma_width(struct efa_com_dev *edev);
 
 int efa_com_cmd_exec(struct efa_com_admin_queue *aq,
-		     struct efa_admin_aq_entry *cmd,
-		     size_t cmd_size,
-		     struct efa_admin_acq_entry *comp,
-		     size_t comp_size);
+		     u8 opcode, u8 flags,
+		     void *payload, size_t payload_size,
+		     struct efa_admin_acq_entry *comp, size_t comp_size);
 void efa_com_aenq_intr_handler(struct efa_com_dev *edev, void *data);
 void efa_com_eq_comp_intr_handler(struct efa_com_dev *edev,
 				  struct efa_com_eq *eeq);
