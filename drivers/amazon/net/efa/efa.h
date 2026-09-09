@@ -156,6 +156,14 @@ struct efa_cq {
 	spinlock_t lock;
 };
 
+struct efa_comp_cntr {
+	struct ib_comp_cntr ibcc;
+	struct ib_umem *comp_umem;
+	struct ib_umem *err_umem;
+	u32 comp_handle;
+	u32 err_handle;
+};
+
 struct efa_wq {
 	u64 *wrid;
 	/* wrid_idx_pool: Pool of free indexes in the wrid array, used to select the
@@ -194,6 +202,8 @@ struct efa_sq {
 	u32 max_rdma_sges;
 	u32 max_batch_wr;
 	enum ib_sig_type sig_type;
+	u16 wqe_size;
+	bool inline_write_enabled;
 };
 
 struct efa_qp {
@@ -215,6 +225,8 @@ struct efa_qp {
 	u32 max_send_sge;
 	u32 max_recv_sge;
 	u32 max_inline_data;
+	struct xarray comp_cntrs;
+	u32 comp_cntr_op_mask;
 	struct efa_sq sq;
 	struct efa_rq rq;
 };
@@ -236,6 +248,7 @@ int efa_query_device(struct ib_device *ibdev,
 		     struct ib_udata *udata);
 int efa_query_port(struct ib_device *ibdev, port_t port,
 		   struct ib_port_attr *props);
+int efa_query_port_speed(struct ib_device *ibdev, u32 port_num, u64 *speed);
 int efa_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr,
 		 int qp_attr_mask,
 		 struct ib_qp_init_attr *qp_init_attr);
@@ -249,10 +262,20 @@ int efa_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata);
 int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
 		  struct ib_udata *udata);
 int efa_destroy_cq(struct ib_cq *ibcq, struct ib_udata *udata);
-int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
-		  struct uverbs_attr_bundle *attrs);
 int efa_create_user_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
 		       struct uverbs_attr_bundle *attrs);
+int efa_create_cq(struct ib_cq *ibcq, const struct ib_cq_init_attr *attr,
+		  struct uverbs_attr_bundle *attrs);
+int efa_query_comp_cntr_caps(struct ib_device *ibdev,
+			     struct ib_comp_cntr_caps *caps,
+			     struct uverbs_attr_bundle *attrs);
+int efa_create_comp_cntr(struct ib_comp_cntr *ibcc,
+			 struct uverbs_attr_bundle *attrs);
+int efa_destroy_comp_cntr(struct ib_comp_cntr *ibcc);
+int efa_modify_comp_cntr(struct ib_comp_cntr *ibcc, enum ib_comp_cntr_entry entry,
+			 enum ib_comp_cntr_modify_op op, u64 value);
+int efa_qp_attach_comp_cntr(struct ib_qp *ibqp, struct ib_comp_cntr *ibcc,
+			    struct ib_qp_attach_comp_cntr_attr *attr);
 struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 			 u64 virt_addr, int access_flags,
 			 struct ib_dmah *dmah,
