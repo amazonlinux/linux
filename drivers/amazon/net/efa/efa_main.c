@@ -21,18 +21,20 @@
 #define PCI_DEV_ID_EFA1_VF 0xefa1
 #define PCI_DEV_ID_EFA2_VF 0xefa2
 #define PCI_DEV_ID_EFA3_VF 0xefa3
+#define PCI_DEV_ID_EFA4_VF 0xefa4
 
 static const struct pci_device_id efa_pci_tbl[] = {
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA0_VF) },
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA1_VF) },
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA2_VF) },
 	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA3_VF) },
+	{ PCI_VDEVICE(AMAZON, PCI_DEV_ID_EFA4_VF) },
 	{ }
 };
 
 #define DRV_MODULE_VER_MAJOR           3
-#define DRV_MODULE_VER_MINOR           1
-#define DRV_MODULE_VER_SUBMINOR        0
+#define DRV_MODULE_VER_MINOR           3
+#define DRV_MODULE_VER_SUBMINOR        1
 
 #ifndef DRV_MODULE_VERSION
 #define DRV_MODULE_VERSION \
@@ -42,7 +44,7 @@ static const struct pci_device_id efa_pci_tbl[] = {
 #endif
 
 MODULE_VERSION(DRV_MODULE_VERSION);
-MODULE_SOFTDEP("pre: ib_uverbs");
+MODULE_SOFTDEP("pre: ib_uverbs crc16");
 
 static char version[] = DEVICE_NAME " v" DRV_MODULE_VERSION;
 
@@ -358,7 +360,7 @@ static int efa_create_eqs(struct efa_dev *dev)
 
 	neqs = min_t(u32, neqs, dev->num_irq_vectors - EFA_COMP_EQS_VEC_BASE);
 	dev->neqs = neqs;
-	dev->eqs = kcalloc(neqs, sizeof(*dev->eqs), GFP_KERNEL);
+	dev->eqs = kzalloc_objs(*dev->eqs, neqs);
 	if (!dev->eqs)
 		return -ENOMEM;
 
@@ -458,6 +460,7 @@ static const struct ib_device_ops efa_dev_ops = {
 	.query_gid = efa_query_gid,
 	.query_pkey = efa_query_pkey,
 	.query_port = efa_query_port,
+	.query_port_speed = efa_query_port_speed,
 	.query_qp = efa_query_qp,
 	.reg_user_mr = efa_reg_mr,
 	.reg_user_mr_dmabuf = efa_reg_user_mr_dmabuf,
