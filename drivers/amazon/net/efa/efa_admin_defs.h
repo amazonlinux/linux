@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
 /*
- * Copyright 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef _EFA_ADMIN_H_
 #define _EFA_ADMIN_H_
+
+#define EFA_ADMIN_API_VERSION_MAJOR          0
+#define EFA_ADMIN_API_VERSION_MINOR          3
 
 enum efa_admin_aq_completion_status {
 	EFA_ADMIN_SUCCESS                           = 0,
@@ -12,7 +15,6 @@ enum efa_admin_aq_completion_status {
 	EFA_ADMIN_BAD_OPCODE                        = 2,
 	EFA_ADMIN_UNSUPPORTED_OPCODE                = 3,
 	EFA_ADMIN_MALFORMED_REQUEST                 = 4,
-	/* Additional status is provided in ACQ entry extended_status */
 	EFA_ADMIN_ILLEGAL_PARAMETER                 = 5,
 	EFA_ADMIN_UNKNOWN_ERROR                     = 6,
 	EFA_ADMIN_RESOURCE_BUSY                     = 7,
@@ -39,6 +41,21 @@ struct efa_admin_aq_common_desc {
 	u8 flags;
 };
 
+struct efa_admin_aq_common_desc_v2 {
+	struct efa_admin_aq_common_desc common;
+
+	/*
+	 * Poly 0x8005 CRC16 with initial value 0xFFFF and final XOR of
+	 * 0xFFFF. The checksum covers the entire admin command entry
+	 * including the zeroed checksum field.
+	 */
+	u16 checksum;
+
+	u8 payload_ver;
+
+	u8 reserved[5];
+};
+
 /*
  * used in efa_admin_aq_entry. Can point directly to control data, or to a
  * page list chunk. Used also at the end of indirect mode page list chunks,
@@ -53,13 +70,13 @@ struct efa_admin_ctrl_buff_info {
 struct efa_admin_aq_entry {
 	struct efa_admin_aq_common_desc aq_common_descriptor;
 
-	union {
-		u32 inline_data_w1[3];
+	u32 request_payload[15];
+};
 
-		struct efa_admin_ctrl_buff_info control_buffer;
-	} u;
+struct efa_admin_aq_entry_v2 {
+	struct efa_admin_aq_common_desc_v2 aq_common_descriptor;
 
-	u32 inline_data_w4[12];
+	u32 request_payload[29];
 };
 
 struct efa_admin_acq_common_desc {
@@ -78,13 +95,14 @@ struct efa_admin_acq_common_desc {
 	 */
 	u8 flags;
 
-	u16 extended_status;
-
 	/*
-	 * indicates to the driver which AQ entry has been consumed by the
-	 * device and could be reused
+	 * Poly 0x8005 CRC16 with initial value 0xFFFF and final XOR of 0xFFFF.
+	 * The checksum covers the entire admin completion entry including the
+	 * zeroed checksum field.
 	 */
-	u16 sq_head_indx;
+	u16 checksum;
+
+	u16 reserved;
 };
 
 struct efa_admin_acq_entry {
