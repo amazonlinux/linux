@@ -80,7 +80,7 @@ ifdef CONFIG_DEBUG_INFO_BTF_MODULES
 	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.fips140.ko.btf crypto/fips140/fips140.ko.tmp; \
 	cp crypto/fips140/.fips140.ko.btf crypto/fips140/.fips140.ko.btf.first; \
 	rm -f crypto/fips140/fips140.ko.tmp; \
-	$(LD) -r -b binary -o crypto/fips140/fips140_btf.o crypto/fips140/.fips140.ko.btf; \
+	$(LD) $(KBUILD_LDFLAGS) -r -b binary -o crypto/fips140/fips140_btf.o crypto/fips140/.fips140.ko.btf; \
 	$(OBJCOPY) --rename-section .data=.fips140_btf crypto/fips140/fips140_btf.o
 ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
       cmd_link_vmlinux += ; \
@@ -89,7 +89,7 @@ ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
 	$(RESOLVE_BTFIDS) -b $@ crypto/fips140/nonfips140.ko.tmp; \
 	$(OBJCOPY) --dump-section=.BTF=crypto/fips140/.nonfips140.ko.btf crypto/fips140/nonfips140.ko.tmp; \
 	rm -f crypto/fips140/nonfips140.ko.tmp; \
-	$(LD) -r -b binary -o crypto/fips140/nonfips140_btf.o crypto/fips140/.nonfips140.ko.btf; \
+	$(LD) $(KBUILD_LDFLAGS) -r -b binary -o crypto/fips140/nonfips140_btf.o crypto/fips140/.nonfips140.ko.btf; \
 	$(OBJCOPY) --rename-section .data=.nonfips140_btf --prefix-symbols nonfips140_ crypto/fips140/nonfips140_btf.o
 endif
 	  cmd_link_vmlinux += ; \
