@@ -53,6 +53,13 @@ struct kobject *btf_kobj;
 
 static int __init btf_vmlinux_init(void)
 {
+	/*
+	 * btf=off: never expose the .BTF section; its backing pages are
+	 * freed at free_initmem() time.
+	 */
+	if (btf_is_disabled())
+		return 0;
+
 	bin_attr_btf_vmlinux.private = __start_BTF;
 	bin_attr_btf_vmlinux.size = __stop_BTF - __start_BTF;
 
