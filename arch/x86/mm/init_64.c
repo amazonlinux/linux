@@ -33,6 +33,7 @@
 #include <linux/nmi.h>
 #include <linux/gfp.h>
 #include <linux/kcore.h>
+#include <linux/btf.h>
 
 #include <asm/processor.h>
 #include <asm/bios_ebda.h>
@@ -1400,6 +1401,35 @@ void mark_rodata_ro(void)
 				(void *)text_end, (void *)rodata_start);
 	free_kernel_image_pages("unused kernel image (rodata/data gap)",
 				(void *)rodata_end, (void *)_sdata);
+
+#if defined(CONFIG_DEBUG_INFO_BTF) && defined(CONFIG_BPF_SYSCALL)
+	/*
+	 * With btf=off nothing has parsed or exported the vmlinux BTF:
+	 * no sysfs attribute exists (so no mmap can exist) and no BTF
+	 * pointer has been handed out, so the pages backing the .BTF
+	 * section can be freed like the gaps above.
+	 *
+	 * .BTF lies inside __start_rodata..__end_rodata, which
+	 * protect_rodata() pins read-only now that
+	 * kernel_set_to_readonly is set.  The freed page range is
+	 * excluded from that pinning (see protect_rodata() in
+	 * arch/x86/mm/pat/set_memory.c); without the exclusion the RW
+	 * flip in free_init_pages() is silently refused and the poison
+	 * write faults.  __start_BTF is PAGE_SIZE-aligned by the linker
+	 * script; __stop_BTF is not, so the trailing partial page is
+	 * left in place (and stays protected rodata).
+	 */
+	if (btf_is_disabled()) {
+		extern char __start_BTF[], __stop_BTF[];
+		unsigned long btf_start = PAGE_ALIGN((unsigned long)__start_BTF);
+		unsigned long btf_end = (unsigned long)__stop_BTF & PAGE_MASK;
+
+		if (btf_start < btf_end)
+			free_kernel_image_pages("unused BTF (btf=off)",
+						(void *)btf_start,
+						(void *)btf_end);
+	}
+#endif
 }
 
 /*

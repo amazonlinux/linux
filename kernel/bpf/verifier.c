@@ -20619,7 +20619,7 @@ struct btf *bpf_get_btf_vmlinux(void)
 	/* Pairs with the smp_store_release() on the parse path below. */
 	struct btf *btf = smp_load_acquire(&btf_vmlinux);
 
-	if (!btf && IS_ENABLED(CONFIG_DEBUG_INFO_BTF)) {
+	if (!btf && IS_ENABLED(CONFIG_DEBUG_INFO_BTF) && !btf_is_disabled()) {
 		mutex_lock(&btf_vmlinux_lock);
 		btf = btf_vmlinux;
 		if (!btf) {
