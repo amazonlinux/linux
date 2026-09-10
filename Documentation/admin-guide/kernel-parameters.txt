@@ -668,6 +668,20 @@ Kernel parameters
 
 			See Documentation/admin-guide/bootconfig.rst
 
+	btf=		[KNL,EARLY]
+			Format: { off }
+			Disable use of the kernel's BTF type information
+			(CONFIG_DEBUG_INFO_BTF), making the kernel behave
+			as if it were built without it: /sys/kernel/btf is
+			not created, module BTF is not registered, and BPF
+			features that require kernel type information
+			(CO-RE, fentry/fexit, kfunc calls, struct_ops) are
+			unavailable.  The memory backing the .BTF section
+			is freed after init, reducing the kernel's
+			resident memory footprint.  Only supported on
+			x86-64 and arm64; other architectures ignore this
+			parameter.
+
 	bttv.card=	[HW,V4L] bttv (bt848 + bt878 based grabber cards)
 	bttv.radio=	Most important insmod options are available as
 			kernel args too.
