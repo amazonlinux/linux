@@ -24406,7 +24406,8 @@ static int check_attach_btf_id(struct bpf_verifier_env *env)
 
 struct btf *bpf_get_btf_vmlinux(void)
 {
-	if (!btf_vmlinux && IS_ENABLED(CONFIG_DEBUG_INFO_BTF)) {
+	if (!btf_vmlinux && IS_ENABLED(CONFIG_DEBUG_INFO_BTF) &&
+	    !btf_is_disabled()) {
 		mutex_lock(&bpf_verifier_lock);
 		if (!btf_vmlinux)
 			btf_vmlinux = btf_parse_vmlinux();
