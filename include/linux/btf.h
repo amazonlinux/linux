@@ -11,6 +11,15 @@
 #include <uapi/linux/btf.h>
 #include <uapi/linux/bpf.h>
 
+#if defined(CONFIG_BPF_SYSCALL) && defined(CONFIG_DEBUG_INFO_BTF)
+bool btf_is_disabled(void);
+#else
+static inline bool btf_is_disabled(void)
+{
+	return false;
+}
+#endif
+
 #define BTF_TYPE_EMIT(type) ((void)(type *)0)
 #define BTF_TYPE_EMIT_ENUM(enum_val) ((void)enum_val)
 
