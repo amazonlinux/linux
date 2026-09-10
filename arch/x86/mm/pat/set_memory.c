@@ -21,6 +21,7 @@
 #include <linux/kernel.h>
 #include <linux/cc_platform.h>
 #include <linux/set_memory.h>
+#include <linux/btf.h>
 #include <linux/memregion.h>
 
 #include <asm/e820/api.h>
@@ -518,7 +519,32 @@ static pgprotval_t protect_rodata(unsigned long spfn, unsigned long epfn)
 	 */
 	epfn_ro = PFN_DOWN(__pa_symbol(__end_rodata)) - 1;
 
-	if (kernel_set_to_readonly && overlaps(spfn, epfn, spfn_ro, epfn_ro))
+	if (!kernel_set_to_readonly)
+		return 0;
+
+#if defined(CONFIG_DEBUG_INFO_BTF) && defined(CONFIG_BPF_SYSCALL)
+	/*
+	 * btf=off: the pages backing the .BTF section are freed to the
+	 * page allocator at the end of mark_rodata_ro() and are then
+	 * ordinary pages that must not be pinned read-only - both for
+	 * the freeing itself (free_reserved_area() writes the poison
+	 * pattern through the direct map) and for any later CPA call on
+	 * whatever gets allocated from them.  Only the fully-freed page
+	 * range is excluded; a trailing partial page stays protected
+	 * rodata.
+	 */
+	if (btf_is_disabled()) {
+		extern char __start_BTF[], __stop_BTF[];
+		unsigned long spfn_btf = PFN_UP(__pa_symbol(__start_BTF));
+		unsigned long epfn_btf = PFN_DOWN(__pa_symbol(__stop_BTF));
+
+		if (spfn_btf < epfn_btf &&
+		    spfn >= spfn_btf && epfn <= epfn_btf - 1)
+			return 0;
+	}
+#endif
+
+	if (overlaps(spfn, epfn, spfn_ro, epfn_ro))
 		return _PAGE_RW;
 	return 0;
 }
