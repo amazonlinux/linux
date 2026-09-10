@@ -29,6 +29,8 @@
 #include <linux/mm_inline.h>
 #include <linux/pagewalk.h>
 #include <linux/stop_machine.h>
+#include <linux/btf.h>
+#include <linux/poison.h>
 
 #include <asm/barrier.h>
 #include <asm/cputype.h>
@@ -1039,6 +1041,39 @@ static void update_mapping_prot(phys_addr_t phys, unsigned long virt,
 	flush_tlb_kernel_range(virt, virt + size);
 }
 
+#if defined(CONFIG_DEBUG_INFO_BTF) && defined(CONFIG_BPF_SYSCALL)
+extern char __start_BTF[], __stop_BTF[];
+
+/*
+ * With btf=off the pages backing the vmlinux .BTF section are freed by
+ * mark_rodata_ro() and later reused through the linear alias of the
+ * kernel image.  Block mappings cannot be split live without BBML2,
+ * which not all CPUs provide, so map_mem() maps the page-aligned
+ * interior of the section as a separate region of the alias: mapping
+ * boundaries then coincide with its edges, and its permissions can be
+ * changed as a whole without ever splitting a block mapping.
+ *
+ * Returns true and the region's kernel image virtual bounds when the
+ * free is pending.  early_param() is parsed before map_mem(), so the
+ * decision is stable by the time it is first needed.  __stop_BTF is
+ * not necessarily page-aligned; a trailing partial page stays
+ * resident (and read-only).
+ */
+static bool btf_free_range(unsigned long *start, unsigned long *end)
+{
+	*start = PAGE_ALIGN((unsigned long)__start_BTF);
+	*end = (unsigned long)__stop_BTF & PAGE_MASK;
+
+	return btf_is_disabled() && *start < *end;
+}
+#else
+static bool btf_free_range(unsigned long *start, unsigned long *end)
+{
+	*start = *end = 0;
+	return false;
+}
+#endif
+
 static void __init __map_memblock(pgd_t *pgdp, phys_addr_t start,
 				  phys_addr_t end, pgprot_t prot, int flags)
 {
@@ -1048,12 +1083,33 @@ static void __init __map_memblock(pgd_t *pgdp, phys_addr_t start,
 
 void __init mark_linear_text_alias_ro(void)
 {
+	unsigned long btf_start, btf_end;
+
 	/*
 	 * Remove the write permissions from the linear alias of .text/.rodata
+	 *
+	 * With btf=off the alias consists of three regions (see map_mem());
+	 * remap it with the same boundaries so that every entry keeps its
+	 * granularity and only the permissions change.
 	 */
-	update_mapping_prot(__pa_symbol(_text), (unsigned long)lm_alias(_text),
-			    (unsigned long)__init_begin - (unsigned long)_text,
-			    PAGE_KERNEL_RO);
+	if (btf_free_range(&btf_start, &btf_end)) {
+		update_mapping_prot(__pa_symbol(_text),
+				    (unsigned long)lm_alias(_text),
+				    btf_start - (unsigned long)_text,
+				    PAGE_KERNEL_RO);
+		update_mapping_prot(__pa_symbol(btf_start),
+				    (unsigned long)lm_alias(btf_start),
+				    btf_end - btf_start, PAGE_KERNEL_RO);
+		update_mapping_prot(__pa_symbol(btf_end),
+				    (unsigned long)lm_alias(btf_end),
+				    (unsigned long)__init_begin - btf_end,
+				    PAGE_KERNEL_RO);
+	} else {
+		update_mapping_prot(__pa_symbol(_text),
+				    (unsigned long)lm_alias(_text),
+				    (unsigned long)__init_begin - (unsigned long)_text,
+				    PAGE_KERNEL_RO);
+	}
 }
 
 #ifdef CONFIG_KFENCE
@@ -1144,6 +1200,7 @@ static void __init map_mem(pgd_t *pgdp)
 	phys_addr_t kernel_end = __pa_symbol(__init_begin);
 	phys_addr_t start, end;
 	phys_addr_t early_kfence_pool;
+	unsigned long btf_start, btf_end;
 	int flags = NO_EXEC_MAPPINGS;
 	u64 i;
 
@@ -1197,9 +1254,23 @@ static void __init map_mem(pgd_t *pgdp)
 	 * but protects it from inadvertent modification or execution.
 	 * Note that contiguous mappings cannot be remapped in this way,
 	 * so we should avoid them here.
+	 *
+	 * With btf=off the .BTF section becomes a separate region of
+	 * the alias, so that mark_rodata_ro() can change its
+	 * permissions and free it as a whole without splitting any
+	 * block mapping (see btf_free_range()).
 	 */
-	__map_memblock(pgdp, kernel_start, kernel_end,
-		       PAGE_KERNEL, NO_CONT_MAPPINGS);
+	if (btf_free_range(&btf_start, &btf_end)) {
+		__map_memblock(pgdp, kernel_start, __pa_symbol(btf_start),
+			       PAGE_KERNEL, NO_CONT_MAPPINGS);
+		__map_memblock(pgdp, __pa_symbol(btf_start), __pa_symbol(btf_end),
+			       PAGE_KERNEL, NO_CONT_MAPPINGS);
+		__map_memblock(pgdp, __pa_symbol(btf_end), kernel_end,
+			       PAGE_KERNEL, NO_CONT_MAPPINGS);
+	} else {
+		__map_memblock(pgdp, kernel_start, kernel_end,
+			       PAGE_KERNEL, NO_CONT_MAPPINGS);
+	}
 	memblock_clear_nomap(kernel_start, kernel_end - kernel_start);
 	arm64_kfence_map_pool(early_kfence_pool, pgdp);
 }
@@ -1207,6 +1278,7 @@ static void __init map_mem(pgd_t *pgdp)
 void mark_rodata_ro(void)
 {
 	unsigned long section_size;
+	unsigned long btf_start, btf_end;
 
 	/*
 	 * mark .rodata as read only. Use __init_begin rather than __end_rodata
@@ -1220,6 +1292,33 @@ void mark_rodata_ro(void)
 	update_mapping_prot(__pa_symbol(_text), (unsigned long)_text,
 			    (unsigned long)_stext - (unsigned long)_text,
 			    PAGE_KERNEL_RO);
+
+	/*
+	 * btf=off: nothing has parsed or exported the vmlinux BTF - no
+	 * sysfs attribute exists (so no mmap can exist) and no BTF
+	 * pointer has been handed out - so the pages backing the .BTF
+	 * section can be returned to the page allocator.
+	 *
+	 * The pages are freed, poisoned and later reused through their
+	 * linear alias, which map_mem() mapped as a separate region and
+	 * mark_linear_text_alias_ro() made read-only: flip the whole
+	 * region back to PAGE_KERNEL - a permission-only change - and
+	 * hand the pages over, mirroring free_initmem().  The kernel
+	 * image mapping of the section (made read-only just above) is
+	 * left in place: it cannot be written through, and removing it
+	 * would require splitting live block mappings.
+	 */
+	if (btf_free_range(&btf_start, &btf_end)) {
+		void *lm_start = lm_alias((void *)btf_start);
+		void *lm_end = lm_alias((void *)btf_end);
+
+		update_mapping_prot(__pa_symbol(btf_start),
+				    (unsigned long)lm_start,
+				    btf_end - btf_start, PAGE_KERNEL);
+		memblock_free(lm_start, lm_end - lm_start);
+		free_reserved_area(lm_start, lm_end, POISON_FREE_INITMEM,
+				   "unused BTF (btf=off)");
+	}
 }
 
 static void __init declare_vma(struct vm_struct *vma,
