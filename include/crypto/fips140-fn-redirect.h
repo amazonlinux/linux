@@ -36,7 +36,6 @@ extern void __fips140_fn_not_redirected(void);
 			"jmp __x86_indirect_thunk_rax\n\t"		\
 			::: "rax", "memory"				\
 		);							\
-		__builtin_unreachable();					\
 	}
 
 #elif defined(CONFIG_ARM64)
@@ -53,7 +52,6 @@ extern void __fips140_fn_not_redirected(void);
 			"br   x16\n\t"					\
 			::: "x16", "memory"				\
 		);							\
-		__builtin_unreachable();					\
 	}
 
 #else
