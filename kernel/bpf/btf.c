@@ -5892,6 +5892,46 @@ extern char __start_BTF[];
 extern char __stop_BTF[];
 extern struct btf *btf_vmlinux;
 
+#ifdef CONFIG_DEBUG_INFO_BTF
+/*
+ * Boot-time opt out of vmlinux and module BTF.
+ *
+ * "btf=off" makes the kernel behave as if CONFIG_DEBUG_INFO_BTF were not
+ * set: vmlinux BTF is never parsed, /sys/kernel/btf is not created (so
+ * the .BTF section can never be read or mapped), and module BTF is not
+ * registered.  Since nothing can then reference the .BTF section, the
+ * architecture frees the pages backing it at free_initmem() time,
+ * recovering its memory.
+ */
+static bool btf_disabled __ro_after_init;
+
+static int __init btf_param(char *str)
+{
+	if (str && !strcmp(str, "off")) {
+		/*
+		 * Only architectures that implement freeing of the .BTF
+		 * section honour btf=off: x86-64 (mark_rodata_ro() in
+		 * arch/x86/mm/init_64.c) and arm64 (mark_rodata_ro() in
+		 * arch/arm64/mm/mmu.c).  On any other architecture
+		 * btf_disabled must never be set - disabling BTF without
+		 * freeing the section would lose the functionality while
+		 * recovering no memory.
+		 */
+		if (IS_ENABLED(CONFIG_X86_64) || IS_ENABLED(CONFIG_ARM64))
+			btf_disabled = true;
+		else
+			pr_warn("btf=off is not supported on this architecture, ignoring\n");
+	}
+	return 0;
+}
+early_param("btf", btf_param);
+
+bool btf_is_disabled(void)
+{
+	return btf_disabled;
+}
+#endif
+
 #define BPF_MAP_TYPE(_id, _ops)
 #define BPF_LINK_TYPE(_id, _name)
 static union {
@@ -8211,7 +8251,12 @@ static int btf_module_notify(struct notifier_block *nb, unsigned long op,
 	struct btf *btf;
 	int err = 0;
 
-	if (mod->btf_data_size == 0 ||
+	/*
+	 * btf=off: module BTF must not be parsed or registered; parsing
+	 * would fail against the missing vmlinux BTF and (without
+	 * CONFIG_MODULE_ALLOW_BTF_MISMATCH) veto the module load.
+	 */
+	if (btf_is_disabled() || mod->btf_data_size == 0 ||
 	    (op != MODULE_STATE_COMING && op != MODULE_STATE_LIVE &&
 	     op != MODULE_STATE_GOING))
 		goto out;
@@ -8412,6 +8457,10 @@ static struct btf *btf_get_module_btf(const struct module *module)
 
 static int check_btf_kconfigs(const struct module *module, const char *feature)
 {
+	/* btf=off: behave as if CONFIG_DEBUG_INFO_BTF were not set */
+	if (btf_is_disabled())
+		return 0;
+
 	if (!module && IS_ENABLED(CONFIG_DEBUG_INFO_BTF)) {
 		pr_err("missing vmlinux BTF, cannot register %s\n", feature);
 		return -ENOENT;
