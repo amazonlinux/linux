@@ -1402,7 +1402,7 @@ crypto/fips140/fips140-embedded.o: fips140-ready
 	@$(STRIP) --strip-debug -o crypto/fips140/.fips140.ko.stripped \
 		$(fips140_build)/crypto/fips140/fips140.ko
 	@echo "  LD      $@"
-	@$(LD) -r -b binary -o $@ crypto/fips140/.fips140.ko.stripped
+	@$(LD) $(KBUILD_LDFLAGS) -r -b binary -o $@ crypto/fips140/.fips140.ko.stripped
 	@$(OBJCOPY) --rename-section .data=.fips140_module_data,alloc,load,contents,readonly,data $@
 
 ifdef CONFIG_CRYPTO_FIPS140_DUAL_VERSION
@@ -1410,7 +1410,7 @@ crypto/fips140/nonfips140-embedded.o: fips140-ready
 	@$(STRIP) --strip-debug -o crypto/fips140/.nonfips140.ko.stripped \
 		crypto/fips140/fips140.ko
 	@echo "  LD      $@"
-	@$(LD) -r -b binary -o $@ crypto/fips140/.nonfips140.ko.stripped
+	@$(LD) $(KBUILD_LDFLAGS) -r -b binary -o $@ crypto/fips140/.nonfips140.ko.stripped
 	@$(OBJCOPY) --rename-section .data=.nonfips140_module_data,alloc,load,contents,readonly,data \
 		--prefix-symbols nonfips140_ $@
 endif
@@ -1422,7 +1422,7 @@ crypto/fips140/.fips140.hmac: crypto/fips140/fips140-embedded.o
 
 crypto/fips140/fips140-digest.o: crypto/fips140/.fips140.hmac
 	@echo "  LD      $@"
-	@$(LD) -r -b binary -o $@ crypto/fips140/.fips140.hmac
+	@$(LD) $(KBUILD_LDFLAGS) -r -b binary -o $@ crypto/fips140/.fips140.hmac
 	@$(OBJCOPY) --rename-section .data=.fips140_digest,alloc,load,contents,readonly,data $@
 
 # Ensure fips140.ko is built before embedding
