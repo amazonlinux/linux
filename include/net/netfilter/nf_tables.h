@@ -1140,10 +1140,13 @@ struct nft_stats {
 	struct u64_stats_sync	syncp;
 };
 
+#define NFT_HOOK_REMOVE	(1 << 0)
+
 struct nft_hook {
 	struct list_head	list;
 	struct nf_hook_ops	ops;
 	struct rcu_head		rcu;
+	u8			flags;
 };
 
 /**
@@ -1682,6 +1685,11 @@ struct nft_trans_flowtable {
 	bool				update;
 	struct list_head		hook_list;
 	u32				flags;
+};
+
+struct nft_trans_hook {
+	struct list_head		list;
+	struct nft_hook			*hook;
 };
 
 #define nft_trans_flowtable(trans)	\
