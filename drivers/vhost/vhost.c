@@ -3184,8 +3184,13 @@ static bool vhost_notify(struct vhost_dev *dev, struct vhost_virtqueue *vq)
 void vhost_signal(struct vhost_dev *dev, struct vhost_virtqueue *vq)
 {
 	/* Signal the Guest tell them we used something up. */
-	if (vq->call_ctx.ctx && vhost_notify(dev, vq))
+	bool notify = vhost_notify(dev, vq);
+	pr_debug("vhost_signal: call_ctx=%p notify=%d\n",
+		 vq->call_ctx.ctx, notify);
+	if (vq->call_ctx.ctx && notify) {
+		pr_debug("vhost_signal: signaling call_fd\n");
 		eventfd_signal(vq->call_ctx.ctx);
+	}
 }
 EXPORT_SYMBOL_GPL(vhost_signal);
 

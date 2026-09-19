@@ -8,4 +8,10 @@
 
 #include <uapi/linux/nitro_enclaves.h>
 
+#ifdef CONFIG_NITRO_ENCLAVES
+void __init ne_cma_reserve(void);
+#else
+static inline void __init ne_cma_reserve(void) { }
+#endif
+
 #endif /* _LINUX_NITRO_ENCLAVES_H_ */

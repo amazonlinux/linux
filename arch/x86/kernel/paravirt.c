@@ -62,14 +62,26 @@ void __init native_pv_lock_init(void)
 
 struct static_key paravirt_steal_enabled;
 struct static_key paravirt_steal_rq_enabled;
+struct static_key paravirt_guest_clock_enabled;
 
 static u64 native_steal_clock(int cpu)
 {
 	return 0;
 }
 
+/*
+ * Default for pv_guest_clock when no paravirt provider implements
+ * publishing cpu_guest_time.  Hosts without KVM_CAP_NO_STEAL_TIME use
+ * this and the /proc/stat relabel is a no-op.
+ */
+static u64 native_guest_clock(int cpu)
+{
+	return 0;
+}
+
 DEFINE_STATIC_CALL(pv_steal_clock, native_steal_clock);
 DEFINE_STATIC_CALL(pv_sched_clock, native_sched_clock);
+DEFINE_STATIC_CALL(pv_guest_clock, native_guest_clock);
 
 void paravirt_set_sched_clock(u64 (*func)(void))
 {
