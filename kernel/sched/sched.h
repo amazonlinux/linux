@@ -1252,6 +1252,9 @@ struct rq {
 #ifdef CONFIG_PARAVIRT
 	u64			prev_steal_time;
 #endif
+#ifdef CONFIG_PARAVIRT_GUEST_CLOCK
+	u64			prev_guest_time;
+#endif
 #ifdef CONFIG_PARAVIRT_TIME_ACCOUNTING
 	u64			prev_steal_time_rq;
 #endif
