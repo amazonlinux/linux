@@ -87,6 +87,16 @@ static struct vhost_vsock *vhost_vsock_get(u32 guest_cid)
 	return NULL;
 }
 
+static bool vhost_transport_has_cid(u32 cid)
+{
+	bool found;
+
+	rcu_read_lock();
+	found = vhost_vsock_get(cid) != NULL;
+	rcu_read_unlock();
+	return found;
+}
+
 static void
 vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 			    struct vhost_virtqueue *vq)
@@ -103,6 +113,9 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 
 	if (!vq_meta_prefetch(vq))
 		goto out;
+
+	pr_debug("vhost_vsock: send_pkt_work running, queue len=%u\n",
+		skb_queue_len(&vsock->send_pkt_queue));
 
 	/* Avoid further vmexits, we're already processing the virtqueue */
 	vhost_disable_notify(&vsock->dev, vq);
@@ -127,6 +140,8 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 
 		head = vhost_get_vq_desc(vq, vq->iov, ARRAY_SIZE(vq->iov),
 					 &out, &in, NULL, NULL);
+		pr_debug("vhost_vsock: vhost_get_vq_desc head=%d out=%u in=%u num=%u\n",
+			head, out, in, vq->num);
 		if (head < 0) {
 			virtio_vsock_skb_queue_head(&vsock->send_pkt_queue, skb);
 			break;
@@ -215,6 +230,7 @@ vhost_transport_do_send_pkt(struct vhost_vsock *vsock,
 		virtio_transport_deliver_tap_pkt(skb);
 
 		vhost_add_used(vq, head, sizeof(*hdr) + payload_len);
+		pr_debug("vhost_vsock: added used head=%d len=%zu\n", head, sizeof(*hdr) + payload_len);
 		added = true;
 
 		VIRTIO_VSOCK_SKB_CB(skb)->offset += payload_len;
@@ -412,6 +428,7 @@ static struct virtio_transport vhost_transport = {
 		.module                   = THIS_MODULE,
 
 		.get_local_cid            = vhost_transport_get_local_cid,
+		.has_cid                  = vhost_transport_has_cid,
 
 		.init                     = virtio_transport_do_socket_init,
 		.destruct                 = virtio_transport_destruct,
@@ -497,6 +514,7 @@ static void vhost_vsock_handle_tx_kick(struct vhost_work *work)
 		goto out;
 
 	vhost_disable_notify(&vsock->dev, vq);
+	pr_debug("vhost_vsock: TX kick processing\n");
 	do {
 		struct virtio_vsock_hdr *hdr;
 
@@ -539,8 +557,14 @@ static void vhost_vsock_handle_tx_kick(struct vhost_work *work)
 		    le64_to_cpu(hdr->dst_cid) ==
 		    vhost_transport_get_local_cid())
 			virtio_transport_recv_pkt(&vhost_transport, skb);
-		else
+		else {
+			pr_info("vhost_vsock: TX pkt dropped: src_cid=%llu dst_cid=%llu guest_cid=%u local_cid=%u\n",
+				le64_to_cpu(hdr->src_cid),
+				le64_to_cpu(hdr->dst_cid),
+				vsock->guest_cid,
+				vhost_transport_get_local_cid());
 			kfree_skb(skb);
+		}
 
 		vhost_add_used(vq, head, 0);
 		added = true;
