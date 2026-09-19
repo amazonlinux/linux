@@ -52,7 +52,7 @@
  * rest are per-device feature bits.
  */
 #define VIRTIO_TRANSPORT_F_START	28
-#define VIRTIO_TRANSPORT_F_END		42
+#define VIRTIO_TRANSPORT_F_END		43
 
 #ifndef VIRTIO_CONFIG_NO_LEGACY
 /* Do we get callbacks when the ring is completely used, even if we've
@@ -114,10 +114,18 @@
  * This feature indicates that the driver can reset a queue individually.
  */
 #define VIRTIO_F_RING_RESET		40
-
 /*
  * This feature indicates that the device support administration virtqueues.
  */
 #define VIRTIO_F_ADMIN_VQ		41
+
+/*
+ * When Device Memory Buffer (DMB) is active, all virtio memory addresses are
+ * offsets into a shared memory region that belongs to the device.
+ */
+#define VIRTIO_F_DMB			42
+
+/* Device Memory Buffer (DMB) shared memory region */
+#define VIRTIO_SHMEM_ID_DMB		2
 
 #endif /* _UAPI_LINUX_VIRTIO_CONFIG_H */
