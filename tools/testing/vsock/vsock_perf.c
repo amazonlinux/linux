@@ -27,6 +27,8 @@
 #define DEFAULT_VSOCK_BUF_BYTES (256 * 1024)
 #define DEFAULT_RCVLOWAT_BYTES	1
 #define DEFAULT_PORT		1234
+#define DEFAULT_LAT_COUNT	10000
+#define DEFAULT_LAT_WARMUP	1000
 
 #define BYTES_PER_GB		(1024 * 1024 * 1024ULL)
 #define NSEC_PER_SEC		(1000000000ULL)
@@ -46,7 +48,7 @@ static time_t current_nsec(void)
 {
 	struct timespec ts;
 
-	if (clock_gettime(CLOCK_REALTIME, &ts))
+	if (clock_gettime(CLOCK_MONOTONIC, &ts))
 		error("clock_gettime");
 
 	return (ts.tv_sec * NSEC_PER_SEC) + ts.tv_nsec;
@@ -362,6 +364,111 @@ static void run_sender(int peer_cid, unsigned long to_send_bytes)
 		free(data);
 }
 
+static void run_latency_server(void)
+{
+	union {
+		struct sockaddr sa;
+		struct sockaddr_vm svm;
+	} addr = {
+		.svm = {
+			.svm_family = AF_VSOCK,
+			.svm_port = port,
+			.svm_cid = VMADDR_CID_ANY,
+		},
+	};
+	char buf[64];
+	int fd;
+
+	printf("Latency server on port %u (echo mode)\n", port);
+
+	fd = socket(AF_VSOCK, SOCK_STREAM, 0);
+	if (fd < 0)
+		error("socket");
+	if (bind(fd, &addr.sa, sizeof(addr.svm)) < 0)
+		error("bind");
+	if (listen(fd, 1) < 0)
+		error("listen");
+
+	while (1) {
+		int client_fd = accept(fd, NULL, NULL);
+
+		if (client_fd < 0)
+			error("accept");
+
+		while (1) {
+			ssize_t n = read(client_fd, buf, sizeof(buf));
+
+			if (n <= 0)
+				break;
+			if (write(client_fd, buf, n) != n)
+				break;
+		}
+
+		close(client_fd);
+	}
+
+	close(fd);
+}
+
+static void run_latency_client(int peer_cid, unsigned long count)
+{
+	unsigned long warmup = DEFAULT_LAT_WARMUP;
+	char buf[1] = { 0x42 };
+	unsigned long long start, end, rtt;
+	unsigned long long rtt_min = 60ULL * NSEC_PER_SEC;
+	unsigned long long rtt_max = 0;
+	double total_us;
+	int fd;
+
+	if (peer_cid < 0) {
+		fprintf(stderr, "--latency client requires --sender <cid>\n");
+		exit(EXIT_FAILURE);
+	}
+
+	printf("Latency client: %lu iterations (+ %lu warmup) to %d:%u\n",
+	       count, warmup, peer_cid, port);
+
+	fd = vsock_connect(peer_cid, port);
+	if (fd < 0)
+		exit(EXIT_FAILURE);
+
+	for (unsigned long i = 0; i < warmup; i++) {
+		if (write(fd, buf, 1) != 1)
+			error("write (warmup)");
+		if (read(fd, buf, 1) != 1)
+			error("read (warmup)");
+	}
+
+	start = current_nsec();
+
+	for (unsigned long i = 0; i < count; i++) {
+		unsigned long long t0 = current_nsec();
+
+		if (write(fd, buf, 1) != 1)
+			error("write");
+		if (read(fd, buf, 1) != 1)
+			error("read");
+
+		rtt = current_nsec() - t0;
+		if (rtt < rtt_min)
+			rtt_min = rtt;
+		if (rtt > rtt_max)
+			rtt_max = rtt;
+	}
+
+	end = current_nsec();
+	total_us = (double)(end - start) / 1000.0;
+
+	printf("RTT min/avg/max: %.1f / %.1f / %.1f us\n",
+	       (double)rtt_min / 1000.0,
+	       total_us / count,
+	       (double)rtt_max / 1000.0);
+	printf("  %lu iterations in %.1f ms\n",
+	       count, total_us / 1000.0);
+
+	close(fd);
+}
+
 static const char optstring[] = "";
 static const struct option longopts[] = {
 	{
@@ -404,6 +511,11 @@ static const struct option longopts[] = {
 		.has_arg = no_argument,
 		.val = 'Z',
 	},
+	{
+		.name = "latency",
+		.has_arg = optional_argument,
+		.val = 'L',
+	},
 	{},
 };
 
@@ -427,9 +539,12 @@ static void usage(void)
 	       "                                receiver mode it is the buffer size passed to 'read()'.\n"
 	       "  --vsk-size <bytes>KMG		Socket buffer size (default %d)\n"
 	       "  --rcvlowat <bytes>KMG		SO_RCVLOWAT value (default %d)\n"
+	       "  --latency[=count]		Ping-pong latency mode (default %d iterations)\n"
+	       "                                In receiver mode, echo data back.\n"
+	       "                                In sender mode, measure round-trip time.\n"
 	       "\n", DEFAULT_PORT, DEFAULT_TO_SEND_BYTES,
 	       DEFAULT_BUF_SIZE_BYTES, DEFAULT_VSOCK_BUF_BYTES,
-	       DEFAULT_RCVLOWAT_BYTES);
+	       DEFAULT_RCVLOWAT_BYTES, DEFAULT_LAT_COUNT);
 	exit(EXIT_FAILURE);
 }
 
@@ -449,9 +564,11 @@ static long strtolx(const char *arg)
 int main(int argc, char **argv)
 {
 	unsigned long to_send_bytes = DEFAULT_TO_SEND_BYTES;
+	unsigned long latency_count = DEFAULT_LAT_COUNT;
 	int rcvlowat_bytes = DEFAULT_RCVLOWAT_BYTES;
 	int peer_cid = -1;
 	bool sender = false;
+	bool latency = false;
 
 	while (1) {
 		int opt = getopt_long(argc, argv, optstring, longopts, NULL);
@@ -485,15 +602,26 @@ int main(int argc, char **argv)
 		case 'Z': /* Zerocopy. */
 			zerocopy = true;
 			break;
+		case 'L': /* Latency mode. */
+			latency = true;
+			if (optarg)
+				latency_count = strtolx(optarg);
+			break;
 		default:
 			usage();
 		}
 	}
 
-	if (!sender)
-		run_receiver(rcvlowat_bytes);
-	else
+	if (latency) {
+		if (sender)
+			run_latency_client(peer_cid, latency_count);
+		else
+			run_latency_server();
+	} else if (sender) {
 		run_sender(peer_cid, to_send_bytes);
+	} else {
+		run_receiver(rcvlowat_bytes);
+	}
 
 	return 0;
 }

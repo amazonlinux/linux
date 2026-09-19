@@ -25,6 +25,7 @@
 #include <asm/smp_plat.h>
 
 struct static_key paravirt_steal_enabled;
+struct static_key paravirt_guest_clock_enabled;
 struct static_key paravirt_steal_rq_enabled;
 
 static u64 native_steal_clock(int cpu)
@@ -32,7 +33,18 @@ static u64 native_steal_clock(int cpu)
 	return 0;
 }
 
+/*
+ * Default for pv_guest_clock when no paravirt provider implements
+ * publishing cpu_guest_time.  Hosts without KVM_CAP_NO_STEAL_TIME use
+ * this and the /proc/stat relabel is a no-op.
+ */
+static u64 native_guest_clock(int cpu)
+{
+	return 0;
+}
+
 DEFINE_STATIC_CALL(pv_steal_clock, native_steal_clock);
+DEFINE_STATIC_CALL(pv_guest_clock, native_guest_clock);
 
 struct pv_time_stolen_time_region {
 	struct pvclock_vcpu_stolen_time __rcu *kaddr;
@@ -71,6 +83,41 @@ static u64 para_steal_clock(int cpu)
 	}
 
 	ret = le64_to_cpu(READ_ONCE(kaddr->stolen_time));
+	rcu_read_unlock();
+	return ret;
+}
+
+/*
+ * Cumulative ns of host-observed "parent vCPU was not on a pCPU" time
+ * for the given vCPU, published by the host via the .cpu_guest_time
+ * field of the per-CPU stolen_time region.  Valid only when
+ * PVCLOCK_STOLEN_TIME_GUEST is set in .attributes; returns 0 otherwise
+ * so /proc/stat takes the conventional path that reads idle from the
+ * NO_HZ accumulator.
+ */
+static u64 para_guest_clock(int cpu)
+{
+	struct pvclock_vcpu_stolen_time *kaddr = NULL;
+	struct pv_time_stolen_time_region *reg;
+	u64 ret = 0;
+	u32 attrs;
+
+	reg = per_cpu_ptr(&stolen_time_region, cpu);
+
+	rcu_read_lock();
+	kaddr = rcu_dereference(reg->kaddr);
+	if (!kaddr) {
+		rcu_read_unlock();
+		return 0;
+	}
+
+	attrs = le32_to_cpu(READ_ONCE(kaddr->attributes));
+	if (!(attrs & PVCLOCK_STOLEN_TIME_GUEST)) {
+		rcu_read_unlock();
+		return 0;
+	}
+
+	ret = le64_to_cpu(READ_ONCE(kaddr->cpu_guest_time));
 	rcu_read_unlock();
 	return ret;
 }
@@ -115,8 +162,14 @@ static int stolen_time_cpu_online(unsigned int cpu)
 		return -ENOMEM;
 	}
 
+	/*
+	 * Reject an unknown revision, and any attribute bit this kernel
+	 * cannot interpret.  Known bits are accepted: a host that sets
+	 * PVCLOCK_STOLEN_TIME_GUEST must not lose steal time.
+	 */
 	if (le32_to_cpu(kaddr->revision) != 0 ||
-	    le32_to_cpu(kaddr->attributes) != 0) {
+	    (le32_to_cpu(kaddr->attributes) &
+	     ~PVCLOCK_STOLEN_TIME_ATTRS_SUPPORTED)) {
 		pr_warn_once("Unexpected revision or attributes in stolen time data\n");
 		return -ENXIO;
 	}
@@ -135,6 +188,28 @@ static int __init pv_time_init_stolen_time(void)
 	if (ret < 0)
 		return ret;
 	return 0;
+}
+
+/*
+ * Whether the host advertises the guest-time extension on the boot CPU.
+ * Called from pv_time_init() after cpuhp_setup_state() has run the online
+ * callback for this CPU, never from the callback itself: enabling the
+ * static key needs static_key_slow_inc(), which takes cpus_read_lock()
+ * (kernel/jump_label.c), and CPU hotplug holds that lock for write.
+ */
+static bool __init has_pv_guest_clock(void)
+{
+	struct pvclock_vcpu_stolen_time *kaddr;
+	bool ret = false;
+
+	rcu_read_lock();
+	kaddr = rcu_dereference(this_cpu_ptr(&stolen_time_region)->kaddr);
+	if (kaddr)
+		ret = !!(le32_to_cpu(READ_ONCE(kaddr->attributes)) &
+			 PVCLOCK_STOLEN_TIME_GUEST);
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static bool __init has_pv_steal_clock(void)
@@ -167,6 +242,17 @@ int __init pv_time_init(void)
 	static_call_update(pv_steal_clock, para_steal_clock);
 
 	static_key_slow_inc(&paravirt_steal_enabled);
+
+	/*
+	 * Only reinterpret suppressed steal time as guest time when the
+	 * host says it publishes .cpu_guest_time.  Leaving the static key
+	 * off keeps account_guest_time() on its conventional path for
+	 * every other host.
+	 */
+	if (has_pv_guest_clock()) {
+		static_call_update(pv_guest_clock, para_guest_clock);
+		static_key_enable(&paravirt_guest_clock_enabled);
+	}
 	if (steal_acc)
 		static_key_slow_inc(&paravirt_steal_rq_enabled);
 

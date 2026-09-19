@@ -89,6 +89,9 @@
 #include <linux/user_namespace.h>
 #include <linux/indirect_call_wrapper.h>
 #include <linux/textsearch.h>
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+#include <linux/virtio.h>
+#endif
 
 #include "dev.h"
 #include "devmem.h"
@@ -1055,6 +1058,15 @@ static void skb_free_head(struct sk_buff *skb)
 {
 	unsigned char *head = skb->head;
 
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	if (skb->dmb_head) {
+		struct dmb_skb_free_cb *cb = DMB_SKB_FREE_CB(skb);
+
+		kfree(cb->safe_hdr);
+		virtio_dmb_free(cb->vdev, cb->data, cb->size);
+		return;
+	}
+#endif
 	if (skb->head_frag) {
 		if (skb_pp_recycle(skb, head))
 			return;
@@ -1068,6 +1080,22 @@ static void skb_release_data(struct sk_buff *skb, enum skb_drop_reason reason)
 {
 	struct skb_shared_info *shinfo = skb_shinfo(skb);
 	int i;
+
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	/*
+	 * DMB-backed SKBs have skb_shared_info in untrusted shared memory.
+	 * We must not read shinfo->dataref (skb_data_unref) or any frag
+	 * metadata: the parent could manipulate dataref to cause double-free
+	 * or leak, and could plant arbitrary page pointers in frags.
+	 * DMB SKBs are never cloned (unreadable=1, linear), so unconditional
+	 * free is correct.
+	 */
+	if (skb->dmb_head) {
+		WARN_ON_ONCE(skb_cloned(skb));
+		skb_free_head(skb);
+		goto exit;
+	}
+#endif
 
 	if (!skb_data_unref(skb, shinfo))
 		goto exit;
