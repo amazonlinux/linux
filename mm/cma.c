@@ -47,6 +47,11 @@ unsigned long cma_get_size(const struct cma *cma)
 	return cma->count << PAGE_SHIFT;
 }
 
+unsigned long cma_get_available(const struct cma *cma)
+{
+	return cma->available_count << PAGE_SHIFT;
+}
+
 const char *cma_get_name(const struct cma *cma)
 {
 	return cma->name;
@@ -154,6 +159,24 @@ static void __init cma_activate_area(struct cma *cma)
 
 	if (!cma_validate_zones(cma))
 		goto cleanup;
+
+	/*
+	 * init_cma_reserved_pageblock() below operates on whole
+	 * pageblocks.  A range whose bounds are not pageblock aligned
+	 * would hand the buddy-owned remainder of its last pageblock to
+	 * CMA: a double free.  Validate every range before touching any.
+	 */
+	for (r = 0; r < cma->nranges; r++) {
+		cmr = &cma->ranges[r];
+		if (!IS_ALIGNED(early_pfn[r], pageblock_nr_pages) ||
+		    !IS_ALIGNED(cmr->base_pfn + cmr->count,
+				pageblock_nr_pages)) {
+			pr_err("CMA area %s range %d [%lx, %lx) not pageblock aligned, refusing to activate\n",
+			       cma->name, r, early_pfn[r],
+			       cmr->base_pfn + cmr->count);
+			goto cleanup;
+		}
+	}
 
 	for (r = 0; r < cma->nranges; r++) {
 		cmr = &cma->ranges[r];
@@ -541,6 +564,20 @@ int __init cma_declare_contiguous_multi(phys_addr_t total_size,
 	int ret, nr = 1;
 	u64 i;
 	struct cma *cma;
+
+	if (align && !is_power_of_2(align))
+		return -EINVAL;
+	align = max_t(phys_addr_t, align, CMA_MIN_ALIGNMENT_BYTES);
+	/*
+	 * The multi-range fallback below reserves total_size verbatim
+	 * across ranges; an unaligned tail would make cma_activate_area()
+	 * free a partial pageblock whose remainder the buddy allocator
+	 * already owns.  Align up front, exactly as
+	 * __cma_declare_contiguous_nid() does for the single-range case
+	 * (on its local copy only, which is why this must happen here).
+	 */
+	total_size = ALIGN(total_size, max_t(phys_addr_t, align,
+				(phys_addr_t)PAGE_SIZE << order_per_bit));
 
 	/*
 	 * First, try it the normal way, producing just one range.

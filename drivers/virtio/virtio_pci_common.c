@@ -52,6 +52,8 @@ bool vp_notify(struct virtqueue *vq)
 {
 	/* we write the queue's selector into the notification register to
 	 * signal the other end */
+	if (vq->vdev->id.device == 0x0013) /* vsock */
+		pr_debug("vp_notify: vq=%u addr=%px\n", vq->index, vq->priv);
 	iowrite16(vq->index, (void __iomem *)vq->priv);
 	return true;
 }
@@ -159,8 +161,11 @@ static int vp_request_msix_vectors(struct virtio_device *vdev, int nvectors,
 
 	err = pci_alloc_irq_vectors_affinity(vp_dev->pci_dev, nvectors,
 					     nvectors, flags, desc);
-	if (err < 0)
+	if (err < 0) {
+		pr_err("vp_request_msix_vectors: pci_alloc_irq_vectors failed: %d nvectors=%d\n",
+		       err, nvectors);
 		goto error;
+	}
 	vp_dev->msix_enabled = 1;
 
 	/* Set the vector used for configuration */

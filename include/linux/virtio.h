@@ -209,6 +209,41 @@ int virtio_device_reset_done(struct virtio_device *dev);
 
 size_t virtio_max_dma_size(const struct virtio_device *vdev);
 
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+bool virtio_has_dmb(struct virtio_device *vdev);
+void *virtio_dmb_alloc(struct virtio_device *vdev, size_t size);
+void virtio_dmb_free(struct virtio_device *vdev, void *vaddr, size_t size);
+size_t virtio_dmb_size(struct virtio_device *vdev);
+size_t virtio_dmb_avail(struct virtio_device *vdev);
+dma_addr_t virtio_dmb_virt_to_dma(struct virtio_device *vdev, void *vaddr);
+#else
+static inline bool virtio_has_dmb(struct virtio_device *vdev)
+{
+	return false;
+}
+static inline void *virtio_dmb_alloc(struct virtio_device *vdev, size_t size)
+{
+	return NULL;
+}
+static inline void virtio_dmb_free(struct virtio_device *vdev, void *vaddr,
+				   size_t size)
+{
+}
+static inline size_t virtio_dmb_size(struct virtio_device *vdev)
+{
+	return 0;
+}
+static inline size_t virtio_dmb_avail(struct virtio_device *vdev)
+{
+	return 0;
+}
+static inline dma_addr_t virtio_dmb_virt_to_dma(struct virtio_device *vdev,
+						void *vaddr)
+{
+	return DMA_MAPPING_ERROR;
+}
+#endif
+
 #define virtio_device_for_each_vq(vdev, vq) \
 	list_for_each_entry(vq, &(vdev)->vqs, list)
 
