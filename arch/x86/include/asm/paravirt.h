@@ -24,9 +24,11 @@ struct mm_struct;
 
 u64 dummy_steal_clock(int cpu);
 u64 dummy_sched_clock(void);
+u64 dummy_guest_clock(int cpu);
 
 DECLARE_STATIC_CALL(pv_steal_clock, dummy_steal_clock);
 DECLARE_STATIC_CALL(pv_sched_clock, dummy_sched_clock);
+DECLARE_STATIC_CALL(pv_guest_clock, dummy_guest_clock);
 
 void paravirt_set_sched_clock(u64 (*func)(void));
 
@@ -38,6 +40,7 @@ static __always_inline u64 paravirt_sched_clock(void)
 struct static_key;
 extern struct static_key paravirt_steal_enabled;
 extern struct static_key paravirt_steal_rq_enabled;
+extern struct static_key paravirt_guest_clock_enabled;
 
 __visible void __native_queued_spin_unlock(struct qspinlock *lock);
 bool pv_is_native_spin_unlock(void);
@@ -47,6 +50,26 @@ bool pv_is_native_vcpu_is_preempted(void);
 static inline u64 paravirt_steal_clock(int cpu)
 {
 	return static_call(pv_steal_clock)(cpu);
+}
+
+/*
+ * Cumulative ns of host-observed "parent vCPU was not on a pCPU" time
+ * for the given vCPU, published by the host via the .cpu_guest_time
+ * field of struct kvm_steal_time when KVM_CAP_NO_STEAL_TIME is in
+ * effect.  This is the sum of run_delay (parent runnable but waiting)
+ * and HLT (parent voluntarily yielded), i.e. the host-side view of
+ * the parent's idle time.  Returns 0 on hosts that don't advertise
+ * the cap (the dummy callback is a no-op), so /proc/stat takes the
+ * conventional path.
+ *
+ * The /proc/stat read path moves this cumulative value from the
+ * idle column into the guest column, so that customer-visible
+ * accounting reflects that the parent's spare CPU budget was
+ * available to its sibling VMs (Nitro Enclaves).
+ */
+static inline u64 paravirt_guest_clock(int cpu)
+{
+	return static_call(pv_guest_clock)(cpu);
 }
 
 #ifdef CONFIG_PARAVIRT_SPINLOCKS
