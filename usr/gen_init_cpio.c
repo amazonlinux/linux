@@ -8,6 +8,30 @@
 #include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/syscall.h>
+#include <errno.h>
+
+/* glibc < 2.27 lacks a copy_file_range() wrapper. Fall back to the raw
+ * syscall so the in-tree cpio generator builds on older build hosts
+ * (Buildroot-2017 musl, AL2 glibc 2.26, etc.). The kernel's gen_init_cpio
+ * already handles a short or failed copy via the read/write loop below,
+ * so a syscall that returns -ENOSYS on an even older kernel is harmless.
+ */
+#if !__GLIBC_PREREQ(2, 27)
+static ssize_t copy_file_range(int fd_in, loff_t *off_in, int fd_out,
+			       loff_t *off_out, size_t len, unsigned int flags)
+{
+#ifdef __NR_copy_file_range
+	return syscall(__NR_copy_file_range, fd_in, off_in, fd_out,
+		       off_out, len, flags);
+#else
+	(void)fd_in; (void)off_in; (void)fd_out; (void)off_out;
+	(void)len; (void)flags;
+	errno = ENOSYS;
+	return -1;
+#endif
+}
+#endif
 #include <time.h>
 #include <fcntl.h>
 #include <errno.h>

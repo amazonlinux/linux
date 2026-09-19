@@ -12,6 +12,7 @@
 #include <linux/dma-map-ops.h>
 #include <linux/efi.h>
 #include <linux/hugetlb.h>
+#include <linux/nitro_enclaves.h>
 #include <linux/ima.h>
 #include <linux/init_ohci1394_dma.h>
 #include <linux/initrd.h>
@@ -1203,6 +1204,8 @@ void __init setup_arch(char **cmdline_p)
 		hugetlb_cma_reserve(PUD_SHIFT - PAGE_SHIFT);
 		hugetlb_bootmem_alloc();
 	}
+
+	ne_cma_reserve();
 
 	/*
 	 * Reserve memory for crash kernel after SRAT is parsed so that it

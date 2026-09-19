@@ -30,6 +30,7 @@
 #include <linux/highmem.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
+#include <linux/genalloc.h>
 
 struct virtio_pci_vq_info {
 	/* the actual virtqueue */
@@ -97,6 +98,17 @@ struct virtio_pci_device {
 
 	/* Whether we have vector per vq */
 	bool per_vq_vectors;
+
+	/* Device Memory Buffer (DMB): lockless bitmap allocator.
+	 * PAGE_SIZE slots, test_and_set_bit alloc, clear_bit free.
+	 * dmb_orig[slot] parks the CPU VA of that slot for O(1) unmap/sync
+	 * (populated per-slot so sub-slot sync offsets resolve correctly). */
+	void __iomem *dmb_mem;
+	unsigned long dmb_size;
+	unsigned int dmb_nslots;
+	unsigned long *dmb_bitmap;
+	unsigned int __percpu *dmb_hint;
+	void **dmb_orig;
 
 	struct virtqueue *(*setup_vq)(struct virtio_pci_device *vp_dev,
 				      struct virtio_pci_vq_info *info,

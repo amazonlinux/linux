@@ -246,6 +246,29 @@ void __account_forceidle_time(struct task_struct *p, u64 delta)
 }
 #endif /* CONFIG_SCHED_CORE */
 
+#ifdef CONFIG_PARAVIRT_GUEST_CLOCK
+/*
+ * Account host-side time that the hypervisor spent running this instance's
+ * own enclave vCPUs to cpu*.guest.
+ *
+ * Unlike account_guest_time(), this deliberately touches neither the task
+ * counters nor cpu*.user: the cycles were consumed by a sibling VM while @p
+ * merely happened to be current at the tick boundary, so crediting p->utime
+ * and p->gtime would inflate an unrelated task's /proc/<pid>/stat, and
+ * crediting CPUTIME_USER would double-count against the cpu*.guest column
+ * that /proc/stat prints separately.
+ */
+static void account_guest_clock_time(struct task_struct *p, u64 cputime)
+{
+	u64 *cpustat = kcpustat_this_cpu->cpustat;
+
+	if (task_nice(p) > 0)
+		cpustat[CPUTIME_GUEST_NICE] += cputime;
+	else
+		cpustat[CPUTIME_GUEST] += cputime;
+}
+#endif /* CONFIG_PARAVIRT_GUEST_CLOCK */
+
 /*
  * When a guest is interrupted for a longer amount of time, missed clock
  * ticks are not redelivered later. Due to that, this function may on
@@ -263,6 +286,42 @@ static __always_inline u64 steal_account_process_time(u64 maxtime)
 		account_steal_time(steal);
 		this_rq()->prev_steal_time += steal;
 
+#ifdef CONFIG_PARAVIRT_GUEST_CLOCK
+		/*
+		 * A host that advertises the guest clock pins .steal (the
+		 * loop above sees delta == 0 every tick) and routes the
+		 * preemption-time accumulator into .cpu_guest_time instead.
+		 * Credit that delta to cpu*.guest so the cycles the parent
+		 * lent to its own enclave vCPUs stop being reported as idle.
+		 *
+		 * paravirt_guest_clock_enabled is set only on a host that
+		 * advertised the capability, so on every other host this
+		 * reads nothing and accounts nothing.
+		 *
+		 * Mirrors the unsigned-subtract + min() pattern used for
+		 * steal above. The cumulative counter is monotonic while
+		 * the host publishes it; if the counter restarts (the host
+		 * stopped publishing or re-zeroed the record), re-anchor
+		 * instead of letting the unsigned subtract charge the whole
+		 * tick window to cpu*.guest on every tick from there on.
+		 */
+		if (static_key_false(&paravirt_guest_clock_enabled)) {
+			u64 guest;
+
+			guest = paravirt_guest_clock(smp_processor_id());
+			if (guest < this_rq()->prev_guest_time) {
+				this_rq()->prev_guest_time = guest;
+				guest = 0;
+			} else {
+				guest -= this_rq()->prev_guest_time;
+				guest = min(guest, maxtime - steal);
+				account_guest_clock_time(current, guest);
+				this_rq()->prev_guest_time += guest;
+			}
+
+			return steal + guest;
+		}
+#endif /* CONFIG_PARAVIRT_GUEST_CLOCK */
 		return steal;
 	}
 #endif /* CONFIG_PARAVIRT */

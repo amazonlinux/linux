@@ -85,6 +85,20 @@ config VIRTIO_PCI_LEGACY
 
 	  If unsure, say Y.
 
+config VIRTIO_DMB_ZEROCOPY
+	bool "Zero-copy I/O for virtio DMB devices"
+	depends on VIRTIO_PCI
+	help
+	  When a virtio-pci device exposes a Device Memory Buffer (DMB),
+	  transports such as virtio-vsock can allocate I/O buffers directly
+	  from the shared region and use the premapped virtqueue APIs to
+	  bypass the DMA mapping bounce-buffer copy entirely.
+
+	  This adds a small hook in skb_free_head() to return DMB-allocated
+	  SKB buffers to the gen_pool.
+
+	  If unsure, say N.
+
 config VIRTIO_VDPA
 	tristate "vDPA driver for virtio devices"
 	depends on VDPA
