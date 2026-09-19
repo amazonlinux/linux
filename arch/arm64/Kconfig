@@ -1644,6 +1644,9 @@ config PARAVIRT_TIME_ACCOUNTING
 
 	  If in doubt, say N here.
 
+config PARAVIRT_GUEST_CLOCK
+	def_bool PARAVIRT
+
 config ARCH_SUPPORTS_KEXEC
 	def_bool PM_SLEEP_SMP
 

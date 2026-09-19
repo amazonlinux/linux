@@ -65,11 +65,31 @@ struct kvm_steal_time {
 	__u32 flags;
 	__u8  preempted;
 	__u8  u8_pad[3];
-	__u32 pad[11];
+	__u32 pad[9];
+	__u64 cpu_guest_time;	/* see KVM_VCPU_STEAL_TIME_GUEST */
 };
 
 #define KVM_VCPU_PREEMPTED          (1 << 0)
 #define KVM_VCPU_FLUSH_TLB          (1 << 1)
+
+/*
+ * Bits for struct kvm_steal_time::flags.  Distinct from the per-byte
+ * KVM_VCPU_PREEMPTED / KVM_VCPU_FLUSH_TLB flags above, which live in
+ * the separate .preempted field and belong to KVM_FEATURE_PV_TLB_FLUSH.
+ *
+ * KVM_VCPU_STEAL_TIME_GUEST tells the guest that this vCPU is operating
+ * under KVM_CAP_NO_STEAL_TIME.  When this bit is set:
+ *   - .steal is pinned (suppressed): its delta MUST NOT be accounted
+ *     as CPUTIME_STEAL.
+ *   - .cpu_guest_time carries the host-side preemption-time accumulator
+ *     that would otherwise have flowed into .steal.  Consumers that
+ *     understand the new field SHOULD account its delta against
+ *     CPUTIME_GUEST.
+ * A guest that does not honor this bit sees .steal pinned (no growth),
+ * which is acceptable: the missing wall-clock time falls into idle/user
+ * via the standard tick path with no regression vs the cap-off case.
+ */
+#define KVM_VCPU_STEAL_TIME_GUEST   (1 << 0)
 
 #define KVM_CLOCK_PAIRING_WALLCLOCK 0
 struct kvm_clock_pairing {

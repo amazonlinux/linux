@@ -13,6 +13,9 @@
 #include <linux/module.h>
 #include <linux/list.h>
 #include <linux/atomic.h>
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+#include <linux/genalloc.h>
+#endif
 #include <linux/virtio.h>
 #include <linux/virtio_ids.h>
 #include <linux/virtio_config.h>
@@ -26,9 +29,42 @@ static struct virtio_vsock __rcu *the_virtio_vsock;
 static DEFINE_MUTEX(the_virtio_vsock_mutex); /* protects the_virtio_vsock */
 static struct virtio_transport virtio_transport; /* forward declaration */
 
+static int rx_buf_size = -1;
+module_param(rx_buf_size, int, 0444);
+MODULE_PARM_DESC(rx_buf_size,
+	"Size of RX buffers posted to the virtqueue. Larger values reduce "
+	"per-packet descriptor overhead for bulk transfers at the cost of "
+	"memory. Range: 128 to 65536. Default: ~4K (VIRTIO_VSOCK_DEFAULT_RX_BUF_SIZE).");
+
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+static int dmb_rx_zc_pct = 50;
+module_param(dmb_rx_zc_pct, int, 0444);
+MODULE_PARM_DESC(dmb_rx_zc_pct,
+	"Percentage of DMB pool dedicated to zero-copy RX buffers. "
+	"Remaining pool is available for TX zero-copy. Range: 0-100. Default: 50.");
+
+/*
+ * Heap-backed (bounced) RX buffers kept posted on the DMB zero-copy RX
+ * virtqueue as a liveness floor.  One is sufficient: it is harvested and
+ * re-posted within the same rx_work pass, so the RX vq never drains to
+ * empty even when a slow reader has pinned every zero-copy slot.
+ */
+#define VIRTIO_VSOCK_RX_BOUNCE_FLOOR 1
+#endif
+
 struct virtio_vsock {
 	struct virtio_device *vdev;
 	struct virtqueue *vqs[VSOCK_VQ_MAX];
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	bool dmb_active;
+	size_t dmb_slot_size;		/* aligned buffer size for budget */
+	size_t tx_pool_min;		/* min pool avail kept for TX */
+	size_t rx_pool_min;		/* min pool avail kept for RX */
+	int rx_zc_max;			/* max RX ZC buffers in VQ */
+	int rx_zc_posted;		/* ZC buffers currently in VQ */
+	size_t rx_bounce_reserve;	/* pool bytes kept free for the floor */
+	int rx_bounce_posted;		/* bounced (heap) RX buffers in VQ */
+#endif
 
 	/* Virtqueue processing is deferred to a workqueue */
 	struct work_struct tx_work;
@@ -100,6 +136,51 @@ static int virtio_transport_send_skb(struct sk_buff *skb, struct virtqueue *vq,
 {
 	int ret, in_sg = 0, out_sg = 0;
 	struct scatterlist **sgs;
+
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	/*
+	 * DMB-allocated SKBs use premapped submission: the buffer is already
+	 * in shared memory, so we set sg_dma_address directly and bypass the
+	 * DMA mapping layer entirely.  Non-DMB SKBs (fallback) use the
+	 * standard path which bounces through vp_dmb_map_page.
+	 */
+	if (skb->dmb_head) {
+		struct scatterlist dmb_sgs[2];
+		void *hdr = virtio_vsock_hdr(skb);
+		int num_sg = 0;
+
+		if (skb->len > 0) {
+			sg_init_table(dmb_sgs, 2);
+			sg_set_buf(&dmb_sgs[0], hdr,
+				   sizeof(struct virtio_vsock_hdr));
+			sg_dma_address(&dmb_sgs[0]) =
+				virtio_dmb_virt_to_dma(vsock->vdev, hdr);
+			sg_dma_len(&dmb_sgs[0]) =
+				sizeof(struct virtio_vsock_hdr);
+			sg_set_buf(&dmb_sgs[1], skb->data, skb->len);
+			sg_dma_address(&dmb_sgs[1]) =
+				virtio_dmb_virt_to_dma(vsock->vdev,
+						       skb->data);
+			sg_dma_len(&dmb_sgs[1]) = skb->len;
+			num_sg = 2;
+		} else {
+			sg_init_one(&dmb_sgs[0], hdr,
+				    sizeof(struct virtio_vsock_hdr));
+			sg_dma_address(&dmb_sgs[0]) =
+				virtio_dmb_virt_to_dma(vsock->vdev, hdr);
+			sg_dma_len(&dmb_sgs[0]) =
+				sizeof(struct virtio_vsock_hdr);
+			num_sg = 1;
+		}
+
+		ret = virtqueue_add_outbuf_premapped(vq, dmb_sgs, num_sg,
+						     skb, gfp);
+		if (ret < 0)
+			return ret;
+		virtio_transport_deliver_tap_pkt(skb);
+		return 0;
+	}
+#endif
 
 	sgs = vsock->out_sgs;
 	sg_init_one(sgs[out_sg], virtio_vsock_hdr(skb),
@@ -222,8 +303,12 @@ static int virtio_transport_send_skb_fast_path(struct virtio_vsock *vsock, struc
 		return -EBUSY;
 
 	ret = virtio_transport_send_skb(skb, vq, vsock, GFP_ATOMIC);
-	if (ret == 0)
+	if (ret == 0) {
+		pr_debug("virtio_transport: fast_path kick VQ TX\n");
 		virtqueue_kick(vq);
+	} else {
+		pr_debug("virtio_transport: fast_path send_skb failed ret=%d\n", ret);
+	}
 
 	mutex_unlock(&vsock->tx_lock);
 
@@ -242,16 +327,24 @@ virtio_transport_send_pkt(struct sk_buff *skb)
 	rcu_read_lock();
 	vsock = rcu_dereference(the_virtio_vsock);
 	if (!vsock) {
+		pr_debug("virtio_transport_send_pkt: no vsock device\n");
 		kfree_skb(skb);
 		len = -ENODEV;
 		goto out_rcu;
 	}
 
 	if (le64_to_cpu(hdr->dst_cid) == vsock->guest_cid) {
+		pr_debug("virtio_transport_send_pkt: loopback drop dst_cid=%llu guest_cid=%u\n",
+			le64_to_cpu(hdr->dst_cid), vsock->guest_cid);
 		kfree_skb(skb);
 		len = -ENODEV;
 		goto out_rcu;
 	}
+
+	pr_debug("virtio_transport_send_pkt: sending op=%u src=%u:%u dst=%llu:%u len=%d\n",
+		le16_to_cpu(hdr->op),
+		vsock->guest_cid, le32_to_cpu(hdr->src_port),
+		le64_to_cpu(hdr->dst_cid), le32_to_cpu(hdr->dst_port), len);
 
 	/* If send_pkt_queue is empty, we can safely bypass this queue
 	 * because packet order is maintained and (try) to put the packet
@@ -305,35 +398,159 @@ out_rcu:
 	return ret;
 }
 
-static void virtio_vsock_rx_fill(struct virtio_vsock *vsock)
+static void virtio_vsock_rx_fill(struct virtio_vsock *vsock);
+
+static int virtio_vsock_rx_buf_len(void)
 {
-	int total_len = VIRTIO_VSOCK_DEFAULT_RX_BUF_SIZE;
+	return (rx_buf_size > 0)
+		? clamp_t(int, rx_buf_size, 128, VIRTIO_VSOCK_MAX_PKT_BUF_SIZE)
+		: VIRTIO_VSOCK_DEFAULT_RX_BUF_SIZE;
+}
+
+static int virtio_vsock_rx_post_one(struct virtio_vsock *vsock,
+				    struct virtqueue *vq, int total_len)
+{
 	struct scatterlist pkt, *p;
-	struct virtqueue *vq;
 	struct sk_buff *skb;
 	int ret;
 
-	vq = vsock->vqs[VSOCK_VQ_RX];
+	skb = virtio_vsock_alloc_linear_skb(total_len, GFP_KERNEL);
+	if (!skb)
+		return -ENOMEM;
 
-	do {
-		skb = virtio_vsock_alloc_linear_skb(total_len, GFP_KERNEL);
-		if (!skb)
+	memset(skb->head, 0, VIRTIO_VSOCK_SKB_HEADROOM);
+	sg_init_one(&pkt, virtio_vsock_hdr(skb), total_len);
+	p = &pkt;
+	ret = virtqueue_add_sgs(vq, &p, 0, 1, skb, GFP_KERNEL);
+	if (ret < 0) {
+		kfree_skb(skb);
+		return ret;
+	}
+
+	vsock->rx_buf_nr++;
+	return 0;
+}
+
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+static void virtio_vsock_rx_fill_dmb(struct virtio_vsock *vsock)
+{
+	struct virtqueue *vq = vsock->vqs[VSOCK_VQ_RX];
+	int total_len = virtio_vsock_rx_buf_len();
+	size_t slot_size = vsock->dmb_slot_size;
+	int ret;
+
+	while (vq->num_free && vsock->rx_zc_posted < vsock->rx_zc_max) {
+		struct scatterlist sg;
+		struct sk_buff *skb;
+		dma_addr_t dma;
+		void *buf;
+
+		if (virtio_dmb_avail(vsock->vdev) <=
+		    vsock->tx_pool_min + vsock->rx_bounce_reserve)
 			break;
 
-		memset(skb->head, 0, VIRTIO_VSOCK_SKB_HEADROOM);
-		sg_init_one(&pkt, virtio_vsock_hdr(skb), total_len);
-		p = &pkt;
-		ret = virtqueue_add_sgs(vq, &p, 0, 1, skb, GFP_KERNEL);
+		buf = virtio_dmb_alloc(vsock->vdev, slot_size);
+		if (!buf)
+			break;
+
+		skb = __build_skb(buf, slot_size);
+		if (!skb) {
+			virtio_dmb_free(vsock->vdev, buf, slot_size);
+			break;
+		}
+
+		skb->dmb_head = 1;
+		skb->unreadable = 1;
+		BUILD_BUG_ON(sizeof(struct dmb_skb_free_cb) +
+			     sizeof(struct virtio_vsock_skb_cb) > 48);
+		DMB_SKB_FREE_CB(skb)->vdev = vsock->vdev;
+		DMB_SKB_FREE_CB(skb)->data = buf;
+		DMB_SKB_FREE_CB(skb)->size = slot_size;
+		DMB_SKB_FREE_CB(skb)->safe_hdr = NULL;
+
+		skb_reserve(skb, VIRTIO_VSOCK_SKB_HEADROOM);
+
+		dma = virtio_dmb_virt_to_dma(vsock->vdev, buf);
+		sg_init_one(&sg, buf, total_len);
+		sg_dma_address(&sg) = dma;
+		sg_dma_len(&sg) = total_len;
+
+		ret = virtqueue_add_inbuf_premapped(vq, &sg, 1, skb,
+						    NULL, GFP_KERNEL);
 		if (ret < 0) {
 			kfree_skb(skb);
 			break;
 		}
 
+		vsock->rx_zc_posted++;
 		vsock->rx_buf_nr++;
+	}
+
+	if (vsock->rx_buf_nr > vsock->rx_buf_max_nr)
+		vsock->rx_buf_max_nr = vsock->rx_buf_nr;
+	virtqueue_kick(vq);
+}
+
+/* Replenish heap-backed bounce floor (see VIRTIO_VSOCK_RX_BOUNCE_FLOOR). */
+static void virtio_vsock_rx_fill_bounce(struct virtio_vsock *vsock)
+{
+	struct virtqueue *vq = vsock->vqs[VSOCK_VQ_RX];
+	int total_len = virtio_vsock_rx_buf_len();
+	bool added = false;
+
+	while (vq->num_free &&
+	       vsock->rx_bounce_posted < VIRTIO_VSOCK_RX_BOUNCE_FLOOR) {
+		if (virtio_vsock_rx_post_one(vsock, vq, total_len) < 0)
+			break;
+
+		vsock->rx_bounce_posted++;
+		added = true;
+
+		if (vsock->rx_zc_posted >= vsock->rx_zc_max)
+			dev_dbg(&vsock->vdev->dev,
+				"all %d ZC RX slots pinned, bounce floor active\n",
+				vsock->rx_zc_max);
+	}
+
+	if (added) {
+		if (vsock->rx_buf_nr > vsock->rx_buf_max_nr)
+			vsock->rx_buf_max_nr = vsock->rx_buf_nr;
+		virtqueue_kick(vq);
+	}
+}
+#else
+static inline void virtio_vsock_rx_fill_dmb(struct virtio_vsock *vsock) {}
+static inline void virtio_vsock_rx_fill_bounce(struct virtio_vsock *vsock) {}
+#endif /* CONFIG_VIRTIO_DMB_ZEROCOPY */
+
+static void virtio_vsock_rx_fill(struct virtio_vsock *vsock)
+{
+	struct virtqueue *vq = vsock->vqs[VSOCK_VQ_RX];
+	int total_len = virtio_vsock_rx_buf_len();
+
+	do {
+		if (virtio_vsock_rx_post_one(vsock, vq, total_len) < 0)
+			break;
 	} while (vq->num_free);
 	if (vsock->rx_buf_nr > vsock->rx_buf_max_nr)
 		vsock->rx_buf_max_nr = vsock->rx_buf_nr;
 	virtqueue_kick(vq);
+}
+
+static void virtio_vsock_rx_refill(struct virtio_vsock *vsock, bool force)
+{
+	bool below_watermark = vsock->rx_buf_nr < vsock->rx_buf_max_nr / 2;
+
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	if (vsock->dmb_active && vsock->rx_zc_max > 0) {
+		virtio_vsock_rx_fill_bounce(vsock);
+		if (force || below_watermark)
+			virtio_vsock_rx_fill_dmb(vsock);
+		return;
+	}
+#endif
+	if (force || below_watermark)
+		virtio_vsock_rx_fill(vsock);
 }
 
 static void virtio_transport_tx_work(struct work_struct *work)
@@ -428,6 +645,7 @@ static void virtio_vsock_update_guest_cid(struct virtio_vsock *vsock)
 	vdev->config->get(vdev, offsetof(struct virtio_vsock_config, guest_cid),
 			  &guest_cid, sizeof(guest_cid));
 	vsock->guest_cid = le64_to_cpu(guest_cid);
+	pr_debug("virtio_vsock: guest_cid=%u\n", vsock->guest_cid);
 }
 
 /* event_lock must be held */
@@ -496,6 +714,7 @@ static void virtio_vsock_rx_done(struct virtqueue *vq)
 {
 	struct virtio_vsock *vsock = vq->vdev->priv;
 
+	pr_debug("virtio_vsock_rx_done called\n");
 	if (!vsock)
 		return;
 	queue_work(virtio_vsock_workqueue, &vsock->rx_work);
@@ -538,6 +757,63 @@ static bool virtio_transport_msgzerocopy_allow(void)
 }
 
 static bool virtio_transport_seqpacket_allow(u32 remote_cid);
+
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+static struct sk_buff *virtio_vsock_dmb_alloc_skb(size_t size, gfp_t gfp)
+{
+	struct virtio_vsock *vsock;
+	struct virtio_device *vdev;
+	struct sk_buff *skb;
+	size_t alloc_size;
+	void *buf;
+
+	rcu_read_lock();
+	vsock = rcu_dereference(the_virtio_vsock);
+	if (!vsock || !vsock->dmb_active) {
+		rcu_read_unlock();
+		return NULL;
+	}
+	/*
+	 * Pin the virtio_device while still under RCU: vsock may be freed by
+	 * the removal path once we drop the read lock, so every DMB access
+	 * (including the skb free-cb stored after rcu_read_unlock) must use
+	 * this local instead of vsock->vdev.
+	 */
+	vdev = vsock->vdev;
+
+	alloc_size = SKB_DATA_ALIGN(size) +
+		     SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+	alloc_size = ALIGN(alloc_size, SMP_CACHE_BYTES);
+
+	if (virtio_dmb_avail(vdev) < alloc_size + vsock->rx_pool_min) {
+		rcu_read_unlock();
+		return NULL;
+	}
+
+	buf = virtio_dmb_alloc(vdev, alloc_size);
+	if (!buf) {
+		rcu_read_unlock();
+		return NULL;
+	}
+
+	skb = __build_skb(buf, alloc_size);
+	if (!skb) {
+		virtio_dmb_free(vdev, buf, alloc_size);
+		rcu_read_unlock();
+		return NULL;
+	}
+	rcu_read_unlock();
+
+	skb->dmb_head = 1;
+	DMB_SKB_FREE_CB(skb)->vdev = vdev;
+	DMB_SKB_FREE_CB(skb)->data = buf;
+	DMB_SKB_FREE_CB(skb)->size = alloc_size;
+	DMB_SKB_FREE_CB(skb)->safe_hdr = NULL;
+
+	skb_reserve(skb, VIRTIO_VSOCK_SKB_HEADROOM);
+	return skb;
+}
+#endif
 
 static struct virtio_transport virtio_transport = {
 	.transport = {
@@ -592,6 +868,9 @@ static struct virtio_transport virtio_transport = {
 
 	.send_pkt = virtio_transport_send_pkt,
 	.can_msgzerocopy = virtio_transport_can_msgzerocopy,
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	.alloc_skb = virtio_vsock_dmb_alloc_skb,
+#endif
 };
 
 static bool virtio_transport_seqpacket_allow(u32 remote_cid)
@@ -638,10 +917,22 @@ static void virtio_transport_rx_work(struct work_struct *work)
 			}
 
 			skb = virtqueue_get_buf(vq, &len);
-			if (!skb)
+			if (!skb) {
+				pr_debug("virtio_vsock_rx: get_buf NULL\n");
 				break;
+			}
+			pr_debug("virtio_vsock_rx: got buf len=%u\n", len);
 
 			vsock->rx_buf_nr--;
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+			/* Track ZC/bounce counters only when DMB fill is active. */
+			if (vsock->dmb_active && vsock->rx_zc_max > 0) {
+				if (skb->dmb_head)
+					vsock->rx_zc_posted--;
+				else
+					vsock->rx_bounce_posted--;
+			}
+#endif
 
 			/* Drop short/long packets */
 			if (unlikely(len < sizeof(*hdr) ||
@@ -651,11 +942,49 @@ static void virtio_transport_rx_work(struct work_struct *work)
 			}
 
 			hdr = virtio_vsock_hdr(skb);
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+			/*
+			 * DMB-backed buffers reside in shared memory
+			 * writable by the untrusted parent.  Allocate a
+			 * kernel-heap copy of the header so all downstream
+			 * consumers (via virtio_vsock_hdr()) read from
+			 * memory the parent cannot mutate.
+			 */
+			if (skb->dmb_head) {
+				struct virtio_vsock_hdr *safe;
+
+				safe = kmalloc(sizeof(*safe), GFP_KERNEL);
+				if (unlikely(!safe)) {
+					kfree_skb(skb);
+					continue;
+				}
+				memcpy(safe, hdr, sizeof(*safe));
+				DMB_SKB_FREE_CB(skb)->safe_hdr = safe;
+
+				payload_len = le32_to_cpu(safe->len);
+				if (unlikely(payload_len > len - sizeof(*hdr))) {
+					kfree_skb(skb);
+					continue;
+				}
+				goto dmb_hdr_done;
+			}
+#endif
 			payload_len = le32_to_cpu(hdr->len);
 			if (unlikely(payload_len > len - sizeof(*hdr))) {
 				kfree_skb(skb);
 				continue;
 			}
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+dmb_hdr_done:
+#endif
+			pr_debug("virtio_vsock_rx: hdr src=%llu:%u dst=%llu:%u op=%u type=%u len=%u\n",
+				le64_to_cpu(virtio_vsock_hdr(skb)->src_cid),
+				le32_to_cpu(virtio_vsock_hdr(skb)->src_port),
+				le64_to_cpu(virtio_vsock_hdr(skb)->dst_cid),
+				le32_to_cpu(virtio_vsock_hdr(skb)->dst_port),
+				le16_to_cpu(virtio_vsock_hdr(skb)->op),
+				le16_to_cpu(virtio_vsock_hdr(skb)->type),
+				le32_to_cpu(virtio_vsock_hdr(skb)->len));
 
 			if (payload_len)
 				virtio_vsock_skb_put(skb, payload_len);
@@ -666,8 +995,7 @@ static void virtio_transport_rx_work(struct work_struct *work)
 	} while (!virtqueue_enable_cb(vq));
 
 out:
-	if (vsock->rx_buf_nr < vsock->rx_buf_max_nr / 2)
-		virtio_vsock_rx_fill(vsock);
+	virtio_vsock_rx_refill(vsock, false);
 out_nofill:
 	mutex_unlock(&vsock->rx_lock);
 }
@@ -685,13 +1013,19 @@ static int virtio_vsock_vqs_init(struct virtio_vsock *vsock)
 	mutex_lock(&vsock->rx_lock);
 	vsock->rx_buf_nr = 0;
 	vsock->rx_buf_max_nr = 0;
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	vsock->rx_zc_posted = 0;
+	vsock->rx_bounce_posted = 0;
+#endif
 	mutex_unlock(&vsock->rx_lock);
 
 	atomic_set(&vsock->queued_replies, 0);
 
 	ret = virtio_find_vqs(vdev, VSOCK_VQ_MAX, vsock->vqs, vqs_info, NULL);
-	if (ret < 0)
+	if (ret < 0) {
+		pr_err("virtio_vsock: virtio_find_vqs failed: %d\n", ret);
 		return ret;
+	}
 
 	virtio_vsock_update_guest_cid(vsock);
 
@@ -707,7 +1041,7 @@ static void virtio_vsock_vqs_start(struct virtio_vsock *vsock)
 	mutex_unlock(&vsock->tx_lock);
 
 	mutex_lock(&vsock->rx_lock);
-	virtio_vsock_rx_fill(vsock);
+	virtio_vsock_rx_refill(vsock, true);
 	vsock->rx_run = true;
 	mutex_unlock(&vsock->rx_lock);
 
@@ -797,7 +1131,50 @@ static int virtio_vsock_probe(struct virtio_device *vdev)
 	}
 
 	vsock->vdev = vdev;
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	vsock->dmb_active = virtio_has_dmb(vdev);
+	if (vsock->dmb_active) {
+		int total_len = virtio_vsock_rx_buf_len();
+		size_t slot_size = SKB_DATA_ALIGN(total_len) +
+				   SKB_DATA_ALIGN(sizeof(struct skb_shared_info));
+		size_t pool_size = virtio_dmb_size(vdev);
 
+		slot_size = ALIGN(slot_size, SMP_CACHE_BYTES);
+		vsock->dmb_slot_size = slot_size;
+
+		/*
+		 * Partition the pool: ZC RX budget + bounce reserve + TX.
+		 * Shrink rx_zc_max if the pool cannot hold the requested
+		 * ZC budget alongside the bounce reserve.
+		 */
+		vsock->rx_bounce_reserve =
+			VIRTIO_VSOCK_RX_BOUNCE_FLOOR * PAGE_ALIGN(total_len);
+
+		vsock->rx_zc_max = (pool_size / slot_size) *
+				   clamp(dmb_rx_zc_pct, 0, 100) / 100;
+		while (vsock->rx_zc_max > 0 &&
+		       (size_t)vsock->rx_zc_max * slot_size +
+		       vsock->rx_bounce_reserve >= pool_size)
+			vsock->rx_zc_max--;
+
+		if (vsock->rx_zc_max == 0) {
+			vsock->rx_bounce_reserve = 0;
+			dev_warn(&vdev->dev,
+				 "DMB pool too small for zero-copy RX; falling back to heap mode (pool=%zu, slot=%zu)\n",
+				 pool_size, slot_size);
+		}
+
+		vsock->rx_pool_min = (size_t)vsock->rx_zc_max * slot_size +
+				     vsock->rx_bounce_reserve;
+		vsock->tx_pool_min = pool_size - vsock->rx_pool_min;
+
+		dev_info(&vdev->dev,
+			 "DMB zero-copy (pool=%zu, slot=%zu, rx_zc_max=%d/%zu, tx_min=%zu, rx_min=%zu, bounce_reserve=%zu)\n",
+			 pool_size, slot_size, vsock->rx_zc_max,
+			 pool_size / slot_size, vsock->tx_pool_min,
+			 vsock->rx_pool_min, vsock->rx_bounce_reserve);
+	}
+#endif
 
 	mutex_init(&vsock->tx_lock);
 	mutex_init(&vsock->rx_lock);
