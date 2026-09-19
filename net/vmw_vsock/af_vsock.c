@@ -139,6 +139,24 @@ struct proto vsock_proto = {
 #define VSOCK_DEFAULT_BUFFER_MAX_SIZE (1024 * 256)
 #define VSOCK_DEFAULT_BUFFER_MIN_SIZE 128
 
+static unsigned int vsock_buffer_size = VSOCK_DEFAULT_BUFFER_SIZE;
+module_param(vsock_buffer_size, uint, 0444);
+MODULE_PARM_DESC(vsock_buffer_size,
+	"Initial socket buffer size for new vsock connections. Controls the "
+	"credit window advertised to the peer: the maximum bytes in-flight "
+	"before the sender blocks. Larger values improve bulk throughput at "
+	"the cost of memory. Only affects sockets created after module load. "
+	"Accepted connections inherit the listener's value. "
+	"Default: 262144 (256K).");
+
+static unsigned int vsock_buffer_max_size = VSOCK_DEFAULT_BUFFER_MAX_SIZE;
+module_param(vsock_buffer_max_size, uint, 0444);
+MODULE_PARM_DESC(vsock_buffer_max_size,
+	"Initial maximum socket buffer size for new vsock connections. "
+	"Upper bound for runtime buffer growth via setsockopt. "
+	"Only affects sockets created after module load. "
+	"Default: 262144 (256K).");
+
 /* Transport used for host->guest communication */
 static const struct vsock_transport *transport_h2g;
 /* Transport used for guest->host communication */
@@ -478,6 +496,9 @@ int vsock_assign_transport(struct vsock_sock *vsk, struct vsock_sock *psk)
 			new_transport = transport_local;
 		else if (remote_cid <= VMADDR_CID_HOST || !transport_h2g ||
 			 (remote_flags & VMADDR_FLAG_TO_HOST))
+			new_transport = transport_g2h;
+		else if (transport_h2g->has_cid &&
+			 !transport_h2g->has_cid(remote_cid))
 			new_transport = transport_g2h;
 		else
 			new_transport = transport_h2g;
@@ -831,9 +852,11 @@ static struct sock *__vsock_create(struct net *net,
 		vsk->trusted = ns_capable_noaudit(&init_user_ns, CAP_NET_ADMIN);
 		vsk->owner = get_current_cred();
 		vsk->connect_timeout = VSOCK_DEFAULT_CONNECT_TIMEOUT;
-		vsk->buffer_size = VSOCK_DEFAULT_BUFFER_SIZE;
+		vsk->buffer_max_size = vsock_buffer_max_size;
 		vsk->buffer_min_size = VSOCK_DEFAULT_BUFFER_MIN_SIZE;
-		vsk->buffer_max_size = VSOCK_DEFAULT_BUFFER_MAX_SIZE;
+		vsk->buffer_size = clamp_t(unsigned int, vsock_buffer_size,
+					   VSOCK_DEFAULT_BUFFER_MIN_SIZE,
+					   vsock_buffer_max_size);
 	}
 
 	return sk;
