@@ -2076,7 +2076,7 @@ static int move_freepages_block(struct zone *zone, struct page *page,
 
 }
 
-#ifdef CONFIG_MEMORY_ISOLATION
+#if defined(CONFIG_MEMORY_ISOLATION) || defined(CONFIG_CONTIG_ALLOC)
 /* Look for a buddy that straddles start_pfn */
 static unsigned long find_large_buddy(unsigned long start_pfn)
 {
@@ -2106,7 +2106,9 @@ static unsigned long find_large_buddy(unsigned long start_pfn)
 	/* Nothing found */
 	return start_pfn;
 }
+#endif
 
+#ifdef CONFIG_MEMORY_ISOLATION
 static inline void toggle_pageblock_isolate(struct page *page, bool isolate)
 {
 	if (isolate)

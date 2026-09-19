@@ -229,7 +229,22 @@ static struct sk_buff *virtio_transport_alloc_skb(struct virtio_vsock_pkt_info *
 	if (!zcopy)
 		skb_len += payload_len;
 
-	skb = virtio_vsock_alloc_skb(skb_len, GFP_KERNEL);
+	skb = NULL;
+	if (info->vsk && !zcopy) {
+		const struct vsock_transport *vt;
+
+		vt = vsock_core_get_transport(info->vsk);
+		if (vt) {
+			const struct virtio_transport *t_ops;
+
+			t_ops = container_of(vt, struct virtio_transport,
+					     transport);
+			if (t_ops->alloc_skb)
+				skb = t_ops->alloc_skb(skb_len, GFP_KERNEL);
+		}
+	}
+	if (!skb)
+		skb = virtio_vsock_alloc_skb(skb_len, GFP_KERNEL);
 	if (!skb)
 		return NULL;
 
@@ -1725,6 +1740,7 @@ virtio_transport_recv_listen(struct sock *sk, struct sk_buff *skb,
 	 * where we received the request.
 	 */
 	if (ret || vchild->transport != &t->transport) {
+		pr_debug("virtio_transport_recv_listen: transport mismatch ret=%d\n", ret);
 		release_sock(child);
 		virtio_transport_reset_no_sock(t, skb);
 		sock_put(child);
@@ -1737,6 +1753,7 @@ virtio_transport_recv_listen(struct sock *sk, struct sk_buff *skb,
 
 	vsock_insert_connected(vchild);
 	vsock_enqueue_accept(sk, child);
+	pr_debug("virtio_transport_recv_listen: sending RESPONSE\n");
 	virtio_transport_send_response(vchild, skb);
 
 	release_sock(child);
@@ -1778,6 +1795,7 @@ void virtio_transport_recv_pkt(struct virtio_transport *t,
 					le32_to_cpu(hdr->fwd_cnt));
 
 	if (!virtio_transport_valid_type(le16_to_cpu(hdr->type))) {
+		pr_debug("virtio_transport_recv_pkt: invalid type %u\n", le16_to_cpu(hdr->type));
 		(void)virtio_transport_reset_no_sock(t, skb);
 		goto free_pkt;
 	}
@@ -1789,10 +1807,13 @@ void virtio_transport_recv_pkt(struct virtio_transport *t,
 	if (!sk) {
 		sk = vsock_find_bound_socket(&dst);
 		if (!sk) {
+			pr_debug("virtio_transport_recv_pkt: no socket for dst %u:%u\n",
+				dst.svm_cid, dst.svm_port);
 			(void)virtio_transport_reset_no_sock(t, skb);
 			goto free_pkt;
 		}
 	}
+	pr_debug("virtio_transport_recv_pkt: found sk state=%u\n", sk->sk_state);
 
 	if (virtio_transport_get_type(sk) != le16_to_cpu(hdr->type)) {
 		(void)virtio_transport_reset_no_sock(t, skb);
