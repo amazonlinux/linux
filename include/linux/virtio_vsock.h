@@ -19,6 +19,14 @@ struct virtio_vsock_skb_cb {
 
 static inline struct virtio_vsock_hdr *virtio_vsock_hdr(struct sk_buff *skb)
 {
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	if (skb->dmb_head) {
+		struct dmb_skb_free_cb *cb = DMB_SKB_FREE_CB(skb);
+
+		if (cb->safe_hdr)
+			return (struct virtio_vsock_hdr *)cb->safe_hdr;
+	}
+#endif
 	return (struct virtio_vsock_hdr *)skb->head;
 }
 
@@ -195,6 +203,11 @@ struct virtio_transport {
 	 * default.
 	 */
 	bool (*can_msgzerocopy)(int bufs_num);
+
+	/* Optional: allocate an SKB from transport-managed memory (e.g.
+	 * DMB pool). Returns NULL to fall back to standard allocation.
+	 */
+	struct sk_buff *(*alloc_skb)(size_t size, gfp_t gfp);
 };
 
 ssize_t

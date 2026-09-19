@@ -805,11 +805,16 @@ int __pci_enable_msix_range(struct pci_dev *dev, struct msix_entry *entries, int
 		return -EINVAL;
 
 	/* Check MSI-X early on irq domain enabled architectures */
-	if (!pci_msi_domain_supports(dev, MSI_FLAG_PCI_MSIX, ALLOW_LEGACY))
+	if (!pci_msi_domain_supports(dev, MSI_FLAG_PCI_MSIX, ALLOW_LEGACY)) {
+		pci_info(dev, "MSI-X not supported by MSI domain\n");
 		return -ENOTSUPP;
+	}
 
-	if (!pci_msi_supported(dev, nvec) || dev->current_state != PCI_D0)
+	if (!pci_msi_supported(dev, nvec) || dev->current_state != PCI_D0) {
+		pci_info(dev, "MSI not supported: msi_supported=%d state=%d\n",
+			 pci_msi_supported(dev, nvec), dev->current_state);
 		return -EINVAL;
+	}
 
 	hwsize = pci_msix_vec_count(dev);
 	if (hwsize < 0)
@@ -847,8 +852,11 @@ int __pci_enable_msix_range(struct pci_dev *dev, struct msix_entry *entries, int
 		if (rc == 0)
 			return nvec;
 
-		if (rc < 0)
+		if (rc < 0) {
+			pr_err("msix_capability_init failed for %s: %d nvec=%d\n",
+			       pci_name(dev), rc, nvec);
 			return rc;
+		}
 		if (rc < minvec)
 			return -ENOSPC;
 
