@@ -419,6 +419,35 @@ static u64 kvm_steal_clock(int cpu)
 	return steal;
 }
 
+/*
+ * Cumulative ns of host-observed "parent vCPU was not on a pCPU" time,
+ * published by the host via the .cpu_guest_time field of the per-CPU
+ * pvclock page.  Valid only when KVM_VCPU_STEAL_TIME_GUEST is set in
+ * .flags; returns 0 otherwise so /proc/stat takes the conventional
+ * path that reads idle from the NO_HZ accumulator.
+ */
+static u64 kvm_guest_clock(int cpu)
+{
+	struct kvm_steal_time *src;
+	int version;
+	u32 flags;
+	u64 cgt;
+
+	src = &per_cpu(steal_time, cpu);
+	do {
+		version = src->version;
+		virt_rmb();
+		flags = src->flags;
+		cgt = src->cpu_guest_time;
+		virt_rmb();
+	} while ((version & 1) || (version != src->version));
+
+	if (!(flags & KVM_VCPU_STEAL_TIME_GUEST))
+		return 0;
+
+	return cgt;
+}
+
 static inline __init void __set_percpu_decrypted(void *ptr, unsigned long size)
 {
 	early_set_memory_decrypted((unsigned long) ptr, size);
@@ -826,6 +855,7 @@ static void __init kvm_guest_init(void)
 	if (kvm_para_has_feature(KVM_FEATURE_STEAL_TIME)) {
 		has_steal_clock = 1;
 		static_call_update(pv_steal_clock, kvm_steal_clock);
+		static_call_update(pv_guest_clock, kvm_guest_clock);
 
 		pv_ops.lock.vcpu_is_preempted =
 			PV_CALLEE_SAVE(__kvm_vcpu_is_preempted);
@@ -1037,12 +1067,44 @@ const __initconst struct hypervisor_x86 x86_hyper_kvm = {
 #endif
 };
 
+/*
+ * True when the host has advertised KVM_VCPU_STEAL_TIME_GUEST on a
+ * registered vCPU, i.e. when it publishes .cpu_guest_time and suppresses
+ * .steal.  The guest zero-initializes the record and a host that does not
+ * implement the guest clock never writes .flags (Documentation/virt/kvm/
+ * x86/msr.rst: "flags: At this point, always zero"), so this reads false
+ * on stock KVM, including an L1 KVM that only offers plain steal time.
+ */
+static bool __init kvm_guest_clock_advertised(void)
+{
+	struct kvm_steal_time *src;
+	int cpu, version;
+	u32 flags;
+
+	for_each_online_cpu(cpu) {
+		src = &per_cpu(steal_time, cpu);
+		do {
+			version = src->version;
+			virt_rmb();
+			flags = src->flags;
+			virt_rmb();
+		} while ((version & 1) || (version != src->version));
+
+		if (flags & KVM_VCPU_STEAL_TIME_GUEST)
+			return true;
+	}
+
+	return false;
+}
+
 static __init int activate_jump_labels(void)
 {
 	if (has_steal_clock) {
 		static_key_slow_inc(&paravirt_steal_enabled);
 		if (steal_acc)
 			static_key_slow_inc(&paravirt_steal_rq_enabled);
+		if (kvm_guest_clock_advertised())
+			static_key_enable(&paravirt_guest_clock_enabled);
 	}
 
 	return 0;

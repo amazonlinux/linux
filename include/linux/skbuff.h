@@ -882,6 +882,32 @@ enum skb_tstamp_type {
  *	@extensions: allocated extensions, valid if active_extensions is nonzero
  */
 
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+/*
+ * Stored in skb->cb[] for DMB-allocated SKBs. Allows skb_free_head()
+ * to return the buffer to its gen_pool without transport-layer dependencies.
+ *
+ * Placed at the end of cb[48] to avoid overlap with protocol-specific cb
+ * usage (e.g. virtio_vsock_skb_cb uses bytes 0-7). Safe because DMB SKBs
+ * stay within the vsock transport layer (unreadable=1) and never traverse
+ * generic protocol handlers that use cb[] beyond byte 8.
+ *
+ * No function pointers: gen_pool_free() is called directly from
+ * skb_free_head() to avoid creating a code-execution primitive in cb[].
+ */
+struct virtio_device;
+struct dmb_skb_free_cb {
+	struct virtio_device *vdev;
+	void *data;
+	size_t size;
+	void *safe_hdr;	/* kernel-heap copy of vsock hdr (untrusted DMB) */
+};
+static_assert(sizeof(struct dmb_skb_free_cb) <= 48);
+
+#define DMB_SKB_FREE_CB(skb) \
+	((struct dmb_skb_free_cb *)((skb)->cb + 48 - sizeof(struct dmb_skb_free_cb)))
+#endif /* CONFIG_VIRTIO_DMB_ZEROCOPY */
+
 struct sk_buff {
 	union {
 		struct {
@@ -1030,6 +1056,9 @@ struct sk_buff {
 	__u8			csum_not_inet:1;
 #endif
 	__u8			unreadable:1;
+#if IS_ENABLED(CONFIG_VIRTIO_DMB_ZEROCOPY)
+	__u8			dmb_head:1;
+#endif
 #if defined(CONFIG_NET_SCHED) || defined(CONFIG_NET_XGRESS)
 	__u16			tc_index;	/* traffic control index */
 #endif
