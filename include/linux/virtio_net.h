@@ -3,6 +3,7 @@
 #define _LINUX_VIRTIO_NET_H
 
 #include <linux/if_vlan.h>
+#include <linux/ip.h>
 #include <uapi/linux/tcp.h>
 #include <uapi/linux/udp.h>
 #include <uapi/linux/virtio_net.h>
@@ -47,6 +48,7 @@ static inline int virtio_net_hdr_to_skb(struct sk_buff *skb,
 					const struct virtio_net_hdr *hdr,
 					bool little_endian)
 {
+	int nh_min_len = sizeof(struct iphdr);
 	unsigned int gso_type = 0;
 	unsigned int thlen = 0;
 	unsigned int p_off = 0;
@@ -91,6 +93,9 @@ static inline int virtio_net_hdr_to_skb(struct sk_buff *skb,
 			return -EINVAL;
 
 		if (!skb_partial_csum_set(skb, start, off))
+			return -EINVAL;
+		if (skb_transport_offset(skb) < nh_min_len ||
+		    skb_transport_offset(skb) - skb_network_offset(skb) < nh_min_len)
 			return -EINVAL;
 
 		p_off = skb_transport_offset(skb) + thlen;
