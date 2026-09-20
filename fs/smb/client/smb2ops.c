@@ -2275,6 +2275,7 @@ smb2_duplicate_extents(const unsigned int xid,
 	struct inode *inode;
 	struct duplicate_extents_to_file dup_ext_buf;
 	struct cifs_tcon *tcon = tlink_tcon(trgtfile->tlink);
+	loff_t old_size;
 
 	/* server fileays advertise duplicate extent support with this flag */
 	if ((le32_to_cpu(tcon->fsAttrInfo.Attributes) &
@@ -2292,7 +2293,8 @@ smb2_duplicate_extents(const unsigned int xid,
 			       trgtfile->fid.volatile_fid, tcon->tid,
 			       tcon->ses->Suid, src_off, dest_off, len);
 	inode = d_inode(trgtfile->dentry);
-	if (inode->i_size < dest_off + len) {
+	old_size = i_size_read(inode);
+	if (old_size < dest_off + len) {
 		rc = smb2_set_file_size(xid, tcon, trgtfile, dest_off + len, false);
 		if (rc)
 			goto duplicate_extents_out;
@@ -2305,7 +2307,7 @@ smb2_duplicate_extents(const unsigned int xid,
 		 * to make sure that file's cached size is updated immediately
 		 */
 		netfs_resize_file(netfs_inode(inode), dest_off + len, true);
-		cifs_setsize(inode, dest_off + len);
+		cifs_setsize(inode, old_size, dest_off + len);
 	}
 	rc = SMB2_ioctl(xid, tcon, trgtfile->fid.persistent_fid,
 			trgtfile->fid.volatile_fid,
@@ -3775,13 +3777,13 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 	struct cifsFileInfo *cfile = file->private_data;
 	long rc = -EOPNOTSUPP;
 	unsigned int xid;
-	loff_t old_eof, new_eof;
+	loff_t old_eof, new_eof, local_eof;
 
 	xid = get_xid();
 
 	inode = d_inode(cfile->dentry);
 	cifsi = CIFS_I(inode);
-	old_eof = i_size_read(inode);
+	old_eof = local_eof = i_size_read(inode);
 
 	trace_smb3_falloc_enter(xid, cfile->fid.persistent_fid, tcon->tid,
 				tcon->ses->Suid, off, len);
@@ -3808,7 +3810,11 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 			return rc;
 		}
 		server_eof = le64_to_cpu(file_inf.EndOfFile);
-		/* Only use the larger EOF to decide whether we're extending. */
+		/*
+		 * Only use the larger EOF to decide whether we're extending.
+		 * The pagecache zeroing below must still key off the local
+		 * i_size, so keep local_eof for that.
+		 */
 		old_eof = max_t(loff_t, old_eof, server_eof);
 	}
 
@@ -3828,7 +3834,7 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 				  cfile->fid.volatile_fid, cfile->pid, new_eof);
 		if (rc == 0) {
 			netfs_resize_file(&cifsi->netfs, new_eof, true);
-			cifs_setsize(inode, new_eof);
+			cifs_setsize(inode, local_eof, new_eof);
 			cifs_truncate_page(inode->i_mapping, inode->i_size);
 			truncate_setsize(inode, new_eof);
 		}
