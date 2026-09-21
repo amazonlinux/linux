@@ -2868,7 +2868,8 @@ int bpf_add_kfunc_call(struct bpf_verifier_env *env, u32 func_id, u16 offset)
 	tab = prog_aux->kfunc_tab;
 	btf_tab = prog_aux->kfunc_btf_tab;
 	if (!tab) {
-		if (!btf_vmlinux) {
+		/* with CONFIG_DEBUG_INFO_BTF=m this is where the vmlinux BTF gets loaded */
+		if (IS_ERR_OR_NULL(bpf_get_btf_vmlinux())) {
 			verbose(env, "calling kernel function is not supported without CONFIG_DEBUG_INFO_BTF\n");
 			return -ENOTSUPP;
 		}
@@ -6252,7 +6253,8 @@ static int check_ptr_to_map_access(struct bpf_verifier_env *env,
 	u32 btf_id;
 	int ret;
 
-	if (!btf_vmlinux) {
+	/* with CONFIG_DEBUG_INFO_BTF=m this is where the vmlinux BTF gets loaded */
+	if (IS_ERR_OR_NULL(bpf_get_btf_vmlinux())) {
 		verbose(env, "map_ptr access not supported without CONFIG_DEBUG_INFO_BTF\n");
 		return -ENOTSUPP;
 	}
@@ -11518,6 +11520,20 @@ static int release_reg(struct bpf_verifier_env *env, struct bpf_reg_state *reg,
 	return err;
 }
 
+/* Does calling @fn bring kernel BTF types into the program state? */
+static bool helper_uses_vmlinux_btf(const struct bpf_func_proto *fn)
+{
+	int i;
+
+	if (base_type(fn->ret_type) == RET_PTR_TO_BTF_ID)
+		return true;
+	for (i = 0; i < MAX_BPF_FUNC_ARGS; i++) {
+		if (base_type(fn->arg_type[i]) == ARG_PTR_TO_BTF_ID)
+			return true;
+	}
+	return false;
+}
+
 static int check_helper_call(struct bpf_verifier_env *env, struct bpf_insn *insn,
 			     int *insn_idx_p)
 {
@@ -11585,6 +11601,16 @@ static int check_helper_call(struct bpf_verifier_env *env, struct bpf_insn *insn
 	if (err) {
 		verifier_bug(env, "incorrect func proto %s#%d", func_id_name(func_id), func_id);
 		return err;
+	}
+
+	/*
+	 * Helpers that take or return kernel BTF pointers need the vmlinux
+	 * BTF; with CONFIG_DEBUG_INFO_BTF=m this is where it gets loaded.
+	 */
+	if (helper_uses_vmlinux_btf(fn) && IS_ERR_OR_NULL(bpf_get_btf_vmlinux())) {
+		verbose(env, "helper %s#%d is not supported without vmlinux BTF\n",
+			func_id_name(func_id), func_id);
+		return -ENOTSUPP;
 	}
 
 	if (fn->might_sleep && !in_sleepable_context(env)) {
@@ -19155,12 +19181,13 @@ static int check_pseudo_btf_id(struct bpf_verifier_env *env,
 			return -EINVAL;
 		}
 	} else {
-		if (!btf_vmlinux) {
+		/* with CONFIG_DEBUG_INFO_BTF=m this is where the vmlinux BTF gets loaded */
+		btf = bpf_get_btf_vmlinux();
+		if (IS_ERR_OR_NULL(btf)) {
 			verbose(env, "kernel is missing BTF, make sure CONFIG_DEBUG_INFO_BTF=y is specified in Kconfig.\n");
 			return -EINVAL;
 		}
-		btf_get(btf_vmlinux);
-		btf = btf_vmlinux;
+		btf_get(btf);
 	}
 
 	err = __check_pseudo_btf_id(env, insn, aux, btf);
@@ -21050,27 +21077,60 @@ int bpf_check_attach_btf_id_multi(struct btf *btf, struct bpf_prog *prog, u32 bt
 	return 0;
 }
 
+/*
+ * Returns the parsed vmlinux BTF, NULL if the kernel has none, or an ERR_PTR
+ * if it is malformed.  With CONFIG_DEBUG_INFO_BTF=m the BTF lives in the
+ * btf_vmlinux module; the first caller loads it, parses it and then registers
+ * the BTF of the modules that were loaded before it.  May sleep.
+ */
 struct btf *bpf_get_btf_vmlinux(void)
 {
 	/* Pairs with the smp_store_release() on the parse path below. */
 	struct btf *btf = smp_load_acquire(&btf_vmlinux);
+	bool parsed = false;
+	u32 size;
 
-	if (!btf && IS_ENABLED(CONFIG_DEBUG_INFO_BTF)) {
-		mutex_lock(&btf_vmlinux_lock);
-		btf = btf_vmlinux;
-		if (!btf) {
-			btf = btf_parse_vmlinux();
-			/*
-			 * Order the parsed BTF contents and the globals the
-			 * parse populated (e.g. bpf_ctx_convert.t) before
-			 * the pointer publication. Pairs with the acquire
-			 * on the lockless fast path above.
-			 */
-			smp_store_release(&btf_vmlinux, btf);
-		}
-		mutex_unlock(&btf_vmlinux_lock);
+	if (btf || !IS_ENABLED(CONFIG_DEBUG_INFO_BTF))
+		return btf;
+
+	/*
+	 * Loading the module may take a while and its notifier must not be
+	 * blocked by us, so do it outside btf_vmlinux_lock.  Not available:
+	 * behave like a kernel without BTF, and retry next time.
+	 */
+	if (!btf_vmlinux_data(&size, true))
+		return NULL;
+
+	mutex_lock(&btf_vmlinux_lock);
+	btf = btf_vmlinux;
+	if (!btf) {
+		btf = btf_parse_vmlinux();
+		/*
+		 * Order the parsed BTF contents and the globals the
+		 * parse populated (e.g. bpf_ctx_convert.t) before
+		 * the pointer publication. Pairs with the acquire
+		 * on the lockless fast path above.
+		 */
+		smp_store_release(&btf_vmlinux, btf);
+		parsed = true;
 	}
+	mutex_unlock(&btf_vmlinux_lock);
+
+	if (parsed && IS_MODULE(CONFIG_DEBUG_INFO_BTF))
+		btf_parse_deferred_modules();
+
 	return btf;
+}
+
+/*
+ * The vmlinux BTF if it has been parsed already, else NULL.  Unlike
+ * bpf_get_btf_vmlinux() this never loads or parses anything, so it is safe
+ * to call from a running BPF program.
+ */
+struct btf *bpf_peek_btf_vmlinux(void)
+{
+	/* Pairs with the smp_store_release() in bpf_get_btf_vmlinux() */
+	return smp_load_acquire(&btf_vmlinux);
 }
 
 /*
@@ -21644,7 +21704,11 @@ int bpf_check(struct bpf_prog **prog, union bpf_attr *attr, bpfptr_t uattr,
 	if (ret)
 		goto err_prep;
 
-	bpf_get_btf_vmlinux();
+	/*
+	 * The vmlinux BTF is not fetched up front: with CONFIG_DEBUG_INFO_BTF=m
+	 * it is loaded on demand, at the points where kernel types enter the
+	 * program (attach_btf, kfuncs, ksyms, map pointers, BTF-typed helpers).
+	 */
 
 	/* Serialize verification of unprivileged programs. */
 	if (!is_priv)
