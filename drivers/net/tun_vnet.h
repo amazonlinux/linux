@@ -177,10 +177,49 @@ static inline int tun_vnet_hdr_put(int sz, struct iov_iter *iter,
 	return __tun_vnet_hdr_put(sz, 0, iter, hdr);
 }
 
+static inline int
+tun_vnet_hdr_get_l3_offset(unsigned int flags, const struct sk_buff *skb,
+			   const struct virtio_net_hdr *hdr,
+			   __be16 *network_protocol)
+{
+	if ((flags & TUN_TYPE_MASK) != IFF_TAP) {
+		u8 version, first_byte;
+		const u8 *first;
+
+		*network_protocol = 0;
+		if (!(hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM))
+			return 0;
+
+		first = skb_header_pointer(skb, 0, sizeof(first_byte),
+					   &first_byte);
+		if (!first)
+			return -EINVAL;
+
+		version = *first >> 4;
+		if (version == 4)
+			*network_protocol = htons(ETH_P_IP);
+		else if (version == 6)
+			*network_protocol = htons(ETH_P_IPV6);
+		return 0;
+	}
+
+	return virtio_net_hdr_eth_get_l3_offset(skb, hdr,
+					      network_protocol);
+}
+
 static inline int tun_vnet_hdr_to_skb(unsigned int flags, struct sk_buff *skb,
 				      const struct virtio_net_hdr *hdr)
 {
-	return virtio_net_hdr_to_skb(skb, hdr, tun_vnet_is_little_endian(flags));
+	__be16 network_protocol;
+	int network_offset = tun_vnet_hdr_get_l3_offset(flags, skb, hdr,
+						       &network_protocol);
+
+	if (network_offset < 0)
+		return network_offset;
+
+	return virtio_net_hdr_to_skb(skb, hdr,
+				     tun_vnet_is_little_endian(flags),
+				     network_offset, network_protocol);
 }
 
 /*
@@ -199,10 +238,19 @@ tun_vnet_hdr_tnl_to_skb(unsigned int flags, netdev_features_t features,
 			struct sk_buff *skb,
 			const struct virtio_net_hdr_v1_hash_tunnel *hdr)
 {
+	const struct virtio_net_hdr *vnet_hdr = (const struct virtio_net_hdr *)hdr;
+	__be16 network_protocol;
+	int network_offset = tun_vnet_hdr_get_l3_offset(flags, skb, vnet_hdr,
+						       &network_protocol);
+
+	if (network_offset < 0)
+		return network_offset;
+
 	return virtio_net_hdr_tnl_to_skb(skb, hdr,
 				features & NETIF_F_GSO_UDP_TUNNEL,
 				features & NETIF_F_GSO_UDP_TUNNEL_CSUM,
-				tun_vnet_is_little_endian(flags));
+				tun_vnet_is_little_endian(flags),
+				network_offset, network_protocol);
 }
 
 static inline int tun_vnet_hdr_from_skb(unsigned int flags,
