@@ -2547,6 +2547,26 @@ static void tpacket_destruct_skb(struct sk_buff *skb)
 	sock_wfree(skb);
 }
 
+static int packet_vnet_hdr_to_skb(struct sk_buff *skb,
+				  const struct virtio_net_hdr *vnet_hdr)
+{
+	__be16 network_protocol = 0;
+	int network_offset;
+
+	if (skb->dev->type == ARPHRD_ETHER) {
+		network_offset = virtio_net_hdr_eth_get_l3_offset(skb, vnet_hdr,
+								  &network_protocol);
+	} else {
+		network_offset = skb_network_offset(skb);
+		network_protocol = skb->protocol;
+	}
+	if (network_offset < 0)
+		return network_offset;
+
+	return virtio_net_hdr_to_skb(skb, vnet_hdr, vio_le(),
+				     network_offset, network_protocol);
+}
+
 static int __packet_snd_vnet_parse(struct virtio_net_hdr *vnet_hdr, size_t len)
 {
 	if ((vnet_hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) &&
@@ -2898,7 +2918,7 @@ tpacket_error:
 		}
 
 		if (has_vnet_hdr) {
-			if (virtio_net_hdr_to_skb(skb, &vnet_hdr, vio_le())) {
+			if (packet_vnet_hdr_to_skb(skb, &vnet_hdr)) {
 				tp_len = -EINVAL;
 				goto tpacket_error;
 			}
@@ -3100,7 +3120,7 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
 	packet_parse_headers(skb, sock);
 
 	if (vnet_hdr_sz) {
-		err = virtio_net_hdr_to_skb(skb, &vnet_hdr, vio_le());
+		err = packet_vnet_hdr_to_skb(skb, &vnet_hdr);
 		if (err)
 			goto out_free;
 		len += vnet_hdr_sz;
