@@ -48,15 +48,60 @@ static inline int virtio_net_hdr_set_proto(struct sk_buff *skb,
 	return 0;
 }
 
+/*
+ * Return the L3 offset and protocol of an Ethernet frame starting at skb->data.
+ * The offset is unused without NEEDS_CSUM, so avoid parsing and return zero.
+ */
+static inline int
+virtio_net_hdr_eth_get_l3_offset(const struct sk_buff *skb,
+				 const struct virtio_net_hdr *hdr,
+				 __be16 *network_protocol)
+{
+	unsigned int parse_depth = VLAN_MAX_DEPTH;
+	const struct ethhdr *eth;
+	struct ethhdr ethbuf;
+	__be16 protocol;
+	int depth = ETH_HLEN;
+
+	*network_protocol = 0;
+	if (!(hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM))
+		return 0;
+
+	eth = skb_header_pointer(skb, 0, sizeof(ethbuf), &ethbuf);
+	if (!eth)
+		return -EINVAL;
+
+	protocol = eth->h_proto;
+	while (eth_type_vlan(protocol)) {
+		const struct vlan_hdr *vh;
+		struct vlan_hdr vhdr;
+
+		vh = skb_header_pointer(skb, depth, sizeof(vhdr), &vhdr);
+		if (!vh || !--parse_depth)
+			return -EINVAL;
+
+		protocol = vh->h_vlan_encapsulated_proto;
+		depth += VLAN_HLEN;
+	}
+
+	*network_protocol = protocol;
+	return depth;
+}
+
 static inline int __virtio_net_hdr_to_skb(struct sk_buff *skb,
 					  const struct virtio_net_hdr *hdr,
-					  bool little_endian, u8 hdr_gso_type)
+					  bool little_endian, u8 hdr_gso_type,
+					  int network_offset,
+					  __be16 network_protocol)
 {
-	unsigned int nh_min_len = sizeof(struct iphdr);
+	int nh_min_len = sizeof(struct iphdr);
 	unsigned int gso_type = 0;
 	unsigned int thlen = 0;
 	unsigned int p_off = 0;
 	unsigned int ip_proto;
+
+	if (network_protocol == htons(ETH_P_IPV6))
+		nh_min_len = sizeof(struct ipv6hdr);
 
 	if (hdr_gso_type != VIRTIO_NET_HDR_GSO_NONE) {
 		switch (hdr_gso_type & ~VIRTIO_NET_HDR_GSO_ECN) {
@@ -98,16 +143,20 @@ static inline int __virtio_net_hdr_to_skb(struct sk_buff *skb,
 		u32 start = __virtio16_to_cpu(little_endian, hdr->csum_start);
 		u32 off = __virtio16_to_cpu(little_endian, hdr->csum_offset);
 		u32 needed = start + max_t(u32, thlen, off + sizeof(__sum16));
+		int transport_offset;
 
 		if (!pskb_may_pull(skb, needed))
 			return -EINVAL;
 
 		if (!skb_partial_csum_set(skb, start, off))
 			return -EINVAL;
-		if (skb_transport_offset(skb) < nh_min_len)
+
+		transport_offset = skb_transport_offset(skb);
+		if (transport_offset < nh_min_len || network_offset < 0 ||
+		    network_offset > transport_offset - nh_min_len)
 			return -EINVAL;
 
-		nh_min_len = skb_transport_offset(skb);
+		nh_min_len = transport_offset;
 		p_off = nh_min_len + thlen;
 		if (!pskb_may_pull(skb, p_off))
 			return -EINVAL;
@@ -206,9 +255,12 @@ retry:
 
 static inline int virtio_net_hdr_to_skb(struct sk_buff *skb,
 					const struct virtio_net_hdr *hdr,
-					bool little_endian)
+					bool little_endian,
+					int network_offset,
+					__be16 network_protocol)
 {
-	return __virtio_net_hdr_to_skb(skb, hdr, little_endian, hdr->gso_type);
+	return __virtio_net_hdr_to_skb(skb, hdr, little_endian, hdr->gso_type,
+				       network_offset, network_protocol);
 }
 
 /* This function must be called after virtio_net_hdr_from_skb(). */
@@ -287,7 +339,7 @@ static inline int virtio_net_hdr_from_skb(const struct sk_buff *skb,
 	return 0;
 }
 
-static inline unsigned int virtio_l3min(bool is_ipv6)
+static inline int virtio_l3min(bool is_ipv6)
 {
 	return is_ipv6 ? sizeof(struct ipv6hdr) : sizeof(struct iphdr);
 }
@@ -297,18 +349,20 @@ virtio_net_hdr_tnl_to_skb(struct sk_buff *skb,
 			  const struct virtio_net_hdr_v1_hash_tunnel *vhdr,
 			  bool tnl_hdr_negotiated,
 			  bool tnl_csum_negotiated,
-			  bool little_endian)
+			  bool little_endian, int network_offset,
+			  __be16 network_protocol)
 {
 	const struct virtio_net_hdr *hdr = (const struct virtio_net_hdr *)vhdr;
-	unsigned int inner_nh, outer_th, inner_th;
-	unsigned int inner_l3min, outer_l3min;
 	u8 gso_inner_type, gso_tunnel_type;
 	bool outer_isv6, inner_isv6;
+	int inner_nh, outer_th, inner_th;
+	int inner_l3min, outer_l3min;
 	int ret;
 
 	gso_tunnel_type = hdr->gso_type & VIRTIO_NET_HDR_GSO_UDP_TUNNEL;
 	if (!gso_tunnel_type)
-		return virtio_net_hdr_to_skb(skb, hdr, little_endian);
+		return virtio_net_hdr_to_skb(skb, hdr, little_endian,
+					     network_offset, network_protocol);
 
 	/* Tunnel not supported/negotiated, but the hdr asks for it. */
 	if (!tnl_hdr_negotiated)
@@ -332,19 +386,24 @@ virtio_net_hdr_tnl_to_skb(struct sk_buff *skb,
 	outer_isv6 = gso_tunnel_type & VIRTIO_NET_HDR_GSO_UDP_TUNNEL_IPV6;
 	inner_isv6 = gso_inner_type == VIRTIO_NET_HDR_GSO_TCPV6;
 	inner_l3min = virtio_l3min(inner_isv6);
-	outer_l3min = ETH_HLEN + virtio_l3min(outer_isv6);
+	outer_l3min = virtio_l3min(outer_isv6);
+	if (network_protocol == htons(ETH_P_IPV6))
+		outer_l3min = sizeof(struct ipv6hdr);
 
 	inner_th = __virtio16_to_cpu(little_endian, hdr->csum_start);
 	inner_nh = le16_to_cpu(vhdr->inner_nh_offset);
 	outer_th = le16_to_cpu(vhdr->outer_th_offset);
-	if (outer_th < outer_l3min ||
+	if (network_offset < 0 ||
+	    outer_th < outer_l3min ||
+	    network_offset > outer_th - outer_l3min ||
 	    inner_nh < outer_th + sizeof(struct udphdr) ||
 	    inner_th < inner_nh + inner_l3min)
 		return -EINVAL;
 
 	/* Let the basic parsing deal with plain GSO features. */
 	ret = __virtio_net_hdr_to_skb(skb, hdr, true,
-				      hdr->gso_type & ~gso_tunnel_type);
+				      hdr->gso_type & ~gso_tunnel_type,
+				      network_offset, network_protocol);
 	if (ret)
 		return ret;
 

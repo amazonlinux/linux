@@ -197,6 +197,8 @@ static int raw_verify_header(
 	uint8_t *header, struct sk_buff *skb, struct vector_private *vp)
 {
 	struct virtio_net_hdr *vheader = (struct virtio_net_hdr *) header;
+	__be16 network_protocol;
+	int network_offset;
 
 	if ((vheader->gso_type != VIRTIO_NET_HDR_GSO_NONE) &&
 		(vp->req_size != 65536)) {
@@ -209,8 +211,14 @@ static int raw_verify_header(
 	if ((vheader->flags & VIRTIO_NET_HDR_F_DATA_VALID) > 0)
 		return 1;
 
-	virtio_net_hdr_to_skb(skb, vheader, virtio_legacy_is_little_endian());
-	return 0;
+	network_offset = virtio_net_hdr_eth_get_l3_offset(skb, vheader,
+							  &network_protocol);
+	if (network_offset < 0)
+		return network_offset;
+
+	return virtio_net_hdr_to_skb(skb, vheader,
+				     virtio_legacy_is_little_endian(),
+				     network_offset, network_protocol);
 }
 
 static bool get_uint_param(
@@ -491,4 +499,3 @@ int build_transport_data(struct vector_private *vp)
 		return build_bess_transport_data(vp);
 	return 0;
 }
-
