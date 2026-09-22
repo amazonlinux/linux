@@ -361,6 +361,45 @@ static inline __virtio16 cpu_to_tun16(struct tun_struct *tun, u16 val)
 	return __cpu_to_virtio16(tun_is_little_endian(tun), val);
 }
 
+/*
+ * Convert a virtio header, passing the data-relative L3 origin explicitly.
+ * IFF_TUN carries a raw L3 packet, so its network header starts at offset 0
+ * and the protocol is derived from the IP version. IFF_TAP carries an
+ * Ethernet frame, so parse it (including VLAN tags) for the L3 origin.
+ */
+static int tun_virtio_net_hdr_to_skb(struct tun_struct *tun,
+				     struct sk_buff *skb,
+				     const struct virtio_net_hdr *hdr)
+{
+	__be16 network_protocol = 0;
+	int network_offset = 0;
+
+	if ((tun->flags & TUN_TYPE_MASK) != IFF_TAP) {
+		if (hdr->flags & VIRTIO_NET_HDR_F_NEEDS_CSUM) {
+			u8 first_byte;
+			const u8 *first;
+
+			first = skb_header_pointer(skb, 0, sizeof(first_byte),
+						   &first_byte);
+			if (!first)
+				return -EINVAL;
+
+			if ((*first >> 4) == 4)
+				network_protocol = htons(ETH_P_IP);
+			else if ((*first >> 4) == 6)
+				network_protocol = htons(ETH_P_IPV6);
+		}
+	} else {
+		network_offset = virtio_net_hdr_eth_get_l3_offset(skb, hdr,
+							&network_protocol);
+		if (network_offset < 0)
+			return network_offset;
+	}
+
+	return virtio_net_hdr_to_skb(skb, hdr, tun_is_little_endian(tun),
+				     network_offset, network_protocol);
+}
+
 static inline u32 tun_hashfn(u32 rxhash)
 {
 	return rxhash & TUN_MASK_FLOW_ENTRIES;
@@ -1855,7 +1894,7 @@ drop:
 		}
 	}
 
-	if (virtio_net_hdr_to_skb(skb, &gso, tun_is_little_endian(tun))) {
+	if (tun_virtio_net_hdr_to_skb(tun, skb, &gso)) {
 		atomic_long_inc(&tun->rx_frame_errors);
 		kfree_skb(skb);
 		if (frags) {
@@ -2487,7 +2526,7 @@ build:
 	skb_reserve(skb, xdp->data - xdp->data_hard_start);
 	skb_put(skb, xdp->data_end - xdp->data);
 
-	if (virtio_net_hdr_to_skb(skb, gso, tun_is_little_endian(tun))) {
+	if (tun_virtio_net_hdr_to_skb(tun, skb, gso)) {
 		atomic_long_inc(&tun->rx_frame_errors);
 		kfree_skb(skb);
 		err = -EINVAL;
