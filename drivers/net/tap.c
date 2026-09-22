@@ -93,6 +93,26 @@ static inline __virtio16 cpu_to_tap16(struct tap_queue *q, u16 val)
 	return __cpu_to_virtio16(tap_is_little_endian(q), val);
 }
 
+/*
+ * Convert a virtio header for a tap (Ethernet) frame, passing the
+ * data-relative L3 origin explicitly so the checksum start is validated
+ * against the parsed network header.
+ */
+static int tap_virtio_net_hdr_to_skb(struct tap_queue *q, struct sk_buff *skb,
+				     const struct virtio_net_hdr *hdr)
+{
+	__be16 network_protocol;
+	int network_offset;
+
+	network_offset = virtio_net_hdr_eth_get_l3_offset(skb, hdr,
+							  &network_protocol);
+	if (network_offset < 0)
+		return network_offset;
+
+	return virtio_net_hdr_to_skb(skb, hdr, tap_is_little_endian(q),
+				     network_offset, network_protocol);
+}
+
 static struct proto tap_proto = {
 	.name = "tap",
 	.owner = THIS_MODULE,
@@ -713,8 +733,7 @@ static ssize_t tap_get_user(struct tap_queue *q, void *msg_control,
 	skb->dev = tap->dev;
 
 	if (vnet_hdr_len) {
-		err = virtio_net_hdr_to_skb(skb, &vnet_hdr,
-					    tap_is_little_endian(q));
+		err = tap_virtio_net_hdr_to_skb(q, skb, &vnet_hdr);
 		if (err) {
 			rcu_read_unlock();
 			goto err_kfree;
@@ -1166,7 +1185,7 @@ static int tap_get_user_xdp(struct tap_queue *q, struct xdp_buff *xdp)
 	skb->protocol = eth_hdr(skb)->h_proto;
 
 	if (vnet_hdr_len) {
-		err = virtio_net_hdr_to_skb(skb, gso, tap_is_little_endian(q));
+		err = tap_virtio_net_hdr_to_skb(q, skb, gso);
 		if (err)
 			goto err_kfree;
 	}
