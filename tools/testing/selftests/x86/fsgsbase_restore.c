@@ -30,8 +30,67 @@
 #include <sys/ptrace.h>
 #include <sys/wait.h>
 #include <stdint.h>
+#include <setjmp.h>
+#include <signal.h>
 
 #define EXPECTED_VALUE 0x1337f00d
+
+/*
+ * int $0x80 dispatches through the ia32 syscall table, whose numbers
+ * differ from the x86-64 table exposed by <sys/syscall.h> on an
+ * x86_64 build. Define the ia32 numbers we need explicitly.
+ */
+#define __NR_ia32_getpid		20
+#define __NR_ia32_set_thread_area	243
+
+static sigjmp_buf jmpbuf;
+
+static void sigsegv_int80(int sig, siginfo_t *si, void *ctx_void)
+{
+	siglongjmp(jmpbuf, 1);
+}
+
+static void sethandler_int80(int sig, void (*handler)(int, siginfo_t *, void *))
+{
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = handler;
+	sa.sa_flags = SA_SIGINFO;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(sig, &sa, 0))
+		err(1, "sigaction");
+}
+
+static void clearhandler_int80(int sig)
+{
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = SIG_DFL;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(sig, &sa, 0))
+		err(1, "sigaction");
+}
+
+static bool probe_int80(void)
+{
+	/*
+	 * Check whether int $0x80 is available.  Kernels built without
+	 * CONFIG_IA32_EMULATION do not install an IDT entry for vector
+	 * 0x80, so executing int $0x80 causes a #GP fault.
+	 */
+	sethandler_int80(SIGSEGV, sigsegv_int80);
+	if (sigsetjmp(jmpbuf, 1) == 0) {
+		long ret;
+		/* getpid -- harmless if it works */
+		asm volatile ("int $0x80" : "=a" (ret) : "a" (__NR_ia32_getpid));
+		clearhandler_int80(SIGSEGV);
+		return true;
+	}
+	clearhandler_int80(SIGSEGV);
+	return false;
+}
 
 #ifdef __x86_64__
 # define SEG "%gs"
@@ -72,7 +131,7 @@ static void init_seg(void)
 	if (syscall(SYS_modify_ldt, 1, &desc, sizeof(desc)) == 0) {
 		printf("\tusing LDT slot 0\n");
 		asm volatile ("mov %0, %" SEG :: "rm" ((unsigned short)0x7));
-	} else {
+	} else if (probe_int80()) {
 		/* No modify_ldt for us (configured out, perhaps) */
 
 		struct user_desc *low_desc = mmap(
@@ -87,7 +146,7 @@ static void init_seg(void)
 		long ret;
 		asm volatile ("int $0x80"
 			      : "=a" (ret), "+m" (*low_desc)
-			      : "a" (243), "b" (low_desc)
+			      : "a" (__NR_ia32_set_thread_area), "b" (low_desc)
 #ifdef __x86_64__
 			      : "r8", "r9", "r10", "r11"
 #endif
@@ -103,6 +162,15 @@ static void init_seg(void)
 
 		unsigned short sel = (unsigned short)((desc.entry_number << 3) | 0x3);
 		asm volatile ("mov %0, %" SEG :: "rm" (sel));
+	} else {
+		/*
+		 * Neither modify_ldt() (CONFIG_MODIFY_LDT_SYSCALL=n) nor
+		 * int $0x80 (CONFIG_IA32_EMULATION=n) is available, so a
+		 * nonzero-based segment cannot be created at all.  There is
+		 * nothing to test; skip instead of crashing on int $0x80.
+		 */
+		printf("[NOTE]\tno way to create a nonzero-based segment -- can't test anything\n");
+		exit(0);
 	}
 }
 
