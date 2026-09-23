@@ -218,6 +218,40 @@ static void do_remote_base()
 
 static __thread int set_thread_area_entry_number = -1;
 
+/*
+ * int $0x80 dispatches through the ia32 syscall table, whose numbers
+ * differ from the x86-64 table exposed by <sys/syscall.h> on an
+ * x86_64 build. Define the ia32 numbers we need explicitly.
+ */
+#define __NR_ia32_getpid		20
+#define __NR_ia32_set_thread_area	243
+
+static bool have_int80;
+
+static void sigsegv_int80(int sig, siginfo_t *si, void *ctx_void)
+{
+	siglongjmp(jmpbuf, 1);
+}
+
+static bool probe_int80(void)
+{
+	/*
+	 * Check whether int $0x80 is available.  Kernels built without
+	 * CONFIG_IA32_EMULATION do not install an IDT entry for vector
+	 * 0x80, so executing int $0x80 causes a #GP fault.
+	 */
+	sethandler(SIGSEGV, sigsegv_int80, 0);
+	if (sigsetjmp(jmpbuf, 1) == 0) {
+		long ret;
+		/* getpid -- harmless if it works */
+		asm volatile ("int $0x80" : "=a" (ret) : "a" (__NR_ia32_getpid));
+		clearhandler(SIGSEGV);
+		return true;
+	}
+	clearhandler(SIGSEGV);
+	return false;
+}
+
 static unsigned short load_gs(void)
 {
 	/*
@@ -245,7 +279,7 @@ static unsigned short load_gs(void)
 		printf("\tusing LDT slot 0\n");
 		asm volatile ("mov %0, %%gs" : : "rm" ((unsigned short)0x7));
 		return 0x7;
-	} else {
+	} else if (have_int80) {
 		/* No modify_ldt for us (configured out, perhaps) */
 
 		struct user_desc *low_desc = mmap(
@@ -260,7 +294,7 @@ static unsigned short load_gs(void)
 		long ret;
 		asm volatile ("int $0x80"
 			      : "=a" (ret), "+m" (*low_desc)
-			      : "a" (243), "b" (low_desc)
+			      : "a" (__NR_ia32_set_thread_area), "b" (low_desc)
 			      : "r8", "r9", "r10", "r11");
 		memcpy(&desc, low_desc, sizeof(desc));
 		munmap(low_desc, sizeof(desc));
@@ -275,6 +309,9 @@ static unsigned short load_gs(void)
 		unsigned short gs = (unsigned short)((desc.entry_number << 3) | 0x3);
 		asm volatile ("mov %0, %%gs" : : "rm" (gs));
 		return gs;
+	} else {
+		printf("[NOTE]\tno way to create a nonzero-based segment\n");
+		return 0;
 	}
 }
 
@@ -516,6 +553,11 @@ static void test_ptrace_write_gsbase(void)
 
 		gs = ptrace(PTRACE_PEEKUSER, child, gs_offset, NULL);
 
+		if (*shared_scratch == 0) {
+			printf("[SKIP]\tCould not create a nonzero GS selector\n");
+			goto END;
+		}
+
 		if (gs != *shared_scratch) {
 			nerrs++;
 			printf("[FAIL]\tGS is not prepared with nonzero\n");
@@ -586,6 +628,11 @@ int main()
 		printf("\tFSGSBASE instructions are disabled\n");
 	}
 	clearhandler(SIGILL);
+
+	/* Probe int $0x80 (32-bit syscall entry) */
+	have_int80 = probe_int80();
+	if (!have_int80)
+		printf("\tint $0x80 is unavailable (CONFIG_IA32_EMULATION=n?)\n");
 
 	sethandler(SIGSEGV, sigsegv, 0);
 
