@@ -2520,33 +2520,6 @@ static int UVERBS_HANDLER(EFA_IB_METHOD_MR_QUERY)(struct uverbs_attr_bundle *att
 			      &ic_id_validity, sizeof(ic_id_validity));
 }
 
-static int UVERBS_HANDLER(UVERBS_METHOD_QUERY_PORT_SPEED)(struct uverbs_attr_bundle *attrs)
-{
-	struct ib_ucontext *ucontext;
-	struct ib_device *ibdev;
-	u32 port_num;
-	u64 speed;
-	int ret;
-
-	ucontext = ib_uverbs_get_ucontext(attrs);
-	if (IS_ERR(ucontext))
-		return PTR_ERR(ucontext);
-
-	ibdev = ucontext->device;
-
-	ret = uverbs_get_const(&port_num, attrs, UVERBS_ATTR_QUERY_PORT_SPEED_PORT_NUM);
-	if (ret)
-		return ret;
-
-	if (!rdma_is_port_valid(ibdev, port_num))
-		return -EINVAL;
-
-	efa_query_port_speed(ibdev, port_num, &speed);
-
-	return uverbs_copy_to(attrs, UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
-			      &speed, sizeof(speed));
-}
-
 int efa_dereg_mr(struct ib_mr *ibmr, struct ib_udata *udata)
 {
 	struct efa_dev *dev = to_edev(ibmr->device);
@@ -3232,18 +3205,6 @@ ADD_UVERBS_METHODS(efa_mr,
 		   UVERBS_OBJECT_MR,
 		   &UVERBS_METHOD(EFA_IB_METHOD_MR_QUERY));
 
-DECLARE_UVERBS_NAMED_METHOD(UVERBS_METHOD_QUERY_PORT_SPEED,
-			    UVERBS_ATTR_CONST_IN(UVERBS_ATTR_QUERY_PORT_SPEED_PORT_NUM,
-						 u32,
-						 UA_MANDATORY),
-			    UVERBS_ATTR_PTR_OUT(UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
-						UVERBS_ATTR_TYPE(u64),
-						UA_MANDATORY));
-
-ADD_UVERBS_METHODS(efa_device,
-		   UVERBS_OBJECT_DEVICE,
-		   &UVERBS_METHOD(UVERBS_METHOD_QUERY_PORT_SPEED));
-
 ADD_UVERBS_ATTRIBUTES_SIMPLE(
 	efa_comp_cntr_create,
 	UVERBS_OBJECT_COMP_CNTR,
@@ -3262,8 +3223,6 @@ const struct uapi_definition efa_uapi_defs[] = {
 	UAPI_DEF_CHAIN(efa_kcompat_uapi_defs),
 	UAPI_DEF_CHAIN_OBJ_TREE(UVERBS_OBJECT_MR,
 				&efa_mr),
-	UAPI_DEF_CHAIN_OBJ_TREE(UVERBS_OBJECT_DEVICE,
-				&efa_device),
 	UAPI_DEF_CHAIN_OBJ_TREE(UVERBS_OBJECT_COMP_CNTR,
 				&efa_comp_cntr_create),
 	{},
