@@ -347,13 +347,4 @@ enum ib_qp_attach_comp_cntr_op {
 	IB_QP_ATTACH_COMP_CNTR_OP_REMOTE_RDMA_WRITE = 1 << 5,
 };
 
-enum {
-	UVERBS_METHOD_QUERY_PORT_SPEED = 7,
-};
-
-enum uverbs_attrs_query_port_speed_cmd_attr_ids {
-	UVERBS_ATTR_QUERY_PORT_SPEED_PORT_NUM,
-	UVERBS_ATTR_QUERY_PORT_SPEED_RESP,
-};
-
 #endif /* _KCOMPAT_H_ */
