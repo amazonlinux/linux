@@ -130,6 +130,7 @@ struct htab_elem {
 
 struct htab_btf_record {
 	struct btf_record *record;
+	struct btf *btf;
 	u32 key_size;
 };
 
@@ -507,8 +508,13 @@ static void htab_dtor_ctx_free(void *ctx)
 {
 	struct htab_btf_record *hrec = ctx;
 
+	/*
+	 * The duplicated record still points into the map BTF, so free it
+	 * before dropping the reference that keeps that BTF alive.
+	 */
 	btf_record_free(hrec->record);
-	kfree(ctx);
+	btf_put(hrec->btf);
+	kfree(hrec);
 }
 
 static int htab_set_dtor(const struct bpf_htab *htab, void (*dtor)(void *, void *))
@@ -532,6 +538,15 @@ static int htab_set_dtor(const struct bpf_htab *htab, void (*dtor)(void *, void 
 		kfree(hrec);
 		return err;
 	}
+	/*
+	 * btf_record_dup() only acquires kernel and module BTF. Fields whose
+	 * types live in the map BTF keep pointing into it: kptrs to local
+	 * types refer to map->btf, and graph roots carry a value record owned
+	 * by its struct meta table. The context can outlive the map when the
+	 * allocator defers its teardown, so hold a reference of our own.
+	 */
+	hrec->btf = htab->map.btf;
+	btf_get(hrec->btf);
 	ma = htab_is_percpu(htab) ? &htab->pcpu_ma : &htab->ma;
 	/* Kinda sad, but cast away const-ness since we change ma->dtor. */
 	bpf_mem_alloc_set_dtor((struct bpf_mem_alloc *)ma, dtor, htab_dtor_ctx_free, hrec);
