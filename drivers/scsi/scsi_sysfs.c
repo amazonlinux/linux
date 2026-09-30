@@ -1629,7 +1629,13 @@ void scsi_sysfs_device_initialize(struct scsi_device *sdev)
 	sdev->sdev_gendev.type = &scsi_dev_type;
 	dev_set_name(&sdev->sdev_gendev, "%d:%d:%d:%llu",
 		     sdev->host->host_no, sdev->channel, sdev->id, sdev->lun);
-	sdev->gendev_attr_groups[j++] = &scsi_sdev_attr_group;
+	/*
+	 * SCSI core attributes are registered through scsi_dev_type.groups.
+	 * Register only the LLDD-specific attributes here (both legacy
+	 * ->sdev_attrs and ->sdev_groups) to avoid double registration of
+	 * the core attributes, and assign the resulting array to
+	 * sdev_gendev.groups so the attributes actually get created.
+	 */
 	if (hostt->sdev_attrs) {
 		sdev->lld_attr_group = (struct attribute_group){
 			.attrs = scsi_convert_dev_attrs(&sdev->sdev_gendev,
@@ -1646,6 +1652,7 @@ void scsi_sysfs_device_initialize(struct scsi_device *sdev)
 		}
 	}
 	WARN_ON_ONCE(j >= ARRAY_SIZE(sdev->gendev_attr_groups));
+	sdev->sdev_gendev.groups = sdev->gendev_attr_groups;
 
 	device_initialize(&sdev->sdev_dev);
 	sdev->sdev_dev.parent = get_device(&sdev->sdev_gendev);
