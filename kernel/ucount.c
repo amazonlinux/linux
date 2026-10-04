@@ -314,25 +314,29 @@ long inc_rlimit_get_ucounts(struct ucounts *ucounts, enum ucount_type type)
 
 	for (iter = ucounts; iter; iter = iter->ns->ucounts) {
 		long new = atomic_long_add_return(1, &iter->ucount[type]);
-		if (new < 0 || new > max)
+		/*
+		 * Grab an extra ucount reference for the caller when
+		 * the rlimit count was previously 0. This has to happen
+		 * before the limit check: once the count is non-zero a
+		 * concurrent increment does not take the reference, and
+		 * whoever brings the count back to 0 drops it.
+		 */
+		if (new == 1 && !get_ucounts(iter))
 			goto dec_unwind;
+		if (new < 0 || new > max)
+			goto unwind;
 		if (iter == ucounts)
 			ret = new;
 		max = READ_ONCE(iter->ns->ucount_max[type]);
-		/*
-		 * Grab an extra ucount reference for the caller when
-		 * the rlimit count was previously 0.
-		 */
-		if (new != 1)
-			continue;
-		if (!get_ucounts(iter))
-			goto dec_unwind;
 	}
 	return ret;
 dec_unwind:
 	dec = atomic_long_add_return(-1, &iter->ucount[type]);
 	WARN_ON_ONCE(dec < 0);
 	do_dec_rlimit_put_ucounts(ucounts, iter, type);
+	return 0;
+unwind:
+	do_dec_rlimit_put_ucounts(ucounts, iter->ns->ucounts, type);
 	return 0;
 }
 
