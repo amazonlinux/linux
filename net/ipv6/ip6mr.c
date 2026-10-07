@@ -1677,7 +1677,6 @@ int ip6mr_sk_done(struct sock *sk)
 			mroute_clean_tables(mrt, MRT6_FLUSH_MIFS | MRT6_FLUSH_MFC,
 					    &dev_kill_list);
 			err = 0;
-			break;
 		}
 	}
 	unregister_netdevice_many(&dev_kill_list);
