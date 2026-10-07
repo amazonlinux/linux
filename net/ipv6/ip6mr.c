@@ -1641,7 +1641,6 @@ int ip6mr_sk_done(struct sock *sk)
 
 			mroute_clean_tables(mrt, false);
 			err = 0;
-			break;
 		}
 	}
 	rtnl_unlock();
