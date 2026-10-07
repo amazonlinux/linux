@@ -20,6 +20,13 @@ static void nft_reject_inet_eval(const struct nft_expr *expr,
 {
 	struct nft_reject *priv = nft_expr_priv(expr);
 
+	/* ip_rcv() and ipv6_rcv() have not seen the packet yet: skb->cb still
+	 * holds what the previous user left there, but the ICMP code reads it
+	 * as IPCB() and IP6CB().
+	 */
+	if (nft_hook(pkt) == NF_INET_INGRESS)
+		memset(pkt->skb->cb, 0, sizeof(pkt->skb->cb));
+
 	switch (nft_pf(pkt)) {
 	case NFPROTO_IPV4:
 		switch (priv->type) {
