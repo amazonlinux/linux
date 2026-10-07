@@ -98,6 +98,7 @@ struct ip_set_counter {
 
 struct ip_set_comment_rcu {
 	struct rcu_head rcu;
+	refcount_t ref;		/* Number of elements pointing here */
 	char str[];
 };
 
@@ -285,6 +286,23 @@ ip_set_ext_destroy(struct ip_set *set, void *data)
 	if (SET_WITH_COMMENT(set))
 		ip_set_extensions[IPSET_EXT_ID_COMMENT].destroy(
 			set, ext_comment(data, set));
+}
+
+/* The element at data was copied from the one at orig, which lives on and
+ * may be deleted at any time: let the copy own what its extensions point to.
+ * Called under rcu_read_lock_bh().
+ */
+static inline void
+ip_set_ext_get(struct ip_set *set, void *data, const void *orig)
+{
+	if (SET_WITH_COMMENT(set)) {
+		struct ip_set_comment_rcu *c;
+
+		c = rcu_dereference_bh(ext_comment(orig, set)->c);
+		if (c && !refcount_inc_not_zero(&c->ref))
+			c = NULL;
+		RCU_INIT_POINTER(ext_comment(data, set)->c, c);
+	}
 }
 
 static inline int
@@ -531,6 +549,18 @@ ip_set_comment_uget(struct nlattr *tb)
 	return nla_data(tb);
 }
 
+/* While a hash is resized or its old table is still dumped, an element
+ * and its copy in the new table point to the same comment.
+ */
+static inline void
+ip_set_comment_put(struct ip_set *set, struct ip_set_comment_rcu *c)
+{
+	if (!refcount_dec_and_test(&c->ref))
+		return;
+	atomic64_sub(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
+	kfree_rcu(c, rcu);
+}
+
 /* Called from uadd only, protected by the set spinlock.
  * The kadt functions don't use the comment extensions in any way.
  */
@@ -542,9 +572,8 @@ ip_set_init_comment(struct ip_set *set, struct ip_set_comment *comment,
 	size_t len = ext->comment ? strlen(ext->comment) : 0;
 
 	if (unlikely(c)) {
-		atomic64_sub(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
 		rcu_assign_pointer(comment->c, NULL);
-		kfree_rcu(c, rcu);
+		ip_set_comment_put(set, c);
 	}
 	if (!len)
 		return;
@@ -553,6 +582,7 @@ ip_set_init_comment(struct ip_set *set, struct ip_set_comment *comment,
 	c = kmalloc(sizeof(*c) + len + 1, GFP_ATOMIC);
 	if (unlikely(!c))
 		return;
+	refcount_set(&c->ref, 1);
 	strlcpy(c->str, ext->comment, len + 1);
 	atomic64_add(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
 	rcu_assign_pointer(comment->c, c);
@@ -582,9 +612,8 @@ ip_set_comment_free(struct ip_set *set, struct ip_set_comment *comment)
 	c = rcu_dereference_protected(comment->c, 1);
 	if (unlikely(!c))
 		return;
-	atomic64_sub(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
 	rcu_assign_pointer(comment->c, NULL);
-	kfree_rcu(c, rcu);
+	ip_set_comment_put(set, c);
 }
 
 static inline void
