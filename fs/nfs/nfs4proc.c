@@ -9251,7 +9251,7 @@ static int nfs4_verify_back_channel_attrs(struct nfs41_create_session_args *args
 		return -EINVAL;
 	if (rcvd->max_ops > sent->max_ops)
 		return -EINVAL;
-	if (rcvd->max_reqs > sent->max_reqs)
+	if (rcvd->max_reqs == 0 || rcvd->max_reqs > sent->max_reqs)
 		return -EINVAL;
 out:
 	return 0;
