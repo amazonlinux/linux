@@ -428,7 +428,7 @@ mtype_flush(struct ip_set *set)
 
 /* Destroy the hashtable part of the set */
 static void
-mtype_ahash_destroy(struct ip_set *set, struct htable *t, bool ext_destroy)
+mtype_ahash_destroy(struct ip_set *set, struct htable *t)
 {
 	struct hbucket *n;
 	u32 i;
@@ -437,7 +437,7 @@ mtype_ahash_destroy(struct ip_set *set, struct htable *t, bool ext_destroy)
 		n = (__force struct hbucket *)hbucket(t, i);
 		if (!n)
 			continue;
-		if (set->extensions & IPSET_EXT_DESTROY && ext_destroy)
+		if (set->extensions & IPSET_EXT_DESTROY)
 			mtype_ext_cleanup(set, n);
 		/* FIXME: use slab cache */
 		kfree(n);
@@ -459,7 +459,7 @@ mtype_destroy(struct ip_set *set)
 		list_del(l);
 		kfree(l);
 	}
-	mtype_ahash_destroy(set, t, true);
+	mtype_ahash_destroy(set, t);
 	kfree(h);
 
 	set->data = NULL;
@@ -591,7 +591,7 @@ mtype_gc(struct work_struct *work)
 
 	if (atomic_dec_and_test(&t->uref) && t->resizing) {
 		pr_debug("Table destroy after resize by expire: %p\n", t);
-		mtype_ahash_destroy(set, t, false);
+		mtype_ahash_destroy(set, t);
 	}
 
 	queue_delayed_work(system_power_efficient_wq, &gc->dwork, next_run);
@@ -754,6 +754,7 @@ retry:
 				}
 				d = ahash_data(m, m->pos, dsize);
 				memcpy(d, data, dsize);
+				ip_set_ext_get(set, d, ahash_data(n, j, dsize));
 				set_bit(m->pos++, m->used);
 				t->hregion[nr].elements++;
 #ifdef IP_SET_HASH_WITH_NETS
@@ -789,7 +790,7 @@ retry:
 	/* If there's nobody else using the table, destroy it */
 	if (atomic_dec_and_test(&orig->uref)) {
 		pr_debug("Table destroy by resize %p\n", orig);
-		mtype_ahash_destroy(set, orig, false);
+		mtype_ahash_destroy(set, orig);
 	}
 
 out:
@@ -807,7 +808,7 @@ cleanup:
 	 * before we decrement uref */
 	synchronize_rcu();
 	atomic_dec(&orig->uref);
-	mtype_ahash_destroy(set, t, false);
+	mtype_ahash_destroy(set, t);
 	if (ret == -EAGAIN)
 		goto retry;
 
@@ -1050,7 +1051,7 @@ unlock:
 out:
 	if (atomic_dec_and_test(&t->uref) && t->resizing) {
 		pr_debug("Table destroy after resize by add: %p\n", t);
-		mtype_ahash_destroy(set, t, false);
+		mtype_ahash_destroy(set, t);
 	}
 	return ret;
 }
@@ -1165,7 +1166,7 @@ out:
 	}
 	if (atomic_dec_and_test(&t->uref) && t->resizing) {
 		pr_debug("Table destroy after resize by del: %p\n", t);
-		mtype_ahash_destroy(set, t, false);
+		mtype_ahash_destroy(set, t);
 	}
 	return ret;
 }
@@ -1375,7 +1376,7 @@ mtype_uref(struct ip_set *set, struct netlink_callback *cb, bool start)
 		if (atomic_dec_and_test(&t->uref) && t->resizing) {
 			pr_debug("Table destroy after resize "
 				 " by dump: %p\n", t);
-			mtype_ahash_destroy(set, t, false);
+			mtype_ahash_destroy(set, t);
 		}
 		cb->args[IPSET_CB_PRIVATE] = 0;
 	}
