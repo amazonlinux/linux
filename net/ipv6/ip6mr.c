@@ -1599,7 +1599,6 @@ int ip6mr_sk_done(struct sock *sk)
 
 			mroute_clean_tables(mrt, MRT6_FLUSH_MIFS | MRT6_FLUSH_MFC);
 			err = 0;
-			break;
 		}
 	}
 	rtnl_unlock();
