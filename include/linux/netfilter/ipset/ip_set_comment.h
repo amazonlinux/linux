@@ -16,6 +16,18 @@ ip_set_comment_uget(struct nlattr *tb)
 	return nla_data(tb);
 }
 
+/* While a hash is resized or its old table is still dumped, an element
+ * and its copy in the new table point to the same comment.
+ */
+static inline void
+ip_set_comment_put(struct ip_set *set, struct ip_set_comment_rcu *c)
+{
+	if (!refcount_dec_and_test(&c->ref))
+		return;
+	atomic64_sub(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
+	kfree_rcu(c, rcu);
+}
+
 /* Called from uadd only, protected by the set spinlock.
  * The kadt functions don't use the comment extensions in any way.
  */
@@ -27,9 +39,8 @@ ip_set_init_comment(struct ip_set *set, struct ip_set_comment *comment,
 	size_t len = ext->comment ? strlen(ext->comment) : 0;
 
 	if (unlikely(c)) {
-		atomic64_sub(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
 		rcu_assign_pointer(comment->c, NULL);
-		kfree_rcu(c, rcu);
+		ip_set_comment_put(set, c);
 	}
 	if (!len)
 		return;
@@ -38,6 +49,7 @@ ip_set_init_comment(struct ip_set *set, struct ip_set_comment *comment,
 	c = kmalloc(sizeof(*c) + len + 1, GFP_ATOMIC);
 	if (unlikely(!c))
 		return;
+	refcount_set(&c->ref, 1);
 	strlcpy(c->str, ext->comment, len + 1);
 	atomic64_add(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
 	rcu_assign_pointer(comment->c, c);
@@ -67,9 +79,8 @@ ip_set_comment_free(struct ip_set *set, struct ip_set_comment *comment)
 	c = rcu_dereference_protected(comment->c, 1);
 	if (unlikely(!c))
 		return;
-	atomic64_sub(sizeof(*c) + strlen(c->str) + 1, &set->ext_size);
 	rcu_assign_pointer(comment->c, NULL);
-	kfree_rcu(c, rcu);
+	ip_set_comment_put(set, c);
 }
 
 #endif

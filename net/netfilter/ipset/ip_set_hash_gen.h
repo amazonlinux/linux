@@ -380,7 +380,7 @@ mtype_flush(struct ip_set *set)
 
 /* Destroy the hashtable part of the set */
 static void
-mtype_ahash_destroy(struct ip_set *set, struct htable *t, bool ext_destroy)
+mtype_ahash_destroy(struct ip_set *set, struct htable *t)
 {
 	struct hbucket *n;
 	u32 i;
@@ -389,7 +389,7 @@ mtype_ahash_destroy(struct ip_set *set, struct htable *t, bool ext_destroy)
 		n = __ipset_dereference_protected(hbucket(t, i), 1);
 		if (!n)
 			continue;
-		if (set->extensions & IPSET_EXT_DESTROY && ext_destroy)
+		if (set->extensions & IPSET_EXT_DESTROY)
 			mtype_ext_cleanup(set, n);
 		/* FIXME: use slab cache */
 		kfree(n);
@@ -408,7 +408,7 @@ mtype_destroy(struct ip_set *set)
 		del_timer_sync(&h->gc);
 
 	mtype_ahash_destroy(set,
-			    __ipset_dereference_protected(h->table, 1), true);
+			    __ipset_dereference_protected(h->table, 1));
 	kfree(h);
 
 	set->data = NULL;
@@ -638,6 +638,7 @@ retry:
 			}
 			d = ahash_data(m, m->pos, dsize);
 			memcpy(d, data, dsize);
+			ip_set_ext_get(set, d, ahash_data(n, j, dsize));
 			set_bit(m->pos++, m->used);
 #ifdef IP_SET_HASH_WITH_NETS
 			mtype_data_reset_flags(d, &flags);
@@ -657,7 +658,7 @@ retry:
 	/* If there's nobody else dumping the table, destroy it */
 	if (atomic_dec_and_test(&orig->uref)) {
 		pr_debug("Table destroy by resize %p\n", orig);
-		mtype_ahash_destroy(set, orig, false);
+		mtype_ahash_destroy(set, orig);
 	}
 
 out:
@@ -670,7 +671,7 @@ cleanup:
 	atomic_set(&orig->ref, 0);
 	atomic_dec(&orig->uref);
 	spin_unlock_bh(&set->lock);
-	mtype_ahash_destroy(set, t, false);
+	mtype_ahash_destroy(set, t);
 	if (ret == -EAGAIN)
 		goto retry;
 	goto out;
@@ -1102,7 +1103,7 @@ mtype_uref(struct ip_set *set, struct netlink_callback *cb, bool start)
 		if (atomic_dec_and_test(&t->uref) && atomic_read(&t->ref)) {
 			/* Resizing didn't destroy the hash table */
 			pr_debug("Table destroy by dump: %p\n", t);
-			mtype_ahash_destroy(set, t, false);
+			mtype_ahash_destroy(set, t);
 		}
 		cb->args[IPSET_CB_PRIVATE] = 0;
 	}

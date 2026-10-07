@@ -101,6 +101,7 @@ struct ip_set_counter {
 
 struct ip_set_comment_rcu {
 	struct rcu_head rcu;
+	refcount_t ref;		/* Number of elements pointing here */
 	char str[0];
 };
 
@@ -273,6 +274,23 @@ ip_set_ext_destroy(struct ip_set *set, void *data)
 	if (SET_WITH_COMMENT(set))
 		ip_set_extensions[IPSET_EXT_ID_COMMENT].destroy(
 			set, ext_comment(data, set));
+}
+
+/* The element at data was copied from the one at orig, which lives on and
+ * may be deleted at any time: let the copy own what its extensions point to.
+ * Called under rcu_read_lock_bh().
+ */
+static inline void
+ip_set_ext_get(struct ip_set *set, void *data, const void *orig)
+{
+	if (SET_WITH_COMMENT(set)) {
+		struct ip_set_comment_rcu *c;
+
+		c = rcu_dereference_bh(ext_comment(orig, set)->c);
+		if (c && !refcount_inc_not_zero(&c->ref))
+			c = NULL;
+		RCU_INIT_POINTER(ext_comment(data, set)->c, c);
+	}
 }
 
 static inline int
