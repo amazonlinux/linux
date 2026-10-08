@@ -1426,6 +1426,20 @@ static size_t xs_tcp_bc_maxpayload(struct rpc_xprt *xprt)
 {
 	return PAGE_SIZE;
 }
+
+/*
+ * xs_read_stream_call() fills a request that is still on bc_pa_list and
+ * holds no reference to it. Keep the receiver out while they are freed.
+ */
+static void xs_tcp_bc_destroy(struct rpc_xprt *xprt, unsigned int max_reqs)
+{
+	struct sock_xprt *transport =
+		container_of(xprt, struct sock_xprt, xprt);
+
+	mutex_lock(&transport->recv_mutex);
+	xprt_destroy_bc(xprt, max_reqs);
+	mutex_unlock(&transport->recv_mutex);
+}
 #endif /* CONFIG_SUNRPC_BACKCHANNEL */
 
 /**
@@ -2739,7 +2753,7 @@ static const struct rpc_xprt_ops xs_tcp_ops = {
 	.bc_maxpayload		= xs_tcp_bc_maxpayload,
 	.bc_num_slots		= xprt_bc_max_slots,
 	.bc_free_rqst		= xprt_free_bc_rqst,
-	.bc_destroy		= xprt_destroy_bc,
+	.bc_destroy		= xs_tcp_bc_destroy,
 #endif
 };
 
