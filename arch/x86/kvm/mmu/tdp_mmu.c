@@ -432,6 +432,18 @@ static inline bool tdp_mmu_iter_cond_resched(struct kvm *kvm,
 }
 
 /*
+ * Bound a walk of @root, which must be a root, at the first GFN that it doesn't
+ * translate.  Memslots are bounded by host.MAXPHYADDR, whereas the root has
+ * four levels if guest.MAXPHYADDR allows for it.  There are no SPTEs for GFNs
+ * beyond the root's reach, and as the iterator ignores the bits of a GFN that
+ * the root doesn't translate, it would come up with the SPTEs of other GFNs.
+ */
+static gfn_t tdp_mmu_root_end_gfn(struct kvm_mmu_page *root, gfn_t end)
+{
+	return min(end, BIT_ULL(root->role.level * PT64_LEVEL_BITS));
+}
+
+/*
  * Tears down the mappings for the range of gfns, [start, end), and frees the
  * non-root pages mapping GFNs strictly within that range. Returns true if
  * SPTEs have been cleared and a TLB flush is needed before releasing the
@@ -448,6 +460,8 @@ static bool zap_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
 			  gfn_t start, gfn_t end, bool can_yield, bool flush)
 {
 	struct tdp_iter iter;
+
+	end = tdp_mmu_root_end_gfn(root, end);
 
 	tdp_root_for_each_pte(iter, root, start, end) {
 		if (can_yield &&
@@ -703,7 +717,8 @@ static int age_gfn_range(struct kvm *kvm, struct kvm_memory_slot *slot,
 	int young = 0;
 	u64 new_spte = 0;
 
-	tdp_root_for_each_leaf_pte(iter, root, start, end) {
+	tdp_root_for_each_leaf_pte(iter, root, start,
+				   tdp_mmu_root_end_gfn(root, end)) {
 		/*
 		 * If we have a non-accessed entry we don't need to change the
 		 * pte.
@@ -748,7 +763,8 @@ static int test_age_gfn(struct kvm *kvm, struct kvm_memory_slot *slot,
 {
 	struct tdp_iter iter;
 
-	tdp_root_for_each_leaf_pte(iter, root, gfn, gfn + 1)
+	tdp_root_for_each_leaf_pte(iter, root, gfn,
+				   tdp_mmu_root_end_gfn(root, gfn + 1))
 		if (is_accessed_spte(iter.old_spte))
 			return 1;
 
@@ -781,7 +797,8 @@ static int set_tdp_spte(struct kvm *kvm, struct kvm_memory_slot *slot,
 
 	new_pfn = pte_pfn(*ptep);
 
-	tdp_root_for_each_pte(iter, root, gfn, gfn + 1) {
+	tdp_root_for_each_pte(iter, root, gfn,
+			      tdp_mmu_root_end_gfn(root, gfn + 1)) {
 		if (iter.level != PG_LEVEL_4K)
 			continue;
 
@@ -827,6 +844,8 @@ static bool wrprot_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
 	struct tdp_iter iter;
 	u64 new_spte;
 	bool spte_set = false;
+
+	end = tdp_mmu_root_end_gfn(root, end);
 
 	BUG_ON(min_level > KVM_MAX_HUGEPAGE_LEVEL);
 
@@ -884,6 +903,8 @@ static bool clear_dirty_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
 	struct tdp_iter iter;
 	u64 new_spte;
 	bool spte_set = false;
+
+	end = tdp_mmu_root_end_gfn(root, end);
 
 	tdp_root_for_each_leaf_pte(iter, root, start, end) {
 		if (tdp_mmu_iter_cond_resched(kvm, &iter, false))
@@ -949,7 +970,7 @@ static void clear_dirty_pt_masked(struct kvm *kvm, struct kvm_mmu_page *root,
 	u64 new_spte;
 
 	tdp_root_for_each_leaf_pte(iter, root, gfn + __ffs(mask),
-				    gfn + BITS_PER_LONG) {
+				   tdp_mmu_root_end_gfn(root, gfn + BITS_PER_LONG)) {
 		if (!mask)
 			break;
 
@@ -1012,6 +1033,8 @@ static bool set_dirty_gfn_range(struct kvm *kvm, struct kvm_mmu_page *root,
 	u64 new_spte;
 	bool spte_set = false;
 
+	end = tdp_mmu_root_end_gfn(root, end);
+
 	tdp_root_for_each_pte(iter, root, start, end) {
 		if (tdp_mmu_iter_cond_resched(kvm, &iter, false))
 			continue;
@@ -1061,6 +1084,8 @@ static void zap_collapsible_spte_range(struct kvm *kvm,
 	struct tdp_iter iter;
 	kvm_pfn_t pfn;
 	bool spte_set = false;
+
+	end = tdp_mmu_root_end_gfn(root, end);
 
 	tdp_root_for_each_pte(iter, root, start, end) {
 		if (tdp_mmu_iter_cond_resched(kvm, &iter, spte_set)) {
@@ -1119,7 +1144,8 @@ static bool write_protect_gfn(struct kvm *kvm, struct kvm_mmu_page *root,
 	u64 new_spte;
 	bool spte_set = false;
 
-	tdp_root_for_each_leaf_pte(iter, root, gfn, gfn + 1) {
+	tdp_root_for_each_leaf_pte(iter, root, gfn,
+				   tdp_mmu_root_end_gfn(root, gfn + 1)) {
 		new_spte = iter.old_spte &
 			~(PT_WRITABLE_MASK | SPTE_MMU_WRITEABLE);
 
