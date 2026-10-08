@@ -4672,7 +4672,14 @@ void sched_cgroup_fork(struct task_struct *p, struct kernel_clone_args *kargs)
 		struct task_group *tg;
 		tg = container_of(kargs->cset->subsys[cpu_cgrp_id],
 				  struct task_group, css);
-		tg = autogroup_task_group(p, tg);
+		/*
+		 * A new process has a reference to its autogroup. A new thread
+		 * shares the signal struct with threads which can replace the
+		 * autogroup and drop the last reference to the old one at any
+		 * time, see sched_autogroup_fork_thread().
+		 */
+		if (!(kargs->flags & CLONE_THREAD))
+			tg = autogroup_task_group(p, tg);
 		p->sched_task_group = tg;
 	}
 #endif
