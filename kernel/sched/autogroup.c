@@ -215,6 +215,23 @@ void sched_autogroup_fork(struct signal_struct *sig)
 	sig->autogroup = autogroup_task_get(current);
 }
 
+/*
+ * Called under ->siglock right before the new thread @p is linked into its
+ * thread group. If autogroup_move_group() has taken the lock before us, we see
+ * the new autogroup. If it takes the lock after us, it finds @p and moves it.
+ *
+ * So far @p is in the task group of its cgroup, see sched_cgroup_fork(), and
+ * nobody else can see it. It can be found before wake_up_new_task() sets up
+ * the runqueue pointers once more, so they have to match the task group.
+ */
+void sched_autogroup_fork_thread(struct task_struct *p)
+{
+	lockdep_assert_held(&p->sighand->siglock);
+
+	p->sched_task_group = autogroup_task_group(p, p->sched_task_group);
+	set_task_rq(p, task_cpu(p));
+}
+
 void sched_autogroup_exit(struct signal_struct *sig)
 {
 	autogroup_kref_put(sig->autogroup);
