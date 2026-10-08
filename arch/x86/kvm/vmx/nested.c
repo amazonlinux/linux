@@ -4463,8 +4463,13 @@ static int handle_vmon(struct kvm_vcpu *vcpu)
 	 * have already been checked by hardware, prior to the VM-exit for
 	 * VMXON.  We do test guest cr4.VMXE because processor CR4 always has
 	 * that bit set to 1 in non-root mode.
+	 *
+	 * CR4.VMXE is reserved in SMM, see vmx_set_cr4(), but userspace
+	 * can force the vCPU into SMM without clearing it.  Treat VMXE as '0'
+	 * in SMM, the VMX state of a vCPU that was post-VMXON when it entered
+	 * SMM is still live and must not be allocated anew.
 	 */
-	if (!kvm_read_cr4_bits(vcpu, X86_CR4_VMXE)) {
+	if (!kvm_read_cr4_bits(vcpu, X86_CR4_VMXE) || is_smm(vcpu)) {
 		kvm_queue_exception(vcpu, UD_VECTOR);
 		return 1;
 	}
