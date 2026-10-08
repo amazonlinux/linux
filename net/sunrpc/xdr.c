@@ -175,6 +175,9 @@ xdr_free_bvec(struct xdr_buf *buf)
  * @base: offset in first page where receive should start, in bytes
  * @len: expected size of the upper layer data payload, in bytes
  *
+ * @offset is an estimate, and it can be younger than the buffer: the
+ * size of the reply verifier is learnt from the replies. Never let it
+ * point behind the end of the buffer.
  */
 void
 xdr_inline_pages(struct xdr_buf *xdr, unsigned int offset,
@@ -185,6 +188,7 @@ xdr_inline_pages(struct xdr_buf *xdr, unsigned int offset,
 	char *buf = (char *)head->iov_base;
 	unsigned int buflen = head->iov_len;
 
+	offset = min(offset, buflen);
 	head->iov_len  = offset;
 
 	xdr->pages = pages;
@@ -193,7 +197,7 @@ xdr_inline_pages(struct xdr_buf *xdr, unsigned int offset,
 
 	tail->iov_base = buf + offset;
 	tail->iov_len = buflen - offset;
-	if ((xdr->page_len & 3) == 0)
+	if ((xdr->page_len & 3) == 0 && tail->iov_len >= sizeof(__be32))
 		tail->iov_len -= sizeof(__be32);
 
 	xdr->buflen += len;
