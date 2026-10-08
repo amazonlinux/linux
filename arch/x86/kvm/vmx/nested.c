@@ -5036,8 +5036,13 @@ static int handle_vmon(struct kvm_vcpu *vcpu)
 	 * force any of the relevant guest state.  For a restricted guest, KVM
 	 * does force CR0.PE=1, but only to also force VM86 in order to emulate
 	 * Real Mode, and so there's no need to check CR0.PE manually.
+	 *
+	 * CR4.VMXE is reserved in SMM, see vmx_is_valid_cr4(), but userspace
+	 * can force the vCPU into SMM without clearing it.  Treat VMXE as '0'
+	 * in SMM, the VMX state of a vCPU that was post-VMXON when it entered
+	 * SMM is still live and must not be allocated anew.
 	 */
-	if (!kvm_read_cr4_bits(vcpu, X86_CR4_VMXE)) {
+	if (!kvm_read_cr4_bits(vcpu, X86_CR4_VMXE) || is_smm(vcpu)) {
 		kvm_queue_exception(vcpu, UD_VECTOR);
 		return 1;
 	}
