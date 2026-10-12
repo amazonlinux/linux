@@ -459,6 +459,10 @@ static int dm_blk_report_zones(struct gendisk *disk, sector_t sector,
 					      nr_zones - args.zone_idx);
 		if (ret < 0)
 			goto out;
+		if (!ret) {
+			ret = -EIO;
+			goto out;
+		}
 	} while (args.zone_idx < nr_zones &&
 		 args.next_sector < get_capacity(disk));
 
