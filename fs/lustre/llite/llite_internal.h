@@ -834,6 +834,13 @@ struct ll_sb_info {
 	unsigned int		  ll_sa_running_max;/* max concurrent
 						     * statahead instances */
 	unsigned int		  ll_sa_max;     /* max statahead RPCs */
+	unsigned long		  ll_sa_timeout; /* statahead thread gives up if
+						  * idle (does no stat) for this
+						  * many seconds; also bounds each
+						  * sai_task wait so quit
+						  * conditions are re-checked
+						  * without a wakeup, so an
+						  * orphaned thread self-reaps */
 	unsigned int		  ll_statahead_xattr;
 	atomic_t		  ll_sa_total;   /* statahead thread started
 						  * count */
@@ -1623,6 +1630,9 @@ void ll_ra_stats_inc(struct inode *inode, enum ra_stat which);
  *	LU-11079 */
 #define LL_SA_RUNNING_MAX	256
 #define LL_SA_RUNNING_DEF	16
+
+/* default statahead idle timeout (seconds); backport of upstream LU-17383 */
+#define LL_SA_TIMEOUT_DEF	30
 
 #define LL_SA_CACHE_BIT         5
 #define LL_SA_CACHE_SIZE        (1 << LL_SA_CACHE_BIT)
