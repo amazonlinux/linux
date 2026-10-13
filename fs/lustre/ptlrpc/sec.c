@@ -757,7 +757,7 @@ again:
 		/*
 		 * don't switch ctx if import was deactivated
 		 */
-		if (req->rq_import->imp_deactive) {
+		if (test_bit(IMPF_DEACTIVE, req->rq_import->imp_flags)) {
 			spin_lock(&req->rq_lock);
 			req->rq_err = 1;
 			spin_unlock(&req->rq_lock);
@@ -1354,7 +1354,7 @@ struct ptlrpc_sec * sptlrpc_sec_create(struct obd_import *imp,
 	ENTRY;
 
 	if (svc_ctx) {
-		LASSERT(imp->imp_dlm_fake == 1);
+		LASSERT(test_bit(IMPF_DLM_FAKE, imp->imp_flags));
 
 		CDEBUG(D_SEC, "%s %s: reverse sec using flavor %s\n",
 		       imp->imp_obd->obd_type->typ_name,
@@ -1364,7 +1364,7 @@ struct ptlrpc_sec * sptlrpc_sec_create(struct obd_import *imp,
 		policy = sptlrpc_policy_get(svc_ctx->sc_policy);
 		sf->sf_flags |= PTLRPC_SEC_FL_REVERSE | PTLRPC_SEC_FL_ROOTONLY;
 	} else {
-		LASSERT(imp->imp_dlm_fake == 0);
+		LASSERT(!test_bit(IMPF_DLM_FAKE, imp->imp_flags));
 
 		CDEBUG(D_SEC, "%s %s: select security flavor %s\n",
 		       imp->imp_obd->obd_type->typ_name,
