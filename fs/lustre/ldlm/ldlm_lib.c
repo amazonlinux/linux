@@ -587,9 +587,7 @@ int client_obd_setup(struct obd_device *obd, struct lustre_cfg *lcfg)
 			CDEBUG(D_HA, "marking %s %s->%s as inactive\n",
 			       name, obd->obd_name,
 			       cli->cl_target_uuid.uuid);
-			spin_lock(&imp->imp_lock);
-			imp->imp_deactive = 1;
-			spin_unlock(&imp->imp_lock);
+			set_bit(IMPF_DEACTIVE, imp->imp_flags);
 		}
 	}
 
@@ -672,6 +670,18 @@ int client_connect_import(const struct lu_env *env,
 
 	LASSERT(obd->obd_namespace);
 
+	spin_lock(&imp->imp_lock);
+	if (imp->imp_state == LUSTRE_IMP_CLOSED &&
+	    test_bit(IMPF_DEACTIVE, imp->imp_flags)) {
+		/* need to reactivate import if trying to connect
+		 * to a previously disconnected
+		 */
+		clear_bit(IMPF_DEACTIVE, imp->imp_flags);
+		clear_bit(IMPF_INVALID, imp->imp_flags);
+		smp_mb__after_atomic();
+	}
+	spin_unlock(&imp->imp_lock);
+
 	imp->imp_dlm_handle = conn;
 	rc = ptlrpc_init_import(imp);
 	if (rc != 0)
@@ -712,8 +722,7 @@ out_ldlm:
 out_sem:
 	up_write(&cli->cl_sem);
 
-	if (!rc && localdata) {
-		LASSERT(cli->cl_cache == NULL); /* only once */
+	if (!rc && localdata && !cli->cl_cache) {
 		cli->cl_cache = (struct cl_client_cache *)localdata;
 		cl_cache_incref(cli->cl_cache);
 		cli->cl_lru_left = &cli->cl_cache->ccc_lru_left;
@@ -766,9 +775,8 @@ int client_disconnect_export(struct obd_export *exp)
 	 * of the cleanup RPCs fails (e.g. LDLM cancel, etc).  We don't
 	 * fully deactivate the import, or that would drop all requests.
 	 */
-	spin_lock(&imp->imp_lock);
-	imp->imp_deactive = 1;
-	spin_unlock(&imp->imp_lock);
+	set_bit(IMPF_DEACTIVE, imp->imp_flags);
+	smp_mb__after_atomic();
 
 	/*
 	 * Some non-replayable imports (MDS's OSCs) are pinged, so just
@@ -1033,7 +1041,7 @@ int rev_import_init(struct obd_export *export)
 
 	revimp->imp_remote_handle.cookie = 0ULL;
 	revimp->imp_client = &obd->obd_ldlm_client;
-	revimp->imp_dlm_fake = 1;
+	set_bit(IMPF_DLM_FAKE, revimp->imp_flags);
 
 	/* it is safe to connect import in new state as no sends possible */
 	spin_lock(&export->exp_lock);
@@ -1402,7 +1410,7 @@ no_export:
 	}
 
 	/* Tell the client if we support replayable requests. */
-	if (target->obd_replayable)
+	if (test_bit(OBDF_REPLAYABLE, target->obd_flags))
 		lustre_msg_add_op_flags(req->rq_repmsg, MSG_CONNECT_REPLAYABLE);
 	client_nid = &req->rq_peer.nid;
 
@@ -2787,6 +2795,9 @@ static int target_recovery_thread(void *arg)
 	 */
 	CDEBUG(D_INFO, "2: lock replay stage - %d clients\n",
 	       atomic_read(&obd->obd_lock_replay_clients));
+
+	CFS_FAIL_TIMEOUT(OBD_FAIL_PTLRPC_FAIL_REPLAY, 10);
+
 	while ((req = target_next_replay_lock(lut))) {
 		LASSERT(trd->trd_processing_task == current->pid);
 		DEBUG_REQ(D_HA, req, "processing lock from %s:",

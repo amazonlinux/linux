@@ -597,8 +597,8 @@ ksocknal_data_ready(struct sock *sk, int n)
 {
 	struct ksock_conn  *conn;
 
-        /* interleave correctly with closing sockets... */
-        LASSERT(!in_irq());
+	/* interleave correctly with closing sockets... */
+	LASSERT(!in_hardirq());
 	read_lock(&ksocknal_data.ksnd_global_lock);
 
 	conn = sk->sk_user_data;
@@ -622,8 +622,8 @@ ksocknal_write_space (struct sock *sk)
         int            wspace;
         int            min_wpace;
 
-        /* interleave correctly with closing sockets... */
-        LASSERT(!in_irq());
+	/* interleave correctly with closing sockets... */
+	LASSERT(!in_hardirq());
 	read_lock(&ksocknal_data.ksnd_global_lock);
 
         conn = sk->sk_user_data;
