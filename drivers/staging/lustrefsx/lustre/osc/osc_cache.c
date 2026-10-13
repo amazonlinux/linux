@@ -1648,8 +1648,9 @@ static int osc_makes_rpc(struct client_obd *cli, struct osc_object *osc,
 	/* if we have an invalid import we want to drain the queued pages
 	 * by forcing them through rpcs that immediately fail and complete
 	 * the pages.  recovery relies on this to empty the queued pages
-	 * before canceling the locks and evicting down the llite pages */
-	if ((cli->cl_import == NULL || cli->cl_import->imp_invalid))
+	 * before canceling the locks and evicting down the llite pages
+	 */
+	if (!cli->cl_import || test_bit(IMPF_INVALID, cli->cl_import->imp_flags))
 		invalid_import = 1;
 
 	if (cmd & OBD_BRW_WRITE) {
@@ -2134,7 +2135,8 @@ static struct osc_object *osc_next_obj(struct client_obd *cli)
 
 	/* then return all queued objects when we have an invalid import
 	 * so that they get flushed */
-	if (cli->cl_import == NULL || cli->cl_import->imp_invalid) {
+	if (!cli->cl_import ||
+	    test_bit(IMPF_INVALID, cli->cl_import->imp_flags)) {
 		if (!list_empty(&cli->cl_loi_write_list))
 			RETURN(list_to_obj(&cli->cl_loi_write_list,
 					   write_item));
@@ -2297,7 +2299,8 @@ int osc_queue_async_io(const struct lu_env *env, struct cl_io *io,
 	if (oap->oap_magic != OAP_MAGIC)
 		RETURN(-EINVAL);
 
-	if (cli->cl_import == NULL || cli->cl_import->imp_invalid)
+	if (!cli->cl_import ||
+	    test_bit(IMPF_INVALID, cli->cl_import->imp_flags))
 		RETURN(-EIO);
 
 	if (!list_empty(&oap->oap_pending_item) ||
@@ -2762,7 +2765,6 @@ again:
 					   -ext->oe_nr_pages);
 		}
 		/* This extent could be on the full extents list, that's OK */
-		EASSERT(!ext->oe_hp && !ext->oe_urgent, ext);
 		if (!list_empty(&ext->oe_link))
 			list_move_tail(&ext->oe_link, &list);
 		else

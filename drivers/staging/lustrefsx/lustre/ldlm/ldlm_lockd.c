@@ -700,7 +700,7 @@ static int ldlm_handle_ast_error(struct ldlm_lock *lock,
 			 * -ENODEV error is returned by ptl_send_rpc() for
 			 *  new request in such import.
 			 * -SHUTDOWN is returned by ptlrpc_import_delay_req()
-			 *  if imp_invalid is set or obd_no_recov.
+			 *  if imp_invalid is set or OBDF_NO_RECOV.
 			 * Meanwhile there is also check for LUSTRE_IMP_CLOSED
 			 * in ptlrpc_import_delay_req() as well with -EIO code.
 			 * In all such cases errors are ignored.
@@ -2459,7 +2459,7 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
 
 	switch (lustre_msg_get_opc(req->rq_reqmsg)) {
 	case LDLM_BL_CALLBACK:
-		CDEBUG(D_INODE, "blocking ast\n");
+		LDLM_DEBUG(lock, "blocking ast\n");
 		req_capsule_extend(&req->rq_pill, &RQF_LDLM_BL_CALLBACK);
 		if (!ldlm_is_cancel_on_block(lock)) {
 			rc = ldlm_callback_reply(req, 0);
@@ -2471,14 +2471,14 @@ static int ldlm_callback_handler(struct ptlrpc_request *req)
 			ldlm_handle_bl_callback(ns, &dlm_req->lock_desc, lock);
 		break;
 	case LDLM_CP_CALLBACK:
-		CDEBUG(D_INODE, "completion ast\n");
+		LDLM_DEBUG(lock, "completion ast\n");
 		req_capsule_extend(&req->rq_pill, &RQF_LDLM_CP_CALLBACK);
 		rc = ldlm_handle_cp_callback(req, ns, dlm_req, lock);
 		if (!OBD_FAIL_CHECK(OBD_FAIL_LDLM_CANCEL_BL_CB_RACE))
 			ldlm_callback_reply(req, rc);
 		break;
 	case LDLM_GL_CALLBACK:
-		CDEBUG(D_INODE, "glimpse ast\n");
+		LDLM_DEBUG(lock, "glimpse ast\n");
 		req_capsule_extend(&req->rq_pill, &RQF_LDLM_GL_CALLBACK);
 		ldlm_handle_gl_callback(req, ns, dlm_req, lock);
 		break;
@@ -2882,7 +2882,7 @@ static int ldlm_bl_thread_blwi(struct ldlm_bl_pool *blp,
 		count = ldlm_cli_cancel_list_local(&blwi->blwi_head,
 						   blwi->blwi_count,
 						   LCF_BL_AST);
-		ldlm_cli_cancel_list(&blwi->blwi_head, count, NULL,
+		ldlm_cli_cancel_list(&blwi->blwi_head, count, NULL, NULL,
 				     blwi->blwi_flags);
 	} else if (blwi->blwi_lock) {
 		ldlm_handle_bl_callback(blwi->blwi_ns, &blwi->blwi_ld,

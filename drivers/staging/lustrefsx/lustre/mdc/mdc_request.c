@@ -769,7 +769,7 @@ int mdc_set_open_replay_data(struct obd_export *exp,
         LASSERT(body != NULL);
 
 	/* Only if the import is replayable, we set replay_open data */
-	if (och && imp->imp_replayable) {
+	if (och && test_bit(IMPF_REPLAYABLE, imp->imp_flags)) {
 		mod = obd_mod_alloc();
 		if (mod == NULL) {
 			DEBUG_REQ(D_ERROR, open_req,
@@ -1344,7 +1344,7 @@ static int do_mdc_read_folio_remote(void *data, struct folio *folio0)
 	}
 
 	for (nfolios = 1; nfolios < max_pages; nfolios++) {
-		folio = filemap_alloc_folio(gfp, 0);
+		folio = filemap_alloc_folio(gfp, 0, NULL);
 		if (IS_ERR_OR_NULL(folio))
 			break;
 		folio_pool[nfolios] = folio;
@@ -2036,7 +2036,7 @@ static int mdc_ioc_hsm_request(struct obd_export *exp,
 
 	/* Cancel existing locks */
 	count = mdc_hsm_request_lock_to_cancel(exp, hur, &cancels);
-	ldlm_cli_cancel_list(&cancels, count, NULL, 0);
+	ldlm_cli_cancel_list(&cancels, count, NULL, NULL, 0);
 	mdc_pack_body(&req->rq_pill, NULL, 0, 0, -1, 0);
 
 	/* Copy hsm_request struct */

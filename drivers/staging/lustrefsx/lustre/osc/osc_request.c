@@ -903,7 +903,7 @@ static int osc_should_shrink_grant(struct client_obd *client)
 		return 0;
 
 	if (!OCD_HAS_FLAG(&client->cl_import->imp_connect_data, GRANT_SHRINK) ||
-	    client->cl_import->imp_grant_shrink_disabled) {
+	    test_bit(IMPF_GRANT_SHRINK_DISABLED, client->cl_import->imp_flags)) {
 		osc_update_next_shrink(client);
 		return 0;
 	}
@@ -3113,6 +3113,8 @@ int osc_enqueue_base(struct obd_export *exp, struct ldlm_res_id *res_id,
 				 * about the result of the enqueue. */
 				aa->oa_lvb    = NULL;
 				aa->oa_flags  = NULL;
+				/* don't block async enqueue RPCs trying to resend */
+				req->rq_no_delay = req->rq_no_resend = 1;
 			}
 
 			req->rq_interpret_reply = osc_enqueue_interpret;
