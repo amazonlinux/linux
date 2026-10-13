@@ -438,7 +438,7 @@ ll_read_ahead_pages(const struct lu_env *env, struct cl_io *io,
 
 				cl_read_ahead_release(env, &ra);
 
-				rc = cl_io_read_ahead(env, io, page_idx, &ra);
+				rc = cl_io_read_ahead_prep(env, io, page_idx, &ra);
 				if (rc < 0)
 					break;
 
@@ -1985,12 +1985,25 @@ int ll_readpage(struct file *file, struct page *vmpage)
 		 * mentioned above.
 		 */
 		if (folio_index_page(vmpage) >= lcc->lcc_end_index) {
-			result = cl_io_read_ahead(env, io, folio_index_page(vmpage), &ra);
+			result = cl_io_read_ahead_prep(env, io,
+						       folio_index_page(vmpage), &ra);
 			if (result < 0 || folio_index_page(vmpage) > ra.cra_end_idx) {
 				cl_read_ahead_release(env, &ra);
 				unlock_page(vmpage);
 				RETURN(AOP_TRUNCATED_PAGE);
 			}
+		}
+	}
+
+	if (lcc && lcc->lcc_type == LCC_MMAP &&
+	    io->u.ci_fault.ft_index != folio_index_page(vmpage) &&
+	    (vvp_env_io(env)->u.fault.ft_vma->vm_flags & VM_HUGEPAGE)) {
+		result = cl_io_read_ahead_prep(env, io,
+					       folio_index_page(vmpage), &ra);
+		if (result < 0 || folio_index_page(vmpage) > ra.cra_end_idx) {
+			cl_read_ahead_release(env, &ra);
+			unlock_page(vmpage);
+			RETURN(AOP_TRUNCATED_PAGE);
 		}
 	}
 
