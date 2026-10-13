@@ -199,7 +199,6 @@ static inline void truncate_inode_pages_final(struct address_space *map)
 	truncate_inode_pages(map, 0);
 }
 #endif
-
 #ifdef HAVE_U64_CAPABILITY
 #define ll_capability_u32(kcap) \
 	((kcap).val & 0xFFFFFFFF)
@@ -710,7 +709,6 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen,
 	posix_acl_update_mode(inode, mode, acl)
 #define notify_change(ns, de, attr, inode)	notify_change(de, attr, inode)
 #define inode_owner_or_capable(ns, inode)	inode_owner_or_capable(inode)
-#define vfs_create(ns, dir, de, mode, ex)	vfs_create(dir, de, mode, ex)
 #define vfs_mkdir(ns, dir, de, mode)		vfs_mkdir(dir, de, mode)
 #define ll_set_acl(ns, inode, acl, type)	ll_set_acl(inode, acl, type)
 #endif
@@ -721,19 +719,37 @@ static inline void ll_security_release_secctx(char *secdata, u32 seclen,
 # define radix_tree_rcu
 #endif /* HAVE_RADIX_TREE_REPLACE_SLOT_3ARGS */
 
+#if !defined(HAVE_VFS_CREATE_DELEGATE)
+#if !defined(HAVE_USER_NAMESPACE_ARG) && !defined(HAVE_MNT_IDMAP_ARG)
+#define vfs_create(ns, de, mode, di)	\
+	vfs_create(d_inode((de)->d_parent), (de), (mode), !!(di))
+#else
+#define vfs_create(ns, de, mode, di) \
+	vfs_create((ns), d_inode((de)->d_parent), (de), (mode), !!(di))
+#endif
+#endif /* HAVE_VFS_CREATE_DELEGATE */
+
+#ifdef HAVE_VFS_MKDIR_DELEGATE
+#define VFS_MKDIR_DELEGATE(id, inode, dentry, mode) \
+	vfs_mkdir((id), (inode), (dentry), (mode), NULL)
+#else
+#define VFS_MKDIR_DELEGATE(id, inode, dentry, mode) \
+	vfs_mkdir((id), (inode), (dentry), (mode))
+#endif /* HAVE_VFS_MKDIR_DELEGATE */
+
 #ifdef HAVE_IOPS_MKDIR_RETURNS_DENTRY
 #define ll_vfs_mkdir(id, inode, dentry, mode)	\
-	vfs_mkdir((id), (inode), (dentry), (mode))
+	VFS_MKDIR_DELEGATE((id), (inode), (dentry), (mode))
 #else
 #define ll_vfs_mkdir(i, inode, dentry, mode) ({				\
-	int rc = vfs_mkdir((i), (inode), (dentry), (mode));		\
+	int rc = VFS_MKDIR_DELEGATE((i), (inode), (dentry), (mode));	\
 	if (rc) {							\
 		dput((dentry));						\
 		dentry = ERR_PTR(rc);					\
 	}								\
 	(dentry);							\
 })
-#endif
+#endif /* HAVE_IOPS_MKDIR_RETURNS_DENTRY */
 
 #ifdef HAVE_RADIX_TREE_REPLACE_SLOT_3ARGS
 # define radix_tree_rcu	__rcu
@@ -754,6 +770,43 @@ static inline int inode_generic_drop(struct inode *inode)
 {
 	return generic_drop_inode(inode);
 }
+#endif
+
+#ifndef HAVE_ILOOKUP5_NOWAIT_ISNEW
+#define ilookup5_nowait(sb, hash, fn, data, isnew) \
+	ilookup5_nowait((sb), (hash), (fn), (data))
+#endif
+
+#ifndef blk_queue_rot
+#define blk_queue_rot(q)	(!blk_queue_nonrot((q)))
+#endif
+
+#ifndef HAVE_POSIX_ACL_TO_XATTR_ALLOC_BUFFER
+static inline void *
+compat_posix_acl_to_xattr(struct user_namespace *user_ns,
+			   const struct posix_acl *acl,
+			   size_t *sizep, gfp_t gfp)
+{
+	size_t acl_sz = posix_acl_xattr_size(acl->a_count);
+	void *value = NULL;
+	int rc;
+
+	*sizep = acl_sz;
+	if (acl_sz > 0)
+		value = kmalloc(acl_sz, gfp);
+	if (!value)
+		return NULL;
+
+	rc = posix_acl_to_xattr(user_ns, acl, value, acl_sz);
+	if (rc < 0) {
+		kfree(value);
+		return NULL;
+	}
+
+	return value;
+}
+#define posix_acl_to_xattr(ns, acl, sz, gfp) \
+	compat_posix_acl_to_xattr((ns), (acl), (sz), (gfp))
 #endif
 
 #endif /* _LUSTRE_COMPAT_H */
