@@ -403,25 +403,36 @@ kefalnd_get_idle_tx(struct kefa_ni *efa_ni)
 	return tx;
 }
 
+/* Must be called after setting the Tx resp_id */
 static inline u64
-kefalnd_tx_to_idx(struct kefa_tx *tx)
+kefalnd_calc_tx_cookie(struct kefa_tx *tx)
 {
-	return tx - (struct kefa_tx *)tx->tx_pool->obj_arr;
+	u32 idx = tx - (struct kefa_tx *)tx->tx_pool->obj_arr;
+
+	return EFALND_TX_COOKIE(atomic_read(&tx->resp_id), idx);
 }
 
 static inline struct kefa_tx *
-kefalnd_get_tx_by_idx(struct kefa_ni *efa_ni, u64 tx_idx)
+kefalnd_finalize_response_get_tx(struct kefa_ni *efa_ni, u64 cookie)
 {
 	struct kefa_obj_pool *tx_pool = &efa_ni->tx_pool;
+	u32 tx_idx = EFALND_TX_COOKIE_INDEX(cookie);
+	u32 exp_id = EFALND_TX_COOKIE_ID(cookie);
+	struct kefa_tx *tx;
 
 	if (tx_idx >= tx_pool->pool_size) {
 		EFA_DEV_ERR(efa_ni->efa_dev,
-			    "received out of range TX[%llu] max[%u]\n",
+			    "received out of range TX[%u] max[%u]\n",
 			    tx_idx, tx_pool->pool_size);
 		return NULL;
 	}
 
-	return (struct kefa_tx *)tx_pool->obj_arr + tx_idx;
+	tx = (struct kefa_tx *)tx_pool->obj_arr + tx_idx;
+
+	if (atomic_cmpxchg_relaxed(&tx->resp_id, exp_id, 0) != exp_id)
+		return NULL;
+
+	return tx;
 }
 
 static inline void
@@ -552,7 +563,6 @@ __must_hold(&conn->lock)
 		}
 
 		atomic64_set(&tx->send_time, now);
-		atomic_inc(&tx->ref_cnt);
 		list_move_tail(&tx->list_node, &conn->active_tx);
 		rc = ib_post_send(qp->ib_qp, wr,
 				  (const struct ib_send_wr **)&bad);
@@ -565,7 +575,6 @@ __must_hold(&conn->lock)
 			}
 
 			atomic64_set(&tx->send_time, 0);
-			atomic_dec(&tx->ref_cnt);
 			list_move(&tx->list_node, &conn->pend_tx);
 
 			/* TODO - TX might stay stuck on connection.
@@ -586,9 +595,17 @@ kefalnd_launch_tx(struct kefa_conn *conn, struct kefa_tx *tx)
 	if (!list_empty(&tx->list_node))
 		list_del_init(&tx->list_node);
 
+	atomic_inc(&tx->ref_cnt);
 	list_add_tail(&tx->list_node, &conn->pend_tx);
 
-	tx->conn = conn;
+	/* The TX takes its own reference on the connection the first time it
+	 * adopts one, released in Tx done. Re-launches of a TX that
+	 * already holds the connection skip this.
+	 */
+	if (!tx->conn) {
+		kefalnd_conn_incref(conn);
+		tx->conn = conn;
+	}
 
 	/* TODO - consider all pending connections. i.e. connection arbitration */
 	if (conn->state == KEFA_CONN_ACTIVE)
@@ -879,21 +896,12 @@ kefalnd_tx_done(struct kefa_tx *tx)
 		return;
 	}
 
-	if (tx->conn) {
-		spin_lock_irqsave(&tx->conn->lock, flags);
-		if (!list_empty(&tx->list_node))
-			list_del_init(&tx->list_node);
-
-		spin_unlock_irqrestore(&tx->conn->lock, flags);
-	}
-
 	CDEBUG(D_NET, "Completed TX type[%s] from[%s] to[%s]\n",
 	       kefalnd_msgtype2str(tx->type),
 	       tx->conn ? libcfs_nidstr(&tx->conn->local_nid) : "NA",
 	       tx->conn ? libcfs_nidstr(&tx->conn->remote_nid) : "NA");
 
 	LASSERT(atomic_read(&tx->ref_cnt) == 0);
-	LASSERT(list_empty(&tx->list_node));
 	atomic64_set(&tx->send_time, 0);
 	kefalnd_unmap_tx(tx);
 
@@ -915,7 +923,20 @@ kefalnd_tx_done(struct kefa_tx *tx)
 	}
 
 	tx->hstatus = LNET_MSG_STATUS_OK;
-	tx->conn = NULL;
+
+	/* All uses of the connection are done: unlink the TX and release the
+	 * reference it held on the connection.
+	 */
+	if (tx->conn) {
+		spin_lock_irqsave(&tx->conn->lock, flags);
+		if (!list_empty(&tx->list_node))
+			list_del_init(&tx->list_node);
+		spin_unlock_irqrestore(&tx->conn->lock, flags);
+
+		kefalnd_conn_decref(tx->conn);
+		tx->conn = NULL;
+	}
+
 	tx->dmadir = DMA_BIDIRECTIONAL;
 	tx->type = 0;
 
@@ -935,7 +956,7 @@ kefalnd_abort_tx(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus, int status)
 	tx->status = status;
 
 	/* Make sure response message refcount decreased only once */
-	if (!atomic_xchg_relaxed(&tx->waiting_resp, false))
+	if (!atomic_xchg_relaxed(&tx->resp_id, 0))
 		return;
 
 	if (atomic_dec_and_test(&tx->ref_cnt))
@@ -955,7 +976,7 @@ kefalnd_force_cancel_tx(struct kefa_tx *tx, enum lnet_msg_hstatus hstatus,
 	tx->hstatus = hstatus;
 	tx->status = status;
 
-	atomic_set(&tx->waiting_resp, false);
+	atomic_set(&tx->resp_id, 0);
 	atomic_set(&tx->ref_cnt, 0);
 
 	kefalnd_tx_done(tx);
@@ -992,11 +1013,11 @@ kefalnd_fill_getr_msg(struct kefa_conn *conn, struct kefa_tx *tx,
 	if (proto_ver != EFALND_PROTO_VER_1) {
 		body_nob = sizeof(struct kefa_getr_req_msg_v2);
 		lnet_hdr_to_nid16(hdr, &msg->msg_v2.u.getr_req.hdr);
-		msg->msg_v2.u.getr_req.sink_cookie = kefalnd_tx_to_idx(tx);
+		msg->msg_v2.u.getr_req.sink_cookie = kefalnd_calc_tx_cookie(tx);
 	} else {
 		body_nob = sizeof(struct kefa_getr_req_msg);
 		lnet_hdr_to_nid4(hdr, &msg->msg_v1.u.getr_req.hdr);
-		msg->msg_v1.u.getr_req.sink_cookie = kefalnd_tx_to_idx(tx);
+		msg->msg_v1.u.getr_req.sink_cookie = kefalnd_calc_tx_cookie(tx);
 	}
 
 	kefalnd_init_tx_protocol_msg(tx, conn, EFALND_MSG_GETR_REQ, body_nob, proto_ver);
@@ -1012,12 +1033,12 @@ kefalnd_fill_putr_msg(struct kefa_conn *conn, struct kefa_tx *tx,
 	if (proto_ver != EFALND_PROTO_VER_1) {
 		body_nob = sizeof(struct kefa_putr_req_msg_v2);
 		lnet_hdr_to_nid16(hdr, &msg->msg_v2.u.putr_req.hdr);
-		msg->msg_v2.u.putr_req.cookie = kefalnd_tx_to_idx(tx);
+		msg->msg_v2.u.putr_req.cookie = kefalnd_calc_tx_cookie(tx);
 		msg->msg_v2.u.putr_req.rdma_desc = tx->rdma_desc;
 	} else {
 		body_nob = sizeof(struct kefa_putr_req_msg);
 		lnet_hdr_to_nid4(hdr, &msg->msg_v1.u.putr_req.hdr);
-		msg->msg_v1.u.putr_req.cookie = kefalnd_tx_to_idx(tx);
+		msg->msg_v1.u.putr_req.cookie = kefalnd_calc_tx_cookie(tx);
 		msg->msg_v1.u.putr_req.rdma_desc = tx->rdma_desc;
 	}
 
@@ -1116,8 +1137,8 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 		return -ENOMEM;
 	}
 
-	conn = kefalnd_lookup_or_init_conn(efa_ni, &target->nid,
-					   KEFA_CONN_TYPE_INITIATOR);
+	conn = kefalnd_get_or_init_conn(efa_ni, &target->nid,
+					KEFA_CONN_TYPE_INITIATOR);
 	if (IS_ERR(conn)) {
 		EFA_DEV_DEBUG(efa_ni->efa_dev,
 			      "can't establish connection to peer NI[%s]\n",
@@ -1164,11 +1185,11 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 				    libcfs_nidstr(&target->nid), rc);
 
 			kefalnd_tx_done(tx);
-			return -EIO;
+			rc = -EIO;
+			goto out;
 		}
 
 		/* setup the message */
-		kefalnd_fill_getr_msg(conn, tx, hdr, proto_ver);
 		tx->lntmsg[1] = lnet_create_reply_msg(ni, lntmsg);
 		if (tx->lntmsg[1] == NULL) {
 			EFA_DEV_ERR(efa_ni->efa_dev, "can't create reply for GET for peer NI[%s]\n",
@@ -1176,15 +1197,18 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 
 			tx->hstatus = LNET_MSG_STATUS_LOCAL_ERROR;
 			kefalnd_tx_done(tx);
-			return -EIO;
+			rc = -EIO;
+			goto out;
 		}
 
+		atomic_set(&tx->resp_id, EFALND_RESP_ID(++tx->resp_counter, 1));
+		kefalnd_fill_getr_msg(conn, tx, hdr, proto_ver);
 		/* finalise lntmsg[0,1] on completion */
 		tx->lntmsg[0] = lntmsg;
 		atomic_inc(&tx->ref_cnt); /* wait for GETR_{ACK,NACK} */
-		atomic_set(&tx->waiting_resp, true);
 		kefalnd_launch_tx(conn, tx);
-		return 0;
+		rc = 0;
+		goto out;
 
 	case LNET_MSG_REPLY:
 	case LNET_MSG_PUT:
@@ -1208,17 +1232,19 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 				    libcfs_nidstr(&target->nid), rc);
 
 			kefalnd_tx_done(tx);
-			return -EIO;
+			rc = -EIO;
+			goto out;
 		}
 
 		/* setup the message */
+		atomic_set(&tx->resp_id, EFALND_RESP_ID(++tx->resp_counter, 1));
 		kefalnd_fill_putr_msg(conn, tx, hdr, proto_ver);
 		/* finalise lntmsg[0,1] on completion */
 		tx->lntmsg[0] = lntmsg;
 		atomic_inc(&tx->ref_cnt); /* wait for PUT_DONE */
-		atomic_set(&tx->waiting_resp, true);
 		kefalnd_launch_tx(conn, tx);
-		return 0;
+		rc = 0;
+		goto out;
 	}
 
 	/* SEND based (non-RDMA flow) */
@@ -1228,8 +1254,14 @@ kefalnd_send(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg)
 	tx->lntmsg[0] = lntmsg;
 
 	kefalnd_launch_tx(conn, tx);
+	rc = 0;
 
-	return 0;
+out:
+	/* Release the connection reference taken by the lookup above. The TX,
+	 * if launched, holds its own reference for its lifetime.
+	 */
+	kefalnd_conn_decref(conn);
+	return rc;
 }
 
 static void
@@ -1406,12 +1438,12 @@ kefalnd_handle_getr_req(struct kefa_ni *efa_ni, struct kefa_conn *conn,
 
 	getr_ack = kefalnd_get_getr_ack_from_msg(tx->msg);
 	getr_ack->sink_cookie = sink_cookie;
-	getr_ack->src_cookie = kefalnd_tx_to_idx(tx);
+
+	atomic_set(&tx->resp_id, EFALND_RESP_ID(++tx->resp_counter, 1));
+	getr_ack->src_cookie = kefalnd_calc_tx_cookie(tx);
 	getr_ack->rdma_desc = tx->rdma_desc;
 
 	atomic_inc(&tx->ref_cnt); /* Wait for GETR_DONE */
-	atomic_set(&tx->waiting_resp, true);
-
 	kefalnd_launch_tx(conn, tx);
 	return 0;
 }
@@ -1500,6 +1532,8 @@ kefalnd_free_rx(struct kefa_rx *rx)
 	struct kefa_qp *qp = rx->qp;
 	unsigned long flags;
 
+	rx->conn = NULL;
+
 	spin_lock_irqsave(&qp->rq_lock, flags);
 	qp->rq_space++;
 	list_move_tail(&rx->list_node, &qp->free_rx);
@@ -1523,14 +1557,15 @@ kefalnd_recv(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg,
 
 	msg = rx->msg;
 	kefalnd_get_srcnid_from_msg(msg, &nid);
-	conn = kefalnd_lookup_conn(efa_ni, &nid, KEFA_CONN_TYPE_RESPONDER);
-	if (IS_ERR_OR_NULL(conn)) {
+	if (!rx->conn) {
 		EFA_DEV_ERR(efa_ni->efa_dev,
-			    "failed to get connection for RX from peer NI[%s]. err[%ld]\n",
-			    libcfs_nidstr(&nid), PTR_ERR(conn));
+			    "RX with no connection to peer NI[%s]\n",
+			     libcfs_nidstr(&nid));
 
 		return -ENOTCONN;
 	}
+
+	conn = rx->conn;
 
 	switch (msg->hdr.type) {
 	default:
@@ -1580,6 +1615,8 @@ kefalnd_recv(struct lnet_ni *ni, void *private, struct lnet_msg *lntmsg,
 		break;
 	}
 
+	/* Release the connection reference stashed on the RX by handle_rx. */
+	kefalnd_conn_decref(conn);
 	kefalnd_free_rx(rx);
 	return rc;
 }
@@ -1673,15 +1710,10 @@ kefalnd_handle_completion(struct kefa_ni *efa_ni,
 			  struct kefa_completion_msg *completion)
 {
 	int status = kefalnd_efa_status_to_errno(completion->status);
-	u64 tx_idx = completion->cookie;
 	struct kefa_tx *tx;
 
-	tx = kefalnd_get_tx_by_idx(efa_ni, tx_idx);
+	tx = kefalnd_finalize_response_get_tx(efa_ni, completion->cookie);
 	if (!tx)
-		return;
-
-	/* Response handling might race with TX abort, first 'wins' */
-	if (!atomic_xchg_relaxed(&tx->waiting_resp, false))
 		return;
 
 	if (tx->status == 0) { /* success so far */
@@ -1702,12 +1734,8 @@ kefalnd_handle_getr_ack(struct kefa_ni *efa_ni,
 	struct kefa_conn *conn;
 	struct kefa_tx *tx;
 
-	tx = kefalnd_get_tx_by_idx(efa_ni, getr_ack->sink_cookie);
+	tx = kefalnd_finalize_response_get_tx(efa_ni, getr_ack->sink_cookie);
 	if (!tx)
-		return -EINVAL;
-
-	/* Response handling might race with TX abort, first 'wins' */
-	if (!atomic_xchg_relaxed(&tx->waiting_resp, false))
 		return -EINVAL;
 
 	conn = tx->conn;
@@ -1731,7 +1759,7 @@ kefalnd_handle_getr_ack(struct kefa_ni *efa_ni,
 	return 0;
 }
 
-static void
+static int
 kefalnd_handle_lnet_request_msg(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 {
 	struct kefa_msg *msg = rx->msg;
@@ -1774,14 +1802,26 @@ kefalnd_handle_lnet_request_msg(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	rc = lnet_parse(efa_ni->lnet_ni, &hdr, &hdr.src_nid, rx, rdma_req);
 	if (rc < 0)
 		EFA_DEV_ERR(efa_ni->efa_dev, "error parsing lnet msg\n");
+
+	return rc;
 }
 
 static void
 kefalnd_handle_rx(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 {
 	struct kefa_msg *msg = rx->msg;
+	struct lnet_nid srcnid;
 	bool free_rx = false;
 	int rc = 0;
+
+	/* Look the responder connection up once and stash it on the RX,
+	 * refreshing its use time. The reference is released once this message
+	 * is done with: here for messages handled entirely within handle_rx,
+	 * or in recv() for request messages passed up to LNet.
+	 */
+	kefalnd_get_srcnid_from_msg(msg, &srcnid);
+	rx->conn = kefalnd_get_conn(efa_ni, &srcnid,
+				    KEFA_CONN_TYPE_RESPONDER, true);
 
 	switch (msg->hdr.type) {
 	default:
@@ -1795,7 +1835,15 @@ kefalnd_handle_rx(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 	case EFALND_MSG_GETR_REQ:
 	case EFALND_MSG_PUTR_REQ:
 	case EFALND_MSG_IMMEDIATE:
-		kefalnd_handle_lnet_request_msg(efa_ni, rx);
+		if (!rx->conn) {
+			EFA_DEV_ERR(efa_ni->efa_dev,
+				    "failed to get connection for RX from peer NI[%s]\n",
+				    libcfs_nidstr(&srcnid));
+			rc = -ENOTCONN;
+			break;
+		}
+
+		rc = kefalnd_handle_lnet_request_msg(efa_ni, rx);
 		break;
 
 	case EFALND_MSG_GETR_ACK:
@@ -1819,8 +1867,12 @@ kefalnd_handle_rx(struct kefa_ni *efa_ni, struct kefa_rx *rx)
 		break;
 	}
 
-	if (free_rx || rc < 0)
+	if (free_rx || rc < 0) {
+		if (rx->conn)
+			kefalnd_conn_decref(rx->conn);
+
 		kefalnd_free_rx(rx);
+	}
 
 	kefalnd_refill_rx(rx->qp, 1);
 }
@@ -1945,19 +1997,40 @@ bad_pkt:
 	return -EPROTO;
 }
 
+static struct kefa_rx *
+kefalnd_get_rx_from_wc(struct kefa_ni *efa_ni, struct ib_wc *wc)
+{
+	u32 rx_idx = EFALND_RX_WRID_INDEX(wc->wr_id);
+	u32 epoch = EFALND_RX_WRID_EPOCH(wc->wr_id);
+	struct kefa_qp *qp = wc->qp->qp_context;
+
+	if (epoch != (u32)efa_ni->ni_epoch)
+		return NULL;
+
+	if (rx_idx >= EFALND_RX_MSGS(qp))
+		return NULL;
+
+	return qp->rx_msgs + rx_idx;
+}
+
 static void
 kefalnd_rx_complete(struct kefa_ni *efa_ni, struct ib_wc *wc)
 {
 	struct kefa_rx *rx;
 	int nob, rc;
 
-	rx = (void *)wc->wr_id;
+	rx = kefalnd_get_rx_from_wc(efa_ni, wc);
+	if (!rx)
+		return;
+
 	nob = wc->byte_len;
-	if (!rx || nob == 0) {
+	if (nob == 0) {
 		/* Reaching here means FW or LND did something bad */
 		CERROR("cpu[%u] received bad RX handle with status[%u] nob[%u]",
 		       smp_processor_id(), wc->status, nob);
-		return;
+
+		rx->rx_nob = 0;
+		goto failed;
 	}
 
 	if (wc->status != IB_WC_SUCCESS) {
@@ -1965,6 +2038,7 @@ kefalnd_rx_complete(struct kefa_ni *efa_ni, struct ib_wc *wc)
 			    "QP[%u] received RX completion with err[%u]\n",
 			    wc->qp->qp_num, wc->status);
 
+		rx->rx_nob = 0;
 		goto failed;
 	}
 
@@ -1980,6 +2054,7 @@ kefalnd_rx_complete(struct kefa_ni *efa_ni, struct ib_wc *wc)
 
 failed:
 	kefalnd_free_rx(rx);
+	kefalnd_refill_rx(rx->qp, 1);
 }
 
 static void
@@ -2099,12 +2174,19 @@ again:
 static void
 kefalnd_destroy_all_conns(struct kefa_ni *efa_ni)
 {
-	struct kefa_conn *conn;
+	struct kefa_conn *conn, *temp_conn;
 	struct hlist_node *tmp;
 	int bkt;
 
 	hash_for_each_safe(efa_ni->conns, bkt, tmp, conn, ni_node) {
 		hlist_del_init(&conn->ni_node);
+		kefalnd_destroy_conn(conn, LNET_MSG_STATUS_LOCAL_ABORTED,
+				     -ENODEV);
+	}
+
+	list_for_each_entry_safe(conn, temp_conn, &efa_ni->cleanup_conns,
+				 cleanup_node) {
+		list_del_init(&conn->cleanup_node);
 		kefalnd_destroy_conn(conn, LNET_MSG_STATUS_LOCAL_ABORTED,
 				     -ENODEV);
 	}
@@ -2318,6 +2400,7 @@ static int
 kefalnd_init_rx_msgs(struct kefa_qp *qp)
 {
 	struct kefa_dev *efa_dev = qp->efa_dev;
+	struct kefa_ni *efa_ni = efa_dev->efa_ni;
 	struct kefa_rx *rx;
 	int i;
 
@@ -2349,7 +2432,7 @@ kefalnd_init_rx_msgs(struct kefa_qp *qp)
 
 		rx->wrq.sg_list = &rx->sge;
 		rx->wrq.num_sge = 1;
-		rx->wrq.wr_id = (u64)rx;
+		rx->wrq.wr_id = EFALND_RX_WRID(efa_ni->ni_epoch, i);
 		INIT_LIST_HEAD(&rx->list_node);
 		list_add_tail(&rx->list_node, &qp->free_rx);
 	}
@@ -2406,6 +2489,7 @@ kefalnd_create_qp(struct kefa_dev *efa_dev, struct kefa_qp *qp,
 	init_attr.send_cq = cq->ib_cq;
 	init_attr.recv_cq = cq->ib_cq;
 	init_attr.sq_sig_type = IB_SIGNAL_ALL_WR;
+	init_attr.qp_context = qp;
 
 	ib_qp = ib_create_qp(efa_dev->pd, &init_attr);
 	if (IS_ERR(ib_qp)) {
@@ -2785,7 +2869,7 @@ failed:
 }
 
 static void
-kefalnd_dev_destroy(struct kefa_dev *efa_dev, bool put_module)
+kefalnd_dev_destroy(struct kefa_dev *efa_dev)
 {
 	kefalnd_destroy_fmr_pool(&efa_dev->fmr_pool);
 
@@ -2798,22 +2882,15 @@ kefalnd_dev_destroy(struct kefa_dev *efa_dev, bool put_module)
 	if (!IS_ERR_OR_NULL(efa_dev->pd))
 		ib_dealloc_pd(efa_dev->pd);
 
-	if (put_module && efa_dev->ib_dev)
-		module_put(efa_dev->ib_dev->ops.owner);
-
-	if (efa_dev->ib_dev)
-		ib_device_put(efa_dev->ib_dev);
-
 	LIBCFS_FREE(efa_dev, sizeof(*efa_dev));
 }
 
 static struct kefa_dev *
-kefalnd_dev_init(struct kefa_ni *efa_ni, char *ifname, uint32_t ip_addr)
+kefalnd_dev_init(struct kefa_ni *efa_ni, struct ib_device *ibdev, uint32_t ip_addr)
 {
 	struct lnet_ioctl_config_efalnd_tunables *tunables;
 	struct lnet_ni *lnet_ni = efa_ni->lnet_ni;
 	struct kefa_dev *efa_dev = NULL;
-	bool took_module_ref = false;
 	int cq_depth, qp_depth;
 	int dev_numa_node, rc;
 
@@ -2824,28 +2901,17 @@ kefalnd_dev_init(struct kefa_ni *efa_ni, char *ifname, uint32_t ip_addr)
 		return ERR_PTR(-ENOMEM);
 
 	memset(efa_dev, 0, sizeof(*efa_dev));
-	strscpy(efa_dev->ifname, ifname, sizeof(efa_dev->ifname));
+	strscpy(efa_dev->ifname, dev_name(&ibdev->dev),
+		sizeof(efa_dev->ifname));
 	efa_dev->efa_ni = efa_ni;
 	efa_dev->ifip = ip_addr;
-	efa_dev->ib_dev = ib_device_get_by_name(efa_dev->ifname, RDMA_DRIVER_EFA);
-	if (!efa_dev->ib_dev) {
-		CERROR("Failed to find EFA IB device %s\n", efa_dev->ifname);
-		rc = -ENODEV;
-		goto failed;
-	}
+	efa_dev->ib_dev = ibdev;
 
 	if (!efa_dev->ib_dev->kverbs_provider) {
 		EFA_DEV_ERR(efa_dev, "EFA driver does not support Kverbs\n");
 		rc = -EINVAL;
 		goto failed;
 	}
-
-	if (!try_module_get(efa_dev->ib_dev->ops.owner)) {
-		EFA_DEV_ERR(efa_dev, "Failed to take reference on EFA driver\n");
-		rc = -ENODEV;
-		goto failed;
-	}
-	took_module_ref = true;
 
 	rc = kefalnd_dev_query(efa_dev);
 	if (rc)
@@ -2891,22 +2957,8 @@ kefalnd_dev_init(struct kefa_ni *efa_ni, char *ifname, uint32_t ip_addr)
 	return efa_dev;
 
 failed:
-	kefalnd_dev_destroy(efa_dev, took_module_ref);
+	kefalnd_dev_destroy(efa_dev);
 	return ERR_PTR(rc);
-}
-
-static struct kefa_dev *
-kefalnd_dev_search(char *ifname)
-{
-	struct kefa_ni *efa_ni;
-
-	list_for_each_entry(efa_ni, &kefalnd.efa_ni_list, lnd_node) {
-		if (strncmp(efa_ni->efa_dev->ifname, ifname,
-			    sizeof(efa_ni->efa_dev->ifname)) == 0)
-			return efa_ni->efa_dev;
-	}
-
-	return NULL;
 }
 
 static int
@@ -2975,6 +3027,75 @@ static void kefalnd_create_efa_nid(struct kefa_ni *efa_ni)
 	ni_nid->nid_size = 0;
 }
 
+#ifdef HAVE_INT_IB_CLIENT_ADD
+static int kefalnd_ib_client_add(struct ib_device *ibdev)
+#else
+static void kefalnd_ib_client_add(struct ib_device *ibdev)
+#endif
+{
+	struct kefalnd_ib_dev_entry *entry;
+
+	LIBCFS_ALLOC(entry, sizeof(*entry));
+	if (!entry)
+#ifdef HAVE_INT_IB_CLIENT_ADD
+		return -ENOMEM;
+#else
+		return;
+#endif
+
+	entry->ibdev = ibdev;
+	mutex_lock(&kefalnd.ib_devs_mutex);
+	list_add_tail(&entry->node, &kefalnd.ib_devs);
+	mutex_unlock(&kefalnd.ib_devs_mutex);
+#ifdef HAVE_INT_IB_CLIENT_ADD
+	return 0;
+#endif
+}
+
+static void kefalnd_ib_client_remove(struct ib_device *ibdev, void *data)
+{
+	struct kefalnd_ib_dev_entry *entry, *tmp;
+
+	mutex_lock(&kefalnd.ib_devs_mutex);
+	list_for_each_entry_safe(entry, tmp, &kefalnd.ib_devs, node) {
+		if (entry->ibdev == ibdev) {
+			WARN_ONCE(entry->efa_ni,
+				  "efalnd: removing device %s with active NI\n",
+				  dev_name(&ibdev->dev));
+			list_del(&entry->node);
+			LIBCFS_FREE(entry, sizeof(*entry));
+			break;
+		}
+	}
+	mutex_unlock(&kefalnd.ib_devs_mutex);
+}
+
+static struct ib_client kefalnd_ib_client = {
+	.name	= "kefalnd",
+	.add	= kefalnd_ib_client_add,
+	.remove	= kefalnd_ib_client_remove,
+};
+
+/**
+ * kefalnd_find_ib_dev_entry - find an IB device entry by name
+ * @name: RDMA device name (e.g. "efa_0")
+ *
+ * Returns the entry or NULL.
+ */
+struct kefalnd_ib_dev_entry *
+kefalnd_find_ib_dev_entry(const char *name)
+__must_hold(&kefalnd.ib_devs_mutex)
+{
+	struct kefalnd_ib_dev_entry *entry;
+
+	list_for_each_entry(entry, &kefalnd.ib_devs, node) {
+		if (strncmp(dev_name(&entry->ibdev->dev), name,
+			    KEFA_IFNAME_SIZE) == 0)
+			return entry;
+	}
+	return NULL;
+}
+
 static void
 kefalnd_base_shutdown(void)
 {
@@ -2984,6 +3105,8 @@ kefalnd_base_shutdown(void)
 
 	CDEBUG(D_MALLOC, "Before LND cleanup: kmem[%lld]\n",
 	       libcfs_kmem_read());
+
+	ib_unregister_client(&kefalnd_ib_client);
 
 	kefalnd.shutdown = true;
 
@@ -3028,20 +3151,21 @@ kefalnd_base_startup(void)
 	/* take a reference count until we clear all module resources */
 	if (!try_module_get(THIS_MODULE)) {
 		rc = -ENETDOWN;
-		goto failed;
+		goto err;
 	}
 
 	memset(&kefalnd, 0, sizeof(kefalnd));
-	INIT_LIST_HEAD(&kefalnd.efa_ni_list);
+	INIT_LIST_HEAD(&kefalnd.ib_devs);
+	mutex_init(&kefalnd.ib_devs_mutex);
 	rc = rhashtable_init(&kefalnd.peer_ni, &peer_ni_params);
 	if (rc)
-		goto failed;
+		goto err_module;
 
 	/* allocate a shceduler per NUMA node (cpt) */
 	kefalnd.scheds = cfs_percpt_alloc(lnet_cpt_table(), sizeof(*sched));
 	if (!kefalnd.scheds) {
 		rc = -ENOMEM;
-		goto hash_failed;
+		goto err_hash;
 	}
 
 	cfs_percpt_for_each(sched, i, kefalnd.scheds) {
@@ -3068,7 +3192,7 @@ kefalnd_base_startup(void)
 	kefalnd.cm_daemons = cfs_percpt_alloc(lnet_cpt_table(), sizeof(*cm_daemon));
 	if (!kefalnd.cm_daemons) {
 		rc = -ENOMEM;
-		goto hash_failed;
+		goto err_sched;
 	}
 
 	cfs_percpt_for_each(cm_daemon, i, kefalnd.cm_daemons) {
@@ -3082,16 +3206,23 @@ kefalnd_base_startup(void)
 	CDEBUG(D_MALLOC, "After LND startup: kmem[%lld]\n",
 	       libcfs_kmem_read());
 
+	rc = ib_register_client(&kefalnd_ib_client);
+	if (rc)
+		goto err_cm;
+
 	kefalnd.init_state = EFALND_INIT_ALL;
 	kefalnd.shutdown = false;
 	return 0;
 
-hash_failed:
+err_cm:
+	cfs_percpt_free(kefalnd.cm_daemons);
+err_sched:
+	cfs_percpt_free(kefalnd.scheds);
+err_hash:
 	rhashtable_destroy(&kefalnd.peer_ni);
-failed:
-	if (kefalnd.scheds)
-		cfs_percpt_free(kefalnd.scheds);
-
+err_module:
+	module_put(THIS_MODULE);
+err:
 	return rc;
 }
 
@@ -3100,6 +3231,8 @@ kefalnd_shutdown(struct lnet_ni *ni)
 {
 	struct kefa_ni *efa_ni = ni->ni_data;
 	struct kefa_dev *efa_dev = efa_ni->efa_dev;
+	struct kefalnd_ib_dev_entry *ib_entry;
+	struct ib_device *ibdev;
 
 	LASSERT(kefalnd.init_state == EFALND_INIT_ALL);
 
@@ -3116,29 +3249,43 @@ kefalnd_shutdown(struct lnet_ni *ni)
 	kefalnd_destroy_tx_pool(efa_ni);
 	kefalnd_destroy_all_conns(efa_ni);
 
-	/* Remove the underlaying device if exists */
-	if (efa_dev)
-		kefalnd_dev_destroy(efa_dev, true);
+	/* Unbind NI from the device entry */
+	mutex_lock(&kefalnd.ib_devs_mutex);
+	ib_entry = kefalnd_find_ib_dev_entry(ni->ni_interface);
+	if (ib_entry && ib_entry->efa_ni == efa_ni)
+		ib_entry->efa_ni = NULL;
+	mutex_unlock(&kefalnd.ib_devs_mutex);
 
-	if (!list_empty(&efa_ni->lnd_node))
-		list_del_init(&efa_ni->lnd_node);
+	/* Release device resources */
+	if (efa_dev) {
+		ibdev = efa_dev->ib_dev;
+		kefalnd_dev_destroy(efa_dev);
+		module_put(ibdev->ops.owner);
+		ib_device_put(ibdev);
+	}
 
 	/* remove the NI itself */
 	ni->ni_data = NULL;
+
+	if (efa_ni->initialized)
+		kefalnd.ni_count--;
+
 	LIBCFS_FREE(efa_ni, sizeof(*efa_ni));
 
 	CDEBUG(D_MALLOC, "After NI[%s] cleanup: kmem[%lld]\n",
 	       libcfs_nidstr(&ni->ni_nid), libcfs_kmem_read());
 
 	/* if there are no more NIs - destroy the global efalnd */
-	if (list_empty(&kefalnd.efa_ni_list))
+	if (kefalnd.ni_count == 0)
 		kefalnd_base_shutdown();
 }
 
 static int
 kefalnd_startup(struct lnet_ni *ni)
 {
+	struct kefalnd_ib_dev_entry *ib_entry;
 	struct kefa_dev *efa_dev;
+	struct ib_device *ibdev;
 	struct kefa_ni *efa_ni;
 	char *ifname;
 	u32 ip_addr;
@@ -3152,6 +3299,12 @@ kefalnd_startup(struct lnet_ni *ni)
 
 	CDEBUG(D_MALLOC, "Before NI startup: kmem[%lld]\n", libcfs_kmem_read());
 
+	if (!ni->ni_interface) {
+		CERROR("Missing interface name\n");
+		return -EINVAL;
+	}
+	ifname = ni->ni_interface;
+
 	LIBCFS_ALLOC(efa_ni, sizeof(*efa_ni));
 	if (!efa_ni) {
 		CERROR("Failed to allocate memory for EFA network\n");
@@ -3164,16 +3317,8 @@ kefalnd_startup(struct lnet_ni *ni)
 	efa_ni->ni_epoch = ktime_get_real_ns();
 	hash_init(efa_ni->conns);
 	rwlock_init(&efa_ni->conn_lock);
-	INIT_LIST_HEAD(&efa_ni->lnd_node);
+	INIT_LIST_HEAD(&efa_ni->cleanup_conns);
 	INIT_LIST_HEAD(&efa_ni->cm_node);
-
-	if (ni->ni_interface) {
-		ifname = ni->ni_interface;
-	} else {
-		CERROR("Missing interface name\n");
-		rc = -EINVAL;
-		goto failed;
-	}
 
 	kefalnd_tunables_setup(ni);
 
@@ -3182,18 +3327,44 @@ kefalnd_startup(struct lnet_ni *ni)
 		goto failed;
 	}
 
-	efa_dev = kefalnd_dev_search(ifname);
-	if (efa_dev) {
-		CERROR("Device[%s] already exists\n", ifname);
-		rc = -EINVAL;
+	mutex_lock(&kefalnd.ib_devs_mutex);
+	ib_entry = kefalnd_find_ib_dev_entry(ifname);
+	if (!ib_entry) {
+		mutex_unlock(&kefalnd.ib_devs_mutex);
+		CERROR("EFA IB device %s not found\n", ifname);
+		rc = -ENODEV;
 		goto failed;
 	}
+	if (ib_entry->efa_ni) {
+		mutex_unlock(&kefalnd.ib_devs_mutex);
+		CERROR("Device[%s] already in use\n", ifname);
+		rc = -EBUSY;
+		goto failed;
+	}
+	if (!ib_device_try_get(ib_entry->ibdev)) {
+		mutex_unlock(&kefalnd.ib_devs_mutex);
+		CERROR("Failed to get reference on EFA IB device %s\n", ifname);
+		rc = -ENODEV;
+		goto failed;
+	}
+	if (!try_module_get(ib_entry->ibdev->ops.owner)) {
+		ib_device_put(ib_entry->ibdev);
+		mutex_unlock(&kefalnd.ib_devs_mutex);
+		CERROR("Failed to get reference on EFA driver module\n");
+		rc = -ENODEV;
+		goto failed;
+	}
+	ib_entry->efa_ni = efa_ni;
+	ibdev = ib_entry->ibdev;
+	mutex_unlock(&kefalnd.ib_devs_mutex);
 
 	/* initialize the device */
-	efa_dev = kefalnd_dev_init(efa_ni, ifname, ip_addr);
+	efa_dev = kefalnd_dev_init(efa_ni, ibdev, ip_addr);
 	if (IS_ERR(efa_dev)) {
 		rc = PTR_ERR(efa_dev);
 		CERROR("Failed to initialize device[%s]. err[%d]\n", ifname, rc);
+		module_put(ibdev->ops.owner);
+		ib_device_put(ibdev);
 		goto failed;
 	}
 
@@ -3205,7 +3376,8 @@ kefalnd_startup(struct lnet_ni *ni)
 								&efa_dev->gid,
 								efa_dev->cm_qp->ib_qp->qp_num,
 								efa_dev->cm_qp->qkey);
-	if (!efa_ni->self_peer_ni) {
+	if (IS_ERR_OR_NULL(efa_ni->self_peer_ni)) {
+		efa_ni->self_peer_ni = NULL;
 		rc = -ENODEV;
 		goto failed;
 	}
@@ -3219,7 +3391,9 @@ kefalnd_startup(struct lnet_ni *ni)
 		goto failed;
 
 	kefalnd_add_ni_to_cm_daemon(efa_ni);
-	list_add_tail(&efa_ni->lnd_node, &kefalnd.efa_ni_list);
+
+	efa_ni->initialized = true;
+	kefalnd.ni_count++;
 
 	CDEBUG(D_MALLOC, "After NI[%s] startup: kmem[%lld]\n",
 	       ni->ni_interface, libcfs_kmem_read());
