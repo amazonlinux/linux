@@ -119,7 +119,7 @@ static void cfs_trace_unlock_tcd(struct cfs_trace_cpu_data *tcd, int walking)
 
 static enum cfs_trace_buf_type cfs_trace_buf_idx_get(void)
 {
-	if (in_irq())
+	if (in_hardirq())
 		return CFS_TCD_TYPE_IRQ;
 	if (in_softirq())
 		return CFS_TCD_TYPE_SOFTIRQ;
