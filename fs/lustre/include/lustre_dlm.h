@@ -1757,8 +1757,9 @@ int ldlm_cli_cancel_unused_resource(struct ldlm_namespace *ns,
 				    union ldlm_policy_data *policy,
 				    enum ldlm_mode mode,
 				    enum ldlm_cancel_flags flags, void *opaque);
-int ldlm_cli_cancel_req(struct obd_export *exp, struct list_head *head,
-			int count, enum ldlm_cancel_flags flags);
+int ldlm_cli_cancel_req(struct obd_export *exp, struct ldlm_lock *lock,
+			struct list_head *head, int count,
+			enum ldlm_cancel_flags flags);
 int ldlm_cancel_resource_local(struct ldlm_resource *res,
 			       struct list_head *cancels,
 			       union ldlm_policy_data *policy,
@@ -1768,6 +1769,7 @@ int ldlm_cancel_resource_local(struct ldlm_resource *res,
 int ldlm_cli_cancel_list_local(struct list_head *cancels, int count,
 			       enum ldlm_cancel_flags flags);
 int ldlm_cli_cancel_list(struct list_head *head, int count,
+			 struct ldlm_lock *primary,
 			 struct ptlrpc_request *req,
 			 enum ldlm_cancel_flags flags);
 

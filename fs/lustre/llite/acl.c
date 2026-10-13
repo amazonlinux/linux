@@ -91,10 +91,8 @@ ll_get_inode_acl(struct inode *inode, int type, bool rcu)
 
 	if (IS_ERR_OR_NULL(acl))
 		goto out;
-	if (type == ACL_TYPE_DEFAULT) {
-		acl = posix_acl_dup(acl);
+	if (type == ACL_TYPE_DEFAULT)
 		goto out;
-	}
 	if (type == ACL_TYPE_ACCESS)
 		lli_replace_acl(lli, acl);
 
@@ -166,14 +164,10 @@ int ll_set_acl(struct mnt_idmap *map,
 		return rc;
 
 	if (acl) {
-		value_size = posix_acl_xattr_size(acl->a_count);
-		value = kmalloc(value_size, GFP_NOFS);
-		if (value == NULL)
+		value = posix_acl_to_xattr(&init_user_ns, acl, &value_size,
+					   GFP_NOFS);
+		if (!value)
 			GOTO(out, rc = -ENOMEM);
-
-		rc = posix_acl_to_xattr(&init_user_ns, acl, value, value_size);
-		if (rc < 0)
-			GOTO(out_value, rc);
 	}
 
 	rc = md_setxattr(sbi->ll_md_exp, ll_inode2fid(inode),
@@ -181,7 +175,6 @@ int ll_set_acl(struct mnt_idmap *map,
 			 name, value, value_size, 0, 0, &req);
 
 	ptlrpc_req_finished(req);
-out_value:
 	kfree(value);
 out:
 	if (rc) {
