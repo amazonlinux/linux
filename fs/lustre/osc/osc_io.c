@@ -71,9 +71,9 @@ void osc_read_ahead_release(const struct lu_env *env, struct cl_read_ahead *ra)
 }
 EXPORT_SYMBOL(osc_read_ahead_release);
 
-static int osc_io_read_ahead(const struct lu_env *env,
-			     const struct cl_io_slice *ios,
-			     pgoff_t start, struct cl_read_ahead *ra)
+static int osc_io_read_ahead_prep(const struct lu_env *env,
+				  const struct cl_io_slice *ios,
+				  pgoff_t start, struct cl_read_ahead *ra)
 {
 	struct osc_object *osc = cl2osc(ios->cis_obj);
 	struct osc_io *oio = cl2osc_io(env, ios);
@@ -403,7 +403,8 @@ EXPORT_SYMBOL(osc_io_extent_release);
 
 static bool osc_import_not_healthy(struct obd_import *imp)
 {
-	return imp->imp_invalid || imp->imp_deactive ||
+	return test_bit(IMPF_INVALID, imp->imp_flags) ||
+	       test_bit(IMPF_DEACTIVE, imp->imp_flags) ||
 	       !(imp->imp_state == LUSTRE_IMP_FULL ||
 		 imp->imp_state == LUSTRE_IMP_IDLE);
 }
@@ -425,7 +426,7 @@ int osc_io_iter_init(const struct lu_env *env, const struct cl_io_slice *ios)
 	if (ios->cis_io->ci_type == CIT_READ && ios->cis_io->ci_ndelay &&
 	    !ios->cis_io->ci_tried_all_mirrors && osc_import_not_healthy(imp)) {
 		rc = -EAGAIN;
-	} else if (likely(!imp->imp_invalid)) {
+	} else if (likely(!test_bit(IMPF_INVALID, imp->imp_flags))) {
 		atomic_inc(&osc->oo_nr_ios);
 		oio->oi_is_active = 1;
 		rc = 0;
@@ -1303,7 +1304,7 @@ static const struct cl_io_operations osc_io_ops = {
 			.cio_fini   = osc_io_fini
 		}
 	},
-	.cio_read_ahead		    = osc_io_read_ahead,
+	.cio_read_ahead_prep	    = osc_io_read_ahead_prep,
 	.cio_lru_reserve	    = osc_io_lru_reserve,
 	.cio_submit                 = osc_io_submit,
 	.cio_commit_async           = osc_io_commit_async,
