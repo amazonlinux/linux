@@ -281,7 +281,7 @@ int gss_do_ctx_init_rpc(char __user *buffer, unsigned long count)
 		RETURN(-EINVAL);
 	}
 
-	if (imp->imp_deactive) {
+	if (test_bit(IMPF_DEACTIVE, imp->imp_flags)) {
 		CERROR("import has been deactivated\n");
 		class_import_put(imp);
 		RETURN(-EINVAL);
