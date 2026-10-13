@@ -222,6 +222,7 @@ int fld_client_del_target(struct lu_client_fld *fld, u64 idx)
 	spin_unlock(&fld->lcf_lock);
 	RETURN(-ENOENT);
 }
+EXPORT_SYMBOL(fld_client_del_target);
 
 struct dentry *fld_debugfs_dir;
 
@@ -399,7 +400,7 @@ again:
 
 	if (rc != 0) {
 		if (imp->imp_state != LUSTRE_IMP_CLOSED &&
-		    !imp->imp_deactive &&
+		    !test_bit(IMPF_DEACTIVE, imp->imp_flags) &&
 		    imp->imp_connect_flags_orig & OBD_CONNECT_MDS_MDS &&
 		    OCD_HAS_FLAG(&imp->imp_connect_data, LIGHTWEIGHT) &&
 		    rc != -ENOTSUPP) {
