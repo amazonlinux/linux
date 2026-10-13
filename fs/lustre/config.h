@@ -355,6 +355,9 @@
 /* union is unnamed */
 /* #undef HAVE_FID2PATH_ANON_UNIONS */
 
+/* filemap_alloc_folio() takes a third argument */
+/* #undef HAVE_FILEMAP_ALLOC_FOLIO_NUMA */
+
 /* filemap_get_folios_contig() is available */
 #define HAVE_FILEMAP_GET_FOLIOS_CONTIG 1
 
@@ -538,6 +541,9 @@
 /* if ib_sg_dma_address wrapper exists */
 /* #undef HAVE_IB_SG_DMA_ADDRESS */
 
+/* ilookup5_nowait() takes isnew */
+/* #undef HAVE_ILOOKUP5_NOWAIT_ISNEW */
+
 /* inode_operations .getattr member function can gather advance stats */
 /* #undef HAVE_INODEOPS_ENHANCED_GETATTR */
 
@@ -553,6 +559,9 @@
 /* inode_lock is defined */
 #define HAVE_INODE_LOCK 1
 
+/* inode_state_read() exists */
+/* #undef HAVE_INODE_STATE_READ */
+
 /* inode times are using timespec64 */
 /* #undef HAVE_INODE_TIMESPEC64 */
 
@@ -567,6 +576,9 @@
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
+
+/* ib_client add() callback returns int */
+#define HAVE_INT_IB_CLIENT_ADD 1
 
 /* address_spaace_operaions->invalidate_folio() member exists */
 #define HAVE_INVALIDATE_FOLIO 1
@@ -957,6 +969,9 @@
 /* 'struct nsproxy' has 'pid_ns_for_children' */
 #define HAVE_PID_NS_FOR_CHILDREN 1
 
+/* posix_acl_to_xattr() returns allocated buffer */
+/* #undef HAVE_POSIX_ACL_TO_XATTR_ALLOC_BUFFER */
+
 /* 'posix_acl_update_mode' is available */
 /* #undef HAVE_POSIX_ACL_UPDATE_MODE */
 
@@ -982,7 +997,7 @@
 #define HAVE_PTR_ERR_OR_ZERO 1
 
 /* If available, contains the Python version number currently in use. */
-#define HAVE_PYTHON "3.9"
+/* #undef HAVE_PYTHON */
 
 /* radix_tree_tag_set exists */
 #define HAVE_RADIX_TREE_TAG_SET 1
@@ -1126,6 +1141,9 @@
 /* struct posix_acl_xattr_{header,entry} defined */
 #define HAVE_STRUCT_POSIX_ACL_XATTR 1
 
+/* struct sockaddr_unsized exists */
+/* #undef HAVE_STRUCT_SOCKADDR_UNSIZED */
+
 /* submit_bio takes two arguments */
 /* #undef HAVE_SUBMIT_BIO_2ARGS */
 
@@ -1218,6 +1236,12 @@
 
 /* 'uuid_t' exist */
 #define HAVE_UUID_T 1
+
+/* vfs_create() takes delegate */
+/* #undef HAVE_VFS_CREATE_DELEGATE */
+
+/* vfs_mkdir() takes delegate */
+/* #undef HAVE_VFS_MKDIR_DELEGATE */
 
 /* vfs_pressure_ratio() is available */
 #define HAVE_VFS_PRESSURE_RATIO 1
@@ -1508,6 +1532,9 @@
 /* hrtimer_setup() is unavailable */
 #define hrtimer_setup(t, f, c, m) (hrtimer_init((t), (c), (m)), (t)->function = (f))
 
+/* inode_state_read() does not exist, provide one */
+#define inode_state_read(inode) ((inode)->i_state)
+
 /* 'iov_iter()' provides iov */
 /* #undef iter_iov */
 
@@ -1523,6 +1550,9 @@
 /* netif_get_flags does not exist, use dev_get_flags */
 #define netif_get_flags(dev) dev_get_flags((dev))
 
+/* real->posix_acl_to_xattr() */
+#define old_posix_acl_to_xattr(ns, acl, buf, sz) posix_acl_to_xattr(ns, acl, buf, sz)
+
 /* need 'page_mapcount_is_type()' replacement */
 /* #undef page_mapcount_is_type */
 
@@ -1534,6 +1564,9 @@
 
 /* set_default_d_op not available */
 #define set_default_d_op(sb, ops) ((sb)->s_d_op = (ops))
+
+/* struct sockaddr_unsized does not exist */
+#define sockaddr_unsized sockaddr
 
 /* timer_delete() not is available */
 /* #undef timer_delete */

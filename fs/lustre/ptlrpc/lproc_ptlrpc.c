@@ -1339,12 +1339,12 @@ ssize_t ping_show(struct kobject *kobj, struct attribute *attr,
 					      obd_kset.kobj);
 	struct obd_import *imp;
 	struct ptlrpc_request *req;
-	int rc, imp_deactive;
+	int rc, imp_deactive = 0;
 
 	ENTRY;
 	with_imp_locked(obd, imp, rc) {
 		req = ptlrpc_prep_ping(imp);
-		imp_deactive = imp->imp_deactive;
+		imp_deactive = test_bit(IMPF_DEACTIVE, imp->imp_flags);
 	}
 
 	if (rc)
@@ -1455,7 +1455,7 @@ int lprocfs_pinger_recov_seq_show(struct seq_file *m, void *n)
 	int rc;
 
 	with_imp_locked(obd, imp, rc)
-		seq_printf(m, "%d\n", !imp->imp_no_pinger_recover);
+		seq_printf(m, "%d\n", !test_bit(IMPF_NO_PINGER_RECOVER, imp->imp_flags));
 
 	return rc;
 }
@@ -1476,9 +1476,11 @@ lprocfs_pinger_recov_seq_write(struct file *file, const char __user *buffer,
 		return rc;
 
 	with_imp_locked(obd, imp, rc) {
-		spin_lock(&imp->imp_lock);
-		imp->imp_no_pinger_recover = !val;
-		spin_unlock(&imp->imp_lock);
+		if (val)
+			clear_bit(IMPF_NO_PINGER_RECOVER, imp->imp_flags);
+		else
+			set_bit(IMPF_NO_PINGER_RECOVER, imp->imp_flags);
+		smp_mb__after_atomic();
 	}
 
 	return rc ?: count;
