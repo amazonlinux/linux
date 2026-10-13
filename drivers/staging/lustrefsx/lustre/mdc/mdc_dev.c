@@ -1144,9 +1144,9 @@ static int mdc_io_setattr_start(const struct lu_env *env,
 	return rc;
 }
 
-static int mdc_io_read_ahead(const struct lu_env *env,
-			     const struct cl_io_slice *ios,
-			     pgoff_t start, struct cl_read_ahead *ra)
+static int mdc_io_read_ahead_prep(const struct lu_env *env,
+				  const struct cl_io_slice *ios,
+				  pgoff_t start, struct cl_read_ahead *ra)
 {
 	struct osc_object *osc = cl2osc(ios->cis_obj);
 	struct osc_io *oio = cl2osc_io(env, ios);
@@ -1370,7 +1370,7 @@ static const struct cl_io_operations mdc_io_ops = {
 			.cio_end    = osc_io_lseek_end,
 		},
 	},
-	.cio_read_ahead   = mdc_io_read_ahead,
+	.cio_read_ahead_prep = mdc_io_read_ahead_prep,
 	.cio_lru_reserve  = osc_io_lru_reserve,
 	.cio_submit	  = osc_io_submit,
 	.cio_commit_async = osc_io_commit_async,
@@ -1600,8 +1600,13 @@ static struct lu_device *mdc_device_alloc(const struct lu_env *env,
 
 	/* Setup MDC OBD */
 	obd = class_name2obd(lustre_cfg_string(cfg, 0));
-	if (obd == NULL)
+	if (obd == NULL) {
+		cl_device_fini(lu2cl_dev(d));
+		OBD_FREE_PTR(oc);
 		RETURN(ERR_PTR(-ENODEV));
+	}
+	obd->obd_lu_dev = d;
+	d->ld_obd = obd;
 
 	rc = mdc_setup(obd, cfg);
 	if (rc < 0) {
