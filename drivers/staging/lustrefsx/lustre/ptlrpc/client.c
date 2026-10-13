@@ -325,7 +325,8 @@ void ptlrpc_at_set_req_timeout(struct ptlrpc_request *req)
 		 * (because of which we are sending this request) would
 		 * timeout waiting for us
 		 */
-		req->rq_timeout = req->rq_import->imp_server_timeout ?
+		req->rq_timeout = test_bit(IMPF_SERVER_TIMEOUT,
+					   req->rq_import->imp_flags) ?
 				  obd_timeout / 2 : obd_timeout;
 	} else {
 		struct imp_at *at = &req->rq_import->imp_at;
@@ -1261,13 +1262,14 @@ static int ptlrpc_import_delay_req(struct obd_import *imp,
 		*status = -ETIMEDOUT;
 	} else if (req->rq_send_state == LUSTRE_IMP_CONNECTING &&
 		   imp->imp_state == LUSTRE_IMP_CONNECTING) {
-		;/* allow CONNECT even if import is invalid */
+		/* allow CONNECT even if import is invalid */
 		if (atomic_read(&imp->imp_inval_count) != 0) {
 			DEBUG_REQ(D_ERROR, req, "invalidate in flight");
 			*status = -EIO;
 		}
-	} else if (imp->imp_invalid || imp->imp_obd->obd_no_recov) {
-		if (!imp->imp_deactive)
+	} else if (test_bit(IMPF_INVALID, imp->imp_flags) ||
+		   test_bit(OBDF_NO_RECOV, imp->imp_obd->obd_flags)) {
+		if (!test_bit(IMPF_DEACTIVE, imp->imp_flags))
 			DEBUG_REQ(D_NET, req, "IMP_INVALID");
 		*status = -ESHUTDOWN; /* b=12940 */
 	} else if (req->rq_import_generation != imp->imp_generation) {
@@ -1542,9 +1544,10 @@ static int after_reply(struct ptlrpc_request *req)
 		 */
 		if (ptlrpc_recoverable_error(rc)) {
 			if (req->rq_send_state != LUSTRE_IMP_FULL ||
-			    imp->imp_obd->obd_no_recov || imp->imp_dlm_fake) {
+			    test_bit(OBDF_NO_RECOV, imp->imp_obd->obd_flags) ||
+			    test_bit(IMPF_DLM_FAKE, imp->imp_flags))
 				RETURN(rc);
-			}
+
 			ptlrpc_request_handle_notconn(req);
 			RETURN(rc);
 		}
@@ -1564,7 +1567,11 @@ static int after_reply(struct ptlrpc_request *req)
 		lustre_msg_set_transno(req->rq_reqmsg, req->rq_transno);
 	}
 
-	if (imp->imp_replayable) {
+	if (lustre_msg_get_transno(req->rq_repmsg) ||
+	    lustre_msg_get_opc(req->rq_reqmsg) == LDLM_ENQUEUE)
+		clear_bit(IMPF_NO_CACHED_DATA, imp->imp_flags);
+
+	if (test_bit(IMPF_REPLAYABLE, imp->imp_flags)) {
 		/* if other threads are waiting for ptlrpc_free_committed()
 		 * they could continue the work of freeing RPCs. That reduces
 		 * lock hold times, and distributes work more fairly across
@@ -1975,7 +1982,7 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
 		}
 
 		/*
-		 * ptlrpc_set_wait uses l_wait_event_abortable_timeout()
+		 * ptlrpc_set_wait uses wait_woken()
 		 * so it sets rq_intr regardless of individual rpc
 		 * timeouts. The synchronous IO waiting path sets
 		 * rq_intr irrespective of whether ptlrpcd
@@ -2056,6 +2063,15 @@ int ptlrpc_check_set(const struct lu_env *env, struct ptlrpc_request_set *set)
 
 				list_move_tail(&req->rq_list,
 					       &imp->imp_sending_list);
+
+				/* Drop initiated_at after successful connection
+				 * and empty delayed queue, all reqs have been
+				 * sent. Lustre needs to distinguish between a
+				 * fully connected state and a full from idle.
+				 */
+				if (imp->imp_initiated_at != 0 &&
+				    list_empty(&imp->imp_delayed_list))
+					imp->imp_initiated_at = 0;
 
 				spin_unlock(&imp->imp_lock);
 
@@ -2335,7 +2351,7 @@ int ptlrpc_expire_one_request(struct ptlrpc_request *req, int async_unlink)
 	atomic_inc(&imp->imp_timeouts);
 
 	/* The DLM server doesn't want recovery run on its imports. */
-	if (imp->imp_dlm_fake)
+	if (test_bit(IMPF_DLM_FAKE, imp->imp_flags))
 		RETURN(1);
 
 	/*
@@ -2344,7 +2360,7 @@ int ptlrpc_expire_one_request(struct ptlrpc_request *req, int async_unlink)
 	 */
 	if (req->rq_ctx_init || req->rq_ctx_fini ||
 	    req->rq_send_state != LUSTRE_IMP_FULL ||
-	    imp->imp_obd->obd_no_recov) {
+	    test_bit(OBDF_NO_RECOV, imp->imp_obd->obd_flags)) {
 		DEBUG_REQ(D_RPCTRACE, req, "err -110, sent_state=%s (now=%s)",
 			  ptlrpc_import_state_name(req->rq_send_state),
 			  ptlrpc_import_state_name(imp->imp_state));
@@ -2490,6 +2506,7 @@ time64_t ptlrpc_set_next_timeout(struct ptlrpc_request_set *set)
 int ptlrpc_set_wait(const struct lu_env *env, struct ptlrpc_request_set *set)
 {
 	struct ptlrpc_request *req;
+	sigset_t oldset, newset;
 	time64_t timeout;
 	int rc;
 
@@ -2506,7 +2523,14 @@ int ptlrpc_set_wait(const struct lu_env *env, struct ptlrpc_request_set *set)
 		RETURN(0);
 
 	do {
+		DEFINE_WAIT_FUNC(wait, woken_wake_function);
+		long remaining;
+		unsigned long allow = 0;
+		int state = TASK_IDLE;
+
+		rc = 0;
 		timeout = ptlrpc_set_next_timeout(set);
+		remaining = cfs_time_seconds(timeout ? timeout : 1);
 
 		/*
 		 * wait until all complete, interrupted, or an in-flight
@@ -2515,71 +2539,39 @@ int ptlrpc_set_wait(const struct lu_env *env, struct ptlrpc_request_set *set)
 		CDEBUG(D_RPCTRACE, "set %p going to sleep for %lld seconds\n",
 		       set, timeout);
 
+		add_wait_queue(&set->set_waitq, &wait);
 		if ((timeout == 0 && !signal_pending(current)) ||
 		    set->set_allow_intr) {
-			/*
-			 * No requests are in-flight (ether timed out
-			 * or delayed), so we can allow interrupts.
-			 * We still want to block for a limited time,
-			 * so we allow interrupts during the timeout.
-			 */
-			rc = l_wait_event_abortable_timeout(
-				set->set_waitq,
-				ptlrpc_check_set(NULL, set),
-				cfs_time_seconds(timeout ? timeout : 1));
-			if (rc == 0) {
-				rc = -ETIMEDOUT;
-				ptlrpc_expired_set(set);
-			} else if (rc < 0) {
-				rc = -EINTR;
-				ptlrpc_interrupted_set(set);
-			} else {
-				rc = 0;
-			}
-		} else {
-			/*
-			 * At least one request is in flight, so no
-			 * interrupts are allowed. Wait until all
-			 * complete, or an in-flight req times out.
-			 */
-			rc = wait_event_idle_timeout(
-				set->set_waitq,
-				ptlrpc_check_set(NULL, set),
-				cfs_time_seconds(timeout ? timeout : 1));
-			if (rc == 0) {
-				ptlrpc_expired_set(set);
-				rc = -ETIMEDOUT;
-			} else {
-				rc = 0;
-			}
-
-			/*
-			 * LU-769 - if we ignored the signal because
-			 * it was already pending when we started, we
-			 * need to handle it now or we risk it being
-			 * ignored forever
-			 */
-			if (rc == -ETIMEDOUT &&
-			    signal_pending(current)) {
-				sigset_t old, new;
-
-				siginitset(&new, LUSTRE_FATAL_SIGS);
-				sigprocmask(SIG_BLOCK, &new, &old);
-				/*
-				 * In fact we only interrupt for the
-				 * "fatal" signals like SIGINT or
-				 * SIGKILL. We still ignore less
-				 * important signals since ptlrpc set
-				 * is not easily reentrant from
-				 * userspace again
-				 */
-				if (signal_pending(current))
-					ptlrpc_interrupted_set(set);
-				sigprocmask(SIG_SETMASK, &old, NULL);
-			}
+			state = TASK_INTERRUPTIBLE;
+			allow = LUSTRE_FATAL_SIGS;
 		}
-
-		LASSERT(rc == 0 || rc == -EINTR || rc == -ETIMEDOUT);
+		/* block until ready or timeout occurs */
+		do {
+			if (ptlrpc_check_set(NULL, set))
+				break;
+			if (allow) {
+				siginitsetinv(&newset, allow);
+				sigprocmask(SIG_BLOCK, &newset, &oldset);
+			}
+			remaining = wait_woken(&wait, state, remaining);
+			if (allow) {
+				if (signal_pending(current))
+					remaining = -EINTR;
+				sigprocmask(SIG_SETMASK, &oldset, NULL);
+			}
+		} while (remaining > 0);
+		/*
+		 * wait_woken* returns the result from schedule_timeout() which
+		 * is always a positive number, or 0 on timeout.
+		 */
+		if (remaining == 0) {
+			rc = -ETIMEDOUT;
+			ptlrpc_expired_set(set);
+		} else if (remaining < 0) {
+			rc = -EINTR;
+			ptlrpc_interrupted_set(set);
+		}
+		remove_wait_queue(&set->set_waitq, &wait);
 
 		/*
 		 * -EINTR => all requests have been flagged rq_intr so next
@@ -3130,7 +3122,7 @@ void ptlrpc_retain_replayable_request(struct ptlrpc_request *req,
 	req->rq_resend = 0;
 	spin_unlock(&req->rq_lock);
 
-	LASSERT(imp->imp_replayable);
+	LASSERT(test_bit(IMPF_REPLAYABLE, imp->imp_flags));
 	/* Balanced in ptlrpc_free_committed, usually. */
 	ptlrpc_request_addref(req);
 	list_for_each_entry_reverse(iter, &imp->imp_replay_list,
@@ -3226,9 +3218,8 @@ static int ptlrpc_replay_interpret(const struct lu_env *env,
 	if (lustre_msg_get_status(req->rq_repmsg) == -EOVERFLOW) {
 		/** replay was failed due to version mismatch */
 		DEBUG_REQ(D_WARNING, req, "Version mismatch during replay");
-		spin_lock(&imp->imp_lock);
-		imp->imp_vbr_failed = 1;
-		spin_unlock(&imp->imp_lock);
+		set_bit(IMPF_VBR_FAILED, imp->imp_flags);
+		smp_mb__after_atomic();
 		lustre_msg_set_status(req->rq_repmsg, aa->praa_old_status);
 	} else {
 		/** The transno had better not change over replay. */
@@ -3425,7 +3416,7 @@ void ptlrpc_abort_inflight(struct obd_import *imp)
 	 * Last chance to free reqs left on the replay list, but we
 	 * will still leak reqs that haven't committed.
 	 */
-	if (imp->imp_replayable)
+	if (test_bit(IMPF_REPLAYABLE, imp->imp_flags))
 		ptlrpc_free_committed(imp);
 
 	EXIT;

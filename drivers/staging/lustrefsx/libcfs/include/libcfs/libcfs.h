@@ -137,4 +137,11 @@ do {									\
 	"Struct contains a flexible member, the size of object is checked" \
 	"and can be safely copied in a single memcpy()"
 
+/* Linux commit v6.18-rc2-1-g70e0a80a1f358
+ *   treewide: Remove in_irq()
+ */
+#ifndef in_hardirq
+#define in_hardirq()	in_irq()
+#endif
+
 #endif /* _LIBCFS_LIBCFS_H_ */

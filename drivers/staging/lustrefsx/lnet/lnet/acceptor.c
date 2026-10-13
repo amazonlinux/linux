@@ -155,7 +155,9 @@ lnet_connect(struct lnet_nid *peer_nid, int interface,
 	     port >= LNET_ACCEPTOR_MIN_RESERVED_PORT;
 	     --port) {
 		/* Iterate through reserved ports. */
-		sock = lnet_sock_connect(interface, port, peeraddr, ns);
+		sock = lnet_sock_connect(interface, port,
+					 (struct sockaddr_unsized *)peeraddr,
+					 ns);
 		if (IS_ERR(sock)) {
 			rc = PTR_ERR(sock);
 			if (rc == -EADDRINUSE || rc == -EADDRNOTAVAIL)
