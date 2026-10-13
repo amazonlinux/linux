@@ -503,6 +503,8 @@ static int ll_xattr_get_common(const struct xattr_handler *handler,
 	if (handler->flags == XATTR_ACL_ACCESS_T) {
 		struct ll_inode_info *lli = ll_i2info(inode);
 		struct posix_acl *acl;
+		size_t acl_sz;
+		void *value = NULL;
 
 		read_lock(&lli->lli_lock);
 		acl = posix_acl_dup(lli->lli_posix_acl);
@@ -510,8 +512,20 @@ static int ll_xattr_get_common(const struct xattr_handler *handler,
 
 		if (!acl)
 			RETURN(-ENODATA);
-
-		rc = posix_acl_to_xattr(&init_user_ns, acl, buffer, size);
+		value = posix_acl_to_xattr(&init_user_ns, acl, &acl_sz,
+					   GFP_NOFS);
+		/* caller wants size */
+		if (!buffer || !size)
+			GOTO(out_acl, rc = acl_sz);
+		if (!value)
+			GOTO(out_acl, rc = -ENOMEM);
+		/* setfacl, getxattr() checks for -ERANGE */
+		if (acl_sz > size)
+			GOTO(out_acl, rc = -ERANGE);
+		rc = acl_sz;
+		memcpy(buffer, value, acl_sz);
+out_acl:
+		kfree(value);
 		posix_acl_release(acl);
 		RETURN(rc);
 	}

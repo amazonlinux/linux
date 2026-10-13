@@ -353,6 +353,9 @@
 /* union is unnamed */
 #undef HAVE_FID2PATH_ANON_UNIONS
 
+/* filemap_alloc_folio() takes a third argument */
+#undef HAVE_FILEMAP_ALLOC_FOLIO_NUMA
+
 /* filemap_get_folios_contig() is available */
 #undef HAVE_FILEMAP_GET_FOLIOS_CONTIG
 
@@ -536,6 +539,9 @@
 /* if ib_sg_dma_address wrapper exists */
 #undef HAVE_IB_SG_DMA_ADDRESS
 
+/* ilookup5_nowait() takes isnew */
+#undef HAVE_ILOOKUP5_NOWAIT_ISNEW
+
 /* inode_operations .getattr member function can gather advance stats */
 #undef HAVE_INODEOPS_ENHANCED_GETATTR
 
@@ -551,6 +557,9 @@
 /* inode_lock is defined */
 #undef HAVE_INODE_LOCK
 
+/* inode_state_read() exists */
+#undef HAVE_INODE_STATE_READ
+
 /* inode times are using timespec64 */
 #undef HAVE_INODE_TIMESPEC64
 
@@ -565,6 +574,9 @@
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
+
+/* ib_client add() callback returns int */
+#undef HAVE_INT_IB_CLIENT_ADD
 
 /* address_spaace_operaions->invalidate_folio() member exists */
 #undef HAVE_INVALIDATE_FOLIO
@@ -955,6 +967,9 @@
 /* 'struct nsproxy' has 'pid_ns_for_children' */
 #undef HAVE_PID_NS_FOR_CHILDREN
 
+/* posix_acl_to_xattr() returns allocated buffer */
+#undef HAVE_POSIX_ACL_TO_XATTR_ALLOC_BUFFER
+
 /* 'posix_acl_update_mode' is available */
 #undef HAVE_POSIX_ACL_UPDATE_MODE
 
@@ -1124,6 +1139,9 @@
 /* struct posix_acl_xattr_{header,entry} defined */
 #undef HAVE_STRUCT_POSIX_ACL_XATTR
 
+/* struct sockaddr_unsized exists */
+#undef HAVE_STRUCT_SOCKADDR_UNSIZED
+
 /* submit_bio takes two arguments */
 #undef HAVE_SUBMIT_BIO_2ARGS
 
@@ -1216,6 +1234,12 @@
 
 /* 'uuid_t' exist */
 #undef HAVE_UUID_T
+
+/* vfs_create() takes delegate */
+#undef HAVE_VFS_CREATE_DELEGATE
+
+/* vfs_mkdir() takes delegate */
+#undef HAVE_VFS_MKDIR_DELEGATE
 
 /* vfs_pressure_ratio() is available */
 #undef HAVE_VFS_PRESSURE_RATIO
@@ -1504,6 +1528,9 @@
 /* hrtimer_setup() is unavailable */
 #undef hrtimer_setup
 
+/* inode_state_read() does not exist, provide one */
+#undef inode_state_read
+
 /* 'iov_iter()' provides iov */
 #undef iter_iov
 
@@ -1519,6 +1546,9 @@
 /* netif_get_flags does not exist, use dev_get_flags */
 #undef netif_get_flags
 
+/* real->posix_acl_to_xattr() */
+#undef old_posix_acl_to_xattr
+
 /* need 'page_mapcount_is_type()' replacement */
 #undef page_mapcount_is_type
 
@@ -1530,6 +1560,9 @@
 
 /* set_default_d_op not available */
 #undef set_default_d_op
+
+/* struct sockaddr_unsized does not exist */
+#undef sockaddr_unsized
 
 /* timer_delete() not is available */
 #undef timer_delete
