@@ -856,7 +856,7 @@ int class_cleanup(struct obd_device *obd, struct lustre_cfg *lcfg)
 #ifdef HAVE_SERVER_SUPPORT
 				obd->obd_no_transno = 1;
 #endif
-				obd->obd_no_recov = 1;
+				set_bit(OBDF_NO_RECOV, obd->obd_flags);
 				spin_unlock(&obd->obd_dev_lock);
 				if (OBP(obd, iocontrol)) {
 					obd_iocontrol(OBD_IOC_SYNC,

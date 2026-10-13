@@ -548,7 +548,6 @@ lnet_peer_del_nid(struct lnet_peer *lp, lnet_nid_t nid4, unsigned int flags)
 		}
 	}
 
-	lpni = lnet_peer_ni_find_locked(&nid);
 	/* If we're asked to lock down the primary NID we shouldn't be
 	 * deleting it
 	 */
@@ -558,6 +557,7 @@ lnet_peer_del_nid(struct lnet_peer *lp, lnet_nid_t nid4, unsigned int flags)
 		goto out;
 	}
 
+	lpni = lnet_peer_ni_find_locked(&nid);
 	if (!lpni) {
 		rc = -ENOENT;
 		goto out;
@@ -1712,7 +1712,7 @@ lnet_peer_attach_peer_ni(struct lnet_peer *lp,
 /*
  * Create a new peer, with nid as its primary nid.
  *
- * Call with the lnet_api_mutex held.
+ * Call with the ln_api_mutex held.
  */
 static int
 lnet_peer_add(lnet_nid_t nid4, unsigned int flags)
@@ -1723,13 +1723,15 @@ lnet_peer_add(lnet_nid_t nid4, unsigned int flags)
 	struct lnet_peer_ni *lpni;
 	int rc = 0;
 
-	LASSERT(nid4 != LNET_NID_ANY);
+	lnet_nid4_to_nid(nid4, &nid);
+
+	LASSERT(!LNET_NID_IS_ANY(&nid));
 
 	/*
 	 * No need for the lnet_net_lock here, because the
 	 * lnet_api_mutex is held.
 	 */
-	lpni = lnet_find_peer_ni_locked(nid4);
+	lpni = lnet_peer_ni_find_locked(&nid);
 	if (lpni) {
 		/* A peer with this NID already exists. */
 		lp = lpni->lpni_peer_net->lpn_peer;
@@ -1741,7 +1743,7 @@ lnet_peer_add(lnet_nid_t nid4, unsigned int flags)
 		 * that an existing peer is being modified.
 		 */
 		if (lp->lp_state & LNET_PEER_CONFIGURED) {
-			if (lnet_nid_to_nid4(&lp->lp_primary_nid) != nid4)
+			if (!nid_same(&lp->lp_primary_nid, &nid))
 				rc = -EEXIST;
 			else if ((lp->lp_state ^ flags) & LNET_PEER_MULTI_RAIL)
 				rc = -EPERM;
@@ -1784,7 +1786,6 @@ lnet_peer_add(lnet_nid_t nid4, unsigned int flags)
 
 	/* Create peer, peer_net, and peer_ni. */
 	rc = -ENOMEM;
-	lnet_nid4_to_nid(nid4, &nid);
 	lp = lnet_peer_alloc(&nid);
 	if (!lp)
 		goto out;
@@ -1803,7 +1804,7 @@ out_free_lp:
 	LIBCFS_FREE(lp, sizeof(*lp));
 out:
 	CDEBUG(D_NET, "peer %s NID flags %#x: %d\n",
-	       libcfs_nid2str(nid4), flags, rc);
+	       libcfs_nidstr(&nid), flags, rc);
 	return rc;
 }
 
@@ -1885,7 +1886,9 @@ lnet_peer_add_nid(struct lnet_peer *lp, lnet_nid_t nid4, unsigned int flags)
 			 */
 			spin_lock(&lp2->lp_lock);
 			if (lp2->lp_state & LNET_PEER_LOCK_PRIMARY &&
-			    lp2->lp_nnis > 1) {
+			    lp2->lp_nnis > 1 &&
+			    (lp->lp_merge_primary_nid == LNET_NID_ANY ||
+			     nid4 != lp->lp_merge_primary_nid)) {
 				lp2->lp_state |= LNET_PEER_BAD_CONFIG;
 				spin_unlock(&lp2->lp_lock);
 				spin_lock(&lp->lp_lock);
@@ -3883,17 +3886,17 @@ __must_hold(&lp->lp_lock)
 	if (rc)
 		goto fail_unlink;
 
-	CDEBUG(D_NET, "peer %s\n", libcfs_nidstr(&lp->lp_primary_nid));
-
 	spin_lock(&lp->lp_lock);
+
+	CDEBUG(D_NET, "peer %s(%p) state %#x\n",
+	       libcfs_nidstr(&lp->lp_primary_nid), lp, lp->lp_state);
+
 	return 0;
 
 fail_unlink:
 	LNetMDUnlink(lp->lp_push_mdh);
 	LNetInvalidateMDHandle(&lp->lp_push_mdh);
 fail_error:
-	CDEBUG(D_NET, "peer %s(%p): %d\n", libcfs_nidstr(&lp->lp_primary_nid),
-	       lp, rc);
 	/*
 	 * The errors that get us here are considered hard errors and
 	 * cause Discovery to terminate. So we clear PUSH_SENT, but do
@@ -3903,6 +3906,8 @@ fail_error:
 	 */
 	spin_lock(&lp->lp_lock);
 	lp->lp_state &= ~(LNET_PEER_PUSH_SENT | LNET_PEER_PUSH_FAILED);
+	CDEBUG(D_NET, "peer %s(%p) state %#x: %d\n",
+	       libcfs_nidstr(&lp->lp_primary_nid), lp, lp->lp_state, rc);
 	return rc;
 }
 

@@ -465,7 +465,8 @@ struct lmv_obd {
 	struct kobject		*lmv_tgts_kobj;
 	void			*lmv_cache;
 
-	__u32			lmv_qos_rr_index;
+	time64_t		lmv_setup_time;
+	__u32			lmv_qos_rr_index; /* next round-robin MDT idx */
 };
 
 #define lmv_mdt_count	lmv_mdt_descs.ltd_lmv_desc.ld_tgt_count
@@ -621,6 +622,13 @@ struct obd_llog_group {
 	spinlock_t	   olg_lock;
 };
 
+/* Obd flag bits */
+enum {
+	OBDF_REPLAYABLE,	/* recovery enabled; inform clients */
+	OBDF_NO_RECOV,		/* fail instead of retry messages */
+    OBDF_NUM_FLAGS,
+};
+
 /* corresponds to one of the obd's */
 #define OBD_DEVICE_MAGIC        0XAB5CD6EF
 
@@ -635,6 +643,7 @@ struct obd_device {
 	char				 obd_name[MAX_OBD_NAME];
 
 	/* bitfield modification is protected by obd_dev_lock */
+	DECLARE_BITMAP(obd_flags, OBDF_NUM_FLAGS);
 	unsigned long
 		obd_attached:1,		/* finished attach */
 		obd_set_up:1,		/* finished setup */
@@ -642,8 +651,6 @@ struct obd_device {
 		obd_abort_recovery:1,	/* recovery expired */
 		obd_abort_recov_mdt:1,	/* only abort recovery between MDTs */
 		obd_version_recov:1,	/* obd uses version checking */
-		obd_replayable:1,	/* recovery enabled; inform clients */
-		obd_no_recov:1,		/* fail instead of retry messages */
 		obd_stopping:1,		/* started cleanup */
 		obd_starting:1,		/* started setup */
 		obd_force:1,		/* cleanup with > 0 obd refcount */
