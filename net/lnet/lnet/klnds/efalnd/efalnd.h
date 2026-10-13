@@ -33,7 +33,7 @@
 
 #define EFALND_MAJOR_VER        1
 #define EFALND_MINOR_VER        2
-#define EFALND_SUBMINOR_VER     2
+#define EFALND_SUBMINOR_VER     6
 #define EFALND_MAJOR_SHIFT	8
 
 #define KEFA_IFNAME_SIZE		256
@@ -50,6 +50,19 @@
 #define EFALND_MSG_SIZE_ALIGNED		PAGE_ALIGN(EFALND_MSG_SIZE)
 #define EFALND_MSG_PAGES		(EFALND_MSG_SIZE_ALIGNED / PAGE_SIZE)
 #define EFALND_RX_MSGS(q)		(2 * (q)->rq_depth)
+
+/* RX work request ID encoding: [epoch(32) | rx_index(32)] */
+#define EFALND_RX_WRID(epoch, idx)	(((u64)(epoch) << 32) | (u32)(idx))
+#define EFALND_RX_WRID_EPOCH(wrid)	((u32)((wrid) >> 32))
+#define EFALND_RX_WRID_INDEX(wrid)	((u32)(wrid))
+
+/* TX resp_id encoding: [resp_counter(31) | valid(1)] */
+#define EFALND_RESP_ID(resp_counter, valid) (((resp_counter) << 1) | !!(valid))
+
+/* TX wire cookie encoding: [resp_id(32) | tx_index(32)] */
+#define EFALND_TX_COOKIE(resp_id, idx)	(((u64)(resp_id) << 32) | (u32)(idx))
+#define EFALND_TX_COOKIE_ID(cookie)	((u32)((cookie) >> 32))
+#define EFALND_TX_COOKIE_INDEX(cookie)	((u32)(cookie))
 
 /* max # of fragments supported. + 1 for unaligned case */
 #define EFALND_MAX_TX_FRAGS		(LNET_MAX_IOV + 1)
@@ -130,13 +143,21 @@ struct kefa_tunables {
 /* global singelton EFA data */
 struct kefa_data {
 	enum efalnd_init_state init_state;	/* init state of global data */
-	struct list_head efa_ni_list;		/* list of EFA NIs */
 	struct kefa_sched **scheds;		/* global schedulers */
 	struct kefa_cm_deamon **cm_daemons;	/* Connection manager daemons */
 	struct rhashtable peer_ni;
 	atomic_t peer_ni_count;
 	atomic_t nthreads;			/* # live threads */
+	int ni_count;				/* # active NIs */
 	bool shutdown;				/* signal shutdown to threads */
+	struct list_head ib_devs;		/* tracked IB devices */
+	struct mutex ib_devs_mutex;		/* protects ib_devs list */
+};
+
+struct kefalnd_ib_dev_entry {
+	struct list_head node;
+	struct ib_device *ibdev;
+	struct kefa_ni *efa_ni;		/* NI bound to this device, or NULL */
 };
 
 struct kefa_obj_pool {
@@ -152,11 +173,12 @@ struct kefa_obj_pool {
 
 struct kefa_rx {
 	struct list_head list_node;
-	struct kefa_qp *qp;			/* owner QP */
-	struct kefa_msg *msg;			/* message buffer (host vaddr) */
-	struct ib_recv_wr wrq;			/* receive work item... */
-	struct ib_sge sge;			/* ...and its memory */
-	int rx_nob;				/* # bytes received (-1 while posted) */
+	struct kefa_qp *qp;		/* owner QP */
+	struct kefa_msg *msg;		/* message buffer (host vaddr) */
+	struct ib_recv_wr wrq;		/* receive work item... */
+	struct ib_sge sge;		/* ...and its memory */
+	struct kefa_conn *conn;		/* looked-up conn */
+	int rx_nob;			/* # bytes received (-1 while posted) */
 };
 
 struct kefa_qp {
@@ -235,8 +257,9 @@ struct kefa_tx {
 	struct scatterlist *frags;		/* mapped buffer fragments */
 	struct kefa_rdma_desc rdma_desc;	/* rdma descriptor to read/write */
 	enum dma_data_direction dmadir;
-	atomic_t ref_cnt;			/* track sends and completions */
-	atomic_t waiting_resp;
+	atomic_t ref_cnt;		/* track sends and completions */
+	atomic_t resp_id;
+	u32 resp_counter;		/* response counter, incremented per request */
 	struct kefa_fmr *fmr;
 	atomic64_t send_time;			/* send time of send in seconds */
 
@@ -247,14 +270,15 @@ struct kefa_tx {
 
 /* Per Lnet network data */
 struct kefa_ni {
-	struct list_head lnd_node;		/* node in LND NI list */
 	struct list_head cm_node;		/* node in connection manager daemon */
 	struct kefa_dev *efa_dev;		/* underlying IB device */
 	struct lnet_ni *lnet_ni;		/* LNet interface */
 	u64 ni_epoch;				/* my epoch */
+	bool initialized;			/* startup completed successfully */
 	struct kefa_obj_pool tx_pool;
 	DECLARE_HASHTABLE(conns, EFALND_CONN_HASH_BITS);
 	rwlock_t conn_lock;
+	struct list_head cleanup_conns;		/* conns pending cleanup by CM daemon */
 	struct kefa_peer_ni *self_peer_ni;	/* Only valid for small NID NI*/
 };
 
@@ -288,13 +312,15 @@ struct kefa_conn {
 	struct kefa_remote_qp *data_qps;
 	atomic_t last_qp_idx;
 	struct lnet_nid remote_nid;
-	time64_t last_use_time;			/* last time the conn was used in seconds */
-	struct hlist_node ni_node;		/* node on kefa_ni hashmap */
+	atomic64_t last_use_time;	/* last time the conn was used in seconds */
+	atomic_t refcount;		/* active TX and lookup references */
+	struct hlist_node ni_node;	/* node on kefa_ni hashmap */
 	struct kefa_ni *efa_ni;
 	u64 hash_key;
 
 	/* Low frequency fields */
-	struct list_head abort_tx;		/* Only CM iterates this list */
+	struct list_head abort_tx;	/* Only CM iterates this list */
+	struct list_head cleanup_node;	/* node on kefa_ni cleanup list */
 	enum kefa_conn_type type;
 	struct lnet_nid local_nid;
 	struct kefa_peer_ni *peer_ni;		/* my peer NI - only valid for small NID */
@@ -332,6 +358,24 @@ kefalnd_thread_stop(void)
 	atomic_dec(&kefalnd.nthreads);
 }
 
+/* Connection reference counting. A connection is destroyed only once its
+ * reference count drops to zero. References come from two independent
+ * sources: a lookup or creation returns a reference that the calling context
+ * owns and releases before it returns, and a TX takes its own reference when
+ * it adopts a connection, released when the TX completes.
+ */
+static inline void
+kefalnd_conn_incref(struct kefa_conn *conn)
+{
+	atomic_inc(&conn->refcount);
+}
+
+static inline void
+kefalnd_conn_decref(struct kefa_conn *conn)
+{
+	atomic_dec(&conn->refcount);
+}
+
 static inline void
 kefalnd_msg_set_epoch(struct kefa_msg *msg, u64 remote_epoch)
 {
@@ -361,6 +405,8 @@ void kefalnd_get_srcnid_from_msg(struct kefa_msg *msg, struct lnet_nid *srcnid);
 void kefalnd_get_dstnid_from_msg(struct kefa_msg *msg, struct lnet_nid *dstnid);
 void kefalnd_reconstruct_conn_pend_msgs(struct kefa_conn *conn);
 
+struct kefalnd_ib_dev_entry *kefalnd_find_ib_dev_entry(const char *name);
+
 struct kefa_peer_ni *kefalnd_find_remote_peer_ni(struct kefa_dev *efa_dev,
 						 struct lnet_nid *efa_nid);
 struct kefa_peer_ni *kefalnd_lookup_or_create_peer_ni(lnet_nid_t nid,
@@ -375,12 +421,13 @@ void kefalnd_put_peer_ni(struct kefa_peer_ni *peer_ni);
 void kefalnd_debugfs_init(void);
 void kefalnd_debugfs_exit(void);
 
-struct kefa_conn *kefalnd_lookup_conn(struct kefa_ni *efa_ni,
-				      struct lnet_nid *nid,
-				      enum kefa_conn_type conn_type);
-struct kefa_conn *kefalnd_lookup_or_init_conn(struct kefa_ni *efa_ni,
-					      struct lnet_nid *nid,
-					      enum kefa_conn_type conn_type);
+struct kefa_conn *kefalnd_get_conn(struct kefa_ni *efa_ni,
+				   struct lnet_nid *nid,
+				   enum kefa_conn_type conn_type,
+				   bool update_use_time);
+struct kefa_conn *kefalnd_get_or_init_conn(struct kefa_ni *efa_ni,
+					   struct lnet_nid *nid,
+					   enum kefa_conn_type conn_type);
 void kefalnd_handle_conn_establishment(struct kefa_ni *efa_ni,
 				       struct kefa_msg *msg);
 void kefalnd_deactivate_conn(struct kefa_conn *conn);

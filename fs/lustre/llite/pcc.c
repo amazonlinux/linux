@@ -2222,7 +2222,7 @@ pcc_create(struct dentry *base, const char *name, umode_t mode)
 	if (d_is_positive(dentry))
 		goto out;
 
-	rc = vfs_create(&nop_mnt_idmap, dir, dentry, mode, false);
+	rc = vfs_create(&nop_mnt_idmap, dentry, mode, NULL);
 	if (rc) {
 		dput(dentry);
 		dentry = ERR_PTR(rc);

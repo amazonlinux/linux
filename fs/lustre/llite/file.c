@@ -697,8 +697,8 @@ retry:
 
 	OBD_FAIL_TIMEOUT(OBD_FAIL_LLITE_OPEN_DELAY, cfs_fail_val);
 
-	rc = md_intent_lock(sbi->ll_md_exp, op_data, itp, &req,
-			    &ll_md_blocking_ast, 0);
+	rc = ll_intent_lock(sbi->ll_md_exp, op_data, itp, &req,
+			    &ll_md_blocking_ast, 0, true);
 	kfree(name);
 	ll_finish_md_op_data(op_data);
 	if (rc == -ESTALE) {
