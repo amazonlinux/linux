@@ -247,9 +247,8 @@ static void sa_free(struct ll_statahead_info *sai, struct sa_entry *entry)
 	atomic_dec(&sai->sai_cache_count);
 }
 
-/*
- * find sa_entry by name, used by directory scanner, lock is not needed because
- * only scanner can remove the entry from cache.
+/* sa_get: find sa_entry by name. Returns NULL when no matching
+ * entry exists.
  */
 static struct sa_entry *
 sa_get(struct ll_statahead_info *sai, const struct qstr *qstr)
@@ -257,14 +256,17 @@ sa_get(struct ll_statahead_info *sai, const struct qstr *qstr)
 	struct sa_entry *entry;
 	int i = sa_hash(qstr->hash);
 
+	spin_lock(&sai->sai_cache_lock[i]);
 	list_for_each_entry(entry, &sai->sai_cache[i], se_hash) {
 		if (entry->se_qstr.hash == qstr->hash &&
 		    entry->se_qstr.len == qstr->len &&
 		    memcmp(entry->se_qstr.name, qstr->name, qstr->len) == 0) {
 			atomic_inc(&sai->sai_inuse_count);
+			spin_unlock(&sai->sai_cache_lock[i]);
 			return entry;
 		}
 	}
+	spin_unlock(&sai->sai_cache_lock[i]);
 	return NULL;
 }
 
@@ -1129,7 +1131,8 @@ static int ll_statahead_thread(void *arg)
 		GOTO(out, rc = -ENOMEM);
 
 	/* matches smp_store_release() in ll_deauthorize_statahead() */
-	while (pos != MDS_DIR_END_OFF && smp_load_acquire(&sai->sai_task)) {
+	while (pos != MDS_DIR_END_OFF && smp_load_acquire(&sai->sai_task) &&
+	       lli->lli_sa_enabled) {
 		struct lu_dirpage *dp;
 		struct lu_dirent  *ent;
 
@@ -1157,7 +1160,7 @@ static int ll_statahead_thread(void *arg)
 		for (ent = lu_dirent_start(dp);
 		     /* matches smp_store_release() in ll_deauthorize_statahead() */
 		     ent != NULL && smp_load_acquire(&sai->sai_task) &&
-		     !sa_low_hit(sai);
+		     !sa_low_hit(sai) && lli->lli_sa_enabled;
 		     ent = lu_dirent_next(ent)) {
 			__u64 hash;
 			int namelen;
@@ -1212,6 +1215,8 @@ static int ll_statahead_thread(void *arg)
 				 /* matches smp_store_release() in
 				  * ll_deauthorize_statahead() */
 				 smp_load_acquire(&sai->sai_task); })) {
+				long timeout;
+
 				if (sa_has_callback(sai)) {
 					__set_current_state(TASK_RUNNING);
 					sa_handle_callback(sai);
@@ -1236,7 +1241,20 @@ static int ll_statahead_thread(void *arg)
 
 				if (!sa_sent_full(sai))
 					break;
-				schedule();
+				/*
+				 * If the thread is not doing stat in
+				 * sbi->ll_sa_timeout (30s) then it probably
+				 * does not care too much about performance, or
+				 * is no longer using this directory.  Stop the
+				 * statahead thread in this case (LU-14361 /
+				 * LU-17383).
+				 */
+				timeout = schedule_timeout(
+					cfs_time_seconds(sbi->ll_sa_timeout));
+				if (timeout == 0) {
+					lli->lli_sa_enabled = 0;
+					break;
+				}
 			}
 			__set_current_state(TASK_RUNNING);
 
@@ -1297,13 +1315,20 @@ static int ll_statahead_thread(void *arg)
 	 * for file release to stop me.
 	 */
 	while (({set_current_state(TASK_IDLE);
-		/* matches smp_store_release() in ll_deauthorize_statahead() */
-		smp_load_acquire(&sai->sai_task); })) {
+		/* matches smp_store_release() in ll_deauthorize_statahead();
+		 * also quit if deauthorized (lli_sa_enabled cleared), so an
+		 * orphaned thread -- one whose opendir handle was released
+		 * before sai->sai_task was set, so deauthorize never cleared
+		 * sai->sai_task -- cannot park here forever and wedge umount in
+		 * ll_kill_super() */
+		smp_load_acquire(&sai->sai_task) && lli->lli_sa_enabled; })) {
 		if (sa_has_callback(sai)) {
 			__set_current_state(TASK_RUNNING);
 			sa_handle_callback(sai);
 		} else {
-			schedule();
+			/* bounded wait (LU-17383) so we re-check the quit
+			 * conditions even if nothing wakes us */
+			schedule_timeout(cfs_time_seconds(sbi->ll_sa_timeout));
 		}
 	}
 	__set_current_state(TASK_RUNNING);
@@ -1785,6 +1810,16 @@ static int start_statahead_thread(struct inode *dir, struct dentry *dentry,
 	}
 	lli->lli_sai = sai;
 	spin_unlock(&lli->lli_sa_lock);
+
+	/*
+	 * TEST-ONLY fault injection (OBD_FAIL_LLITE_STATAHEAD_WINDOW): widen the
+	 * window between publishing lli_sai and setting sai->sai_task, so a
+	 * concurrent closedir()->ll_deauthorize_statahead() observes
+	 * sai->sai_task == NULL, skips the wake-up, and orphans this thread.
+	 * Reproduces the ll_kill_super() umount hang.  fail_val = seconds to
+	 * pause.
+	 */
+	CFS_FAIL_TIMEOUT(OBD_FAIL_LLITE_STATAHEAD_WINDOW, cfs_fail_val);
 
 	CDEBUG(D_READA, "start statahead thread: [pid %d] [parent %pd]\n",
 	       current->pid, parent);
