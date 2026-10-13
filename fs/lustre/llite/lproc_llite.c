@@ -758,6 +758,35 @@ static ssize_t statahead_running_max_store(struct kobject *kobj,
 }
 LUSTRE_RW_ATTR(statahead_running_max);
 
+static ssize_t statahead_timeout_show(struct kobject *kobj,
+				      struct attribute *attr,
+				      char *buf)
+{
+	struct ll_sb_info *sbi = container_of(kobj, struct ll_sb_info,
+					      ll_kset.kobj);
+
+	return scnprintf(buf, PAGE_SIZE, "%lu\n", sbi->ll_sa_timeout);
+}
+
+static ssize_t statahead_timeout_store(struct kobject *kobj,
+				       struct attribute *attr,
+				       const char *buffer,
+				       size_t count)
+{
+	struct ll_sb_info *sbi = container_of(kobj, struct ll_sb_info,
+					      ll_kset.kobj);
+	unsigned long val;
+	int rc;
+
+	rc = kstrtoul(buffer, 0, &val);
+	if (rc)
+		return rc;
+
+	sbi->ll_sa_timeout = val;
+	return count;
+}
+LUSTRE_RW_ATTR(statahead_timeout);
+
 static ssize_t statahead_xattr_show(struct kobject *kobj,
 				   struct attribute *attr,
 				   char *buf)
@@ -1965,6 +1994,7 @@ static struct attribute *llite_attrs[] = {
 	&lustre_attr_stats_track_ppid.attr,
 	&lustre_attr_stats_track_gid.attr,
 	&lustre_attr_statahead_running_max.attr,
+	&lustre_attr_statahead_timeout.attr,
 	&lustre_attr_statahead_xattr.attr,
 	&lustre_attr_statahead_max.attr,
 	&lustre_attr_statahead_agl.attr,
