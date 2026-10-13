@@ -47,7 +47,8 @@ static ssize_t active_show(struct kobject *kobj, struct attribute *attr,
 	ssize_t len;
 
 	with_imp_locked(obd, imp, len)
-		len = sprintf(buf, "%d\n", !imp->imp_deactive);
+		len = scnprintf(buf, PAGE_SIZE, "%d\n",
+				!test_bit(IMPF_DEACTIVE, imp->imp_flags));
 	return len;
 }
 
@@ -69,7 +70,7 @@ static ssize_t active_store(struct kobject *kobj, struct attribute *attr,
 	if (rc)
 		return rc;
 	/* opposite senses */
-	if (imp->imp_deactive == val)
+	if (test_bit(IMPF_DEACTIVE, imp->imp_flags) == val)
 		rc = ptlrpc_set_import_active(imp, val);
 	else
 		CDEBUG(D_CONFIG, "activate %u: ignoring repeat request\n",
@@ -677,7 +678,7 @@ static ssize_t grant_shrink_show(struct kobject *kobj, struct attribute *attr,
 
 	with_imp_locked(obd, imp, len)
 		len = scnprintf(buf, PAGE_SIZE, "%d\n",
-				!imp->imp_grant_shrink_disabled &&
+				!test_bit(IMPF_GRANT_SHRINK_DISABLED, imp->imp_flags) &&
 				OCD_HAS_FLAG(&imp->imp_connect_data,
 					     GRANT_SHRINK));
 
@@ -701,9 +702,11 @@ static ssize_t grant_shrink_store(struct kobject *kobj, struct attribute *attr,
 		return rc;
 
 	with_imp_locked(obd, imp, rc) {
-		spin_lock(&imp->imp_lock);
-		imp->imp_grant_shrink_disabled = !val;
-		spin_unlock(&imp->imp_lock);
+		if (val)
+			clear_bit(IMPF_GRANT_SHRINK_DISABLED, imp->imp_flags);
+		else
+			set_bit(IMPF_GRANT_SHRINK_DISABLED, imp->imp_flags);
+		smp_mb__after_atomic();
 	}
 
 	return rc ?: count;
