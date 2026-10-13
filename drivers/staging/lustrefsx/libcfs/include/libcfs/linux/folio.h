@@ -144,6 +144,23 @@ ll_read_cache_folio(struct address_space *mapping, pgoff_t index,
 	bio_add_page((bio), fpgptr((pg)), (sz), (off))
 #endif
 
+#ifndef HAVE_FILEMAP_ALLOC_FOLIO_NUMA
+#ifdef filemap_alloc_folio
+#undef filemap_alloc_folio
+
+#ifdef alloc_hooks
+#define filemap_alloc_folio(gfp, ord, numa) \
+	alloc_hooks(filemap_alloc_folio_noprof((gfp), (ord)))
+#else
+#define filemap_alloc_folio(gfp, ord, numa) \
+	filemap_alloc_folio((gfp), (ord))
+#endif
+#else
+#define filemap_alloc_folio(gfp, ord, numa) \
+	filemap_alloc_folio((gfp), (ord))
+#endif
+#endif /* HAVE_FILEMAP_ALLOC_FOLIO_NUMA */
+
 #else /* !HAVE___FILEMAP_GET_FOLIO */
 #define get_folio_lock(m, i, f, g)	find_lock_page((m), (i))
 #define get_folio_nowait(m, i, f, g)	grab_cache_page_nowait((m), (i))
@@ -226,7 +243,8 @@ do {						\
 #define folio_unlock(p)			unlock_page((p))
 #define folio_pos(p)			page_offset((p))
 #define flush_dcache_folio(p)		flush_dcache_page((p))
-#define filemap_alloc_folio(gfp, ord)	__page_cache_alloc((gfp))
+#define filemap_alloc_folio(gfp, ord, numa) \
+	__page_cache_alloc((gfp))
 #define folio_ref_count(p)		page_count((p))
 #define virt_to_folio(addr)		virt_to_page((addr))
 #define copy_folio_to_iter(f, o, b, i)	\
