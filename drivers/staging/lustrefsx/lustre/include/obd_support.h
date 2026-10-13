@@ -616,6 +616,7 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_LLITE_READ_PAUSE		    0x1431
 #define OBD_FAIL_LLITE_FAULT_PAUSE		    0x1432
 #define OBD_FAIL_LLITE_STATAHEAD_PAUSE		    0x1433
+#define OBD_FAIL_LLITE_STATAHEAD_WINDOW		    0x143a
 
 #define OBD_FAIL_FID_INDIR	0x1501
 #define OBD_FAIL_FID_INLMA	0x1502
@@ -743,6 +744,7 @@ extern char obd_jobid_var[];
 #define OBD_FAIL_BARRIER_FAILURE		0x2203
 
 #define OBD_FAIL_OSD_FAIL_AT_TRUNCATE		0x2301
+#define OBD_FAIL_MDS_CONNECT_ACCESS		0x2402
 
 /* LNet is allocated failure locations 0xe000 to 0xffff */
 /* Assign references to moved code to reduce code changes */

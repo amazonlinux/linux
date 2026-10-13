@@ -116,10 +116,10 @@ int mdc_set_lock_data(struct obd_export *exp, const struct lustre_handle *lockh,
 	    lock->l_resource->lr_lvb_inode != data) {
 		struct inode *old_inode = lock->l_resource->lr_lvb_inode;
 
-		LASSERTF(old_inode->i_state & I_FREEING,
-			 "Found existing inode %p/%lu/%u state %lu in lock: setting data to %p/%lu/%u\n",
+		LASSERTF(inode_state_read(old_inode) & I_FREEING,
+			 "Found existing inode %px/%lu/%u state %lu in lock: setting data to %px/%lu/%u\n",
 			 old_inode, old_inode->i_ino, old_inode->i_generation,
-			 (unsigned long)old_inode->i_state,
+			 (unsigned long)inode_state_read(old_inode),
 			 new_inode, new_inode->i_ino, new_inode->i_generation);
 	}
 	lock->l_resource->lr_lvb_inode = new_inode;
@@ -343,7 +343,7 @@ mdc_intent_open_pack(struct obd_export *exp, struct lookup_intent *it,
 	}
 
 	spin_lock(&req->rq_lock);
-	req->rq_replay = req->rq_import->imp_replayable;
+	req->rq_replay = test_bit(IMPF_REPLAYABLE, req->rq_import->imp_flags);
 	spin_unlock(&req->rq_lock);
 
 	/* pack the intent */
