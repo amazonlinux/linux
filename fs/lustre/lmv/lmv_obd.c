@@ -129,6 +129,52 @@ static int lmv_set_mdc_active(struct lmv_obd *lmv,
 	return rc;
 }
 
+struct lu_tgt_desc *lmv_tgt_retry(struct lmv_obd *lmv, __u32 index)
+{
+	struct obd_device *obd = lmv2obd_dev(lmv);
+	struct lu_tgt_desc *tgt;
+	static time64_t next_print;
+	time64_t retry_limit = 0;
+	time64_t now;
+	unsigned int level;
+	int rc;
+
+	might_sleep();
+retry:
+	tgt = lmv_tgt(lmv, index);
+	if (likely(tgt && tgt->ltd_exp))
+		return tgt;
+
+	now = ktime_get_seconds();
+	if (retry_limit == 0) {
+		level = now > next_print ? D_WARNING : D_INFO;
+		retry_limit = now + RECONNECT_DELAY_MAX;
+	} else if (now > retry_limit) {
+		level = D_ERROR;
+	} else {
+		level = D_INFO;
+	}
+	CDEBUG_LIMIT(level, index < lmv->lmv_mdt_count ?
+		     "%s: MDT index %u/%u not configured\n" :
+		     "%s: MDT index %u more than MDT count %u\n",
+		     obd->obd_name, index, lmv->lmv_mdt_count);
+	if (index >= LOV_V1_INSANE_STRIPE_COUNT)
+		return NULL;
+
+	if (now > next_print) {
+		LCONSOLE_INFO("%s: wait %ds while client connects to new MDT\n",
+			      obd->obd_name, (int)(retry_limit - now));
+		next_print = retry_limit + 600;
+	}
+	if (now < retry_limit) {
+		rc = schedule_timeout_interruptible(cfs_time_seconds(1));
+		if (rc == 0)
+			goto retry;
+	}
+
+	return NULL;
+}
+
 static struct obd_uuid *lmv_get_uuid(struct obd_export *exp)
 {
 	struct lmv_obd *lmv = &exp->exp_obd->u.lmv;
@@ -502,31 +548,43 @@ static int lmv_disconnect_mdc(struct obd_device *obd, struct lmv_tgt_desc *tgt)
 	if (mdc_obd) {
 		mdc_obd->obd_force = obd->obd_force;
 		mdc_obd->obd_fail = obd->obd_fail;
-		mdc_obd->obd_no_recov = obd->obd_no_recov;
+		if (test_bit(OBDF_NO_RECOV, obd->obd_flags))
+			set_bit(OBDF_NO_RECOV, mdc_obd->obd_flags);
+		else
+			clear_bit(OBDF_NO_RECOV, mdc_obd->obd_flags);
 
 		if (lmv->lmv_tgts_kobj)
 			sysfs_remove_link(lmv->lmv_tgts_kobj,
 					  mdc_obd->obd_name);
 	}
 
+	rc = lu_qos_del_tgt(&lmv->lmv_qos, tgt);
+	if (rc)
+		CERROR("%s: Can't del target from QoS table: rc = %d\n",
+		       tgt->ltd_exp->exp_obd->obd_name, rc);
+
+	rc = fld_client_del_target(&lmv->lmv_fld, tgt->ltd_index);
+	if (rc)
+		CERROR("%s: Can't del fld targets: rc = %d\n",
+		       tgt->ltd_exp->exp_obd->obd_name, rc);
+
 	rc = obd_fid_fini(tgt->ltd_exp->exp_obd);
 	if (rc)
-		CERROR("Can't finalize fids factory\n");
+		CERROR("%s: Can't finalize fids factory: rc = %d\n",
+		       tgt->ltd_exp->exp_obd->obd_name, rc);
 
 	CDEBUG(D_INFO, "Disconnected from %s(%s) successfully\n",
 	       tgt->ltd_exp->exp_obd->obd_name,
 	       tgt->ltd_exp->exp_obd->obd_uuid.uuid);
 
+	lmv_activate_target(lmv, tgt, 0);
 	obd_register_observer(tgt->ltd_exp->exp_obd, NULL);
 	rc = obd_disconnect(tgt->ltd_exp);
 	if (rc) {
-		if (tgt->ltd_active) {
-			CERROR("Target %s disconnect error %d\n",
-			       tgt->ltd_uuid.uuid, rc);
-		}
+		CERROR("%s: Target %s disconnect error: rc = %d\n",
+		       tgt->ltd_exp->exp_obd->obd_name,
+		       tgt->ltd_uuid.uuid, rc);
 	}
-
-	lmv_activate_target(lmv, tgt, 0);
 	tgt->ltd_exp = NULL;
 	RETURN(0);
 }
@@ -1361,6 +1419,8 @@ static int lmv_get_root(struct obd_export *exp, const char *fileset,
 		RETURN(-ENODEV);
 
 	rc = md_get_root(tgt->ltd_exp, fileset, fid);
+	if (!rc)
+		lmv->lmv_setup_time = ktime_get_seconds();
 	RETURN(rc);
 }
 
@@ -1471,10 +1531,25 @@ static int lmv_close(struct obd_export *exp, struct md_op_data *op_data,
 	RETURN(rc);
 }
 
+static inline bool tgt_qos_is_usable(struct lmv_obd *lmv,
+				     struct lu_tgt_desc *tgt, time64_t now)
+{
+	struct obd_import *imp;
+	u32 maxage = lmv->lmv_mdt_descs.ltd_lmv_desc.ld_qos_maxage;
+
+	if (!tgt->ltd_exp || !tgt->ltd_active)
+		return false;
+
+	imp = class_exp2cliimp(tgt->ltd_exp);
+	return now - imp->imp_setup_time > (maxage >> 1) ||
+	       now - lmv->lmv_setup_time < (maxage << 1);
+}
+
 static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv,
 					      struct md_op_data *op_data)
 {
 	struct lu_tgt_desc *tgt, *cur = NULL;
+	time64_t now = ktime_get_seconds();
 	__u64 total_avail = 0;
 	__u64 total_weight = 0;
 	__u64 cur_weight = 0;
@@ -1497,7 +1572,7 @@ static struct lu_tgt_desc *lmv_locate_tgt_qos(struct lmv_obd *lmv,
 		GOTO(unlock, tgt = ERR_PTR(rc));
 
 	lmv_foreach_tgt(lmv, tgt) {
-		if (!tgt->ltd_exp || !tgt->ltd_active) {
+		if (!tgt_qos_is_usable(lmv, tgt, now)) {
 			tgt->ltd_qos.ltq_usable = 0;
 			continue;
 		}
@@ -1563,6 +1638,7 @@ unlock:
 
 static struct lu_tgt_desc *lmv_locate_tgt_rr(struct lmv_obd *lmv)
 {
+	time64_t now = ktime_get_seconds();
 	struct lu_tgt_desc *tgt;
 	int i;
 	int index;
@@ -1574,7 +1650,7 @@ static struct lu_tgt_desc *lmv_locate_tgt_rr(struct lmv_obd *lmv)
 		index = (i + lmv->lmv_qos_rr_index) %
 			lmv->lmv_mdt_descs.ltd_tgts_size;
 		tgt = lmv_tgt(lmv, index);
-		if (!tgt || !tgt->ltd_exp || !tgt->ltd_active)
+		if (!tgt || !tgt_qos_is_usable(lmv, tgt, now))
 			continue;
 
 		lmv->lmv_qos_rr_index = (tgt->ltd_index + 1) %
@@ -1683,7 +1759,7 @@ lmv_locate_tgt_by_name(struct lmv_obd *lmv, struct lmv_stripe_object *lso,
 
 	*fid = oinfo->lmo_fid;
 	*mds = oinfo->lmo_mds;
-	tgt = lmv_tgt(lmv, oinfo->lmo_mds);
+	tgt = lmv_tgt_retry(lmv, oinfo->lmo_mds);
 
 	CDEBUG(D_INODE, "locate MDT %u parent "DFID"\n", *mds, PFID(fid));
 
@@ -1914,11 +1990,15 @@ static struct lu_tgt_desc *lmv_locate_tgt_by_space(struct lmv_obd *lmv,
 	if (tgt == ERR_PTR(-EAGAIN)) {
 		if (ltd_qos_is_balanced(&lmv->lmv_mdt_descs) &&
 		    !lmv_op_default_rr_mkdir(op_data) &&
-		    !lmv_op_user_qos_mkdir(op_data))
+		    !lmv_op_user_qos_mkdir(op_data)) {
 			/* if not necessary, don't create remote directory. */
 			tgt = tmp;
-		else
+		} else {
 			tgt = lmv_locate_tgt_rr(lmv);
+			/* if no MDT chosen, use parent MDT */
+			if (IS_ERR(tgt))
+				tgt = tmp;
+		}
 		if (!IS_ERR(tgt))
 			lmv_statfs_check_update(lmv2obd_dev(lmv), tgt);
 	}
@@ -1927,6 +2007,53 @@ static struct lu_tgt_desc *lmv_locate_tgt_by_space(struct lmv_obd *lmv,
 		op_data->op_mds = tgt->ltd_index;
 
 	return tgt;
+}
+
+/**
+ * lmv_locate_tgt_next_avail() - Select next available MDT
+ * @lmv: LMV device
+ * @op_data: operation data containing user/group IDs
+ * @cur: current MDT
+ * @exclude_bitmap: bitmap of MDT indices to exclude from selection (already
+ * tried)
+ *
+ *
+ * Return:
+ * Pointer to lu_tgt_desc of selected MDT, or error pointer.
+ */
+static
+struct lu_tgt_desc *lmv_locate_tgt_next_avail(struct lmv_obd *lmv,
+					      struct md_op_data *op_data,
+					      struct lmv_tgt_desc *cur,
+					      unsigned long *exclude_bitmap)
+{
+	__u32 count = lmv->lmv_mdt_count;
+	__u32 start;
+	__u32 i;
+
+	if (count <= 1)
+		return ERR_PTR(-EDQUOT);
+
+	/* Make start random to spread creates across MDTs */
+	start = (cur->ltd_index + 1 + get_random_u32_below(count - 1)) % count;
+
+	for (i = 0; i < count ; i++) {
+		__u32 idx = (start+i) % count;
+
+		struct lu_tgt_desc *tgt;
+
+		if (test_bit(idx, exclude_bitmap))
+			continue;
+
+		tgt = lmv_tgt_retry(lmv, idx);
+		if (!tgt || !tgt->ltd_active)
+			continue;
+
+		op_data->op_mds = tgt->ltd_index;
+		return tgt;
+	}
+
+	return ERR_PTR(-EDQUOT);
 }
 
 static int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
@@ -1938,9 +2065,13 @@ static int lmv_create(struct obd_export *exp, struct md_op_data *op_data,
 	struct lmv_obd *lmv = &obd->u.lmv;
 	struct lmv_tgt_desc *tgt;
 	struct mdt_body *repbody;
+	DECLARE_BITMAP(exclude_bitmap, LMV_MAX_TGT_COUNT);
+	int quota_retry = 0;
 	int rc;
 
 	ENTRY;
+
+	bitmap_zero(exclude_bitmap, LMV_MAX_TGT_COUNT);
 
 	if (!lmv->lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count)
 		RETURN(-EIO);
@@ -2011,6 +2142,57 @@ retry:
 		if (*request == NULL)
 			RETURN(rc);
 		CDEBUG(D_INODE, "Created - "DFID"\n", PFID(&op_data->op_fid2));
+	}
+
+	/* If we hit quota limit and this is a directory creation, try to
+	 * find an alternative MDT with available quota space. Retry up to
+	 * the number of active MDTs.
+	 */
+	if (rc == -EDQUOT && S_ISDIR(mode) &&
+	    quota_retry < lmv->lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count &&
+	    lmv->lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count > 1) {
+		struct lmv_tgt_desc *new_tgt;
+
+		CDEBUG(D_QUOTA,
+		       "%s: mkdir hit EDQUOT on MDT%04x (retry %d/%u), searching for alternative MDT: rc = %d\n",
+		       lmv2obd_dev(lmv)->obd_name, tgt->ltd_index, quota_retry,
+		       lmv->lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count, rc);
+
+		set_bit(tgt->ltd_index, exclude_bitmap);
+
+		new_tgt = lmv_locate_tgt_next_avail(lmv, op_data, tgt,
+						    exclude_bitmap);
+		if (!IS_ERR(new_tgt) && new_tgt != tgt) {
+			CDEBUG(D_INFO,
+			       "\nretrying mkdir on MDT%04x (was MDT%04x)\n",
+			       new_tgt->ltd_index, tgt->ltd_index);
+
+			if (*request != NULL) {
+				ptlrpc_req_finished(*request);
+				*request = NULL;
+			}
+
+			tgt = new_tgt;
+			quota_retry++;
+			/* Reset FID2 for retry, and allocate a new FID */
+			fid_zero(&op_data->op_fid2);
+			rc = lmv_fid_alloc(NULL, exp, &op_data->op_fid2, op_data);
+			if (rc)
+				RETURN(rc);
+			goto retry;
+		}
+
+		CDEBUG(D_QUOTA,
+		       "Failed to find alternative MDT: new_tgt=%p, tgt=%p, is_err=%d\n",
+		       new_tgt, tgt, IS_ERR(new_tgt));
+	} else {
+		if (rc == -EDQUOT) {
+			CDEBUG(D_QUOTA,
+			       "EDQUOT but conditions not met: S_ISDIR=%d, retry_count=%d/%u, mdt_count=%u\n",
+			       S_ISDIR(mode), quota_retry,
+			       lmv->lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count,
+			       lmv->lmv_mdt_descs.ltd_lmv_desc.ld_active_tgt_count);
+		}
 	}
 
 	/* dir restripe needs to send to MDT where dir is located */
@@ -2287,7 +2469,7 @@ static int lmv_migrate(struct obd_export *exp, struct md_op_data *op_data,
 
 		/* save source stripe FID in fid4 temporarily for ELC */
 		op_data->op_fid4 = oinfo->lmo_fid;
-		sp_tgt = lmv_tgt(lmv, oinfo->lmo_mds);
+		sp_tgt = lmv_tgt_retry(lmv, oinfo->lmo_mds);
 		if (!sp_tgt)
 			RETURN(-ENODEV);
 
@@ -2302,7 +2484,7 @@ static int lmv_migrate(struct obd_export *exp, struct md_op_data *op_data,
 				RETURN(PTR_ERR(oinfo));
 
 			op_data->op_fid2 = oinfo->lmo_fid;
-			tp_tgt = lmv_tgt(lmv, oinfo->lmo_mds);
+			tp_tgt = lmv_tgt_retry(lmv, oinfo->lmo_mds);
 			if (!tp_tgt)
 				RETURN(-ENODEV);
 
@@ -2739,7 +2921,7 @@ static struct lu_dirent *stripe_dirent_load(struct lmv_dir_ctxt *ctxt,
 			break;
 		}
 
-		tgt = lmv_tgt(ctxt->ldc_lmv, oinfo->lmo_mds);
+		tgt = lmv_tgt_retry(ctxt->ldc_lmv, oinfo->lmo_mds);
 		if (!tgt) {
 			rc = -ENODEV;
 			break;

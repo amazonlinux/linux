@@ -178,6 +178,7 @@ static struct ll_sb_info *ll_init_sbi(void)
 	/* metadata statahead is enabled by default */
 	sbi->ll_sa_running_max = LL_SA_RUNNING_DEF;
 	sbi->ll_sa_max = LL_SA_RPC_DEF;
+	sbi->ll_sa_timeout = LL_SA_TIMEOUT_DEF;
 
 	/* FSxL: https://sim.amazon.com/issues/Simba-71343 */
 	if (num_online_cpus() >= 64)
@@ -385,8 +386,6 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 	data->ocd_ibits_known = MDS_INODELOCK_FULL;
 	data->ocd_version = LUSTRE_VERSION_CODE;
 
-	if (sb->s_flags & SB_RDONLY)
-		data->ocd_connect_flags |= OBD_CONNECT_RDONLY;
 	if (test_bit(LL_SBI_USER_XATTR, sbi->ll_flags))
 		data->ocd_connect_flags |= OBD_CONNECT_XATTR;
 
@@ -414,6 +413,9 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 
 	data->ocd_brw_size = MD_MAX_BRW_SIZE;
 
+retry_connect:
+	if (sb->s_flags & SB_RDONLY)
+		data->ocd_connect_flags |= OBD_CONNECT_RDONLY;
 	err = obd_connect(NULL, &sbi->ll_md_exp, sbi->ll_md_obd,
 			  &sbi->ll_sb_uuid, data, sbi->ll_cache);
 	if (err == -EBUSY) {
@@ -443,8 +445,20 @@ static int client_common_fill_super(struct super_block *sb, char *md, char *dt)
 	err = obd_statfs(NULL, sbi->ll_md_exp, osfs,
 			ktime_get_seconds() - sbi->ll_statfs_max_age,
 			OBD_STATFS_FOR_MDT0);
-	if (err)
+	if (err == -EROFS && !(sb->s_flags & SB_RDONLY)) {
+		/* We got -EROFS from the server, maybe it is imposing
+		 * read-only mount. So just retry like this.
+		 */
+		cfs_tty_write_msg("Forcing read-only mount.\n\r");
+		CERROR("%s: mount failed with %d, forcing read-only mount.\n",
+		       sbi->ll_md_exp->exp_obd->obd_name, err);
+		sb->s_flags |= SB_RDONLY;
+		obd_fid_fini(sbi->ll_md_exp->exp_obd);
+		obd_disconnect(sbi->ll_md_exp);
+		GOTO(retry_connect, err);
+	} else if (err) {
 		GOTO(out_md_fid, err);
+	}
 
 	/* This needs to be after statfs to ensure connect has finished.
 	 * Note that "data" does NOT contain the valid connect reply.
@@ -1479,7 +1493,8 @@ out_free_cfg:
 	if (err)
 		ll_put_super(sb);
 	else if (test_bit(LL_SBI_VERBOSE, sbi->ll_flags))
-		LCONSOLE_WARN("Mounted %s\n", profilenm);
+		LCONSOLE_WARN("Mounted %s%s\n", profilenm,
+			      sb->s_flags & SB_RDONLY ? " read-only" : "");
 	RETURN(err);
 } /* ll_fill_super */
 
@@ -1587,9 +1602,9 @@ struct inode *ll_inode_from_resource_lock(struct ldlm_lock *lock)
 			inode = igrab(lock->l_resource->lr_lvb_inode);
 		} else {
 			inode = lock->l_resource->lr_lvb_inode;
-			LDLM_DEBUG_LIMIT(inode->i_state & I_FREEING ?  D_INFO :
-					 D_WARNING, lock, "lr_lvb_inode %p is "
-					 "bogus: magic %08x",
+			LDLM_DEBUG_LIMIT(inode_state_read(inode) &
+					 I_FREEING ?  D_INFO : D_WARNING, lock,
+					 "lr_lvb_inode %p is bogus: magic %08x",
 					 lock->l_resource->lr_lvb_inode,
 					 lli->lli_inode_magic);
 			inode = NULL;
@@ -1633,7 +1648,7 @@ static struct inode *ll_iget_anon_dir(struct super_block *sb,
 	}
 
 	lli = ll_i2info(inode);
-	if (inode->i_state & I_NEW) {
+	if (inode_state_read(inode) & I_NEW) {
 		inode->i_mode = (inode->i_mode & ~S_IFMT) |
 				(body->mbo_mode & S_IFMT);
 		LASSERTF(S_ISDIR(inode->i_mode), "Not slave inode "DFID"\n",
@@ -2961,7 +2976,8 @@ void ll_truncate_inode_pages_final(struct inode *inode)
 			 "see https://jira.whamcloud.com/browse/LU-118\n",
 			 ll_i2sbi(inode)->ll_fsname,
 			 PFID(ll_inode2fid(inode)), inode, nrpages,
-			 (unsigned long)inode->i_state, ll_i2info(inode)->lli_flags);
+			 (unsigned long)inode_state_read(inode),
+			 ll_i2info(inode)->lli_flags);
 #ifdef HAVE_XARRAY_SUPPORT
 		rcu_read_lock();
 		xas_for_each(&xas, page, ULONG_MAX) {

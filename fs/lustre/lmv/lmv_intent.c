@@ -223,7 +223,7 @@ int lmv_revalidate_slaves(struct obd_export *exp,
 			op_data->op_suppgids[1] = -1;
 		}
 
-		tgt = lmv_tgt(lmv, lsm->lsm_md_oinfo[i].lmo_mds);
+		tgt = lmv_tgt_retry(lmv, lsm->lsm_md_oinfo[i].lmo_mds);
 		if (!tgt)
 			GOTO(cleanup, rc = -ENODEV);
 
