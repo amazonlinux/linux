@@ -926,7 +926,7 @@ int lnet_sock_read(struct socket *sock, void *buffer, int nob, int timeout);
 struct socket *lnet_sock_listen(int port, int backlog,
 				struct net *ns);
 struct socket *lnet_sock_connect(int interface, int local_port,
-				 struct sockaddr *peeraddr,
+				 struct sockaddr_unsized *peeraddr,
 				 struct net *ns);
 
 int lnet_peers_start_down(void);

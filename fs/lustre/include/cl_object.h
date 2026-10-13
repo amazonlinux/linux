@@ -769,9 +769,14 @@ struct cl_page {
 	enum cl_page_type	cp_type:CP_TYPE_BITS;
 	unsigned		cp_defer_uptodate:1,
 				cp_ra_updated:1,
-				cp_ra_used:1;
-	/* which slab kmem index this memory allocated from */
-	short int		cp_kmem_index; /* 48 bits */
+				cp_ra_used:1,
+				cp_in_kmem_array:1;
+	union {
+		/* which slab kmem index this memory allocated from */
+		short int	cp_kmem_index; /* 48 bits */
+		/* or the page size if it's not in the slab kmem array */
+		short int	cp_kmem_size;
+	};
 	unsigned int		cp_unused1:16;	/* 64 bits */
 
 	/**
@@ -1564,9 +1569,9 @@ struct cl_io_operations {
 	 *
 	 * \pre io->ci_type == CIT_READ
 	 */
-	int (*cio_read_ahead)(const struct lu_env *env,
-			      const struct cl_io_slice *slice,
-			      pgoff_t start, struct cl_read_ahead *ra);
+	int (*cio_read_ahead_prep)(const struct lu_env *env,
+				   const struct cl_io_slice *slice,
+				   pgoff_t start, struct cl_read_ahead *ra);
 	/**
 	 *
 	 * Reserve LRU slots before IO.
@@ -2393,10 +2398,10 @@ int   cl_io_commit_async (const struct lu_env *env, struct cl_io *io,
 void  cl_io_extent_release (const struct lu_env *env, struct cl_io *io);
 int cl_io_lru_reserve(const struct lu_env *env, struct cl_io *io,
 		      loff_t pos, size_t bytes);
-int   cl_io_read_ahead   (const struct lu_env *env, struct cl_io *io,
+int cl_io_read_ahead_prep(const struct lu_env *env, struct cl_io *io,
 			  pgoff_t start, struct cl_read_ahead *ra);
-void  cl_io_rw_advance   (const struct lu_env *env, struct cl_io *io,
-                          size_t nob);
+void cl_io_rw_advance(const struct lu_env *env, struct cl_io *io,
+		      size_t bytes);
 
 /**
  * True, iff \a io is an O_APPEND write(2).
