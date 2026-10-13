@@ -170,9 +170,9 @@ cl_page_at_trusted(const struct cl_page *cl_page,
 
 static void __cl_page_free(struct cl_page *cl_page, unsigned short bufsize)
 {
-	int index = cl_page->cp_kmem_index;
+	if (cl_page->cp_in_kmem_array) {
+		int index = cl_page->cp_kmem_index;
 
-	if (index >= 0) {
 		LASSERT(index < ARRAY_SIZE(cl_page_kmem_array));
 		LASSERT(cl_page_kmem_size_array[index] == bufsize);
 		OBD_SLAB_FREE(cl_page, cl_page_kmem_array[index], bufsize);
@@ -185,7 +185,7 @@ static void cl_page_free(const struct lu_env *env, struct cl_page *cp,
 			 struct folio_batch *fbatch)
 {
 	struct cl_object *obj  = cp->cp_obj;
-	unsigned short bufsize = cl_object_header(obj)->coh_page_bufsize;
+	unsigned short bufsize;
 	struct page *vmpage;
 
 	ENTRY;
@@ -212,6 +212,17 @@ static void cl_page_free(const struct lu_env *env, struct cl_page *cp,
 	cs_page_dec(obj, CS_total);
 	cs_pagestate_dec(obj, cp->cp_state);
 	lu_object_ref_del_at(&obj->co_lu, &cp->cp_obj_ref, "cl_page", cp);
+
+	if (cp->cp_in_kmem_array)
+		bufsize = cl_page_kmem_size_array[cp->cp_kmem_index];
+	else
+		bufsize = cp->cp_kmem_size;
+	if (unlikely(bufsize != cl_object_header(obj)->coh_page_bufsize))
+		CWARN("%s:"DFID" page bufsize %d, object bufsize now %d\n",
+		      obj->co_lu.lo_dev->ld_obd->obd_name,
+		      PFID(&cl_object_header(obj)->coh_lu.loh_fid),
+		      bufsize, cl_object_header(obj)->coh_page_bufsize);
+
 	if (cp->cp_type != CPT_TRANSIENT)
 		cl_object_put(env, obj);
 	lu_ref_fini(&cp->cp_reference);
@@ -237,8 +248,10 @@ check:
 		    == bufsize) {
 			OBD_SLAB_ALLOC_GFP(cl_page, cl_page_kmem_array[i],
 					   bufsize, GFP_NOFS);
-			if (cl_page)
+			if (cl_page) {
+				cl_page->cp_in_kmem_array = 1;
 				cl_page->cp_kmem_index = i;
+			}
 			return cl_page;
 		}
 		if (cl_page_kmem_size_array[i] == 0)
@@ -268,8 +281,10 @@ check:
 		goto check;
 	} else {
 		OBD_ALLOC_GFP(cl_page, bufsize, GFP_NOFS);
-		if (cl_page)
-			cl_page->cp_kmem_index = -1;
+		if (cl_page) {
+			cl_page->cp_in_kmem_array = 0;
+			cl_page->cp_kmem_size = bufsize;
+		}
 	}
 
 	return cl_page;
