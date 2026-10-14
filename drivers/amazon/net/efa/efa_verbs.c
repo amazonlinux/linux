@@ -201,7 +201,7 @@ static void *efa_zalloc_mapped(struct efa_dev *dev, dma_addr_t *dma_addr,
 {
 	void *addr;
 
-	addr = alloc_pages_exact(size, GFP_KERNEL | __GFP_ZERO);
+	addr = alloc_pages_exact(size, GFP_KERNEL | __GFP_ZERO | __GFP_RETRY_MAYFAIL);
 	if (!addr)
 		return NULL;
 
@@ -281,6 +281,7 @@ int efa_query_device(struct ib_device *ibdev,
 
 		if (EFA_DEV_CAP(dev, EVENT_COUNTERS))
 			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_COMP_CNTR;
+
 		if (EFA_DEV_CAP(dev, SQ_64_BIT_REQ_ID))
 			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_SQ_64_BIT_REQ_ID;
 
@@ -2152,7 +2153,10 @@ static int efa_register_mr(struct ib_pd *ibpd, struct efa_mr *mr, u64 start,
 	params.pd = to_epd(ibpd)->pdn;
 	params.iova = virt_addr;
 	params.mr_length_in_bytes = length;
-	params.permissions = access_flags;
+	params.permissions.local_write = !!(access_flags & IB_ACCESS_LOCAL_WRITE);
+	params.permissions.remote_write = !!(access_flags & IB_ACCESS_REMOTE_WRITE);
+	params.permissions.remote_read = !!(access_flags & IB_ACCESS_REMOTE_READ);
+	params.relaxed_ordering = !!(access_flags & IB_ACCESS_RELAXED_ORDERING);
 
 	if (mr->p2pmem) {
 		pg_sz = efa_p2p_get_page_size(dev, mr->p2pmem);
@@ -2274,7 +2278,8 @@ struct ib_mr *efa_reg_mr(struct ib_pd *ibpd, u64 start, u64 length,
 		}
 		err = PTR_ERR(mr->umem);
 		ibdev_dbg(&dev->ibdev,
-			  "Failed to pin and map user space memory[%d]\n", err);
+			  "Failed to pin and map user space memory[%pe]\n",
+			  mr->umem);
 		goto err_free;
 	}
 
@@ -2327,7 +2332,9 @@ struct ib_mr *efa_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	params.pd = to_epd(ibpd)->pdn;
 	params.iova = 0;
 	params.mr_length_in_bytes = length;
-	params.permissions = access_flags;
+	params.permissions.local_write = !!(access_flags & IB_ACCESS_LOCAL_WRITE);
+	params.permissions.remote_write = !!(access_flags & IB_ACCESS_REMOTE_WRITE);
+	params.permissions.remote_read = !!(access_flags & IB_ACCESS_REMOTE_READ);
 	params.page_num = 0;
 
 	err = efa_com_register_mr(&dev->edev, &params, &result);
