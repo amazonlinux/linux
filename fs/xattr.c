@@ -329,8 +329,19 @@ vfs_getxattr_alloc(struct dentry *dentry, const char *name, char **xattr_value,
 		memset(value, 0, error + 1);
 	}
 
-	error = handler->get(handler, dentry, inode, name, value, error);
 	*xattr_value = value;
+	/*
+	 * A ->get() with size 0 is a length query for many filesystems: it
+	 * fills nothing and returns the current length.  Never report more
+	 * than the buffer holds.
+	 */
+	if (error) {
+		int len = error;
+
+		error = handler->get(handler, dentry, inode, name, value, len);
+		if (error > len)
+			error = -ERANGE;
+	}
 	return error;
 }
 
