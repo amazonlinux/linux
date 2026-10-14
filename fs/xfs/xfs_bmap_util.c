@@ -980,6 +980,16 @@ xfs_flush_unmap_range(
 	if (error)
 		return error;
 	truncate_pagecache_range(inode, start, end);
+
+	/*
+	 * A large folio that cannot be split (it is pinned) and that was marked
+	 * dirty again after the flush above (the holder of a pin does that with
+	 * no lock of ours) stays in the page cache.  The callers go on to change
+	 * the block map under the range, and writeback of that folio would then
+	 * go to the new blocks.
+	 */
+	if (filemap_range_has_page(inode->i_mapping, start, end))
+		return -EBUSY;
 	return 0;
 }
 
