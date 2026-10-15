@@ -649,15 +649,22 @@ struct page *swap_readahead_detect(struct vm_fault *vmf,
 		return NULL;
 
 	/* Copy the PTEs because the page table may be unmapped */
+	/*
+	 * The window can be larger than fpfn (up to 1 << page_cluster pages),
+	 * so don't let the left edge wrap around: swap_ra_clamp_pfn() can only
+	 * clamp it to the VMA and PMD start if it hasn't underflowed.
+	 */
 	if (fpfn == pfn + 1)
 		swap_ra_clamp_pfn(vma, faddr, fpfn, fpfn + win, &start, &end);
 	else if (pfn == fpfn + 1)
-		swap_ra_clamp_pfn(vma, faddr, fpfn - win + 1, fpfn + 1,
-				  &start, &end);
+		swap_ra_clamp_pfn(vma, faddr,
+				  fpfn - min_t(unsigned long, fpfn, win - 1),
+				  fpfn + 1, &start, &end);
 	else {
 		left = (win - 1) / 2;
-		swap_ra_clamp_pfn(vma, faddr, fpfn - left, fpfn + win - left,
-				  &start, &end);
+		swap_ra_clamp_pfn(vma, faddr,
+				  fpfn - min_t(unsigned long, fpfn, left),
+				  fpfn + win - left, &start, &end);
 	}
 	swap_ra->nr_pte = end - start;
 	swap_ra->offset = fpfn - start;
