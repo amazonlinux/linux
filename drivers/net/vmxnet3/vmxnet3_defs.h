@@ -224,6 +224,8 @@ struct Vmxnet3_RxDesc {
 #define VMXNET3_RXD_BTYPE_SHIFT  14
 #define VMXNET3_RXD_GEN_SHIFT    31
 
+#define VMXNET3_RCD_HDR_INNER_SHIFT  13
+
 struct Vmxnet3_RxCompDesc {
 #ifdef __BIG_ENDIAN_BITFIELD
 	u32		ext2:1;
