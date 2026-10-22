@@ -225,8 +225,6 @@ struct efa_qp {
 	u32 max_send_sge;
 	u32 max_recv_sge;
 	u32 max_inline_data;
-	struct xarray comp_cntrs;
-	u32 comp_cntr_op_mask;
 	struct efa_sq sq;
 	struct efa_rq rq;
 };

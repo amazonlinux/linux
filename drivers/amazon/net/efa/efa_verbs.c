@@ -203,7 +203,7 @@ static void *efa_zalloc_mapped(struct efa_dev *dev, dma_addr_t *dma_addr,
 {
 	void *addr;
 
-	addr = alloc_pages_exact(size, GFP_KERNEL | __GFP_ZERO);
+	addr = alloc_pages_exact(size, GFP_KERNEL | __GFP_ZERO | __GFP_RETRY_MAYFAIL);
 	if (!addr)
 		return NULL;
 
@@ -284,6 +284,7 @@ int efa_query_device(struct ib_device *ibdev,
 
 		if (EFA_DEV_CAP(dev, EVENT_COUNTERS))
 			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_COMP_CNTR;
+
 		if (EFA_DEV_CAP(dev, SQ_64_BIT_REQ_ID))
 			resp.device_caps |= EFA_QUERY_DEVICE_CAPS_SQ_64_BIT_REQ_ID;
 
@@ -575,8 +576,6 @@ int efa_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata)
 {
 	struct efa_dev *dev = to_edev(ibqp->pd->device);
 	struct efa_qp *qp = to_eqp(ibqp);
-	struct ib_comp_cntr *cc;
-	unsigned long index;
 	int err;
 
 	ibdev_dbg(&dev->ibdev, "Destroy qp[%u]\n", ibqp->qp_num);
@@ -598,10 +597,6 @@ int efa_destroy_qp(struct ib_qp *ibqp, struct ib_udata *udata)
 		efa_free_mapped(dev, qp->rq_cpu_addr, qp->rq_dma_addr,
 				qp->rq_size, DMA_TO_DEVICE);
 	}
-
-	xa_for_each(&qp->comp_cntrs, index, cc)
-		atomic_dec(&cc->usecnt);
-	xa_destroy(&qp->comp_cntrs);
 
 	return 0;
 }
@@ -1043,7 +1038,6 @@ int efa_create_qp(struct ib_qp *ibqp, struct ib_qp_init_attr *init_attr,
 	u16 supported_efa_flags = 0;
 	int err;
 
-	xa_init(&qp->comp_cntrs);
 	if (!udata)
 		return efa_create_qp_kernel(ibqp, init_attr);
 	ucontext = rdma_udata_to_drv_context(udata, struct efa_ucontext,
@@ -1171,7 +1165,6 @@ err_free_mapped:
 		efa_free_mapped(dev, qp->rq_cpu_addr, qp->rq_dma_addr,
 				qp->rq_size, DMA_TO_DEVICE);
 err_out:
-	xa_destroy(&qp->comp_cntrs);
 	atomic64_inc(&dev->stats.create_qp_err);
 	return err;
 }
@@ -2163,7 +2156,10 @@ static int efa_register_mr(struct ib_pd *ibpd, struct efa_mr *mr, u64 start,
 	params.pd = to_epd(ibpd)->pdn;
 	params.iova = virt_addr;
 	params.mr_length_in_bytes = length;
-	params.permissions = access_flags;
+	params.permissions.local_write = !!(access_flags & IB_ACCESS_LOCAL_WRITE);
+	params.permissions.remote_write = !!(access_flags & IB_ACCESS_REMOTE_WRITE);
+	params.permissions.remote_read = !!(access_flags & IB_ACCESS_REMOTE_READ);
+	params.relaxed_ordering = !!(access_flags & IB_ACCESS_RELAXED_ORDERING);
 
 	if (mr->p2pmem) {
 		pg_sz = efa_p2p_get_page_size(dev, mr->p2pmem);
@@ -2392,7 +2388,9 @@ struct ib_mr *efa_get_dma_mr(struct ib_pd *ibpd, int access_flags)
 	params.pd = to_epd(ibpd)->pdn;
 	params.iova = 0;
 	params.mr_length_in_bytes = length;
-	params.permissions = access_flags;
+	params.permissions.local_write = !!(access_flags & IB_ACCESS_LOCAL_WRITE);
+	params.permissions.remote_write = !!(access_flags & IB_ACCESS_REMOTE_WRITE);
+	params.permissions.remote_read = !!(access_flags & IB_ACCESS_REMOTE_READ);
 	params.page_num = 0;
 
 	err = efa_com_register_mr(&dev->edev, &params, &result);
