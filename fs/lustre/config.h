@@ -949,7 +949,7 @@
 #define HAVE_PAGE_MAPCOUNT_IS_TYPE 1
 
 /* PagePrivate2() is available */
-#define HAVE_PAGE_PRIVATE_2 1
+/* #undef HAVE_PAGE_PRIVATE_2 */
 
 /* linux/panic_notifier.h is present */
 #define HAVE_PANIC_NOTIFIER_H 1
