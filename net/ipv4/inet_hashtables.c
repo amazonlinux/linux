@@ -372,7 +372,7 @@ begin:
 			continue;
 		if (likely(INET_MATCH(sk, net, acookie,
 				      saddr, daddr, ports, dif, sdif))) {
-			if (unlikely(!refcount_inc_not_zero(&sk->sk_refcnt)))
+			if (unlikely(!refcount_inc_not_zero_acquire(&sk->sk_refcnt)))
 				goto out;
 			if (unlikely(!READ_ONCE(sk->sk_nulls_node.pprev) ||
 				     !INET_MATCH(sk, net, acookie,
