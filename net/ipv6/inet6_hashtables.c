@@ -77,7 +77,7 @@ begin:
 			continue;
 		if (!INET6_MATCH(sk, net, saddr, daddr, ports, dif, sdif))
 			continue;
-		if (unlikely(!refcount_inc_not_zero(&sk->sk_refcnt)))
+		if (unlikely(!refcount_inc_not_zero_acquire(&sk->sk_refcnt)))
 			goto out;
 
 		if (unlikely(!READ_ONCE(sk->sk_nulls_node.pprev) ||
