@@ -830,6 +830,9 @@ static bool ena_xdp_xmit_irq_zc(struct ena_ring *tx_ring,
 			struct xsk_tx_metadata *meta =
 				xsk_buff_get_metadata(xsk_pool, desc.addr, desc.options);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0)
+			tx_info->xsk_meta_compl.tx_timestamp = NULL;
+#endif /* LINUX_VERSION_CODE < KERNEL_VERSION(7, 3, 0) */
 			/* Save a pointer to completion metadata to fill it
 			 * later upon completion
 			 */
