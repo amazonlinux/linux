@@ -1225,6 +1225,9 @@ static void nested_vmx_transition_tlb_flush(struct kvm_vcpu *vcpu,
 	 * "real" VPID (vpid02), and so needs to be sync'd.  There is no direct
 	 * mapping between vpid02 and vpid12, vpid02 is per-vCPU and reused for
 	 * all nested vCPUs.
+	 *
+	 * Note, last_vpid is initialized as 0, so the first nested VM-Enter
+	 * after VMXON will always flush the TLB to avoid using stale entries.
 	 */
 	if (!nested_cpu_has_vpid(vmcs12)) {
 		kvm_make_request(KVM_REQ_TLB_FLUSH, vcpu);
@@ -4908,6 +4911,13 @@ static int enter_vmx_operation(struct kvm_vcpu *vcpu)
 	vmx->nested.preemption_timer.function = vmx_preemption_timer_fn;
 
 	vmx->nested.vpid02 = allocate_vpid();
+
+	/*
+	 * Clear last_vpid to ensure that the VPID is flushed on the first
+	 * nested VM-Enter. Otherwise, stale TLB entries from a previous life of
+	 * the VPID (e.g. different vCPU or even different VM) could be used.
+	 */
+	vmx->nested.last_vpid = 0;
 
 	vmx->nested.vmcs02_initialized = false;
 	vmx->nested.vmxon = true;
