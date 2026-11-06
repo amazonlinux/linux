@@ -80,7 +80,8 @@ begin:
 		if (unlikely(!refcount_inc_not_zero(&sk->sk_refcnt)))
 			goto out;
 
-		if (unlikely(!INET6_MATCH(sk, net, saddr, daddr, ports, dif, sdif))) {
+		if (unlikely(!READ_ONCE(sk->sk_nulls_node.pprev) ||
+			     !INET6_MATCH(sk, net, saddr, daddr, ports, dif, sdif))) {
 			sock_gen_put(sk);
 			goto begin;
 		}
