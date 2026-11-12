@@ -2027,6 +2027,11 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
 
 			asoc = transport->asoc;
 			new = true;
+			/* sctp_sendmsg_to_asoc() may release the socket lock,
+			 * and the new asoc can be peeled off meanwhile.  Hold
+			 * it, and free it on error only if sk still owns it.
+			 */
+			sctp_association_hold(asoc);
 		}
 
 		if (!sctp_style(sk, TCP) && !(sflags & SCTP_ADDR_OVER))
@@ -2048,8 +2053,11 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
 
 	/* Send msg to the asoc */
 	err = sctp_sendmsg_to_asoc(asoc, msg, msg_len, transport, sinfo);
-	if (err < 0 && err != -ESRCH && new)
-		sctp_association_free(asoc);
+	if (new) {
+		if (err < 0 && err != -ESRCH && asoc->base.sk == sk)
+			sctp_association_free(asoc);
+		sctp_association_put(asoc);
+	}
 
 out_unlock:
 	release_sock(sk);
