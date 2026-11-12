@@ -1676,6 +1676,7 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
 	bool fill_sinfo_ttl = false, wait_connect = false;
 	struct sctp_datamsg *datamsg;
 	int msg_flags = msg->msg_flags;
+	bool new = false;
 	__u16 sinfo_flags = 0;
 	long timeo;
 	int err;
@@ -1941,6 +1942,13 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
 			err = -ENOMEM;
 			goto out_free;
 		}
+
+		new = true;
+		/* sctp_wait_for_sndbuf() may release the socket lock,
+		 * and the new asoc can be peeled off meanwhile.  Hold
+		 * it, and free it on error only if sk still owns it.
+		 */
+		sctp_association_hold(asoc);
 	}
 
 	/* ASSERT: we have a valid association at this point.  */
@@ -2080,9 +2088,11 @@ static int sctp_sendmsg(struct sock *sk, struct msghdr *msg, size_t msg_len)
 	goto out_unlock;
 
 out_free:
-	if (new_asoc)
+	if (new_asoc && asoc->base.sk == sk)
 		sctp_association_free(asoc);
 out_unlock:
+	if (new)
+		sctp_association_put(asoc);
 	release_sock(sk);
 
 out_nounlock:
