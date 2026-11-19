@@ -139,6 +139,24 @@
 /* Set if the algorithm cannot have a fallback (e.g., phmac). */
 #define CRYPTO_ALG_NO_FALLBACK		0x00080000
 
+/*
+ * Mark an algorithm as approved for FIPS 140-3.  This is intended to be used
+ * for algorithms that are only approved under certain conditions; crypto/seqiv.c
+ * sets it because FIPS 140-3 approves GCM only when instantiated via seqiv.
+ *
+ * Restored from the certified 6.18 sources, where it comes from the downstream
+ * commit b30c153fcfd6 ("crypto: Only allow GCM in FIPS when instantiated via
+ * seqiv") -- crypto/seqiv.c is inside the boundary and sets the flag, but that
+ * commit's hunk to this header was never ported to 7.1.
+ *
+ * The certified sources define it as 0x00040000, which upstream has since
+ * assigned to CRYPTO_ALG_REQ_VIRT, so there the two flags alias.  A free bit is
+ * used here instead: aliasing would make every seqiv-instantiated AEAD claim
+ * virtual-address support, which crypto/ahash.c gates on, and would make every
+ * REQ_VIRT algorithm read back as FIPS 140 approved.
+ */
+#define CRYPTO_ALG_FIPS140_COMPLIANT	0x00100000
+
 /* The high bits 0xff000000 are reserved for type-specific flags. */
 
 /*
