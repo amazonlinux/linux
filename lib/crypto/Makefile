@@ -27,10 +27,6 @@ ifeq ($(CONFIG_CRYPTO_LIB_AES_ARCH),y)
 CFLAGS_aes.o += -I$(src)/$(SRCARCH)
 
 libaes-$(CONFIG_ARM) += arm/aes-cipher-core.o
-libaes-$(CONFIG_ARM64) += arm64/aes-cipher-core.o \
-			  arm64/aes-ce-core.o \
-			  arm64/aes-ce.o \
-			  arm64/aes-neon.o
 
 ifeq ($(CONFIG_PPC),y)
 ifeq ($(CONFIG_SPE),y)
@@ -52,7 +48,6 @@ endif # CONFIG_PPC
 
 libaes-$(CONFIG_RISCV) += riscv/aes-riscv64-zvkned.o
 libaes-$(CONFIG_SPARC) += sparc/aes_asm.o
-libaes-$(CONFIG_X86) += x86/aes-aesni.o
 endif # CONFIG_CRYPTO_LIB_AES_ARCH
 
 # clean-files must be defined unconditionally
