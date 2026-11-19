@@ -9,6 +9,20 @@
 
 #include <uapi/linux/random.h>
 
+/*
+ * Hook installed by an external RNG (the certified FIPS module's DRBG, from
+ * crypto/rng.c) to take over /dev/random, /dev/urandom and getrandom(2).
+ * Restored from the certified 6.18 sources; the downstream commits 024dc9dccc97
+ * ("random: Add hook to override device reads and getrandom(2)") and
+ * df9b659e02b4 ("random: allow reseeding DRBG with getrandom"), which add it,
+ * were never ported to 7.1, while crypto/rng.c is inside the FIPS boundary and
+ * registers itself through it.
+ */
+struct random_extrng {
+	ssize_t (*extrng_read)(void __user *buf, size_t buflen, bool reseed);
+	struct module *owner;
+};
+
 struct notifier_block;
 
 void add_device_randomness(const void *buf, size_t len);
@@ -120,6 +134,8 @@ void __init random_init(void);
 bool rng_is_initialized(void);
 int wait_for_random_bytes(void);
 int execute_with_initialized_rng(struct notifier_block *nb);
+void random_register_extrng(const struct random_extrng *rng);
+void random_unregister_extrng(void);
 
 /* Calls wait_for_random_bytes() and then calls get_random_bytes(buf, nbytes).
  * Returns the result of the call to wait_for_random_bytes. */

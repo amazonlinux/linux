@@ -47,6 +47,7 @@
 #include <linux/workqueue.h>
 #include <linux/irq.h>
 #include <linux/ratelimit.h>
+#include <linux/rcupdate.h>
 #include <linux/syscalls.h>
 #include <linux/completion.h>
 #include <linux/uuid.h>
@@ -55,6 +56,7 @@
 #include <linux/siphash.h>
 #include <linux/sched/isolation.h>
 #include <crypto/chacha.h>
+#include <crypto/rng.h>
 #include <crypto/blake2s.h>
 #include <vdso/datapage.h>
 #include <asm/archrandom.h>
@@ -321,6 +323,14 @@ static void crng_fast_key_erasure(u8 key[CHACHA_KEY_SIZE],
 }
 
 /*
+ * Hook for external RNG.
+ */
+static const struct random_extrng __rcu *extrng;
+
+static const struct file_operations extrng_random_fops;
+static const struct file_operations extrng_urandom_fops;
+
+/*
  * This function returns a ChaCha state that you may use for generating
  * random data. It also returns up to 32 bytes on its own of random data
  * that may be used; random_data_len may not be greater than 32.
@@ -427,6 +437,19 @@ void get_random_bytes(void *buf, size_t len)
 	_get_random_bytes(buf, len);
 }
 EXPORT_SYMBOL(get_random_bytes);
+
+void random_register_extrng(const struct random_extrng *rng)
+{
+	rcu_assign_pointer(extrng, rng);
+}
+EXPORT_SYMBOL_GPL(random_register_extrng);
+
+void random_unregister_extrng(void)
+{
+	RCU_INIT_POINTER(extrng, NULL);
+	synchronize_rcu();
+}
+EXPORT_SYMBOL_GPL(random_unregister_extrng);
 
 static ssize_t get_random_bytes_user(struct iov_iter *iter)
 {
@@ -981,6 +1004,10 @@ void __cold add_vmfork_randomness(const void *unique_vm_id, size_t len)
 	if (crng_ready()) {
 		crng_reseed(NULL);
 		pr_notice("crng reseeded due to virtual machine fork\n");
+		if (fips_enabled) {
+			crypto_rng_reseed();
+			pr_notice("FIPS RNGs reseeded due to virtual machine fork\n");
+		}
 	}
 	blocking_notifier_call_chain(&vmfork_chain, 0, NULL);
 }
@@ -1379,6 +1406,7 @@ out:
 
 SYSCALL_DEFINE3(getrandom, char __user *, ubuf, size_t, len, unsigned int, flags)
 {
+	const struct random_extrng *rng;
 	struct iov_iter iter;
 	int ret;
 
@@ -1391,6 +1419,18 @@ SYSCALL_DEFINE3(getrandom, char __user *, ubuf, size_t, len, unsigned int, flags
 	 */
 	if ((flags & (GRND_INSECURE | GRND_RANDOM)) == (GRND_INSECURE | GRND_RANDOM))
 		return -EINVAL;
+
+	rcu_read_lock();
+	rng = rcu_dereference(extrng);
+	if (rng && !try_module_get(rng->owner))
+		rng = NULL;
+	rcu_read_unlock();
+
+	if (rng) {
+		ret = rng->extrng_read(ubuf, len, !!(flags & GRND_RANDOM));
+		module_put(rng->owner);
+		return ret;
+	}
 
 	if (!crng_ready() && !(flags & GRND_INSECURE)) {
 		if (flags & GRND_NONBLOCK)
@@ -1552,9 +1592,67 @@ static int random_fasync(int fd, struct file *filp, int on)
 	return fasync_helper(fd, filp, on, &fasync);
 }
 
+static __poll_t
+extrng_poll(struct file *file, poll_table * wait)
+{
+	/* extrng pool is always full, always read, no writes */
+	return EPOLLIN | EPOLLRDNORM;
+}
+
+static int random_open(struct inode *inode, struct file *filp)
+{
+	const struct random_extrng *rng;
+
+	rcu_read_lock();
+	rng = rcu_dereference(extrng);
+	if (rng && !try_module_get(rng->owner))
+		rng = NULL;
+	rcu_read_unlock();
+
+	if (!rng)
+		return 0;
+
+	filp->f_op = &extrng_random_fops;
+	filp->private_data = rng->owner;
+
+	return 0;
+}
+
+static int urandom_open(struct inode *inode, struct file *filp)
+{
+	const struct random_extrng *rng;
+
+	rcu_read_lock();
+	rng = rcu_dereference(extrng);
+	if (rng && !try_module_get(rng->owner))
+		rng = NULL;
+	rcu_read_unlock();
+
+	if (!rng)
+		return 0;
+
+	filp->f_op = &extrng_urandom_fops;
+	filp->private_data = rng->owner;
+
+	return 0;
+}
+
+static int extrng_release(struct inode *inode, struct file *filp)
+{
+	module_put(filp->private_data);
+	return 0;
+}
+
+static ssize_t
+extrng_read(struct file *file, char __user *buf, size_t nbytes, loff_t *ppos)
+{
+	return rcu_dereference_raw(extrng)->extrng_read(buf, nbytes, false);
+}
+
 const struct file_operations random_fops = {
 	.read_iter = random_read_iter,
 	.write_iter = random_write_iter,
+	.open  = random_open,
 	.poll = random_poll,
 	.unlocked_ioctl = random_ioctl,
 	.compat_ioctl = compat_ptr_ioctl,
@@ -1567,12 +1665,36 @@ const struct file_operations random_fops = {
 const struct file_operations urandom_fops = {
 	.read_iter = urandom_read_iter,
 	.write_iter = random_write_iter,
+	.open  = urandom_open,
 	.unlocked_ioctl = random_ioctl,
 	.compat_ioctl = compat_ptr_ioctl,
 	.fasync = random_fasync,
 	.llseek = noop_llseek,
 	.splice_read = copy_splice_read,
 	.splice_write = iter_file_splice_write,
+};
+
+static const struct file_operations extrng_random_fops = {
+	.open  = random_open,
+	.read  = extrng_read,
+	.write_iter = random_write_iter,
+	.poll  = extrng_poll,
+	.unlocked_ioctl = random_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
+	.fasync = random_fasync,
+	.llseek = noop_llseek,
+	.release = extrng_release,
+};
+
+static const struct file_operations extrng_urandom_fops = {
+	.open  = urandom_open,
+	.read  = extrng_read,
+	.write_iter = random_write_iter,
+	.unlocked_ioctl = random_ioctl,
+	.compat_ioctl = compat_ptr_ioctl,
+	.fasync = random_fasync,
+	.llseek = noop_llseek,
+	.release = extrng_release,
 };
 
 
