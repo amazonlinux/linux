@@ -169,6 +169,15 @@
 #define CRYPTO_TFM_REQ_MAY_SLEEP	0x00000200
 #define CRYPTO_TFM_REQ_MAY_BACKLOG	0x00000400
 #define CRYPTO_TFM_REQ_ON_STACK		0x00000800
+/*
+ * Ask a DRBG to reseed before generating output.  Restored from the certified
+ * 6.18 sources, where it comes from the downstream commit df9b659e02b4
+ * ("random: allow reseeding DRBG with getrandom"), which SP800-90C requires
+ * when DRBGs are chained.  crypto/rng.c and crypto/drbg.c are inside the FIPS
+ * boundary and use the flag, but that commit's hunk to this header was never
+ * ported to 7.1.  The certified bit is free here, so it is kept.
+ */
+#define CRYPTO_TFM_REQ_NEED_RESEED	0x00001000
 
 /*
  * Miscellaneous stuff.
