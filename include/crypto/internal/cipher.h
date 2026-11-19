@@ -176,6 +176,13 @@ void crypto_cipher_encrypt_one(struct crypto_cipher *tfm,
 void crypto_cipher_decrypt_one(struct crypto_cipher *tfm,
 			       u8 *dst, const u8 *src);
 
+/*
+ * Restored for the certified FIPS sources: crypto/cipher.c is inside the
+ * boundary and defines it, crypto/cmac.c calls it.  Upstream cb2e6e86ceb5
+ * ("crypto: cipher - Remove crypto_clone_cipher()") removed it.
+ */
+struct crypto_cipher *crypto_clone_cipher(struct crypto_cipher *cipher);
+
 struct crypto_cipher_spawn {
 	struct crypto_spawn base;
 };

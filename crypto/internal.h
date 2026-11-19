@@ -11,6 +11,7 @@
 #include <crypto/algapi.h>
 #include <crypto/fips140-redirect.h>
 #include <linux/completion.h>
+#include <linux/err.h>
 #include <linux/jump_label.h>
 #include <linux/list.h>
 #include <linux/module.h>
@@ -137,10 +138,20 @@ void crypto_remove_spawns(struct crypto_alg *alg, struct list_head *list,
 			  struct crypto_alg *nalg);
 void crypto_remove_final(struct list_head *list);
 void crypto_shoot_alg(struct crypto_alg *alg);
+/*
+ * __crypto_alloc_tfmgfp(), crypto_clone_tfm() and crypto_tfm_get() below are
+ * defined or used by crypto/api.c, which is inside the certified FIPS boundary.
+ * Upstream (7.3) folded or removed them (9d58d14e3a18, 590a46c68a7b,
+ * 3065170bfc7f), so their declarations are restored as certified.
+ */
+struct crypto_tfm *__crypto_alloc_tfmgfp(struct crypto_alg *alg, u32 type,
+					 u32 mask, gfp_t gfp);
 struct crypto_tfm *__crypto_alloc_tfm(struct crypto_alg *alg, u32 type,
 				      u32 mask);
 void *crypto_create_tfm_node(struct crypto_alg *alg,
 			const struct crypto_type *frontend, int node);
+void *crypto_clone_tfm(const struct crypto_type *frontend,
+		       struct crypto_tfm *otfm);
 
 static inline void *crypto_create_tfm(struct crypto_alg *alg,
 			const struct crypto_type *frontend)
@@ -222,6 +233,11 @@ static inline void crypto_yield(u32 flags)
 static inline int crypto_is_test_larval(struct crypto_larval *larval)
 {
 	return larval->alg.cra_driver_name[0];
+}
+
+static inline struct crypto_tfm *crypto_tfm_get(struct crypto_tfm *tfm)
+{
+	return refcount_inc_not_zero(&tfm->refcnt) ? tfm : ERR_PTR(-EOVERFLOW);
 }
 
 #endif	/* _CRYPTO_INTERNAL_H */

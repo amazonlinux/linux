@@ -436,6 +436,13 @@ int crypto_has_alg(const char *name, u32 type, u32 mask);
  */
 
 struct crypto_tfm {
+	/*
+	 * Restored for the certified FIPS sources: crypto/api.c is inside the
+	 * boundary and still counts tfm references here, and this structure
+	 * crosses the boundary, so it keeps the certified layout.  Upstream
+	 * 3065170bfc7f ("crypto: api - Remove per-tfm refcount") removed it.
+	 */
+	refcount_t refcnt;
 
 	u32 crt_flags;
 
