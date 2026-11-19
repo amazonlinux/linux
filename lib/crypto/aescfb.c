@@ -6,27 +6,46 @@
  */
 
 #include <crypto/aes.h>
-#include <crypto/utils.h>
+#include <crypto/algapi.h>
 #include <linux/export.h>
 #include <linux/module.h>
+#include <asm/irqflags.h>
+
+static void aescfb_encrypt_block(const struct crypto_aes_ctx *ctx, void *dst,
+				 const void *src)
+{
+	unsigned long flags;
+
+	/*
+	 * In AES-CFB, the AES encryption operates on known 'plaintext' (the IV
+	 * and ciphertext), making it susceptible to timing attacks on the
+	 * encryption key. The AES library already mitigates this risk to some
+	 * extent by pulling the entire S-box into the caches before doing any
+	 * substitutions, but this strategy is more effective when running with
+	 * interrupts disabled.
+	 */
+	local_irq_save(flags);
+	aes_encrypt(ctx, dst, src);
+	local_irq_restore(flags);
+}
 
 /**
  * aescfb_encrypt - Perform AES-CFB encryption on a block of data
  *
- * @key:	The AES-CFB key schedule
+ * @ctx:	The AES-CFB key schedule
  * @dst:	Pointer to the ciphertext output buffer
  * @src:	Pointer the plaintext (may equal @dst for encryption in place)
  * @len:	The size in bytes of the plaintext and ciphertext.
  * @iv:		The initialization vector (IV) to use for this block of data
  */
-void aescfb_encrypt(const struct aes_enckey *key, u8 *dst, const u8 *src,
+void aescfb_encrypt(const struct crypto_aes_ctx *ctx, u8 *dst, const u8 *src,
 		    int len, const u8 iv[AES_BLOCK_SIZE])
 {
 	u8 ks[AES_BLOCK_SIZE];
 	const u8 *v = iv;
 
 	while (len > 0) {
-		aes_encrypt(key, ks, v);
+		aescfb_encrypt_block(ctx, ks, v);
 		crypto_xor_cpy(dst, src, ks, min(len, AES_BLOCK_SIZE));
 		v = dst;
 
@@ -42,18 +61,18 @@ EXPORT_SYMBOL(aescfb_encrypt);
 /**
  * aescfb_decrypt - Perform AES-CFB decryption on a block of data
  *
- * @key:	The AES-CFB key schedule
+ * @ctx:	The AES-CFB key schedule
  * @dst:	Pointer to the plaintext output buffer
  * @src:	Pointer the ciphertext (may equal @dst for decryption in place)
  * @len:	The size in bytes of the plaintext and ciphertext.
  * @iv:		The initialization vector (IV) to use for this block of data
  */
-void aescfb_decrypt(const struct aes_enckey *key, u8 *dst, const u8 *src,
+void aescfb_decrypt(const struct crypto_aes_ctx *ctx, u8 *dst, const u8 *src,
 		    int len, const u8 iv[AES_BLOCK_SIZE])
 {
 	u8 ks[2][AES_BLOCK_SIZE];
 
-	aes_encrypt(key, ks[0], iv);
+	aescfb_encrypt_block(ctx, ks[0], iv);
 
 	for (int i = 0; len > 0; i ^= 1) {
 		if (len > AES_BLOCK_SIZE)
@@ -62,7 +81,7 @@ void aescfb_decrypt(const struct aes_enckey *key, u8 *dst, const u8 *src,
 			 * performing the XOR, as that may update in place and
 			 * overwrite the ciphertext.
 			 */
-			aes_encrypt(key, ks[!i], src);
+			aescfb_encrypt_block(ctx, ks[!i], src);
 
 		crypto_xor_cpy(dst, src, ks[i], min(len, AES_BLOCK_SIZE));
 
@@ -195,15 +214,15 @@ static struct {
 static int __init libaescfb_init(void)
 {
 	for (int i = 0; i < ARRAY_SIZE(aescfb_tv); i++) {
-		struct aes_enckey key;
+		struct crypto_aes_ctx ctx;
 		u8 buf[64];
 
-		if (aes_prepareenckey(&key, aescfb_tv[i].key, aescfb_tv[i].klen)) {
-			pr_err("aes_prepareenckey() failed on vector %d\n", i);
+		if (aes_expandkey(&ctx, aescfb_tv[i].key, aescfb_tv[i].klen)) {
+			pr_err("aes_expandkey() failed on vector %d\n", i);
 			return -ENODEV;
 		}
 
-		aescfb_encrypt(&key, buf, aescfb_tv[i].ptext, aescfb_tv[i].len,
+		aescfb_encrypt(&ctx, buf, aescfb_tv[i].ptext, aescfb_tv[i].len,
 			       aescfb_tv[i].iv);
 		if (memcmp(buf, aescfb_tv[i].ctext, aescfb_tv[i].len)) {
 			pr_err("aescfb_encrypt() #1 failed on vector %d\n", i);
@@ -211,14 +230,14 @@ static int __init libaescfb_init(void)
 		}
 
 		/* decrypt in place */
-		aescfb_decrypt(&key, buf, buf, aescfb_tv[i].len, aescfb_tv[i].iv);
+		aescfb_decrypt(&ctx, buf, buf, aescfb_tv[i].len, aescfb_tv[i].iv);
 		if (memcmp(buf, aescfb_tv[i].ptext, aescfb_tv[i].len)) {
 			pr_err("aescfb_decrypt() failed on vector %d\n", i);
 			return -ENODEV;
 		}
 
 		/* encrypt in place */
-		aescfb_encrypt(&key, buf, buf, aescfb_tv[i].len, aescfb_tv[i].iv);
+		aescfb_encrypt(&ctx, buf, buf, aescfb_tv[i].len, aescfb_tv[i].iv);
 		if (memcmp(buf, aescfb_tv[i].ctext, aescfb_tv[i].len)) {
 			pr_err("aescfb_encrypt() #2 failed on vector %d\n", i);
 
