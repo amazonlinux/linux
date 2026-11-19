@@ -14,6 +14,22 @@ config CRYPTO_GHASH_ARM64_CE
 	  Architecture: arm64 using:
 	  - ARMv8 Crypto Extensions
 
+# Restored from the certified 6.18 sources: upstream 7.1 dropped this symbol when
+# it moved arm64 SHA-3 acceleration into lib/crypto/arm64/, but the accelerated
+# implementation inside the FIPS boundary is arch/arm64/crypto/sha3-ce-{glue.c,
+# core.S}, and arch/arm64/crypto/Makefile gates it on this symbol.  Without it
+# the rule never fires and fips140.ko would silently lose accelerated SHA-3.
+config CRYPTO_SHA3_ARM64
+	tristate "Hash functions: SHA-3 (ARMv8.2 Crypto Extensions)"
+	depends on KERNEL_MODE_NEON
+	select CRYPTO_HASH
+	select CRYPTO_SHA3
+	help
+	  SHA-3 secure hash algorithms (FIPS 202)
+
+	  Architecture: arm64 using:
+	  - ARMv8.2 Crypto Extensions
+
 config CRYPTO_AES_ARM64_CE_BLK
 	tristate "Ciphers: AES, modes: ECB/CBC/CTR/XTS (ARMv8 Crypto Extensions)"
 	depends on KERNEL_MODE_NEON
