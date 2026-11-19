@@ -181,6 +181,17 @@ struct thread_struct {
 	 * task's kernel mode FPSIMD state while it is scheduled out.
 	 */
 	struct user_fpsimd_state	*kernel_fpsimd_state;
+	/*
+	 * Buffer for the zero-argument kernel_neon_begin()/kernel_neon_end()
+	 * that the certified FIPS crypto sources use.  6.18 kept the kernel mode
+	 * FPSIMD save area here for every caller; 7.1 made the caller supply it,
+	 * and the frozen sources cannot be changed to do so.  It has to be
+	 * per-task rather than per-CPU because kernel mode FPSIMD is preemptible:
+	 * the state must survive a context switch and follow the task if it
+	 * migrates.  Not gated on CONFIG_CRYPTO_FIPS140_EXTMOD, because those
+	 * sources are present and call the zero-argument form either way.
+	 */
+	struct user_fpsimd_state	kernel_fpsimd_legacy_state;
 	unsigned int			kernel_fpsimd_cpu;
 #ifdef CONFIG_ARM64_PTR_AUTH
 	struct ptrauth_keys_user	keys_user;

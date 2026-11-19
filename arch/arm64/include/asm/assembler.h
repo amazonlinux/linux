@@ -758,6 +758,29 @@ alternative_else_nop_endif
 .endm
 
 /*
+ * Yield the CPU if a reschedule is pending.  Restored from the certified 6.18
+ * sources: upstream 180e92df9a4f ("arm64: fpsimd: Remove obsolete cond_yield
+ * macro") deleted it, but the frozen FIPS assembly uses it to stay preemptible
+ * during long NEON loops -- arch/arm64/crypto/{aes-modes.S,sha3-ce-core.S} and
+ * lib/crypto/arm64/{sha1-ce-core.S,sha256-ce.S,sha512-ce-core.S}, all inside the
+ * boundary.
+ */
+	.macro		cond_yield, lbl:req, tmp:req, tmp2
+#ifdef CONFIG_PREEMPT_VOLUNTARY
+	get_current_task \tmp
+	ldr		\tmp, [\tmp, #TSK_TI_PREEMPT]
+	/*
+	 * If we are serving a softirq, there is no point in yielding: the
+	 * softirq will not be preempted no matter what we do, so we should
+	 * run to completion as quickly as we can. The preempt_count field will
+	 * have BIT(SOFTIRQ_SHIFT) set in this case, so the zero check will
+	 * catch this case too.
+	 */
+	cbz		\tmp, \lbl
+#endif
+	.endm
+
+/*
  * Branch Target Identifier (BTI)
  */
 	.macro  bti, targets

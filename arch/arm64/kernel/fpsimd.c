@@ -1887,6 +1887,14 @@ void fpsimd_save_and_flush_cpu_state(void)
  * FPSIMD context when it is scheduled out, or if it is interrupted by kernel
  * mode FPSIMD occurring in softirq context. May be %NULL otherwise.
  */
+/*
+ * <asm/neon.h> turns kernel_neon_begin()/kernel_neon_end() into
+ * argument-count dispatch macros for the certified FIPS sources; the definitions
+ * below and their callers in this file want the real functions.
+ */
+#undef kernel_neon_begin
+#undef kernel_neon_end
+
 void kernel_neon_begin(struct user_fpsimd_state *state)
 {
 	if (WARN_ON(!system_supports_fpsimd()))
@@ -1975,6 +1983,30 @@ void kernel_neon_end(struct user_fpsimd_state *state)
 	}
 }
 EXPORT_SYMBOL_GPL(kernel_neon_end);
+
+/*
+ * Zero-argument entry points for the certified FIPS crypto sources, which are
+ * inside the boundary and predate the caller-provided save area.  The buffer
+ * lives in thread_struct, exactly as it did in 6.18, so kernel mode FPSIMD stays
+ * preemptible: the state survives a context switch and follows the task if it
+ * migrates.  A per-CPU buffer would not do, because another task could reuse the
+ * slot while this one is scheduled out.
+ *
+ * One buffer per task is sufficient for the task/softirq nesting that
+ * kernel_neon_begin() permits: the nested call saves the outer registers into
+ * this same buffer and reloads them on its way out, which is what 6.18 did.
+ */
+void kernel_neon_begin_legacy(void)
+{
+	kernel_neon_begin(&current->thread.kernel_fpsimd_legacy_state);
+}
+EXPORT_SYMBOL_GPL(kernel_neon_begin_legacy);
+
+void kernel_neon_end_legacy(void)
+{
+	kernel_neon_end(&current->thread.kernel_fpsimd_legacy_state);
+}
+EXPORT_SYMBOL_GPL(kernel_neon_end_legacy);
 
 #ifdef CONFIG_EFI
 
