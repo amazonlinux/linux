@@ -108,6 +108,15 @@ config CRYPTO_RNG2
 	tristate
 	select CRYPTO_ALGAPI2
 
+# Restored from the certified 6.18 sources: the default RNG ("stdrng") that
+# crypto/rng.c hands out through crypto_get_default_rng().  Upstream (7.2)
+# deleted this symbol when its users moved to crypto_stdrng_get_bytes(), but
+# the frozen crypto/{geniv,ecc,dh}.c still take the default RNG, so the
+# selects below have to keep a DRBG behind it, as in the certified build.
+config CRYPTO_RNG_DEFAULT
+	tristate
+	select CRYPTO_DRBG_MENU
+
 config CRYPTO_AKCIPHER2
 	tristate
 	select CRYPTO_ALGAPI2
@@ -307,6 +316,7 @@ config CRYPTO_DH
 config CRYPTO_DH_RFC7919_GROUPS
 	bool "RFC 7919 FFDHE groups"
 	depends on CRYPTO_DH
+	select CRYPTO_RNG_DEFAULT
 	help
 	  FFDHE (Finite-Field-based Diffie-Hellman Ephemeral) groups
 	  defined in RFC7919.
@@ -318,6 +328,7 @@ config CRYPTO_DH_RFC7919_GROUPS
 
 config CRYPTO_ECC
 	tristate
+	select CRYPTO_RNG_DEFAULT
 
 config CRYPTO_ECDH
 	tristate "ECDH (Elliptic Curve Diffie-Hellman)"
@@ -814,6 +825,7 @@ config CRYPTO_GENIV
 	tristate
 	select CRYPTO_AEAD
 	select CRYPTO_MANAGER
+	select CRYPTO_RNG_DEFAULT
 
 config CRYPTO_SEQIV
 	tristate "Sequence Number IV Generator"
@@ -1135,16 +1147,51 @@ endmenu
 
 menu "Random number generation"
 
-config CRYPTO_DRBG
+# Restored from the certified 6.18 sources.  crypto/drbg.c is inside the FIPS
+# boundary and builds its HMAC, Hash and CTR DRBG cores under
+# CONFIG_CRYPTO_DRBG_{HMAC,HASH,CTR}, which upstream (7.2) deleted together with
+# CRYPTO_DRBG_MENU when it reduced its own DRBG to HMAC_DRBG over the
+# HMAC-SHA512 library.  Without these symbols the frozen drbg.c would build
+# with no DRBG at all, silently.  The certified build set all four to y.
+menuconfig CRYPTO_DRBG_MENU
 	tristate "NIST SP800-90A DRBG (Deterministic Random Bit Generator)"
-	select CRYPTO_JITTERENTROPY
-	select CRYPTO_LIB_SHA512
-	select CRYPTO_RNG
 	help
 	  DRBG (Deterministic Random Bit Generator) (NIST SP800-90A)
 
-	  Enable this only if you need it for a FIPS 140 certification.
-	  It's otherwise redundant with the kernel's regular RNG.
+	  In the following submenu, one or more of the DRBG types must be selected.
+
+if CRYPTO_DRBG_MENU
+
+config CRYPTO_DRBG_HMAC
+	bool
+	default y
+	select CRYPTO_HMAC
+	select CRYPTO_SHA512
+
+config CRYPTO_DRBG_HASH
+	bool "Hash_DRBG"
+	select CRYPTO_SHA256
+	help
+	  Hash_DRBG variant as defined in NIST SP800-90A.
+
+	  This uses the SHA-1, SHA-256, SHA-384, or SHA-512 hash algorithms.
+
+config CRYPTO_DRBG_CTR
+	bool "CTR_DRBG"
+	select CRYPTO_AES
+	select CRYPTO_CTR
+	help
+	  CTR_DRBG variant as defined in NIST SP800-90A.
+
+	  This uses the AES cipher algorithm with the counter block mode.
+
+config CRYPTO_DRBG
+	tristate
+	default CRYPTO_DRBG_MENU
+	select CRYPTO_RNG
+	select CRYPTO_JITTERENTROPY
+
+endif	# if CRYPTO_DRBG_MENU
 
 config CRYPTO_JITTERENTROPY
 	tristate "CPU Jitter Non-Deterministic RNG (Random Number Generator)"
