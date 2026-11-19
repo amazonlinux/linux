@@ -8,8 +8,6 @@ config CRYPTO_LIB_UTILS
 
 config CRYPTO_LIB_AES
 	tristate
-	# Select dependencies of modes that are part of libaes.
-	select CRYPTO_LIB_GF128HASH if CRYPTO_LIB_AES_GCM != n
 	select CRYPTO_LIB_UTILS
 
 config CRYPTO_LIB_AES_ARCH
@@ -40,9 +38,21 @@ config CRYPTO_LIB_AES_CBC_MACS
 
 config CRYPTO_LIB_AES_GCM
 	tristate
-	select CRYPTO_LIB_AES
+	# <crypto/aes-gcm.h> provides upstream's AES-GCM interface on top of the
+	# certified AES-GCM library, lib/crypto/aesgcm.c.
+	select CRYPTO_LIB_AESGCM
 	help
 	  The AES-GCM library functions.
+
+# Restored from the certified 6.18 sources, together with lib/crypto/aesgcm.c:
+# upstream (7.3) replaced this library with AES-GCM support in libaes, which
+# computes GHASH with the gf128hash library, whose struct ghash_ctx collides
+# with the one in <crypto/ghash.h>, frozen inside the FIPS module boundary.
+config CRYPTO_LIB_AESGCM
+	tristate
+	select CRYPTO_LIB_AES
+	select CRYPTO_LIB_GF128MUL
+	select CRYPTO_LIB_UTILS
 
 config CRYPTO_LIB_ARC4
 	tristate
