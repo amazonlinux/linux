@@ -10,6 +10,10 @@ crypto-y := api.o cipher.o
 
 obj-$(CONFIG_CRYPTO_ENGINE) += crypto_engine.o
 crypto-objs-$(CONFIG_CRYPTO_FIPS) += fips.o
+# fips_enabled has to stay in vmlinux: crypto/fips.c is inside the boundary,
+# so the flag and its fips= command-line parameter live in their own obj-y file,
+# as in the certified sources.
+obj-$(CONFIG_CRYPTO_FIPS) += fips_builtin.o
 
 crypto_algapi-$(CONFIG_PROC_FS) += proc.o
 crypto_algapi-y := algapi.o scatterwalk.o $(crypto_algapi-y)
@@ -159,6 +163,9 @@ obj-$(CONFIG_CRYPTO_LZ4HC) += lz4hc.o
 obj-$(CONFIG_CRYPTO_XXHASH) += xxhash_generic.o
 obj-$(CONFIG_CRYPTO_842) += 842.o
 crypto-objs-$(CONFIG_CRYPTO_RNG2) += rng.o
+# __crypto_stdrng_get_bytes() is 7.1-only and the frozen rng.c predates it, so it
+# lives beside it in vmlinux, over the default-RNG helpers rng.c exports.
+obj-$(CONFIG_CRYPTO_RNG2) += rng_wrapper.o
 crypto-objs-$(CONFIG_CRYPTO_DRBG) += drbg.o
 crypto-objs-$(CONFIG_CRYPTO_JITTERENTROPY) += jitterentropy_rng.o
 CFLAGS_jitterentropy.o = -O0

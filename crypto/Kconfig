@@ -136,6 +136,17 @@ config CRYPTO_ACOMP
 	select CRYPTO_ALGAPI
 	select CRYPTO_ACOMP2
 
+# Restored from the certified 6.18 sources: upstream 7.1 deleted this symbol when
+# it moved HKDF out of the crypto API, but crypto/hkdf.c is inside the FIPS
+# boundary, crypto/Makefile gates it on CONFIG_CRYPTO_HKDF, and CRYPTO_FIPS above
+# selects it -- so without this the select was a no-op and hkdf.o was silently
+# not built at all.
+config CRYPTO_HKDF
+	tristate
+	select CRYPTO_SHA256 if CRYPTO_SELFTESTS
+	select CRYPTO_SHA512 if CRYPTO_SELFTESTS
+	select CRYPTO_HASH2
+
 config CRYPTO_MANAGER
 	tristate
 	default CRYPTO_ALGAPI if CRYPTO_SELFTESTS
