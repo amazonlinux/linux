@@ -212,6 +212,15 @@ int lskcipher_register_instance(struct crypto_template *tmpl,
 				struct lskcipher_instance *inst);
 
 int skcipher_walk_done(struct skcipher_walk *walk, int res);
+/*
+ * Declared for the certified FIPS sources: 20d868a77f11, which reverts
+ * 0f8d42bf128d ("crypto: scatterwalk - Move skcipher walk and use it for
+ * memcpy_sglist"), turned this into a static two-line helper inside
+ * crypto/skcipher.c and dropped the prototype.  In the boundary it is still a
+ * global exported by crypto/scatterwalk.c and called from crypto/skcipher.c,
+ * both of which are frozen at the certified revision.
+ */
+int skcipher_walk_first(struct skcipher_walk *walk, bool atomic);
 int skcipher_walk_virt(struct skcipher_walk *__restrict walk,
 		       struct skcipher_request *__restrict req,
 		       bool atomic);

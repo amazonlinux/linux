@@ -253,4 +253,18 @@ struct scatterlist *scatterwalk_ffwd(struct scatterlist dst[2],
 				     struct scatterlist *src,
 				     unsigned int len);
 
+/*
+ * The skcipher walk (struct skcipher_walk and the skcipher_walk_* interface)
+ * was moved into this header by 0f8d42bf128d ("crypto: scatterwalk - Move
+ * skcipher walk and use it for memcpy_sglist") and moved back out again by
+ * 20d868a77f11, which reverts it.  The certified FIPS sources predate the
+ * revert: crypto/scatterwalk.c, which implements the walk, is inside the
+ * boundary and includes only this header, so pull in the declarations from
+ * where 7.1 keeps them.  There is exactly one definition either way.
+ *
+ * This include must stay last: <crypto/internal/skcipher.h> needs the complete
+ * struct scatter_walk that <crypto/algapi.h> above provides.
+ */
+#include <crypto/internal/skcipher.h>
+
 #endif  /* _CRYPTO_SCATTERWALK_H */
