@@ -21,6 +21,7 @@
  */
 
 #include <crypto/aes.h>
+#include <crypto/aes_wrapper.h>
 #include <crypto/utils.h>
 #include <keys/user-type.h>
 #include <linux/hashtable.h>

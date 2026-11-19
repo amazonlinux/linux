@@ -8,6 +8,7 @@
 #define _CRYPTO_AES_CBC_MACS_H
 
 #include <crypto/aes.h>
+#include <crypto/aes_wrapper.h>	/* struct aes_enckey over the certified AES */
 #include <linux/string.h>
 
 /**

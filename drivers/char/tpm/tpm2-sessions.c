@@ -71,6 +71,7 @@
 #include <crypto/ecdh.h>
 #include <crypto/sha2.h>
 #include <crypto/utils.h>
+#include <crypto/aes_wrapper.h>
 
 /* maximum number of names the TPM must remember for authorization */
 #define AUTH_MAX_NAMES	3

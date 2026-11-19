@@ -22,7 +22,12 @@ libcryptoutils-y				:= memneq.o utils.o
 ################################################################################
 
 obj-$(CONFIG_CRYPTO_LIB_AES) += libaes.o
-libaes-y := aes.o
+# Upstream keeps the CBC-MAC family inside aes.c; here aes.c is the certified
+# version, which predates them, so they live in their own file.  It is listed
+# unconditionally and guarded internally with IS_ENABLED(), exactly as upstream
+# guards it, because CONFIG_CRYPTO_LIB_AES_CBC_MACS=m would otherwise land in
+# libaes-m and be dropped when libaes itself is built in.
+libaes-y := aes.o aes_cbc_macs.o
 ifeq ($(CONFIG_CRYPTO_LIB_AES_ARCH),y)
 CFLAGS_aes.o += -I$(src)/$(SRCARCH)
 

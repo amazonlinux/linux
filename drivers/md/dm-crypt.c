@@ -33,6 +33,7 @@
 #include <asm/page.h>
 #include <linux/unaligned.h>
 #include <crypto/aes.h>
+#include <crypto/aes_wrapper.h>
 #include <crypto/hash.h>
 #include <crypto/md5.h>
 #include <crypto/skcipher.h>
