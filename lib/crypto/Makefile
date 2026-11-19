@@ -71,6 +71,14 @@ libarc4-y					:= arc4.o
 
 obj-$(CONFIG_CRYPTO_LIB_GF128MUL)		+= gf128mul.o
 
+# Boot-time crypto implementation override for FIPS testing (always built-in).
+# From the downstream commits c1fca2944054 and bc80b04f85bc; the frozen
+# lib/crypto/{x86,arm64}/sha*.h declare and read these symbols, but only their
+# header halves came across with the snapshot -- these .c files and these rules
+# are the kernel-side halves that had to be ported by hand.
+obj-$(CONFIG_X86) += x86/crypto_impl_override.o
+obj-$(CONFIG_ARM64) += arm64/crypto_impl_override.o
+
 ################################################################################
 
 obj-$(CONFIG_CRYPTO_LIB_BLAKE2B) += libblake2b.o

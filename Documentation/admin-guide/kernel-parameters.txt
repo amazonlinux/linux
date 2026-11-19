@@ -6963,6 +6963,53 @@ Kernel parameters
 			in memory accesses when users do not want to run
 			SEV-SNP guests.
 
+	sha256_arm64_impl=	[ARM64]
+			Select the SHA-224/SHA-256 implementation used for FIPS
+			testing. Both algorithms use the selected implementation.
+			Format: { generic | asm | neon | ce }
+			generic selects generic C; asm selects scalar assembly;
+			neon selects NEON/ASIMD; ce selects ARMv8 Crypto
+			Extensions.
+			If unset, normal CPU auto-detection is used. Unknown or
+			unsupported values warn and use normal auto-detection.
+	sha256_x86_impl=	[X86]
+			Select the SHA-224/SHA-256 implementation used for FIPS
+			testing. Both algorithms use the selected implementation.
+			Format: { generic | ssse3 | avx | avx2 | ni }
+			generic selects generic C. ssse3, avx, and avx2 select
+			the named assembly implementation; ni selects SHA-NI.
+			If unset, normal CPU auto-detection is used. Unknown or
+			unsupported values warn and use normal auto-detection.
+	sha1_arm64_impl=	[ARM64]
+			Select the SHA-1 implementation used for FIPS testing.
+			Format: { generic | ce }
+			generic selects generic C; ce selects ARMv8 Crypto
+			Extensions.
+			If unset, normal CPU auto-detection is used. Unknown or
+			unsupported values warn and use normal auto-detection.
+	sha1_x86_impl=	[X86]
+			Select the SHA-1 implementation used for FIPS testing.
+			Format: { generic | ssse3 | avx | avx2 | ni }
+			generic selects generic C. ssse3, avx, and avx2 select
+			the named assembly implementation; ni selects SHA-NI.
+			If unset, normal CPU auto-detection is used. Unknown or
+			unsupported values warn and use normal auto-detection.
+	sha512_arm64_impl=	[ARM64]
+			Select the SHA-384/SHA-512 implementation used for FIPS
+			testing. Both algorithms use the selected implementation.
+			Format: { generic | asm | ce }
+			generic selects generic C; asm selects scalar assembly;
+			ce selects ARMv8.2 Crypto Extensions.
+			If unset, normal CPU auto-detection is used. Unknown or
+			unsupported values warn and use normal auto-detection.
+	sha512_x86_impl=	[X86]
+			Select the SHA-384/SHA-512 implementation used for FIPS
+			testing. Both algorithms use the selected implementation.
+			Format: { generic | ssse3 | avx | avx2 }
+			generic selects generic C; the other values select the
+			named assembly implementation.
+			If unset, normal CPU auto-detection is used. Unknown or
+			unsupported values warn and use normal auto-detection.
 	shapers=	[NET]
 			Maximal number of shapers.
 
